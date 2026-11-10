@@ -62,3 +62,39 @@ test('B2 folder rename/modify/delete/resolved bursts read only k affected notes 
   vaultEvents.get('rename')!(untouched, text); adapter.index.flush();
   expect(reads).toBe(1); expect(listings).toBe(0); expect(adapter.coverage()).toEqual({ indexed: 1000 - k, listed: 1000 - k }); adapter.index.dispose();
 });
+test('streaming runtime reads only declared properties and repeated resolved events cannot imply readiness', async () => {
+  const { LocalAdapter } = await import('../src/adapter/local'); const { defaultDeclaration } = await import('../src/core/declaration'); const { unpackRows } = await import('../src/core/columns');
+  const files = [new FixtureFile('a.md'), new FixtureFile('b.md')], events = new Map<string, (...args: any[]) => void>();
+  const caches = new Map<string, any>([['a.md', { frontmatter: { id: 'a', private_unused: 'not copied' } }]]);
+  const app = { vault: { getMarkdownFiles: () => files, getAbstractFileByPath: (path: string) => files.find(f => f.path === path), on: () => ({}) }, metadataCache: { getFileCache: (file: FixtureFile) => caches.get(file.path) ?? null, resolvedLinks: {}, on: (name: string, fn: (...args: any[]) => void) => events.set(name, fn) } } as unknown as App;
+  const declaration = { ...defaultDeclaration('p@1'), identity: [{ key: 'id' }] }, plugin = { registerEvent() {}, register() {} } as unknown as Plugin;
+  const adapter = new LocalAdapter(app, plugin, 'p@1', 10, () => {}, true, declaration);
+  expect(adapter.index.snapshot()).toEqual([]); events.get('resolved')!(); events.get('resolved')!(); expect(adapter.linksResolved).toBe(false);
+  const rows: FactRow[] = []; for await (const b of adapter.columns(true, { chunkRows: 1, budgetMs: 8 })) rows.push(...unpackRows(b.columns));
+  expect(rows[0]?.properties).toEqual({ id: 'a' }); expect(adapter.coverage()).toEqual({ indexed: 1, listed: 2 }); expect(adapter.index.snapshot()).toEqual([]);
+  caches.set('b.md', { frontmatter: { id: 'b', private_unused: 'also not copied' } });
+  for await (const _ of adapter.columns(true, { chunkRows: 1, budgetMs: 8 })) { /* count progressively */ }
+  expect(adapter.coverage()).toEqual({ indexed: 2, listed: 2 }); events.get('resolved')!(); expect(adapter.linksResolved).toBe(true); adapter.index.dispose();
+});
+test('cancelled streaming batches remain pending, invalidate coverage, and force a full reload', async () => {
+  const { LocalAdapter } = await import('../src/adapter/local'); const { defaultDeclaration } = await import('../src/core/declaration'); const { unpackRows } = await import('../src/core/columns');
+  const files = ['a.md', 'b.md', 'c.md'].map(path => new FixtureFile(path)), events = new Map<string, (...args: any[]) => void>();
+  const values = new Map(files.map(f => [f.path, f.path]));
+  const app = { vault: { getMarkdownFiles: () => files, getAbstractFileByPath: (path: string) => files.find(f => f.path === path), on: () => ({}) }, metadataCache: { getFileCache: (file: FixtureFile) => ({ frontmatter: { id: values.get(file.path) } }), resolvedLinks: Object.fromEntries(files.map(f => [f.path, {}])), on: (name: string, fn: (...args: any[]) => void) => events.set(name, fn) } } as unknown as App;
+  const adapter = new LocalAdapter(app, { registerEvent() {}, register() {} } as unknown as Plugin, 'p@1', 10, () => {}, true, { ...defaultDeclaration('p@1'), identity: [{ key: 'id' }] });
+  for await (const _ of adapter.columns(true, { chunkRows: 1, budgetMs: 8 })) {}
+  expect(adapter.coverage()).toEqual({ indexed: 3, listed: 3 });
+  values.set('a.md', 'changed-a'); values.set('b.md', 'changed-b'); events.get('changed')!(files[0]); events.get('changed')!(files[1]); adapter.index.flush();
+  const cancelled = adapter.columns(false, { chunkRows: 1, budgetMs: 8 }); expect((await cancelled.next()).value?.reset).toBe(false);
+  await cancelled.return(undefined); expect(adapter.coverage()).toEqual({ indexed: 0, listed: 3 }); expect(adapter.linksResolved).toBe(false);
+  const rows: FactRow[] = []; let reset = false;
+  for await (const batch of adapter.columns(false, { chunkRows: 1, budgetMs: 8 })) { reset ||= batch.reset; rows.push(...unpackRows(batch.columns)); }
+  expect(reset).toBe(true); expect(rows.map(r => r.properties.id)).toEqual(['changed-a', 'changed-b', 'c.md']); expect(adapter.coverage()).toEqual({ indexed: 3, listed: 3 });
+  // A newer event for a yielded path must survive acknowledgement of its previous value.
+  values.set('a.md', 'first'); events.get('changed')!(files[0]); adapter.index.flush();
+  const active = adapter.columns(false, { chunkRows: 1, budgetMs: 8 }); await active.next();
+  values.set('a.md', 'second'); events.get('changed')!(files[0]); adapter.index.flush();
+  while (!(await active.next()).done) {}
+  const next: FactRow[] = []; for await (const b of adapter.columns(false, { chunkRows: 1, budgetMs: 8 })) next.push(...unpackRows(b.columns));
+  expect(next.map(r => r.properties.id)).toEqual(['second']); adapter.index.dispose();
+});

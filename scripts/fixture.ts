@@ -3,8 +3,8 @@ import type { FactRow } from '../src/core/projection';
 import { random } from '../src/core/layout';
 export const exampleDeclaration: GraphDeclaration = {
   carrierResolvers: [{ kind: 'note-path', key: '$path' }],
-  version: 1, identity: [{ key: 'id' }],
-  edges: [{ name: 'mapping', kind: 'reified', sourceKey: 'subject_id', targetKey: 'object_id', typeKey: 'predicate' }],
+  version: 2, identity: [{ key: 'id' }],
+  edges: [{ name: 'mapping', kind: 'reified', sourceProperty: 'subject_id', targetProperty: 'object_id', typeProperty: 'predicate' }],
   groups: [{ from: 'key', key: 'family' }, { from: 'folder', depth: 1 }],
   display: { reifiedAsNodes: false }, columns: ['family'],
   colors: ['#56b4e9', '#e69f00', '#009e73', '#cc79a7', '#d5c85d', '#9caac2'].map((color, i) => ({ name: `Family ${i + 1}`, color, predicate: { kind: 'eq' as const, key: 'family', value: `Family ${i + 1}` } })),

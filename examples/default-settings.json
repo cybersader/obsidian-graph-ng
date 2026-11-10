@@ -1,6 +1,6 @@
 {
   "declaration": {
-    "version": 1,
+    "version": 2,
     "identity": [],
     "edges": [
       {
@@ -73,7 +73,23 @@
   "cachedDeclarations": 1,
   "projectionFile": "",
   "groupCanvasPageSize": 6,
-  "maxProjectionGroups": 0,
-  "maxProjectionPairs": 0,
-  "maxProjectionCarriers": 0
+  "maxProjectionGroups": 20000,
+  "maxProjectionPairs": 200000,
+  "maxProjectionCarriers": 1000000,
+  "ingest": {
+    "chunkRows": 2000,
+    "budgetMs": 8
+  },
+  "cache": {
+    "directory": "",
+    "chunkBytes": 1048576,
+    "maxGenerationBytes": 268435456,
+    "retainedArtifacts": 8,
+    "maxRetainedBytes": 268435456
+  },
+  "maxProjectionBytes": 67108864,
+  "maxSettingsBytes": 16777216,
+  "streamEveryIterations": 5,
+  "settingsVersion": 2,
+  "workerRestarts": 2
 }

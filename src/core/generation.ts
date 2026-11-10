@@ -6,7 +6,7 @@ export function declaredFacts(rows: readonly FactRow[], d: GraphDeclaration): Fa
   const keys = new Set([...d.identity.map(i => i.key), ...d.columns,
     ...d.groups.flatMap(g => g.from === 'key' ? [g.key] : []),
     ...d.colors.flatMap(c => c.predicate.kind === 'eq' ? [c.predicate.key] : []),
-    ...d.edges.flatMap(e => e.kind === 'reified' ? [e.sourceKey, e.targetKey, ...(e.typeKey ? [e.typeKey] : [])] : e.kind === 'inline' ? [e.key] : [])]);
+    ...d.edges.flatMap(e => e.kind === 'reified' ? [e.sourceProperty, e.targetProperty, ...(e.typeProperty ? [e.typeProperty] : [])] : e.kind === 'inline' ? [e.key] : [])]);
   const producers = [...new Set(d.edges.flatMap(e => e.kind === 'producer' ? [e.producer] : []))].sort();
   return rows.map(row => {
     const properties: Record<string, unknown> = Object.create(null);

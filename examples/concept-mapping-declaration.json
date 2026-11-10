@@ -9,7 +9,7 @@
       "key": "id"
     }
   ],
-  "version": 1,
+  "version": 2,
   "identity": [
     {
       "key": "id"
@@ -19,9 +19,9 @@
     {
       "name": "mapping",
       "kind": "reified",
-      "sourceKey": "subject_id",
-      "targetKey": "object_id",
-      "typeKey": "predicate"
+      "sourceProperty": "subject_id",
+      "targetProperty": "object_id",
+      "typeProperty": "predicate"
     }
   ],
   "groups": [

@@ -22,6 +22,8 @@ try {
       const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1 });
       const errors: string[] = []; page.on('pageerror', e => errors.push(String(e)));
       await page.goto(`http://127.0.0.1:${address.port}/`);
+      await page.waitForFunction(() => (window as any).groupReady || (window as any).failure, {}, { timeout: 180000 });
+      await page.screenshot({ path: `test-screenshots/browser-${literal ? 'literal' : 'semantic'}-groups.png` });
       await page.waitForFunction(() => (window as any).result || (window as any).failure, {}, { timeout: 180000 });
       const value = await page.evaluate(() => ({ result: (window as any).result, failure: (window as any).failure }));
       if (value.failure) throw new Error(value.failure);

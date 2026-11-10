@@ -1,12 +1,14 @@
 export type Scalar = string | number | boolean | null;
-export type Predicate = { kind: 'eq'; key: string; value: Scalar } | { kind: 'folder'; prefix: string };
+export type FolderPath = string | string[];
+export const folderPath = (path: FolderPath) => (Array.isArray(path) ? path.join('/') : path).replace(/\/+$/, '');
+export type Predicate = { kind: 'eq'; key: string; value: Scalar } | { kind: 'folder'; prefix: FolderPath };
 export type EdgeDeclaration =
-  | { name: string; kind: 'reified'; sourceKey: string; targetKey: string; typeKey?: string; type?: string }
+  | { name: string; kind: 'reified'; sourceProperty: string; targetProperty: string; typeProperty?: string; type?: string }
   | { name: string; kind: 'inline'; key: string; type: string }
   | { name: string; kind: 'producer'; producer: string; type: string };
-export type GroupSource = { from: 'key'; key: string } | { from: 'folder'; depth: number };
+export type GroupSource = { from: 'key'; key: string } | { from: 'folder'; depth: number; prefix?: FolderPath };
 export interface GraphDeclaration {
-  version: 1;
+  version: 2;
   identity: { key: string }[];
   edges: EdgeDeclaration[];
   groups: GroupSource[];
@@ -16,7 +18,7 @@ export interface GraphDeclaration {
   colors: { name: string; color: string; predicate: Predicate }[];
 }
 export const defaultDeclaration = (producer: string): GraphDeclaration => ({
-  version: 1, identity: [], edges: [{ name: 'links', kind: 'producer', producer, type: 'link' }],
+  version: 2, identity: [], edges: [{ name: 'links', kind: 'producer', producer, type: 'link' }],
   groups: [{ from: 'folder', depth: 1 }], display: { reifiedAsNodes: false }, columns: [], colors: [], carrierResolvers: [{ kind: 'note-path', key: '$path' }],
 });
 function record(v: unknown): asserts v is Record<string, unknown> {
@@ -36,20 +38,20 @@ export function validatePredicate(v: unknown): asserts v is Predicate {
     if (typeof v.value === 'number' && !Number.isFinite(v.value)) throw new Error('Equality number must be finite');
   } else if (v.kind === 'folder') {
     only(v, ['kind', 'prefix']);
-    if (typeof v.prefix !== 'string' || v.prefix.startsWith('/') || v.prefix.split('/').includes('..')) throw new Error('Expected relative folder prefix');
+    validateFolderPath(v.prefix);
   } else throw new Error('Unknown predicate kind');
 }
 export function validateDeclaration(v: unknown): asserts v is GraphDeclaration {
   record(v); only(v, ['version', 'identity', 'edges', 'groups', 'display', 'columns', 'colors', 'carrierResolvers']);
-  if (v.version !== 1) throw new Error('Declaration version must be 1');
+  if (v.version !== 2) throw new Error('Declaration version must be 2');
   for (const k of ['identity', 'edges', 'groups', 'columns', 'colors']) if (!Array.isArray(v[k])) throw new Error(`${k} must be an array`);
   for (const i of v.identity as unknown[]) { record(i); only(i, ['key']); text(i.key); }
   const names = new Set<string>();
   for (const e of v.edges as unknown[]) {
     record(e); text(e.name); if (names.has(e.name)) throw new Error(`Duplicate edge declaration: ${e.name}`); names.add(e.name);
     if (e.kind === 'reified') {
-      only(e, ['name', 'kind', 'sourceKey', 'targetKey', 'typeKey', 'type']); text(e.sourceKey); text(e.targetKey);
-      if (e.typeKey !== undefined) text(e.typeKey); if (e.type !== undefined) text(e.type);
+      only(e, ['name', 'kind', 'sourceProperty', 'targetProperty', 'typeProperty', 'type']); text(e.sourceProperty); text(e.targetProperty);
+      if (e.typeProperty !== undefined) text(e.typeProperty); if (e.type !== undefined) text(e.type);
     } else if (e.kind === 'inline') { only(e, ['name', 'kind', 'key', 'type']); text(e.key); text(e.type); }
     else if (e.kind === 'producer') { only(e, ['name', 'kind', 'producer', 'type']); text(e.producer); text(e.type); }
     else throw new Error('Unknown edge kind');
@@ -57,7 +59,7 @@ export function validateDeclaration(v: unknown): asserts v is GraphDeclaration {
   for (const g of v.groups as unknown[]) {
     record(g);
     if (g.from === 'key') { only(g, ['from', 'key']); text(g.key); }
-    else if (g.from === 'folder') { only(g, ['from', 'depth']); if (!Number.isSafeInteger(g.depth) || (g.depth as number) < 1) throw new Error('Folder depth must be a positive integer'); }
+    else if (g.from === 'folder') { only(g, ['from', 'depth', 'prefix']); if (g.prefix !== undefined) validateFolderPath(g.prefix); if (!Number.isSafeInteger(g.depth) || (g.depth as number) < 1) throw new Error('Folder depth must be a positive integer'); }
     else throw new Error('Slice 1 supports key and folder group sources');
   }
   record(v.display); only(v.display, ['reifiedAsNodes']); if (typeof v.display.reifiedAsNodes !== 'boolean') throw new Error('reifiedAsNodes must be boolean');
@@ -77,4 +79,40 @@ export function canonical(v: unknown): string {
 export async function digest(v: unknown): Promise<string> {
   const bytes = new TextEncoder().encode(canonical(v));
   return [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(x => x.toString(16).padStart(2, '0')).join('');
+}
+
+function validateFolderPath(value: unknown): asserts value is FolderPath {
+  if (Array.isArray(value)) {
+    if (value.some(segment => typeof segment !== 'string' || !segment || segment.includes('/') || segment === '.' || segment === '..' || segment.includes('\\'))) throw new Error('Expected relative folder segments');
+  } else if (typeof value !== 'string' || value.startsWith('/') || value.includes('\\') || value.split('/').some(s => s === '..' || s === '.')) throw new Error('Expected relative folder prefix');
+}
+/** Input compatibility only. Persist and export version 2, never the legacy *Key fields. */
+export function migrateDeclaration(value: unknown): GraphDeclaration {
+  record(value); const d = structuredClone(value);
+  if (d.version === 1) {
+    if (!Array.isArray(d.edges)) throw new Error('edges must be an array');
+    for (const edge of d.edges) {
+      record(edge);
+      for (const [old, current] of [['sourceKey', 'sourceProperty'], ['targetKey', 'targetProperty'], ['typeKey', 'typeProperty']]) {
+        if (Object.hasOwn(edge, old!)) { if (Object.hasOwn(edge, current!)) throw new Error('Ambiguous legacy edge fields'); edge[current!] = edge[old!]; delete edge[old!]; }
+      }
+    }
+    // Legacy prefixes used host-style separators and optional current-folder segments.
+    // Normalize those only; parent traversal and absolute roots are never resolved.
+    const legacyPrefix = (prefix: unknown) => {
+      if (typeof prefix !== 'string') return prefix;
+      const path = prefix.replace(/\\/g, '/');
+      if (path.startsWith('/') || /^[a-z]:/i.test(path) || path.split('/').includes('..')) throw new Error('Invalid legacy folder prefix');
+      return path.split('/').filter(segment => segment && segment !== '.');
+    };
+    if (Array.isArray(d.colors)) for (const color of d.colors) if (color?.predicate?.kind === 'folder') color.predicate.prefix = legacyPrefix(color.predicate.prefix);
+    if (Array.isArray(d.groups)) for (const group of d.groups) if (group?.from === 'folder' && group.prefix !== undefined) group.prefix = legacyPrefix(group.prefix);
+    d.version = 2;
+  }
+  validateDeclaration(d);
+  // Keep strings valid input, but persist folder paths as segments so ordinary long
+  // multi-folder paths are not mistaken for credential-shaped opaque tokens.
+  for (const color of d.colors) if (color.predicate.kind === 'folder' && typeof color.predicate.prefix === 'string') color.predicate.prefix = folderPath(color.predicate.prefix).split('/').filter(Boolean);
+  for (const group of d.groups) if (group.from === 'folder' && typeof group.prefix === 'string') group.prefix = folderPath(group.prefix).split('/').filter(Boolean);
+  return d;
 }

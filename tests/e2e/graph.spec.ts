@@ -12,7 +12,18 @@ describe('Graph NG synthetic Obsidian path', () => {
   before(async () => {
     await mkdir('test-screenshots', { recursive: true }); await mkdir('.workspace/evidence', { recursive: true });
     await browser.waitUntil(async () => browser.executeObsidian(({ app }) => { const files = app.vault.getMarkdownFiles(); return files.length >= 2000 && files.every(f => app.metadataCache.getFileCache(f) !== null); }), { timeout: 180000, timeoutMsg: 'Synthetic cache indexing not complete' });
+    await browser.executeObsidian(() => {
+      const state = window as any; state.graphOpenTasks = [];
+      state.graphOpenObserver = new PerformanceObserver(list => state.graphOpenTasks.push(...list.getEntries()));
+      state.graphOpenObserver.observe({ type: 'longtask', buffered: false });
+    });
     const start = Date.now(); await open(); evidence.coldOpenMs = Date.now() - start;
+    evidence.firstGroupMs = Number(await $('.graph-ng-view').getAttribute('data-first-group-ms'));
+    evidence.openTasks = await browser.executeObsidian(() => {
+      const state = window as any; state.graphOpenTasks.push(...state.graphOpenObserver.takeRecords()); state.graphOpenObserver.disconnect();
+      const values = state.graphOpenTasks.map((t: PerformanceEntry) => t.duration).sort((a: number, b: number) => a - b);
+      return { count: values.length, p95Ms: values[Math.floor(values.length * .95)] ?? 0, maxMs: values.at(-1) ?? 0, durations: values };
+    });
     evidence.status = await $('.graph-ng-status').getText();
   });
   after(async () => { await writeFile(`.workspace/evidence/e2e-${tag}.json`, JSON.stringify(evidence, null, 2)); });
@@ -33,6 +44,7 @@ describe('Graph NG synthetic Obsidian path', () => {
     const member = await $('.graph-ng-member'), path = await member.getText(); await member.click();
     await browser.waitUntil(async () => browser.executeObsidian(({ app }, path) => app.workspace.getActiveFile()?.path === path, path));
     await open(); await $('.graph-ng-toolbar button:nth-child(2)').click();
+    await browser.waitUntil(async () => (await $('.graph-ng-view').getAttribute('data-mode')) !== 'nodes-building');
     const mode = await $('.graph-ng-view').getAttribute('data-mode'); evidence.mode = mode;
     if (mode !== 'nodes') { assert.ok(software || (await $('.graph-ng-status').getText()).includes('GPU unavailable')); await screenshot('fallback'); return; }
     assert.equal(software, false, 'Software GL must not render full graph');
@@ -49,6 +61,7 @@ describe('Graph NG synthetic Obsidian path', () => {
     assert.ok(point); await browser.action('pointer').move({ x: point.x, y: point.y }).down().up().perform();
     await browser.waitUntil(async () => browser.executeObsidian(({ app }, label) => app.workspace.getActiveFile()?.basename === label, point.label));
     await open(); await $('.graph-ng-toolbar button:nth-child(2)').click();
+    await browser.waitUntil(async () => (await $('.graph-ng-view').getAttribute('data-mode')) !== 'nodes-building');
     if (process.env.GRAPH_MEASURE_NATIVE) {
     await browser.executeObsidian(({ app }) => {
       const view = app.workspace.getLeavesOfType('graph-ng')[0]!.view as any, sigma = view.detailRenderer.sigma, camera = sigma.getCamera();
@@ -76,6 +89,12 @@ describe('Graph NG synthetic Obsidian path', () => {
     const start = Date.now(); await open(); evidence.warmOpenMs = Date.now() - start;
     assert.equal(await $('.graph-ng-view').getAttribute('data-cached'), 'true');
     evidence.offlineCache = true; await browser.deleteNetworkConditions();
+    const saved = await browser.executeObsidian(async ({ app }) => {
+      const plugin = (app.workspace.getLeavesOfType('graph-ng')[0]!.view as any).plugin;
+      await plugin.save(); const data = JSON.parse(await app.vault.adapter.read(`${plugin.manifest.dir}/data.json`));
+      return { keys: Object.keys(data), version: data.settings.declaration.version, hasPositions: JSON.stringify(data).includes('"positions"') };
+    });
+    assert.deepEqual(saved.keys, ['settings']); assert.equal(saved.version, 2); assert.equal(saved.hasPositions, false); evidence.settingsOnly = saved;
   });
   it('restores its persisted layout after a complete Obsidian restart', async function () {
     if (large) { this.skip(); return; }

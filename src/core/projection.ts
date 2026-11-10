@@ -1,4 +1,4 @@
-import { canonical, type GraphDeclaration, type Predicate, type Scalar } from './declaration';
+import { canonical, folderPath, type GraphDeclaration, type Predicate, type Scalar } from './declaration';
 export interface FactRow {
   path: string;
   properties: Record<string, unknown>;
@@ -49,7 +49,7 @@ export function buildProjection(input: readonly FactRow[], d: GraphDeclaration):
   const rows = sorted.filter((_, i) => !excluded.has(i));
   const rowIndex = new Map(rows.map((row, i) => [row.path, i]));
   const carriers = new Set<string>();
-  for (const r of rows) for (const e of d.edges) if (e.kind === 'reified' && has(r, e.sourceKey) && has(r, e.targetKey)) carriers.add(r.path);
+  for (const r of rows) for (const e of d.edges) if (e.kind === 'reified' && has(r, e.sourceProperty) && has(r, e.targetProperty)) carriers.add(r.path);
   const nodes = rows.filter(r => d.display.reifiedAsNodes || !carriers.has(r.path));
   const paths = nodes.map(r => r.path), nodeIndex = new Map(paths.map((x, i) => [x, i]));
   const references = new Map<string, number>(), identities: string[] = [];
@@ -68,10 +68,10 @@ export function buildProjection(input: readonly FactRow[], d: GraphDeclaration):
     src.push(a); dst.push(b); typ.push(t); carrier.push(c);
   };
   for (const r of rows) for (const e of d.edges) {
-    if (e.kind === 'reified' && has(r, e.sourceKey) && has(r, e.targetKey)) {
-      const types = e.typeKey ? values(r.properties[e.typeKey]) : [];
+    if (e.kind === 'reified' && has(r, e.sourceProperty) && has(r, e.targetProperty)) {
+      const types = e.typeProperty ? values(r.properties[e.typeProperty]) : [];
       const t = types[0] ?? e.type ?? e.name;
-      for (const a of values(r.properties[e.sourceKey])) for (const b of values(r.properties[e.targetKey])) {
+      for (const a of values(r.properties[e.sourceProperty])) for (const b of values(r.properties[e.targetProperty])) {
         const s = references.get(a), tnode = references.get(b);
         if (s === undefined || tnode === undefined) { unresolved++; continue; }
         if (d.display.reifiedAsNodes) { edge(s, nodeIndex.get(r.path), t, rowIndex.get(r.path)!); edge(nodeIndex.get(r.path), tnode, t, rowIndex.get(r.path)!); }
@@ -91,7 +91,7 @@ export function buildProjection(input: readonly FactRow[], d: GraphDeclaration):
   const keys = new Set([...d.columns, ...d.groups.flatMap(g => g.from === 'key' ? [g.key] : []), ...d.colors.flatMap(c => c.predicate.kind === 'eq' ? [c.predicate.key] : [])]);
   const columns: Record<string, DictionaryColumn> = Object.create(null);
   for (const key of keys) columns[key] = column(nodes.map(r => canonical(r.properties[key])));
-  const groups = d.groups.map(g => ({ ...column(nodes.map(r => g.from === 'key' ? canonical(r.properties[g.key]) : r.path.split('/').slice(0, -1).slice(0, g.depth).join('/') || '(root)')), encoded: g.from === 'key' }));
+  const groups = d.groups.map(g => ({ ...column(nodes.map(r => g.from === 'key' ? canonical(r.properties[g.key]) : folderGroup(r.path, g.depth, g.prefix))), encoded: g.from === 'key' }));
   const folders = new Map<string, [number, number]>();
   paths.forEach((path, i) => {
     const parts = path.split('/'); parts.pop();
@@ -109,7 +109,7 @@ export function filterNodes(p: Projection, predicate?: Predicate): Uint8Array {
   const bits = new Uint8Array(p.paths.length);
   if (!predicate) { bits.fill(1); return bits; }
   if (predicate.kind === 'folder') {
-    const range = p.folders.get(predicate.prefix.replace(/\/+$/, ''));
+    const range = p.folders.get(folderPath(predicate.prefix));
     if (range) bits.fill(1, range[0], range[1]);
   } else {
     const c = p.columns[predicate.key];
@@ -143,4 +143,11 @@ export function aggregate(p: Projection, positions: Float32Array, visible: Uint8
 }
 export function storageBytes(p: Projection): number {
   return [p.offsets, p.targets, p.source, p.target, p.type, p.carrier, ...Object.values(p.columns).map(c => c.codes), ...p.groups.map(g => g.codes)].reduce((n, a) => n + a.byteLength, 0);
+}
+
+function folderGroup(path: string, depth: number, prefix?: import('./declaration').FolderPath): string {
+  const parent = path.slice(0, Math.max(0, path.lastIndexOf('/'))), base = prefix === undefined ? '' : folderPath(prefix);
+  if (base && parent !== base && !parent.startsWith(base + '/')) return '(outside prefix)';
+  const relative = base ? parent.slice(base.length).replace(/^\//, '') : parent;
+  return relative.split('/').filter(Boolean).slice(0, depth).join('/') || '(root)';
 }

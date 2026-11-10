@@ -1,6 +1,6 @@
 # Benchmark methodology and evidence
 
-Results belong to an exact invocation, fixture, source revision and hardware class. They do not establish all-scale acceptance. Baseline slice-1 source is `041e1382` (2026-11-10); the README's recorded runs distinguish earlier/pre-review measurements from final review regressions. This release-tooling change does not rerun the expensive large/browser benchmarks. Raw receipts remain ignored and local; publish only scrubbed summaries without hostnames, usernames, real-vault paths or private projections.
+Results belong to an exact invocation, fixture, source revision and hardware class. They do not establish all-scale acceptance. Original slice-1 source is `041e1382` (2026-11-10); release-readiness baseline is `9b8cc07`. Historical tables below remain dated evidence. The slice-2 section records the new worker/browser/native invocations and unmet targets separately. Raw receipts remain ignored and local; publish only scrubbed summaries without hostnames, usernames, real-vault paths or private projections.
 
 ## Hardware classes and scope
 
@@ -70,6 +70,81 @@ Baseline/current bundle: **628,393 bytes raw**, **102,744 bytes gzip (level 9)**
 No runtime source changes from `041e1382`. The existing dependency directory was preserved in ignored storage and a **fresh** install used `flock /tmp/openclast-local-verification.lock build-contained -- bun install --frozen-lockfile --ignore-scripts`: 501 packages installed, no lifecycle execution. On that install, the same prefix plus `bun run build`, `bun run test`, and `bun run gates` passed: **35 tests / 3 explicit files / 151 assertions**, six full gate lanes, six MIT runtime packages and four exact inert dev install-hook exceptions. The subset is core, adapter and gate regressions; no new large-scale/matrix acceptance is implied.
 
 `./scripts/run-native-smoke.sh` then regenerated the synthetic small fixture, checked the frozen scripts-disabled install, built, and ran the existing nine native tests: **9/9 passed**, Obsidian/installer 1.13.7, 24.3-second spec / 26-second invocation. Cold open 352 ms, worker 83 ms, offline cached reopen 28 ms; hardware detail mode was reached. All six newly captured hardware screenshots were opened and visually inspected, including groups, nodes, carrier navigation, duplicate quarantine and paged aggregates. This proves esbuild's optional platform binary and the native test toolchain work without invoking installers on this desktop; it does not establish another OS/GPU/version class.
+
+## Slice 2 worker pipeline — 2026-11-10
+
+Source: `feat/slice2-worker-pipeline` from `9b8cc07`; the receipts below distinguish initial measured source from final verification. All commands use `flock --exclusive --wait 2400 /tmp/openclast-local-verification.lock build-contained --`. No remote/native-large acceptance is implied.
+
+### Initial before/after browser comparison
+
+Exact invocation (home directory left symbolic): `CHROME_BIN="$HOME/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome" flock --exclusive --wait 2400 /tmp/openclast-local-verification.lock build-contained -- bun run bench:browser`. One repetition each, 60,600 synthetic notes, same discrete GPU/Chrome/viewport class above. Before receipt is `slice2-before.json`; initial after receipt is `slice2-after.json`, both under ignored `.workspace/evidence/`. This initial after-run predates the final UTF-8 allocation optimization and explicit-detail GPU deferral.
+
+| Metric | Semantic: 16,000 nodes / 44,600 edges | Literal: 60,600 nodes / 89,200 edges |
+| --- | --- | --- |
+| Before p95 load long task | 374 ms | 502 ms |
+| After group-open long tasks ≥50 ms | None observed | None observed |
+| After first group | 602.5 ms | 820.4 ms |
+| After cold layout ready | 3,492.3 ms | 15,310.2 ms |
+| After explicit Sigma first-node view | 3,852.1 ms | 15,756.4 ms |
+| After full binary warm + first Sigma node frame | 1,016.4 ms | 1,234.6 ms |
+| Explicit detail / warm long-task maximum | 292 / 296 ms | 275 / 351 ms |
+| Before retained main JS | 24.99 MiB | 66.12 MiB |
+| After retained main JS | 32.44 MiB | 78.24 MiB |
+| After pan/zoom FPS / p95 frame | 59.32 / 16.7 ms | 57.57 / 16.8 ms |
+
+**Comparability limits:** after-run open timing starts after synthetic host-metadata JSON decode; the original before observer included fixture fetch/decode. After-run retains the fixture as host metadata, unlike before; the heap columns are not an isolated like-for-like plugin regression measurement. Heap excludes worker/GPU/native memory. Zero long-task entries means no observed tasks at the browser's ≥50 ms reporting threshold, not zero main-thread execution or a meaningful zero-sample p95. Detail-open is deliberately separate from default group-open. Warm means a new worker, binary memory-disk decoding, full live verification and the first Sigma node frame, not an app restart or physical-disk benchmark. Both modes reported exact warm hits, 20 transferred position snapshots, and zero page errors.
+
+**Targets are not all met:** this initial run meets the group-open long-task threshold, but misses ≤500 ms cold first-group and ≤1 s full warm-node targets in both modes. Sigma's synchronous indexing/upload still causes >50 ms detail/warm tasks. Streaming FA2 batches reset integrator history; this is a different producer, not identical slice-1 layout quality. Opened screenshots show readable counted groups and a dense node hairball; frame rate does not establish overview usability.
+
+Initial native verification used `DISPLAY=:0` plus the exact prefix above and `bash -c 'bun run fixture --small && bun run build && bun run e2e'`; software used `DISPLAY=:0 GRAPH_SOFTWARE=1` and `bash -c 'bun run fixture --small && bun run e2e'`. Both passed the nine-test suite on Obsidian/installer 1.13.7. Hardware: cold 413 ms, first group 33.4 ms, cached view reopen 120 ms, full restart/cache restore 3,035 ms. Its 161 ms initial-open task was traced to eager GPU context probing, which was then deferred until explicit detail interaction; those numbers do not prove the final deferral fix. Native tests also verify settings-only v2 JSON, binary restart reuse, persisted key-miss hints, pinned untouched positions, carrier/member navigation, duplicate exclusion and paged external aggregates. Native FPS remains unavailable. Final-source verification follows.
+
+### Final source: startup targets reached, detail limitation retained
+
+The final UTF-8 encoder avoids per-cell backing-buffer allocations; GPU probing is deferred until explicit detail interaction. Exact combined invocation, with the same Chrome path variable and `DISPLAY=:0`: the required lock/containment prefix plus `bash -c 'bun run build && bun run test && bun run bench:browser && bun run fixture --small && bun run e2e && bun run fixture --small && GRAPH_SOFTWARE=1 bun run e2e'`. Private immutable browser receipt: `.workspace/evidence/slice2-final-browser.json`; combined log: `slice2-final-verification.log`.
+
+| Final browser metric | Semantic | Literal |
+| --- | --- | --- |
+| Cold first group | 415.5 ms | 457.6 ms |
+| Group-open / cache-write tasks ≥50 ms | None observed / none observed | None observed / none observed |
+| Provisional cached group frame | 25.4 ms | 55.4 ms |
+| Full verified binary warm + first Sigma node frame | 799.0 ms | 970.4 ms |
+| Cold layout / first Sigma node view | 2,665.0 / 3,658.4 ms | 13,276.5 / 14,445.9 ms |
+| Explicit detail / warm long-task maximum | 353 / 257 ms | 360 / 244 ms |
+| Retained main JS after GC | 33.16 MiB | 72.41 MiB |
+| Pan/zoom FPS / p95 frame | 59.66 / 16.7 ms | 56.51 / 33.3 ms |
+
+At one repetition per mode, cold groups meet ≤500 ms, full verified warm-node views meet ≤1 s, and default group-open has no observed ≥50 ms task. **This is not all-main-thread-work acceptance:** explicit Sigma detail/warm initialization still exceeds 50 ms, literal frame-tail regresses to 33.3 ms, and cold literal layout is slower than the before-run. Both modes return exact warm hits and 20 position snapshots, with no page errors. The timing-origin/heap/warm-memory-disk caveats above still apply. The final four browser screenshots were opened and read; dense node views remain hairballs rather than readable overviews.
+
+`bun run test` passed **55 tests / 318 assertions / five explicit files**: core, adapter, gates, pipeline and declaration-v2. The original 35-test subset remains included. New coverage includes real worker RPC, actual buffer detachment, Unicode dictionaries, chunk resume, corruption quarantine, source/layout/producer/format refusal, migration hints, partial metadata preservation and the reported declaration-sharing compatibility classes; that helper is not full host scanner equivalence.
+
+Final native `bun run e2e` and `GRAPH_SOFTWARE=1 bun run e2e`, each after `bun run fixture --small`, passed **9/9 each** on app/installer 1.13.7: 2,000 notes → 600 nodes / 1,400 edges. Hardware/software cold opens were **127/217 ms**, first groups **26.7/34.1 ms**, cached view reopen **140/120 ms**, full app restart/cache restore **3,429/2,816 ms**. Neither native first-open observer recorded a ≥50 ms task after GPU deferral. Hardware reached actual node rendering/clicks; software retained the group/member fallback. All final native screenshots were opened/read. Incremental edits retained 591/601 node positions and included the configured five-second debounce. Paged 16k-group/44.6k-pair external aggregates loaded in 254/154 ms, first synchronous pages 12.5/11.9 ms; this is not a large native vault test.
+
+`flock --exclusive --wait 2400 /tmp/openclast-local-verification.lock build-contained -- bun run gates` passed all six lanes: content/privacy/attribution, frozen scripts-disabled lock/install policy and six permissive runtime packages. Bundle report: **672,011 raw / 112,326 gzip / 81,997 Brotli bytes**, SHA-256 `b9e661c162b9d57b822edad29cb30d1c29111e2cd4d3818a5f73d07605e3922e`. No dependency or lockfile change. This invocation does not imply hosted CI or release approval.
+
+Uncovered: current large-vault native lanes, native FPS, physical-disk large warm timing, integrated GPU, mobile/N-2 app matrix, remote view authorization/nonreplicated host cache integration and million-note scale. Independent review remains a separate gate.
+
+### Review-fix verification: current source
+
+After independent SHIP-WITH-FIXES review, the same combined invocation was rerun with bounded worker recovery/processing-ack deadlines, cancellation-safe ingestion, copy-before-default settings quarantine, safe legacy prefixes, a recorded finite-limit upgrade, plugin-cache containment, generation-bound queued reads and capped derived-cache artifacts. It passed **64 tests / 397 assertions / the same five explicit files**, build and **9/9 native hardware + 9/9 native software**. Receipts: `.workspace/evidence/slice2-reviewed-browser.json`, `slice2-reviewed-native-hardware.json`, `slice2-reviewed-native-software.json`; exact combined output: `slice2-review-fixes-verification.log`. The earlier 415/458 ms cold / 799/970 ms warm run above is preserved, not silently replaced.
+
+| Current browser result, one repetition per mode | Semantic | Literal |
+| --- | --- | --- |
+| Cold first groups | 391.3 ms | 459.9 ms |
+| Cached provisional groups | 38.8 ms | 43.6 ms |
+| Full verified warm Sigma frame | 807.3 ms | 961.3 ms |
+| Default open / cache-write tasks ≥50 ms | None / none observed | None / none observed |
+| Explicit detail / warm task maximum | 318 / 247 ms | 277 / 274 ms |
+| Worker layout / first Sigma node view | 2,630.3 / 3,531.7 ms | 13,578.1 / 14,608.5 ms |
+| Retained main heap after GC | 33.17 MiB | 75.37 MiB |
+| Pan/zoom FPS / p95 frame | 58.97 / 16.8 ms | 56.88 / 33.3 ms |
+
+Both startup/warm time targets remain met. The **247–318 ms current detail/warm tasks remain a miss** pending the slice-3 renderer (244–360 ms in the preceding run). All comparison, memory-backed warm, one-host and no-zero-sample-p95 caveats still apply; both current browser modes reported no page errors, exact hits and 20 streamed snapshots. The current four browser and twelve native screenshots were opened/read.
+
+Current native hardware/software cold opens: **133/118 ms**; first groups **28.8/26.5 ms**; cached reopen **145/118 ms**; app restart/cache restore **2,904/2,872 ms**. Neither open observer recorded a ≥50 ms task. Incremental totals **5,879/5,339 ms** include five-second debounce and retain 591 node positions. External aggregate first pages **11.6/12.3 ms**, total **169/157 ms**. The hardware WebDriver polling log contains two transient `carrierPaths`-undefined warnings during refresh before its condition settled; the suite still passed, so this is not a warning-free native invocation.
+
+The same exact `bun run gates` containment invocation passed all six lanes again after staging: **282 secrets / 245 attribution / 282 privacy checks**, six permissive runtime packages, scripts-disabled frozen lock unchanged. That reviewed bundle: **680,336 raw / 114,346 gzip / 83,707 Brotli bytes**, SHA-256 `9ed75c713e6f1b1bad66f768fc5472bc47bc45e9c5ee61cf70dfbc97cf322ff7`; receipt `slice2-review-fixes-gates.log` still names the baseline source commit because the patch was staged but uncommitted.
+
+The final review follow-up closes the group-before-detail member race by checking the requested generation against both active groups and the detail dictionary, not object-reference equality. Exact containment prefix plus `bash -c 'bun run build && bun run test'` passed **65 tests / 401 assertions / the same five files** (`slice2-final-race-units.log`). Browser/native screenshots and metrics above precede only this narrow guard; they were not rerun afterward. Final `main.js`: **680,834 raw / 114,476 gzip / 83,872 Brotli bytes**, SHA-256 `1ae42bc81cfda7880db41cdc8984279d7772f4d33ffa2d8ea131a6a5f05f9145`. Final full gates use the identical containment invocation and are recorded in `slice2-final-gates.log`.
 
 ## Retention and honest reporting
 

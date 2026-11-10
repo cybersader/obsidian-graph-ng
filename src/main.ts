@@ -1,17 +1,16 @@
 import { ItemView, Plugin, PluginSettingTab, Setting, Notice, TFile, apiVersion, type WorkspaceLeaf } from 'obsidian';
 import { LocalAdapter } from './adapter/local';
-import { digest, validateDeclaration, validatePredicate, type Predicate } from './core/declaration';
-import { buildProjection, filterNodes, type Projection } from './core/projection';
-import { contractGroups, validateGroupProjection, pairKey, indexCarriers, type GroupProjection, type GroupContribution } from './core/group-projection';
-import { incrementalLayout, warmLayout, validSavedLayout, edgeKeys } from './core/incremental';
-import { generationKey } from './core/generation';
+import { digest, migrateDeclaration, validatePredicate, type Predicate } from './core/declaration';
+import type { Projection } from './core/projection';
+import { pairKey, indexCarriers, type GroupProjection, type GroupContribution } from './core/group-projection';
+import { BinaryLayoutStore, type BinaryGeneration } from './core/binary-layout';
+import { yieldTask } from './core/scheduler';
+import { WorkerPipeline, LAYOUT_PRODUCER, currentDetailGeneration, type ProjectResult, type DetailResult, type LayoutResult } from './pipeline';
 import { groupPages, page } from './core/group-page';
-import type { LayoutInput } from './core/layout';
-import { defaults, validateSettings, type Settings } from './settings';
+import { loadSettings, validateSettings, type Settings } from './settings';
 import { DetailRenderer, GroupRenderer, gpuStatus, type Renderer } from './renderer';
 declare const __LAYOUT_WORKER_SOURCE__: string;
 const VIEW = 'graph-ng';
-const PRODUCER = 'graphology-fa2@0.10.1';
 interface Generation { key: string; identities: string[]; positions: number[]; producer: string; layoutHash?: string; edgeKeys?: string[] }
 interface Data { settings: Settings; generations: Record<string, Generation> }
 export default class GraphPlugin extends Plugin {
@@ -20,20 +19,54 @@ export default class GraphPlugin extends Plugin {
   generations: Record<string, Generation> = Object.create(null);
   private listeners = new Set<() => void>();
   private writes: Promise<void> = Promise.resolve();
+  private work: Promise<unknown> = Promise.resolve();
+  pipeline!: WorkerPipeline;
+  store!: BinaryLayoutStore;
+  ingestedHash = '';
+  nextRevision = 0;
+  private viewIdentity = 'local';
+  private viewNamespace = 'local';
+  serialize<T>(run: () => Promise<T>): Promise<T> { const next = this.work.catch(() => {}).then(run); this.work = next; return next; }
+  resetStore() {
+    const pluginDirectory = this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`;
+    const directory = `${pluginDirectory}/${this.settings.cache.directory || 'cache'}`;
+    this.store = new BinaryLayoutStore(this.app.vault.adapter, { ...this.settings.cache, directory: `${directory}/${this.viewNamespace}`, cachedDeclarations: this.settings.cachedDeclarations }, yieldTask);
+  }
+  get sourceIdentity() { return this.viewIdentity; }
+  // Future host adapter supplies an opaque member/view tag, never an inferred plugin identity.
+  async setSourceIdentity(identity: string) {
+    if (!identity || identity.length > 512) throw new Error('Invalid source view identity');
+    if (identity === this.viewIdentity) return;
+    for (const leaf of this.app.workspace.getLeavesOfType(VIEW)) (leaf.view as GraphView).invalidateSource();
+    await this.serialize(async () => { await this.store.discard(); this.generations = Object.create(null); this.viewIdentity = identity; this.viewNamespace = identity === 'local' ? 'local' : await digest({ identity }); this.ingestedHash = ''; this.adapter.invalidate(); this.resetStore(); }); this.notify();
+  }
   readonly linkProducer = `obsidian-links@${apiVersion}`;
   async onload() {
-    const data = await this.loadData() as Data | null;
-    this.settings = defaults(this.linkProducer);
-    if (data?.settings) { try { const settings = { ...this.settings, ...data.settings }; validateSettings(settings); this.settings = settings; } catch (e) { new Notice(`Graph NG settings invalid; using defaults: ${String(e)}`); } }
-    if (data?.generations && typeof data.generations === 'object') this.generations = data.generations;
+    const dataPath = `${this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`}/data.json`;
+    const loaded = await loadSettings(this.app.vault.adapter, dataPath, this.linkProducer, message => { new Notice(message); });
+    this.settings = loaded.settings;
+    const data = loaded.data as Data | undefined;
+    if (data?.generations && typeof data.generations === 'object' && data.settings?.declaration) { const oldHash = await digest(data.settings.declaration), currentHash = await digest(this.settings.declaration); const old = data.generations[oldHash]; if (old) this.generations[currentHash] = old; }
+    const url = URL.createObjectURL(new Blob([__LAYOUT_WORKER_SOURCE__], { type: 'text/javascript' }));
+    this.pipeline = new WorkerPipeline(new Worker(url), () => this.settings.workerTimeoutMs, () => URL.revokeObjectURL(url), {
+      restart: () => new Worker(url), maxRestarts: () => this.settings.workerRestarts,
+      onRestart: () => {
+        this.ingestedHash = ''; this.adapter?.invalidate();
+        for (const leaf of this.app.workspace.getLeavesOfType(VIEW)) (leaf.view as GraphView).invalidateSource();
+        new Notice('Graph NG worker restarted; rebuilding from the public metadata cache.');
+        this.notify();
+      },
+    });
+    this.register(() => this.pipeline.dispose()); this.resetStore();
     this.registerView(VIEW, leaf => new GraphView(leaf, this));
     this.addCommand({ id: 'open', name: 'Open graph', callback: () => { void this.open(); } });
     this.addRibbonIcon('git-fork', 'Graph NG', () => { void this.open(); });
     this.addSettingTab(new GraphSettings(this));
     this.resetAdapter();
+    if (loaded.persist) await this.save();
     this.registerEvent(this.app.vault.on('modify', file => { if (file.path === this.settings.projectionFile) this.notify(); }));
   }
-  resetAdapter() { this.adapter?.index.dispose(); this.adapter = new LocalAdapter(this.app, this, this.linkProducer, this.settings.debounceMs, () => this.notify()); }
+  resetAdapter() { this.adapter?.index.dispose(); this.adapter = new LocalAdapter(this.app, this, this.linkProducer, this.settings.debounceMs, () => this.notify(), true, this.settings.declaration); this.ingestedHash = ''; }
   subscribe(listener: () => void) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   notify() { for (const fn of this.listeners) fn(); }
   async open() {
@@ -42,26 +75,34 @@ export default class GraphPlugin extends Plugin {
     await this.app.workspace.revealLeaf(leaf);
   }
   save() {
-    this.writes = this.writes.catch(() => {}).then(() => this.saveData({ settings: this.settings, generations: this.settings.persistLayout ? this.generations : {} }));
+    this.writes = this.writes.catch(() => {}).then(() => this.saveData({ settings: this.settings}));
     return this.writes;
   }
   async apply(settings: Settings) {
-    validateSettings(settings); this.settings = settings;
-    // Event registrations are owned by the original adapter; use its debounce only after reload.
-    await this.save(); this.notify();
+    settings = { ...settings, declaration: migrateDeclaration(settings.declaration) }; validateSettings(settings);
+    await this.serialize(async () => {
+      this.settings = settings; this.adapter.configure(settings.declaration); this.resetStore();
+      // Event registrations are owned by the original adapter; use its debounce only after reload.
+      await this.save();
+    }); this.notify();
   }
-  async cache(declarationHash: string, generation: Generation) {
+  async cache(generation: BinaryGeneration) {
     if (!this.settings.persistLayout) return;
-    delete this.generations[declarationHash]; this.generations[declarationHash] = generation;
-    for (const key of Object.keys(this.generations).slice(0, -this.settings.cachedDeclarations)) delete this.generations[key];
-    await this.save();
+    this.writes = this.writes.catch(() => {}).then(() => this.store.write(generation));
+    await this.writes;
+  }
+  async migrate(revision: number, declarationHash: string) {
+    const old = this.generations[declarationHash]; if (!old || this.sourceIdentity !== 'local') return;
+    const generation = await this.pipeline.request<BinaryGeneration | undefined>(revision, { kind: 'migrate', generation: old, declarationHash });
+    if (generation) await this.cache(generation);
+    delete this.generations[declarationHash]; await this.save();
   }
 }
 export class GraphView extends ItemView {
   private renderer?: Renderer;
-  private stopWorker?: () => void;
   private unsubscribe?: () => void;
   private revision = 0;
+  private renderRevision = 0;
   private status!: HTMLElement;
   private stage!: HTMLElement;
   private panel!: HTMLElement;
@@ -71,7 +112,13 @@ export class GraphView extends ItemView {
   private contributions = new Map<string, GroupContribution[]>();
   private members = new Map<string, number[]>();
   private projection?: Projection;
-  private previous?: { projection: Projection; positions: Float32Array; declaration: string; layout: string };
+  private colors?: Uint32Array;
+  private provisional = true;
+  private activeRevision = 0;
+  private detailGeneration = -1;
+  private queued = false;
+  private refreshing = false;
+  private closed = false;
   private positions?: Float32Array;
   private visible?: Uint8Array;
   private predicate?: Predicate;
@@ -90,86 +137,110 @@ export class GraphView extends ItemView {
     const filter = this.toolbar.createEl('input', { attr: { placeholder: 'Filter JSON: {"kind":"folder","prefix":"Notes"}', 'aria-label': 'Column predicate JSON' } });
     const apply = this.toolbar.createEl('button', { text: 'Apply filter' });
     apply.onclick = () => {
-      try { const pred: unknown = filter.value.trim() ? JSON.parse(filter.value) : undefined; if (pred !== undefined) validatePredicate(pred); this.predicate = pred; if (this.projection) { this.visible = filterNodes(this.projection, pred); this.updateGroups(); this.showGroups(); } }
+      try { const pred: unknown = filter.value.trim() ? JSON.parse(filter.value) : undefined; if (pred !== undefined) validatePredicate(pred); this.predicate = pred; void this.refresh(); }
       catch (e) { new Notice(String(e)); }
     };
     this.status = this.contentEl.createDiv({ cls: 'graph-ng-status', attr: { role: 'status' } });
     this.stage = this.contentEl.createDiv({ cls: 'graph-ng-stage' });
     this.panel = this.contentEl.createDiv({ cls: 'graph-ng-panel' });
-    this.gpu = gpuStatus();
+    // Creating even a probe GL context can block; the initial group view needs no GPU.
     this.unsubscribe = this.plugin.subscribe(() => { void this.refresh(); });
     await this.refresh();
   }
-  async onClose() { this.revision++; this.stopWorker?.(); this.renderer?.dispose(); this.unsubscribe?.(); }
-  private updateGroups() {
-    if (!this.projection || !this.visible) return;
-    const c = contractGroups(this.projection, this.visible, this.plugin.settings.groupLevel);
-    this.groupGraph = c.projection; this.contributions = c.contributions; this.members = c.members;
-  }
+  invalidateSource() { this.revision++; this.renderRevision++; this.provisional = true; if (this.contentEl) this.contentEl.dataset.verified = 'false'; this.renderer?.dispose(); this.renderer = undefined; this.projection = undefined; this.detailGeneration = -1; this.positions = undefined; this.groupGraph = undefined; this.stage?.empty(); this.panel?.empty(); }
+  async onClose() { this.closed = true; this.renderRevision++; this.revision++; this.renderer?.dispose(); this.unsubscribe?.(); }
   async refresh() {
-    const rev = ++this.revision; this.stopWorker?.(); this.renderer?.dispose(); this.renderer = undefined; this.detailRenderer = undefined;
-    this.status.textContent = 'Building projection…'; this.contentEl.dataset.state = 'building';
-    const settings = this.plugin.settings;
-    this.carrierLookup = undefined;
+    if (this.closed) return;
+    if (this.refreshing) { this.queued = true; return; }
+    this.refreshing = true;
+    try { do { this.queued = false; await this.plugin.serialize(() => this.refreshOnce()); } while (this.queued && !this.closed); }
+    finally { this.refreshing = false; }
+  }
+  private async refreshOnce() {
+    const rev = ++this.revision, revision = ++this.plugin.nextRevision; this.activeRevision = revision;
+    const current = () => !this.closed && rev === this.revision;
+    const settings = this.plugin.settings, start = performance.now();
+    this.carrierLookup = undefined; this.provisional = true; this.contentEl.dataset.verified = 'false';
+    this.contentEl.dataset.state = 'building'; this.status.textContent = 'Building projection from the public metadata cache…';
     try {
       if (settings.projectionFile) {
         const file = this.app.vault.getAbstractFileByPath(settings.projectionFile);
         if (!(file instanceof TFile)) throw new Error(`Projection file not found: ${settings.projectionFile}`);
-        const p: unknown = JSON.parse(await this.app.vault.read(file)); validateGroupProjection(p, { groups: settings.maxProjectionGroups, pairs: settings.maxProjectionPairs, carriers: settings.maxProjectionCarriers });
-        if (rev !== this.revision) return;
+        if (file.stat.size > settings.maxProjectionBytes) throw new Error('Projection byte limit exceeded');
+        const text = await this.app.vault.read(file);
+        const bytes = new TextEncoder().encode(text);
+        if (bytes.byteLength > settings.maxProjectionBytes) throw new Error('Projection byte limit exceeded');
+        const p = await this.plugin.pipeline.request<GroupProjection>(revision, { kind: 'external', bytes, maxBytes: settings.maxProjectionBytes, limits: { groups: settings.maxProjectionGroups, pairs: settings.maxProjectionPairs, carriers: settings.maxProjectionCarriers } });
+        if (!current()) return;
         this.projection = undefined; this.positions = undefined; this.groupGraph = p; this.members.clear(); this.contributions.clear();
-        this.status.textContent = `${p.groups.length} producer-supplied groups · ${p.groupEdges.length} counted group pairs · aggregate input only`;
+        this.status.textContent = `${p.groups.length} groups · ${p.groupEdges.length} counted group pairs · unverified external aggregate (not merged with live rows)`;
         this.contentEl.dataset.state = 'ready'; this.showGroups(); return;
       }
-      const rows = this.plugin.adapter.snapshot();
-      const start = performance.now(), p = buildProjection(rows, settings.declaration);
-      this.projection = p; this.visible = filterNodes(p, this.predicate); this.positions = undefined;
-      this.updateGroups(); this.showGroups();
-      const coverage = this.plugin.adapter.coverage();
-      const base = `${p.paths.length.toLocaleString()} nodes · ${p.source.length.toLocaleString()} edges · ${coverage.indexed}/${coverage.listed} listed notes indexed${coverage.indexed < coverage.listed ? ' (partial)' : ''} · ${p.unresolved} unresolved${p.quarantined.length ? ` · ${p.quarantined.length} notes share an ID (excluded)` : ''}`;
-      this.status.textContent = `${base} · building layout in worker`;
-      this.contentEl.dataset.nodes = String(p.paths.length); this.contentEl.dataset.edges = String(p.source.length);
-      const declarationHash = await digest(settings.declaration), layoutHash = await digest(settings.layout);
-      const key = await generationKey(rows, settings.declaration, settings.layout, PRODUCER);
-      if (rev !== this.revision) return;
-      const cache = this.plugin.generations[declarationHash];
-      const saved = cache && cache.producer === PRODUCER && validSavedLayout(cache);
-      const valid = settings.persistLayout && saved && cache.key === key && JSON.stringify(cache.identities) === JSON.stringify(p.identities);
-      this.cacheTrace.push({ expected: key, stored: cache?.key, nodes: p.paths.length, ...coverage, valid: Boolean(valid) });
-      if (this.cacheTrace.length > 16) this.cacheTrace.shift();
-      let ms = 0, cached = false;
-      if (valid) { this.positions = Float32Array.from(cache.positions); cached = true; }
-      else {
-        const seed = Number.parseInt(key.slice(0, 8), 16), old = this.previous;
-        const input = old?.declaration === declarationHash && old.layout === layoutHash ? incrementalLayout(old.projection, old.positions, p, seed, settings.layout)
-          : settings.persistLayout && saved && cache.layoutHash === layoutHash ? warmLayout(cache, p, seed, settings.layout)
-          : { count: p.paths.length, source: p.source, target: p.target, seed };
-        if ('movable' in input && input.movable && !input.movable.some(Boolean)) this.positions = input.initial;
-        else { const result = await this.layout(input); if (rev !== this.revision) return; this.positions = result.positions; ms = result.milliseconds; }
-        // A restored workspace can open before metadata/vault enumeration finishes.
-        // Never replace its last complete generation with a transient partial/empty graph.
-        const linksReady = !settings.declaration.edges.some(edge => edge.kind === 'producer') || this.plugin.adapter.linksResolved;
-        if (this.positions && linksReady && coverage.indexed === coverage.listed && (coverage.listed > 0 || !cache)) await this.plugin.cache(declarationHash, { key, identities: p.identities, positions: Array.from(this.positions), producer: PRODUCER, layoutHash, edgeKeys: edgeKeys(p) });
+      const config = { declaration: settings.declaration, layout: settings.layout, source: `${this.plugin.linkProducer}/${this.plugin.sourceIdentity}`, groupLevel: settings.groupLevel, predicate: this.predicate, streamEveryIterations: settings.streamEveryIterations };
+      const hashes = await this.plugin.pipeline.request<{ declarationHash: string; layoutHash: string }>(revision, { kind: 'configure', config });
+      if (!current()) return;
+      if (settings.persistLayout) {
+        await this.plugin.migrate(revision, hashes.declarationHash);
+        const saved = await this.plugin.store.latest(hashes.declarationHash, { source: config.source, layoutHash: hashes.layoutHash, producer: LAYOUT_PRODUCER });
+        if (saved) {
+          try {
+            const cache = await this.plugin.pipeline.request<{ groups?: GroupProjection } | undefined>(revision, { kind: 'load', generation: saved });
+            if (cache?.groups && current() && !this.predicate) {
+              this.projection = undefined; this.positions = undefined; this.groupGraph = cache.groups; this.members.clear(); this.contributions.clear(); this.showGroups();
+              this.status.textContent = `cached · verifying ${this.plugin.adapter.coverage().indexed} of ${this.plugin.adapter.coverage().listed} · filters and members provisional`;
+              this.contentEl.dataset.cachedPaintMs = String(performance.now() - start); await yieldTask();
+            }
+          } catch { await this.plugin.store.quarantine(saved.meta); }
+        }
       }
-      if (rev !== this.revision || !this.positions) return;
-      this.previous = { projection: p, positions: this.positions, declaration: declarationHash, layout: layoutHash };
-      this.status.textContent = `${base} · ${cached ? 'cached layout' : `worker ${ms.toFixed(0)} ms`} · total ${(performance.now() - start).toFixed(0)} ms${this.gpu.available ? '' : ' · GPU unavailable — group view and member lists remain available'}`;
-      this.contentEl.dataset.state = 'ready'; this.contentEl.dataset.layoutMs = String(ms); this.contentEl.dataset.cached = String(cached);
-    } catch (e) { if (rev === this.revision) { this.status.textContent = `Graph NG: ${String(e)}`; this.contentEl.dataset.state = 'error'; } }
-  }
-  private layout(input: LayoutInput): Promise<{ positions: Float32Array; milliseconds: number }> {
-    return new Promise((resolve, reject) => {
-      const url = URL.createObjectURL(new Blob([__LAYOUT_WORKER_SOURCE__], { type: 'text/javascript' }));
-      const worker = new Worker(url);
-      const cleanup = () => { clearTimeout(timer); worker.terminate(); URL.revokeObjectURL(url); this.stopWorker = undefined; };
-      const timer = setTimeout(() => { cleanup(); reject(new Error('Layout timed out; reduce iterations or use precomputed groups')); }, this.plugin.settings.workerTimeoutMs);
-      this.stopWorker = () => { cleanup(); reject(new Error('Layout superseded')); };
-      worker.onerror = e => { cleanup(); reject(new Error(e.message)); };
-      worker.onmessage = e => { cleanup(); if (e.data.error) reject(new Error(e.data.error)); else resolve(e.data); };
-      worker.postMessage({ input, options: this.plugin.settings.layout });
-    });
+      const reset = this.plugin.ingestedHash !== hashes.declarationHash;
+      for await (const batch of this.plugin.adapter.columns(reset, settings.ingest)) {
+        if (!current()) return;
+        await this.plugin.pipeline.request(revision, { kind: 'rows', ...batch });
+        const c = this.plugin.adapter.coverage();
+        this.status.textContent = `${this.groupGraph ? 'cached · ' : ''}verifying ${c.indexed} of ${c.listed} · filters and members provisional`;
+      }
+      this.plugin.ingestedHash = hashes.declarationHash;
+      this.plugin.pipeline.onGroups = event => {
+        if (event.revision !== revision || !current()) return;
+        this.groupGraph = event.projection; this.members.clear(); this.contributions.clear(); this.showGroups();
+        this.contentEl.dataset.firstGroupMs = String(performance.now() - start);
+      };
+      const result = await this.plugin.pipeline.request<ProjectResult>(revision, { kind: 'project', complete: this.plugin.adapter.coverage().indexed === this.plugin.adapter.coverage().listed });
+      if (!current()) return;
+      if (result.invalidSaved) await this.plugin.store.quarantine(result.invalidSaved);
+      const coverage = this.plugin.adapter.coverage(); this.provisional = coverage.indexed !== coverage.listed;
+      this.contentEl.dataset.verified = String(!this.provisional);
+      const base = `${result.nodes.toLocaleString()} nodes · ${result.edges.toLocaleString()} edges · ${coverage.indexed}/${coverage.listed} listed notes indexed${this.provisional ? ' (partial · filters and members provisional)' : ' · verified'} · ${result.unresolved} unresolved${result.quarantined.length ? ` · ${result.quarantined.length} notes share an ID (excluded)` : ''}`;
+      this.status.textContent = `${base} · building layout in worker`;
+      this.contentEl.dataset.nodes = String(result.nodes); this.contentEl.dataset.edges = String(result.edges);
+      await yieldTask();
+      const detail = await this.plugin.pipeline.request<DetailResult>(revision, { kind: 'detail' });
+      if (!current()) return;
+      this.projection = detail.projection; this.detailGeneration = revision; this.visible = detail.visible; this.colors = detail.colors;
+      if (result.quarantined.length) this.showGroups();
+      this.plugin.pipeline.onPositions = event => { if (event.revision === revision && current()) { if (this.positions && this.contentEl.dataset.mode === 'groups') this.plugin.pipeline.recycle(this.positions.buffer as ArrayBuffer); this.positions = event.positions; this.contentEl.dataset.streaming = 'true'; } };
+      let layout: LayoutResult;
+      try { layout = await this.plugin.pipeline.request<LayoutResult>(revision, { kind: 'layout' }); }
+      catch (error) { if (String(error).includes('Saved identities')) { await this.plugin.store.quarantine(result.meta); } throw error; }
+      if (!current()) return;
+      this.positions = layout.positions;
+      this.cacheTrace.push({ expected: result.meta.key, stored: layout.stored, nodes: result.nodes, ...coverage, valid: layout.cached }); if (this.cacheTrace.length > 16) this.cacheTrace.shift();
+      this.status.textContent = `${base} · ${layout.cached ? 'cached layout' : `worker ${layout.milliseconds.toFixed(0)} ms`} · total ${(performance.now() - start).toFixed(0)} ms${this.gpu.available || this.gpu.reason === 'Not probed' ? '' : ' · GPU unavailable — group view and member lists remain available'}`;
+      this.contentEl.dataset.state = 'ready'; this.contentEl.dataset.layoutMs = String(layout.milliseconds); this.contentEl.dataset.cached = String(layout.cached);
+      if (settings.persistLayout && !layout.cached && !this.provisional && (!settings.declaration.edges.some(e => e.kind === 'producer') || this.plugin.adapter.linksResolved)) {
+        const generation = await this.plugin.pipeline.request<BinaryGeneration>(revision, { kind: 'encode' });
+        await this.plugin.cache(generation);
+      }
+    } catch (e) {
+      this.plugin.adapter.invalidate(); this.plugin.ingestedHash = ''; this.provisional = true; this.contentEl.dataset.verified = 'false';
+      if (current()) { this.status.textContent = `Graph NG: ${String(e)}`; this.contentEl.dataset.state = 'error'; }
+    } finally {
+      if (!current()) { this.plugin.adapter.invalidate(); this.plugin.ingestedHash = ''; this.contentEl.dataset.verified = 'false'; }
+    }
   }
   showGroups() {
+    this.renderRevision++;
     const start = performance.now();
     this.renderer?.dispose(); this.detailRenderer = undefined; this.stage.empty(); this.panel.empty();
     const projection = this.groupGraph; if (!projection) return;
@@ -217,26 +288,33 @@ export class GraphView extends ItemView {
     };
     previous.onclick = () => { index--; draw(); }; next.onclick = () => { index++; draw(); }; draw();
   }
-  private drill(id: string) {
+  private async drill(id: string) {
     const group = this.groupGraph?.groups.find(g => g.id === id); if (!group) return;
-    this.panel.empty(); this.panel.createEl('strong', { text: `${group.label}: ${group.count.toLocaleString()} members` });
-    const members = this.members.get(id);
-    if (!members || !this.projection) {
+    this.panel.empty(); this.panel.createEl('strong', { text: `${group.label}: ${group.count.toLocaleString()} members${this.provisional ? ' · provisional' : ''}` });
+    const revision = this.activeRevision, projection = this.projection, renderRevision = this.renderRevision;
+    if (projection && !currentDetailGeneration(revision, this.activeRevision, this.detailGeneration)) { new Notice('Member dictionary is updating; try this group again when verification finishes.'); return; }
+    let members: Uint32Array | undefined;
+    try { members = projection ? await this.plugin.pipeline.request<Uint32Array>(revision, { kind: 'members', group: id }) : undefined; }
+    catch { return; } // A changed projection or recovered worker invalidates this interaction.
+    if (revision !== this.activeRevision || (projection && !currentDetailGeneration(revision, this.activeRevision, this.detailGeneration)) || renderRevision !== this.renderRevision || this.closed) return;
+    if (!members || !projection) {
       if (group.openPath) this.panel.createEl('button', { text: 'Open group note' }).onclick = () => this.openPath(group.openPath!);
       const local = group.identityPrefix ? this.plugin.adapter.snapshot().filter(r => this.plugin.settings.declaration.identity.some(k => typeof r.properties[k.key] === 'string' && (r.properties[k.key] as string).startsWith(group.identityPrefix!))) : [];
       if (local.length) this.paginate(local, (r, host) => { host.createEl('button', { text: r.path, cls: 'graph-ng-member' }).onclick = () => this.openPath(r.path); });
       else this.panel.createDiv({ text: 'Producer aggregate: member bodies are not included. No local members matched its declared identity prefix.' });
       return;
     }
-    const p = this.projection;
+    const p = projection;
+    if (this.gpu.reason === 'Not probed') this.gpu = gpuStatus();
     if (this.gpu.available && this.positions) { const bits = new Uint8Array(p.paths.length); for (const i of members) bits[i] = 1; this.showDetails(bits, false); }
-    this.paginate(members, (i, host) => { host.createEl('button', { text: p.paths[i]!, cls: 'graph-ng-member' }).onclick = () => this.openPath(p.paths[i]!); });
+    this.paginate(Array.from(members), (i, host) => { host.createEl('button', { text: p.paths[i]!, cls: 'graph-ng-member' }).onclick = () => this.openPath(p.paths[i]!); });
   }
   private edgeList(edge: GroupProjection['groupEdges'][number]) {
     this.panel.empty();
     this.panel.createEl('strong', { text: Object.entries(edge.typeCounts).map(([t, n]) => `${t}: ${n.toLocaleString()}`).join(' · ') });
     if (edge.directional) this.panel.createDiv({ text: `A → B: ${JSON.stringify(edge.directional.aToB)} · B → A: ${JSON.stringify(edge.directional.bToA)}` });
     const rows = this.contributions.get(pairKey(edge.a, edge.b));
+    if (this.projection) { void this.contributionPages(pairKey(edge.a, edge.b)); return; }
     if (rows) this.paginate(rows, (r, host) => { const item = host.createDiv({ cls: 'graph-ng-contribution' }); item.createSpan({ text: `${r.source} → ${r.target} [${r.type}] ` }); if (r.carrier) item.createEl('button', { text: r.carrier }).onclick = () => this.openPath(r.carrier!); });
     else this.paginate(edge.carriers.ids, (id, host) => {
       this.carrierLookup ??= indexCarriers(this.plugin.adapter.values(), this.plugin.settings.declaration);
@@ -245,14 +323,29 @@ export class GraphView extends ItemView {
       button.disabled = !path; if (path) button.onclick = () => this.openPath(path);
     });
   }
-  showDetails(bits = this.visible, clearPanel = true) {
+  private async contributionPages(pair: string) {
+    let offset = 0; const revision = this.activeRevision, size = this.plugin.settings.listPageSize;
+    const root = this.panel.createDiv({ cls: 'graph-ng-pagination' }), controls = root.createDiv(), previous = controls.createEl('button', { text: 'Previous page' }), next = controls.createEl('button', { text: 'Next page' }), list = root.createDiv();
+    const draw = async () => {
+      let result: { total: number; items: GroupContribution[] };
+      try { result = await this.plugin.pipeline.request<typeof result>(revision, { kind: 'contributions', pair, offset, count: size }); }
+      catch { return; } // Stale generation/worker recovery: never display another generation's page.
+      if (revision !== this.activeRevision || !root.isConnected) return;
+      list.empty(); previous.disabled = offset === 0; next.disabled = offset + size >= result.total;
+      for (const r of result.items) { const item = list.createDiv({ cls: 'graph-ng-contribution' }); item.createSpan({ text: `${r.source} → ${r.target} [${r.type}] ` }); if (r.carrier) item.createEl('button', { text: r.carrier }).onclick = () => this.openPath(r.carrier!); }
+    };
+    previous.onclick = () => { offset -= size; void draw(); }; next.onclick = () => { offset += size; void draw(); }; await draw();
+  }
+  async showDetails(bits = this.visible, clearPanel = true) {
     if (!this.projection || !this.positions || !bits) { new Notice('Individual nodes are not ready; the group graph remains usable.'); return; }
-    if (!this.gpu.available) { new Notice(`GPU unavailable: ${this.gpu.reason}. Use group member lists.`); return; }
+    if (this.gpu.reason === 'Not probed') this.gpu = gpuStatus();
+    if (!this.gpu.available) { this.status.textContent += ' · GPU unavailable — use group member lists'; new Notice(`GPU unavailable: ${this.gpu.reason}. Use group member lists.`); return; }
+    const renderRevision = ++this.renderRevision; this.contentEl.dataset.mode = 'nodes-building';
     this.renderer?.dispose(); this.stage.empty(); if (clearPanel) this.panel.empty();
     try {
-      this.detailRenderer = new DetailRenderer(this.stage, this.projection, this.positions, bits, this.plugin.settings, i => this.openPath(this.projection!.paths[i]!), () => this.showGroups());
+      this.detailRenderer = await DetailRenderer.create(this.stage, this.projection, this.positions, bits, this.plugin.settings, i => this.openPath(this.projection!.paths[i]!), () => this.showGroups(), this.colors!, () => renderRevision === this.renderRevision);
       this.renderer = this.detailRenderer; this.contentEl.dataset.mode = 'nodes';
-    } catch (e) { this.gpu = { available: false, reason: String(e) }; this.showGroups(); this.status.textContent += ' · GPU unavailable; group fallback active'; }
+    } catch (e) { if (renderRevision !== this.renderRevision) return; this.gpu = { available: false, reason: String(e) }; this.showGroups(); this.status.textContent += ' · GPU unavailable; group fallback active'; }
   }
 }
 class GraphSettings extends PluginSettingTab {
@@ -266,7 +359,7 @@ class GraphSettings extends PluginSettingTab {
     const { declaration: _, ...rest } = this.plugin.settings; knobs.value = JSON.stringify(rest, null, 2);
     const result = this.containerEl.createDiv({ attr: { role: 'status' } });
     new Setting(this.containerEl).addButton(b => b.setButtonText('Validate and save').onClick(async () => {
-      try { const d: unknown = JSON.parse(declaration.value); validateDeclaration(d); const settings = { ...JSON.parse(knobs.value), declaration: d }; validateSettings(settings); await this.plugin.apply(settings); result.textContent = 'Saved and rebuilt.'; }
+      try { const d = migrateDeclaration(JSON.parse(declaration.value)); const settings = { ...JSON.parse(knobs.value), declaration: d }; validateSettings(settings); await this.plugin.apply(settings); result.textContent = 'Saved and rebuilt.'; }
       catch (e) { result.textContent = String(e); }
     }));
   }

@@ -15,7 +15,7 @@ Use Bun **1.3.14**, Node.js **22.x** (CI pins 22.14.0), `flock`, and an installe
 1. Configure the local private-terms file described below.
 2. `./scripts/run.sh install --frozen-lockfile` installs without lifecycle execution.
 3. `./scripts/run.sh build` typechecks and bundles the plugin/worker.
-4. `./scripts/run.sh test` runs exactly `tests/core.test.ts`, `tests/adapter.test.ts`, and `tests/gates.test.ts`.
+4. `./scripts/run.sh test` runs exactly `tests/core.test.ts`, `tests/adapter.test.ts`, `tests/gates.test.ts`, `tests/pipeline.test.ts`, and `tests/declaration-v2.test.ts`.
 5. `./scripts/run.sh gates` runs the full deterministic gates. `bun run gates` is the same entry point when already inside the lock/containment boundary.
 6. For authorized synthetic native testing, use `./scripts/run-native-smoke.sh`; `GRAPH_SOFTWARE=1 ./scripts/run-native-smoke.sh` selects the software fallback. This creates/replaces only the documented synthetic fixture destinations, not personal vaults.
 

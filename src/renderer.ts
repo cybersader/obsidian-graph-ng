@@ -4,6 +4,7 @@ import type { Projection } from './core/projection';
 import { colorGroups, edgeVisibility } from './core/projection';
 import type { GroupProjection } from './core/group-projection';
 import type { Settings } from './settings';
+import { sliced } from './core/scheduler';
 export interface Renderer { dispose(): void }
 export function gpuStatus(): { available: boolean; reason: string } {
   const canvas = document.createElement('canvas');
@@ -17,10 +18,20 @@ export function gpuStatus(): { available: boolean; reason: string } {
 }
 export class DetailRenderer implements Renderer {
   readonly sigma: Sigma;
-  constructor(container: HTMLElement, p: Projection, positions: Float32Array, visible: Uint8Array, settings: Settings, onNode: (i: number) => void, onZoomOut: () => void) {
-    const graph = new MultiDirectedGraph(), colors = colorGroups(p, settings.declaration), edges = edgeVisibility(p, visible);
-    for (let i = 0; i < p.paths.length; i++) if (visible[i]) graph.addNode(String(i), { x: positions[i * 2], y: positions[i * 2 + 1], label: p.paths[i]!.split('/').pop()!.replace(/\.md$/, ''), size: settings.nodeSize, color: settings.declaration.colors[colors[i]!] ?.color ?? settings.nodeColor });
-    for (let i = 0; i < p.source.length; i++) if (edges[i]) graph.addDirectedEdgeWithKey(String(i), String(p.source[i]), String(p.target[i]), { size: settings.edgeSize, color: settings.edgeColor });
+  static async create(container: HTMLElement, p: Projection, positions: Float32Array, visible: Uint8Array, settings: Settings, onNode: (i: number) => void, onZoomOut: () => void, colors: Uint32Array, current = () => true) {
+    const graph = new MultiDirectedGraph();
+    function* indices(n: number) { for (let i = 0; i < n; i++) yield i; }
+    await sliced(indices(p.paths.length), settings.ingest, i => {
+      if (visible[i]) { const path = p.paths[i]!; graph.addNode(String(i), { x: positions[i * 2], y: positions[i * 2 + 1], label: path.slice(path.lastIndexOf('/') + 1).replace(/\.md$/, ''), size: settings.nodeSize, color: settings.declaration.colors[colors[i]!] ?.color ?? settings.nodeColor }); }
+    });
+    await sliced(indices(p.source.length), settings.ingest, i => { if (visible[p.source[i]!] && visible[p.target[i]!]) graph.addDirectedEdgeWithKey(String(i), String(p.source[i]), String(p.target[i]), { size: settings.edgeSize, color: settings.edgeColor }); });
+    if (!current()) throw new Error('Renderer superseded');
+    return new DetailRenderer(container, p, positions, visible, settings, onNode, onZoomOut, graph);
+  }
+  constructor(container: HTMLElement, p: Projection, positions: Float32Array, visible: Uint8Array, settings: Settings, onNode: (i: number) => void, onZoomOut: () => void, prepared?: MultiDirectedGraph) {
+    const graph = prepared ?? new MultiDirectedGraph(), colors = prepared ? [] : colorGroups(p, settings.declaration), edges = prepared ? [] : edgeVisibility(p, visible);
+    for (let i = 0; !prepared && i < p.paths.length; i++) if (visible[i]) graph.addNode(String(i), { x: positions[i * 2], y: positions[i * 2 + 1], label: p.paths[i]!.split('/').pop()!.replace(/\.md$/, ''), size: settings.nodeSize, color: settings.declaration.colors[colors[i]!] ?.color ?? settings.nodeColor });
+    for (let i = 0; !prepared && i < p.source.length; i++) if (edges[i]) graph.addDirectedEdgeWithKey(String(i), String(p.source[i]), String(p.target[i]), { size: settings.edgeSize, color: settings.edgeColor });
     this.sigma = new Sigma(graph, container, { renderLabels: true, labelSize: settings.labelSize, labelDensity: settings.labelDensity, labelGridCellSize: settings.labelGridCellSize, labelRenderedSizeThreshold: settings.labelRenderedSizeThreshold, labelColor: { color: settings.textColor }, defaultNodeColor: settings.nodeColor, defaultEdgeColor: settings.edgeColor, hideEdgesOnMove: false, allowInvalidContainer: false });
     this.sigma.on('clickNode', ({ node }) => onNode(Number(node)));
     this.sigma.on('enterNode', ({ node }) => { container.title = p.paths[Number(node)]!; });
@@ -40,8 +51,8 @@ export class GroupRenderer implements Renderer {
   private edges: Hit[] = [];
   constructor(private container: HTMLElement, private p: GroupProjection, private s: Settings,
     private onGroup: (id: string) => void, private onEdge: (edge: GroupProjection['groupEdges'][number]) => void) {
-    this.canvas = container.createEl('canvas', { cls: 'graph-ng-groups', attr: { 'aria-label': 'Declared groups and counted relationships' } });
-    this.tooltip = container.createDiv({ cls: 'graph-ng-tooltip' });
+    this.canvas = document.createElement('canvas'); this.canvas.className = 'graph-ng-groups'; this.canvas.setAttribute('aria-label', 'Declared groups and counted relationships'); container.append(this.canvas);
+    this.tooltip = document.createElement('div'); this.tooltip.className = 'graph-ng-tooltip'; container.append(this.tooltip);
     this.canvas.addEventListener('click', this.click);
     this.canvas.addEventListener('mousemove', this.hover);
     this.canvas.addEventListener('mouseleave', this.leave);
