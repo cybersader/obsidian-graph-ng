@@ -2,7 +2,9 @@ import { describe, test, expect } from 'bun:test';
 import { buildProjection, filterNodes, edgeVisibility, colorGroups, aggregate, storageBytes, NONE, type FactRow } from '../src/core/projection';
 import { canonical, digest, validateDeclaration, defaultDeclaration, validatePredicate } from '../src/core/declaration';
 import { runLayout, DEFAULT_LAYOUT } from '../src/core/layout';
-import { incrementalLayout } from '../src/core/incremental';
+import { incrementalLayout, warmLayout, edgeKeys } from '../src/core/incremental';
+import { generationKey } from '../src/core/generation';
+import { groupPages, page } from '../src/core/group-page';
 import { contractGroups, validateGroupProjection, resolveCarrier } from '../src/core/group-projection';
 import { SpatialGrid } from '../src/core/grid';
 import { defaults, validateSettings } from '../src/settings';
@@ -26,9 +28,11 @@ describe('declarations and identity', () => {
     expect(() => validateSettings({ ...defaults('s'), nodeSize: 0 })).toThrow();
     expect(() => validateSettings({ ...defaults('s'), groupCurveSamples: 1.5 })).toThrow();
   });
-  test('path order deterministic; duplicate identity/path rejected', () => {
+  test('path order deterministic; duplicate identities quarantined, duplicate paths rejected', () => {
     expect(buildProjection(rows, d)).toEqual(buildProjection([...rows].reverse(), d));
-    expect(() => buildProjection([...rows, { path: 'duplicate.md', properties: { id: 'one' } }], d)).toThrow('Ambiguous');
+    const duplicate = buildProjection([...rows, { path: 'duplicate.md', properties: { id: 'one' } }], d);
+    expect(duplicate.quarantined.map(row => row.path)).toEqual(['a/one.md', 'duplicate.md']);
+    expect(duplicate.paths).toEqual(['a/two.md', 'ab/three.md']);
     expect(() => buildProjection([...rows, rows[0]!], d)).toThrow('Duplicate path');
   });
   test('path fallback with ordered identity keys', () => {
@@ -104,4 +108,62 @@ test('opaque producer carriers resolve only declared unique keys', () => {
 test('missing property and explicit null are different exact matches', () => {
   const p = buildProjection([{ path: 'a.md', properties: {} }, { path: 'b.md', properties: { nullable: null } }], { ...d, columns: ['nullable'] });
   expect([...filterNodes(p, { kind: 'eq', key: 'nullable', value: null })]).toEqual([0, 1]);
+});
+
+describe('independent review probes A–F', () => {
+  test('A undeclared properties/producer maps do not invalidate keys or cold positions', async () => {
+    const base = fixture(100, 300), edited = base.map((row, i) => i ? row : { ...row, properties: { ...row.properties, unrelated_timestamp: 'changed' }, links: { 'unused@1': ['nowhere.md'] } });
+    const first = await generationKey(base, d, DEFAULT_LAYOUT, 'fa2@1'), second = await generationKey(edited, d, DEFAULT_LAYOUT, 'fa2@1');
+    expect(first).toBe(second);
+    const p = buildProjection(base, d), options = { ...DEFAULT_LAYOUT, iterations: 20 };
+    expect(runLayout({ count: p.paths.length, source: p.source, target: p.target, seed: parseInt(first.slice(0, 8), 16) }, options)).toEqual(runLayout({ count: p.paths.length, source: p.source, target: p.target, seed: parseInt(second.slice(0, 8), 16) }, options));
+    const changed = base.map((row, i) => i ? row : { ...row, properties: { ...row.properties, family: 'other' } });
+    expect(await generationKey(changed, d, DEFAULT_LAYOUT, 'fa2@1')).not.toBe(first);
+  });
+  test('B declared link array order does not reseed a cold generation', async () => {
+    const declaration = defaultDeclaration('p@1');
+    const first = [{ path: 'a.md', properties: {}, links: { 'p@1': ['b.md', 'c.md'] } }, { path: 'b.md', properties: {} }, { path: 'c.md', properties: {} }];
+    const second = [{ ...first[0]!, links: { 'p@1': ['c.md', 'b.md'] } }, first[1]!, first[2]!];
+    expect(await generationKey(first, declaration, DEFAULT_LAYOUT, 'fa2@1')).toBe(await generationKey(second, declaration, DEFAULT_LAYOUT, 'fa2@1'));
+    expect(buildProjection(first, declaration)).toEqual(buildProjection(second, declaration));
+  });
+  test('saved generation key misses preserve untouched positions and place new nodes', () => {
+    const declaration = { ...d, edges: [] }, previous = buildProjection([{ path: 'a.md', properties: { id: 'a' } }, { path: 'b.md', properties: { id: 'b' } }], declaration);
+    const saved = JSON.parse(JSON.stringify({ identities: previous.identities, positions: [10, 20, 30, 40], edgeKeys: edgeKeys(previous) }));
+    const current = buildProjection([{ path: 'a.md', properties: { id: 'a' } }, { path: 'b.md', properties: { id: 'b' } }, { path: 'c.md', properties: { id: 'c' } }], declaration);
+    const input = warmLayout(saved, current, 42, DEFAULT_LAYOUT), result = runLayout(input, { ...DEFAULT_LAYOUT, iterations: 10 });
+    expect([...input.movable!]).toEqual([0, 0, 1]); expect([...result.slice(0, 4)]).toEqual([10, 20, 30, 40]); expect([...result]).toHaveLength(6); expect([...result].every(Number.isFinite)).toBe(true);
+  });
+  test('C constructor type is an own key, not an inherited directional count', () => {
+    validateGroupProjection(JSON.parse('{"groups":[{"id":"a","label":"A","count":1},{"id":"b","label":"B","count":1}],"groupEdges":[{"a":"a","b":"b","total":1,"typeCounts":{"constructor":1},"directional":{"aToB":{"constructor":1},"bToA":{}},"carriers":{"kind":"k","ids":[]}}]}'));
+    expect(true).toBe(true);
+  });
+  test('D duplicate identities quarantine every conflicting note; unrelated graph works', () => {
+    const facts = [{ path: 'a.md', properties: { id: 'same' } }, { path: 'b.md', properties: { id: 'same' } }, { path: 'c.md', properties: { id: 'c', relation: 'd' } }, { path: 'd.md', properties: { id: 'd' } }];
+    const p = buildProjection(facts, { ...d, edges: [{ name: 'inline', kind: 'inline', key: 'relation', type: 'related' }] });
+    expect(p.quarantined).toEqual([{ path: 'a.md', id: 'same' }, { path: 'b.md', id: 'same' }]); expect(p.paths).toEqual(['c.md', 'd.md']); expect(p.source.length).toBe(1);
+    const collision = buildProjection([{ path: 'a.md', properties: { id: 'b.md' } }, { path: 'b.md', properties: { id: 'other' } }], d); expect(collision.quarantined).toHaveLength(2);
+  });
+  test('E 16k groups / 44.6k pairs build only a bounded first page within 500ms', () => {
+    const p = buildProjection(fixture(), { ...d, groups: [{ from: 'key', key: 'id' }] });
+    const { projection } = contractGroups(p, new Uint8Array(p.paths.length).fill(1)), start = performance.now();
+    const pages = groupPages(projection, 6), canvas = pages.canvas(0), groups = page(projection.groups, 0, 25), pairs = page(projection.groupEdges, 0, 25);
+    expect(projection.groups).toHaveLength(16000); expect(projection.groupEdges.length).toBeGreaterThan(44000);
+    expect(groups).toHaveLength(25); expect(pairs).toHaveLength(25); expect(canvas.groups).toHaveLength(6); expect(canvas.groupEdges.length).toBeLessThanOrEqual(21);
+    expect(performance.now() - start).toBeLessThan(500);
+    expect(page(projection.groups, 1, 25)[0]!.id).toBe(projection.groups[25]!.id);
+  });
+  test('F a literal folder beginning with a quote is never parsed as JSON', () => {
+    const p = buildProjection([{ path: '"q/x.md', properties: {} }], { ...d, edges: [], groups: [{ from: 'folder', depth: 1 }] });
+    expect(contractGroups(p, new Uint8Array([1])).projection.groups[0]!.label).toBe('"q');
+    const quoted = buildProjection([{ path: '"valid"/x.md', properties: {} }], { ...d, edges: [], groups: [{ from: 'folder', depth: 1 }] });
+    expect(contractGroups(quoted, new Uint8Array([1])).projection.groups[0]!.label).toBe('"valid"');
+  });
+  test('configurable aggregate limits reject only the explicitly configured envelope', () => {
+    const projection = { groups: [{ id: 'a', label: 'A', count: 1 }], groupEdges: [{ a: 'a', b: 'a', total: 2, typeCounts: { t: 2 }, carriers: { kind: 'id', ids: ['1', '2'] } }] };
+    validateGroupProjection(projection);
+    expect(() => validateGroupProjection(projection, { groups: 0, pairs: 0, carriers: 1 })).toThrow('carrier limit');
+    expect(() => validateGroupProjection({ ...projection, groups: [...projection.groups, { id: 'b', label: 'B', count: 1 }] }, { groups: 1, pairs: 0, carriers: 0 })).toThrow('group limit');
+    expect(() => validateGroupProjection({ ...projection, groupEdges: [...projection.groupEdges, ...projection.groupEdges] }, { groups: 0, pairs: 1, carriers: 0 })).toThrow('pair limit');
+  });
 });

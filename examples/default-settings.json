@@ -71,5 +71,9 @@
   "textColor": "#edf4ff",
   "persistLayout": true,
   "cachedDeclarations": 1,
-  "projectionFile": ""
+  "projectionFile": "",
+  "groupCanvasPageSize": 6,
+  "maxProjectionGroups": 0,
+  "maxProjectionPairs": 0,
+  "maxProjectionCarriers": 0
 }

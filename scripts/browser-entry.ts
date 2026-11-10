@@ -1,5 +1,5 @@
 import { buildProjection, filterNodes } from '../src/core/projection';
-import { digest } from '../src/core/declaration';
+import { generationKey } from '../src/core/generation';
 import { defaults } from '../src/settings';
 import { DetailRenderer, gpuStatus } from '../src/renderer';
 declare const __WORKER_SOURCE__: string;
@@ -9,7 +9,7 @@ async function main() {
   new PerformanceObserver(list => { for (const t of list.getEntries()) tasks.push(t.duration); }).observe({ entryTypes: ['longtask'] });
   const input = await (await fetch('/fixture.json')).json();
   const settings = defaults('synthetic@1'); settings.declaration = input.declaration;
-  const p = buildProjection(input.rows, settings.declaration), snapshot = await digest({ rows: input.rows, declaration: settings.declaration, layout: settings.layout });
+  const p = buildProjection(input.rows, settings.declaration), snapshot = await generationKey(input.rows, settings.declaration, settings.layout, 'graphology-fa2@0.10.1');
   const url = URL.createObjectURL(new Blob([__WORKER_SOURCE__], { type: 'text/javascript' }));
   const worker = new Worker(url), workerStart = performance.now();
   const answer = await new Promise<{ positions: Float32Array; milliseconds: number }>((resolve, reject) => {

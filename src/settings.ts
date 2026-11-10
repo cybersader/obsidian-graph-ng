@@ -21,6 +21,10 @@ export interface Settings {
   labelRenderedSizeThreshold: number;
   edgeWidthScale: number;
   listPageSize: number;
+  groupCanvasPageSize: number;
+  maxProjectionGroups: number;
+  maxProjectionPairs: number;
+  maxProjectionCarriers: number;
   backgroundColor: string;
   nodeColor: string;
   edgeColor: string;
@@ -36,7 +40,8 @@ export function defaults(producer: string): Settings {
     workerTimeoutMs: 120000, lodZoomRatio: 1.8, groupLevel: 0, nodeSize: 3, edgeSize: 0.5, labelSize: 13,
     groupRadius: 26, groupCurveDivisor: 5, groupEdgeHitRadius: 6, groupCurveSamples: 32, groupLoopScale: 1.5, groupRingPadding: 56, labelDensity: 1, labelGridCellSize: 100, labelRenderedSizeThreshold: 6, edgeWidthScale: 0.8, listPageSize: 100,
     backgroundColor: '#141b26', nodeColor: '#7fc8e7', edgeColor: '#43566e', groupColor: '#7fc8e7', textColor: '#edf4ff',
-    persistLayout: true, cachedDeclarations: 1, projectionFile: '',
+    persistLayout: true, cachedDeclarations: 1, projectionFile: '', groupCanvasPageSize: 6,
+    maxProjectionGroups: 0, maxProjectionPairs: 0, maxProjectionCarriers: 0,
   };
 }
 export function validateSettings(v: unknown): asserts v is Settings {
@@ -45,7 +50,8 @@ export function validateSettings(v: unknown): asserts v is Settings {
   for (const k of Object.keys(s)) if (!keys.includes(k)) throw new Error(`Unknown setting: ${k}`);
   validateDeclaration(s.declaration);
   for (const key of ['debounceMs', 'workerTimeoutMs', 'lodZoomRatio', 'nodeSize', 'edgeSize', 'labelSize', 'groupRadius', 'groupCurveDivisor', 'groupEdgeHitRadius', 'groupCurveSamples', 'groupLoopScale', 'groupRingPadding', 'labelDensity', 'labelGridCellSize', 'labelRenderedSizeThreshold', 'edgeWidthScale'] as const) if (!Number.isFinite(s[key]) || s[key] <= 0) throw new Error(`${key} must be positive`);
-  for (const key of ['groupLevel', 'groupCurveSamples', 'listPageSize', 'cachedDeclarations'] as const) if (!Number.isSafeInteger(s[key]) || s[key] < (key === 'groupLevel' ? 0 : 1)) throw new Error(`Invalid ${key}`);
+  for (const key of ['groupLevel', 'groupCurveSamples', 'listPageSize', 'groupCanvasPageSize', 'cachedDeclarations'] as const) if (!Number.isSafeInteger(s[key]) || s[key] < (key === 'groupLevel' ? 0 : 1)) throw new Error(`Invalid ${key}`);
+  for (const key of ['maxProjectionGroups', 'maxProjectionPairs', 'maxProjectionCarriers'] as const) if (!Number.isSafeInteger(s[key]) || s[key] < 0) throw new Error(`${key} must be a nonnegative integer (0 means unlimited)`);
   for (const key of ['backgroundColor', 'nodeColor', 'edgeColor', 'groupColor', 'textColor'] as const) if (!/^#[0-9a-f]{6}$/i.test(s[key])) throw new Error(`${key} must be #rrggbb`);
   if (typeof s.persistLayout !== 'boolean' || typeof s.projectionFile !== 'string') throw new Error('Invalid persistence or projectionFile');
   if (s.projectionFile && (s.projectionFile.startsWith('/') || s.projectionFile.split('/').includes('..') || !s.projectionFile.endsWith('.json'))) throw new Error('projectionFile must be a vault-relative .json path');

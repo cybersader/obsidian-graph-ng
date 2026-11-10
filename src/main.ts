@@ -2,15 +2,17 @@ import { ItemView, Plugin, PluginSettingTab, Setting, Notice, TFile, apiVersion,
 import { LocalAdapter } from './adapter/local';
 import { digest, validateDeclaration, validatePredicate, type Predicate } from './core/declaration';
 import { buildProjection, filterNodes, type Projection } from './core/projection';
-import { contractGroups, validateGroupProjection, pairKey, resolveCarrier, type GroupProjection, type GroupContribution } from './core/group-projection';
-import { incrementalLayout } from './core/incremental';
+import { contractGroups, validateGroupProjection, pairKey, indexCarriers, type GroupProjection, type GroupContribution } from './core/group-projection';
+import { incrementalLayout, warmLayout, validSavedLayout, edgeKeys } from './core/incremental';
+import { generationKey } from './core/generation';
+import { groupPages, page } from './core/group-page';
 import type { LayoutInput } from './core/layout';
 import { defaults, validateSettings, type Settings } from './settings';
 import { DetailRenderer, GroupRenderer, gpuStatus, type Renderer } from './renderer';
 declare const __LAYOUT_WORKER_SOURCE__: string;
 const VIEW = 'graph-ng';
 const PRODUCER = 'graphology-fa2@0.10.1';
-interface Generation { key: string; identities: string[]; positions: number[]; producer: string }
+interface Generation { key: string; identities: string[]; positions: number[]; producer: string; layoutHash?: string; edgeKeys?: string[] }
 interface Data { settings: Settings; generations: Record<string, Generation> }
 export default class GraphPlugin extends Plugin {
   settings!: Settings;
@@ -22,7 +24,7 @@ export default class GraphPlugin extends Plugin {
   async onload() {
     const data = await this.loadData() as Data | null;
     this.settings = defaults(this.linkProducer);
-    if (data?.settings) { try { validateSettings(data.settings); this.settings = data.settings; } catch (e) { new Notice(`Graph NG settings invalid; using defaults: ${String(e)}`); } }
+    if (data?.settings) { try { const settings = { ...this.settings, ...data.settings }; validateSettings(settings); this.settings = settings; } catch (e) { new Notice(`Graph NG settings invalid; using defaults: ${String(e)}`); } }
     if (data?.generations && typeof data.generations === 'object') this.generations = data.generations;
     this.registerView(VIEW, leaf => new GraphView(leaf, this));
     this.addCommand({ id: 'open', name: 'Open graph', callback: () => { void this.open(); } });
@@ -65,6 +67,7 @@ export class GraphView extends ItemView {
   private panel!: HTMLElement;
   private toolbar!: HTMLElement;
   private groupGraph?: GroupProjection;
+  private carrierLookup?: ReturnType<typeof indexCarriers>;
   private contributions = new Map<string, GroupContribution[]>();
   private members = new Map<string, number[]>();
   private projection?: Projection;
@@ -107,11 +110,12 @@ export class GraphView extends ItemView {
     const rev = ++this.revision; this.stopWorker?.(); this.renderer?.dispose(); this.renderer = undefined; this.detailRenderer = undefined;
     this.status.textContent = 'Building projection…'; this.contentEl.dataset.state = 'building';
     const settings = this.plugin.settings;
+    this.carrierLookup = undefined;
     try {
       if (settings.projectionFile) {
         const file = this.app.vault.getAbstractFileByPath(settings.projectionFile);
         if (!(file instanceof TFile)) throw new Error(`Projection file not found: ${settings.projectionFile}`);
-        const p: unknown = JSON.parse(await this.app.vault.read(file)); validateGroupProjection(p);
+        const p: unknown = JSON.parse(await this.app.vault.read(file)); validateGroupProjection(p, { groups: settings.maxProjectionGroups, pairs: settings.maxProjectionPairs, carriers: settings.maxProjectionCarriers });
         if (rev !== this.revision) return;
         this.projection = undefined; this.positions = undefined; this.groupGraph = p; this.members.clear(); this.contributions.clear();
         this.status.textContent = `${p.groups.length} producer-supplied groups · ${p.groupEdges.length} counted group pairs · aggregate input only`;
@@ -122,26 +126,30 @@ export class GraphView extends ItemView {
       this.projection = p; this.visible = filterNodes(p, this.predicate); this.positions = undefined;
       this.updateGroups(); this.showGroups();
       const coverage = this.plugin.adapter.coverage();
-      const base = `${p.paths.length.toLocaleString()} nodes · ${p.source.length.toLocaleString()} edges · ${coverage.indexed}/${coverage.listed} listed notes indexed${coverage.indexed < coverage.listed ? ' (partial)' : ''} · ${p.unresolved} unresolved`;
+      const base = `${p.paths.length.toLocaleString()} nodes · ${p.source.length.toLocaleString()} edges · ${coverage.indexed}/${coverage.listed} listed notes indexed${coverage.indexed < coverage.listed ? ' (partial)' : ''} · ${p.unresolved} unresolved${p.quarantined.length ? ` · ${p.quarantined.length} notes share an ID (excluded)` : ''}`;
       this.status.textContent = `${base} · building layout in worker`;
       this.contentEl.dataset.nodes = String(p.paths.length); this.contentEl.dataset.edges = String(p.source.length);
       const declarationHash = await digest(settings.declaration), layoutHash = await digest(settings.layout);
-      const key = await digest({ declarationHash, layoutHash, producer: PRODUCER, rows: [...rows].sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0) });
+      const key = await generationKey(rows, settings.declaration, settings.layout, PRODUCER);
       if (rev !== this.revision) return;
       const cache = this.plugin.generations[declarationHash];
-      const valid = settings.persistLayout && cache?.key === key && cache.producer === PRODUCER && Array.isArray(cache.positions) && cache.positions.length === p.paths.length * 2 && cache.positions.every(Number.isFinite) && JSON.stringify(cache.identities) === JSON.stringify(p.identities);
+      const saved = cache && cache.producer === PRODUCER && validSavedLayout(cache);
+      const valid = settings.persistLayout && saved && cache.key === key && JSON.stringify(cache.identities) === JSON.stringify(p.identities);
       this.cacheTrace.push({ expected: key, stored: cache?.key, nodes: p.paths.length, ...coverage, valid: Boolean(valid) });
       if (this.cacheTrace.length > 16) this.cacheTrace.shift();
       let ms = 0, cached = false;
       if (valid) { this.positions = Float32Array.from(cache.positions); cached = true; }
       else {
         const seed = Number.parseInt(key.slice(0, 8), 16), old = this.previous;
-        const input = old?.declaration === declarationHash && old.layout === layoutHash ? incrementalLayout(old.projection, old.positions, p, seed, settings.layout) : { count: p.paths.length, source: p.source, target: p.target, seed };
+        const input = old?.declaration === declarationHash && old.layout === layoutHash ? incrementalLayout(old.projection, old.positions, p, seed, settings.layout)
+          : settings.persistLayout && saved && cache.layoutHash === layoutHash ? warmLayout(cache, p, seed, settings.layout)
+          : { count: p.paths.length, source: p.source, target: p.target, seed };
         if ('movable' in input && input.movable && !input.movable.some(Boolean)) this.positions = input.initial;
         else { const result = await this.layout(input); if (rev !== this.revision) return; this.positions = result.positions; ms = result.milliseconds; }
         // A restored workspace can open before metadata/vault enumeration finishes.
         // Never replace its last complete generation with a transient partial/empty graph.
-        if (this.positions && coverage.indexed === coverage.listed && (coverage.listed > 0 || !cache)) await this.plugin.cache(declarationHash, { key, identities: p.identities, positions: Array.from(this.positions), producer: PRODUCER });
+        const linksReady = !settings.declaration.edges.some(edge => edge.kind === 'producer') || this.plugin.adapter.linksResolved;
+        if (this.positions && linksReady && coverage.indexed === coverage.listed && (coverage.listed > 0 || !cache)) await this.plugin.cache(declarationHash, { key, identities: p.identities, positions: Array.from(this.positions), producer: PRODUCER, layoutHash, edgeKeys: edgeKeys(p) });
       }
       if (rev !== this.revision || !this.positions) return;
       this.previous = { projection: p, positions: this.positions, declaration: declarationHash, layout: layoutHash };
@@ -162,27 +170,52 @@ export class GraphView extends ItemView {
     });
   }
   showGroups() {
+    const start = performance.now();
     this.renderer?.dispose(); this.detailRenderer = undefined; this.stage.empty(); this.panel.empty();
-    if (!this.groupGraph) return;
-    this.renderer = new GroupRenderer(this.stage, this.groupGraph, this.plugin.settings, id => this.drill(id), edge => this.edgeList(edge));
-    const controls = this.panel.createDiv({ cls: 'graph-ng-group-controls' });
-    for (const g of this.groupGraph.groups) controls.createEl('button', { text: `${g.label} (${g.count.toLocaleString()})`, attr: { 'data-group': g.id } }).onclick = () => this.drill(g.id);
-    const edges = this.panel.createEl('details'); edges.createEl('summary', { text: `Relationships (${this.groupGraph.groupEdges.length} group pairs)` });
-    for (const e of this.groupGraph.groupEdges) {
-      const labels = new Map(this.groupGraph.groups.map(g => [g.id, g.label]));
-      const label = `${labels.get(e.a)} → ${labels.get(e.b)} · ${Object.values(e.typeCounts).reduce((a, b) => a + b, 0)}`;
-      edges.createEl('button', { text: label, cls: 'graph-ng-edge' }).onclick = () => this.edgeList(e);
+    const projection = this.groupGraph; if (!projection) return;
+    const settings = this.plugin.settings, pages = groupPages(projection, settings.groupCanvasPageSize);
+    let canvasPage = 0;
+    const canvasControls = this.panel.createDiv({ cls: 'graph-ng-canvas-pager' });
+    const previous = canvasControls.createEl('button', { text: 'Previous canvas groups' });
+    const label = canvasControls.createSpan();
+    const next = canvasControls.createEl('button', { text: 'Next canvas groups' });
+    canvasControls.hidden = projection.groups.length <= settings.groupCanvasPageSize;
+    const draw = () => {
+      this.renderer?.dispose(); this.stage.empty();
+      const selected = pages.canvas(canvasPage);
+      this.renderer = new GroupRenderer(this.stage, selected, settings, id => this.drill(id), edge => this.edgeList(edge));
+      previous.disabled = canvasPage === 0; next.disabled = (canvasPage + 1) * settings.groupCanvasPageSize >= projection.groups.length;
+      label.textContent = ` Canvas groups ${canvasPage * settings.groupCanvasPageSize + 1}–${Math.min((canvasPage + 1) * settings.groupCanvasPageSize, projection.groups.length)} / ${projection.groups.length} `;
+      this.contentEl.dataset.canvasGroups = String(selected.groups.length);
+    };
+    previous.onclick = () => { canvasPage--; draw(); }; next.onclick = () => { canvasPage++; draw(); }; draw();
+    this.paginate(projection.groups, (g, host) => { host.createEl('button', { text: `${g.label} (${g.count.toLocaleString()})`, attr: { 'data-group': g.id } }).onclick = () => this.drill(g.id); }, this.panel, 'graph-ng-group-controls');
+    const edges = this.panel.createEl('details'); edges.createEl('summary', { text: `Relationships (${projection.groupEdges.length} group pairs)` });
+    this.paginate(projection.groupEdges, (edge, host) => {
+      host.createEl('button', { text: `${pages.labels.get(edge.a)} ↔ ${pages.labels.get(edge.b)} · ${edge.total}`, cls: 'graph-ng-edge' }).onclick = () => this.edgeList(edge);
+    }, edges);
+    if (this.projection?.quarantined.length) {
+      const conflicts = this.panel.createEl('details', { cls: 'graph-ng-quarantine' });
+      conflicts.createEl('summary', { text: `${this.projection.quarantined.length} notes share an ID (excluded)` });
+      this.paginate(this.projection.quarantined, (note, host) => { host.createEl('button', { text: `${note.path} — ${note.id}` }).onclick = () => this.openPath(note.path); }, conflicts);
     }
-    this.contentEl.dataset.mode = 'groups';
+    this.contentEl.dataset.mode = 'groups'; this.contentEl.dataset.groupFirstPageMs = String(performance.now() - start);
   }
   private openPath(path: string) {
     if (!(this.app.vault.getAbstractFileByPath(path) instanceof TFile)) { new Notice('The referenced note is not available locally.'); return; }
     void this.app.workspace.openLinkText(path, '', 'tab');
   }
-  private paginate<T>(items: T[], render: (item: T, host: HTMLElement) => void) {
-    let shown = 0; const list = this.panel.createDiv({ cls: 'graph-ng-list' }), more = this.panel.createEl('button', { text: 'Show more' });
-    const next = () => { const end = Math.min(items.length, shown + this.plugin.settings.listPageSize); for (; shown < end; shown++) render(items[shown]!, list); more.hidden = shown >= items.length; };
-    more.onclick = next; next();
+  private paginate<T>(items: readonly T[], render: (item: T, host: HTMLElement) => void, host = this.panel, listClass = 'graph-ng-list') {
+    let index = 0; const size = this.plugin.settings.listPageSize, root = host.createDiv({ cls: 'graph-ng-pagination' });
+    const controls = root.createDiv({ cls: 'graph-ng-page-controls' }), previous = controls.createEl('button', { text: 'Previous page' });
+    const label = controls.createSpan(), next = controls.createEl('button', { text: 'Next page' }), list = root.createDiv({ cls: listClass });
+    controls.hidden = items.length <= size;
+    const draw = () => {
+      list.empty(); for (const item of page(items, index, size)) render(item, list);
+      previous.disabled = index === 0; next.disabled = (index + 1) * size >= items.length;
+      label.textContent = ` ${items.length ? index * size + 1 : 0}–${Math.min((index + 1) * size, items.length)} / ${items.length} `;
+    };
+    previous.onclick = () => { index--; draw(); }; next.onclick = () => { index++; draw(); }; draw();
   }
   private drill(id: string) {
     const group = this.groupGraph?.groups.find(g => g.id === id); if (!group) return;
@@ -206,7 +239,8 @@ export class GraphView extends ItemView {
     const rows = this.contributions.get(pairKey(edge.a, edge.b));
     if (rows) this.paginate(rows, (r, host) => { const item = host.createDiv({ cls: 'graph-ng-contribution' }); item.createSpan({ text: `${r.source} → ${r.target} [${r.type}] ` }); if (r.carrier) item.createEl('button', { text: r.carrier }).onclick = () => this.openPath(r.carrier!); });
     else this.paginate(edge.carriers.ids, (id, host) => {
-      const path = resolveCarrier(this.plugin.adapter.snapshot(), this.plugin.settings.declaration, edge.carriers.kind, id);
+      this.carrierLookup ??= indexCarriers(this.plugin.adapter.values(), this.plugin.settings.declaration);
+      const path = this.carrierLookup.get(edge.carriers.kind)?.get(id) ?? null;
       const button = host.createEl('button', { text: path ?? `${id} (not resolved locally)`, cls: 'graph-ng-carrier' });
       button.disabled = !path; if (path) button.onclick = () => this.openPath(path);
     });

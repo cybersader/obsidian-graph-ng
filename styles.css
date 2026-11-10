@@ -10,3 +10,6 @@
 .graph-ng-json { width:100%; min-height:260px; font-family:var(--font-monospace); font-size:12px; }
 .graph-ng-tooltip { position:absolute; pointer-events:none; color:#edf4ff; background:#141b26; padding:5px; border-radius:3px; max-width:80%; z-index:2; }
 .graph-ng-tooltip:empty { display:none; }
+.graph-ng-canvas-pager,.graph-ng-page-controls { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:4px 0; }
+.graph-ng-canvas-pager[hidden],.graph-ng-page-controls[hidden] { display:none; }
+.graph-ng-quarantine { margin:6px 0; border-left:3px solid var(--text-warning); padding-left:8px; }

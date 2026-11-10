@@ -85,6 +85,26 @@ describe('Graph NG synthetic Obsidian path', () => {
     finally { evidence.afterRestart = await browser.executeObsidian(({ app }) => { const v = app.workspace.getLeavesOfType('graph-ng')[0]!.view as any; return { generations: v.plugin.generations, firstRow: v.plugin.adapter.index.snapshot()[0], coverage: v.plugin.adapter.coverage(), cacheTrace: v.cacheTrace, status: v.contentEl.querySelector('.graph-ng-status').textContent }; }); }
     evidence.restartAndRestoreMs = Date.now() - start;
   });
+  it('warm-starts a persisted key miss after restart without moving untouched nodes', async function () {
+    if (large) { this.skip(); return; }
+    const before = await browser.executeObsidian(async ({ app }) => {
+      const view = app.workspace.getLeavesOfType('graph-ng')[0]!.view as any;
+      const result = { identities: [...view.projection.identities], positions: [...view.positions] };
+      await app.vault.create('Warm-Start-Added.md', '---\nid: "concept:warm-added"\nfamily: "Family 1"\n---\nSynthetic isolated node.\n');
+      return result;
+    });
+    await browser.reloadObsidian(); await open();
+    await browser.waitUntil(async () => browser.executeObsidian(({ app }) => { const view = app.workspace.getLeavesOfType('graph-ng')[0]!.view as any; return view.projection?.identities.includes('concept:warm-added') && view.contentEl.dataset.state === 'ready'; }));
+    evidence.persistedMiss = await browser.executeObsidian(({ app }, before) => {
+      const view = app.workspace.getLeavesOfType('graph-ng')[0]!.view as any, index = new Map(view.projection.identities.map((id: string, i: number) => [id, i]));
+      let unchanged = 0;
+      before.identities.forEach((id: string, i: number) => { const next = index.get(id) as number; if (before.positions[i * 2] === view.positions[next * 2] && before.positions[i * 2 + 1] === view.positions[next * 2 + 1]) unchanged++; });
+      return { unchanged, expected: before.identities.length, nodes: view.projection.paths.length, finite: [...view.positions].every(Number.isFinite), trace: view.cacheTrace };
+    }, before);
+    const result = evidence.persistedMiss as { unchanged: number; expected: number; finite: boolean; nodes: number; trace: { expected: string; stored?: string; valid: boolean; nodes: number }[] };
+    assert.equal(result.unchanged, result.expected); assert.equal(result.finite, true); assert.equal(result.nodes, result.expected + 1);
+    assert.ok(result.trace.some(entry => entry.nodes === result.nodes && entry.stored && entry.expected !== entry.stored && !entry.valid), 'Restart must exercise a persisted key miss, not an exact cache hit');
+  });
   it('updates one declared carrier without moving untouched nodes', async function () {
     if (large) { this.skip(); return; }
     const before = await browser.executeObsidian(async ({ app, obsidian }) => {
@@ -107,6 +127,16 @@ describe('Graph NG synthetic Obsidian path', () => {
     }, before);
     assert.ok(unchanged > 300, 'Most unrelated nodes must remain pinned'); evidence.incremental = { updateMs: Date.now() - start, unchangedNodes: unchanged };
   });
+  it('quarantines duplicate identities visibly without breaking the graph', async function () {
+    if (large) { this.skip(); return; }
+    await browser.executeObsidian(async ({ app }) => { await app.vault.create('Quarantine-Duplicate.md', '---\nid: "concept:0"\nfamily: "Family 1"\n---\nSynthetic duplicate.\n'); });
+    await browser.waitUntil(async () => (await $('.graph-ng-status').getText()).includes('2 notes share an ID') && (await $('.graph-ng-view').getAttribute('data-state')) === 'ready', { timeout: 15000 });
+    await $('.graph-ng-quarantine summary').click();
+    assert.equal(await $$('.graph-ng-quarantine .graph-ng-list button').length, 2);
+    assert.ok(Number(await $('.graph-ng-view').getAttribute('data-nodes')) > 500);
+    await screenshot('quarantine'); evidence.quarantine = { notes: 2, graphRemainsAvailable: true };
+    await browser.executeObsidian(async ({ app, obsidian }) => { const file = app.vault.getAbstractFileByPath('Quarantine-Duplicate.md'); if (file instanceof obsidian.TFile) await app.vault.trash(file, true); });
+  });
   it('accepts draft producer aggregates and resolves opaque carriers by a declared key', async () => {
     await browser.executeObsidian(async ({ app }) => {
       const view = app.workspace.getLeavesOfType('graph-ng')[0]!.view as any;
@@ -120,4 +150,27 @@ describe('Graph NG synthetic Obsidian path', () => {
     const carrier = await $('.graph-ng-carrier'); assert.equal(await carrier.isEnabled(), true); await carrier.click();
     await browser.waitUntil(async () => browser.executeObsidian(({ app }) => app.workspace.getActiveFile()?.path === 'Mappings/Mapping-000000.md'));
   });
+  it('renders a bounded first page for 16000 groups and 44600 pairs', async () => {
+    await open(); const start = Date.now();
+    await browser.executeObsidian(async ({ app }) => {
+      const view = app.workspace.getLeavesOfType('graph-ng')[0]!.view as any;
+      const projection = { groups: Array.from({ length: 16000 }, (_, i) => ({ id: String(i), label: `Synthetic group ${i}`, count: 1 })),
+        groupEdges: Array.from({ length: 44600 }, (_, i) => ({ a: String(i % 16000), b: String((i + 1 + Math.floor(i / 16000)) % 16000), total: 1, typeCounts: { related: 1 }, carriers: { kind: 'none', ids: [] } })) };
+      await app.vault.create('paged-projection.json', JSON.stringify(projection));
+      const settings = structuredClone(view.plugin.settings); Object.assign(settings, { projectionFile: 'paged-projection.json', listPageSize: 25, groupCanvasPageSize: 6, maxProjectionGroups: 16000, maxProjectionPairs: 44600 });
+      await view.plugin.apply(settings);
+    });
+    await ready();
+    const firstPageMs = Number(await $('.graph-ng-view').getAttribute('data-group-first-page-ms'));
+    evidence.pagedGroups = { groups: 16000, pairs: 44600, listPageSize: 25, canvasPageSize: 6, firstPageMs, totalMs: Date.now() - start };
+    assert.ok(firstPageMs < 1000, 'First-page synchronous rendering must stay below 1 second');
+    assert.ok(Date.now() - start < 5000, 'Full aggregate first-page load must stay below 5 seconds');
+    assert.equal(await $$('.graph-ng-group-controls button').length, 25); assert.equal(await $('.graph-ng-view').getAttribute('data-canvas-groups'), '6');
+    await $('.graph-ng-panel summary').click(); assert.equal(await $$('.graph-ng-edge').length, 25); assert.ok((await $('.graph-ng-edge').getText()).includes('↔'));
+    const first = await $('.graph-ng-group-controls button').getAttribute('data-group');
+    await $('.graph-ng-panel > .graph-ng-pagination .graph-ng-page-controls button:last-child').click();
+    assert.notEqual(await $('.graph-ng-group-controls button').getAttribute('data-group'), first); assert.equal(await $$('.graph-ng-group-controls button').length, 25);
+    await screenshot('paged-groups');
+  });
+
 });

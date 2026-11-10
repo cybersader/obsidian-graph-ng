@@ -4,7 +4,7 @@ export interface FactRow {
   properties: Record<string, unknown>;
   links?: Record<string, string[]>;
 }
-export interface DictionaryColumn { values: string[]; codes: Uint32Array }
+export interface DictionaryColumn { values: string[]; codes: Uint32Array; encoded?: boolean }
 export interface Projection {
   paths: string[];
   identities: string[];
@@ -20,6 +20,7 @@ export interface Projection {
   groups: DictionaryColumn[];
   folders: Map<string, [number, number]>;
   unresolved: number;
+  quarantined: { path: string; id: string }[];
 }
 export const NONE = 0xffffffff;
 const compare = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
@@ -31,9 +32,22 @@ function column(items: string[]): DictionaryColumn {
   return { values: dict, codes: Uint32Array.from(items, x => index.get(x)!) };
 }
 export function buildProjection(input: readonly FactRow[], d: GraphDeclaration): Projection {
-  const rows = [...input].sort((a, b) => compare(a.path, b.path));
-  const rowIndex = new Map<string, number>();
-  rows.forEach((r, i) => { if (rowIndex.has(r.path)) throw new Error(`Duplicate path: ${r.path}`); rowIndex.set(r.path, i); });
+  const sorted = [...input].sort((a, b) => compare(a.path, b.path));
+  const allPaths = new Map<string, number>(), byId = new Map<string, number[]>();
+  const rowIds = sorted.map((r, i) => {
+    if (allPaths.has(r.path)) throw new Error(`Duplicate path: ${r.path}`);
+    allPaths.set(r.path, i);
+    const value = d.identity.map(k => r.properties[k.key]).find(v => scalar(v) && v !== null && String(v).length > 0);
+    const id = value === undefined ? r.path : String(value), owners = byId.get(id);
+    if (owners) owners.push(i); else byId.set(id, [i]);
+    return id;
+  });
+  const excluded = new Set<number>();
+  for (const owners of byId.values()) if (owners.length > 1) for (const owner of owners) excluded.add(owner);
+  rowIds.forEach((id, i) => { const pathOwner = allPaths.get(id); if (pathOwner !== undefined && pathOwner !== i) { excluded.add(i); excluded.add(pathOwner); } });
+  const quarantined = sorted.flatMap((r, i) => excluded.has(i) ? [{ path: r.path, id: rowIds[i]! }] : []);
+  const rows = sorted.filter((_, i) => !excluded.has(i));
+  const rowIndex = new Map(rows.map((row, i) => [row.path, i]));
   const carriers = new Set<string>();
   for (const r of rows) for (const e of d.edges) if (e.kind === 'reified' && has(r, e.sourceKey) && has(r, e.targetKey)) carriers.add(r.path);
   const nodes = rows.filter(r => d.display.reifiedAsNodes || !carriers.has(r.path));
@@ -77,7 +91,7 @@ export function buildProjection(input: readonly FactRow[], d: GraphDeclaration):
   const keys = new Set([...d.columns, ...d.groups.flatMap(g => g.from === 'key' ? [g.key] : []), ...d.colors.flatMap(c => c.predicate.kind === 'eq' ? [c.predicate.key] : [])]);
   const columns: Record<string, DictionaryColumn> = Object.create(null);
   for (const key of keys) columns[key] = column(nodes.map(r => canonical(r.properties[key])));
-  const groups = d.groups.map(g => column(nodes.map(r => g.from === 'key' ? canonical(r.properties[g.key]) : r.path.split('/').slice(0, -1).slice(0, g.depth).join('/') || '(root)')));
+  const groups = d.groups.map(g => ({ ...column(nodes.map(r => g.from === 'key' ? canonical(r.properties[g.key]) : r.path.split('/').slice(0, -1).slice(0, g.depth).join('/') || '(root)')), encoded: g.from === 'key' }));
   const folders = new Map<string, [number, number]>();
   paths.forEach((path, i) => {
     const parts = path.split('/'); parts.pop();
@@ -89,7 +103,7 @@ export function buildProjection(input: readonly FactRow[], d: GraphDeclaration):
   const tc = column(typ);
   return { paths, identities, carrierPaths: rows.map(r => r.path), offsets, targets,
     source: Uint32Array.from(src), target: Uint32Array.from(dst), type: tc.codes, carrier: Uint32Array.from(carrier), types: tc.values,
-    columns, groups, folders, unresolved };
+    columns, groups, folders, unresolved, quarantined };
 }
 export function filterNodes(p: Projection, predicate?: Predicate): Uint8Array {
   const bits = new Uint8Array(p.paths.length);

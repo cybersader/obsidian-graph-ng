@@ -17,6 +17,6 @@ const aggregate = {
   coverage: { source: 'synthetic example' },
 };
 validateDeclaration(declaration); validateGroupProjection(aggregate);
-for (const [name, value] of Object.entries({ 'default-declaration': defaults('obsidian-links@1.13.7').declaration, 'default-settings': defaults('obsidian-links@1.13.7'), 'crosswalker-like-declaration': declaration, facts, 'graph-projection-v0': aggregate })) {
+for (const [name, value] of Object.entries({ 'default-declaration': defaults('obsidian-links@1.13.7').declaration, 'default-settings': defaults('obsidian-links@1.13.7'), 'concept-mapping-declaration': declaration, facts, 'graph-projection-v0': aggregate })) {
   await writeFile(`examples/${name}.json`, JSON.stringify(value, null, 2) + '\n');
 }

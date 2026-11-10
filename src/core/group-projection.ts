@@ -14,10 +14,14 @@ function counts(v: unknown): asserts v is Record<string, number> {
   if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('Expected a type-count object');
   for (const n of Object.values(v)) if (!Number.isSafeInteger(n) || n < 0) throw new Error('Type counts must be nonnegative integers');
 }
-export function validateGroupProjection(v: unknown): asserts v is GroupProjection {
+export interface ProjectionLimits { groups: number; pairs: number; carriers: number }
+export function validateGroupProjection(v: unknown, limits: ProjectionLimits = { groups: 0, pairs: 0, carriers: 0 }): asserts v is GroupProjection {
   if (!v || typeof v !== 'object') throw new Error('Projection must be an object');
   const p = v as GroupProjection;
   if (!Array.isArray(p.groups) || !Array.isArray(p.groupEdges)) throw new Error('Projection requires groups and groupEdges arrays');
+  if (limits.groups > 0 && p.groups.length > limits.groups) throw new Error(`Projection group limit exceeded (${limits.groups})`);
+  if (limits.pairs > 0 && p.groupEdges.length > limits.pairs) throw new Error(`Projection pair limit exceeded (${limits.pairs})`);
+  let carrierCount = 0;
   if (p.schema !== undefined && typeof p.schema !== 'string') throw new Error('schema must be a string');
   if (p.producer !== undefined && (!p.producer || ['name', 'projection', 'asOf'].some(k => typeof p.producer![k as keyof typeof p.producer] !== 'string'))) throw new Error('Invalid producer');
   const ids = new Set<string>();
@@ -30,12 +34,15 @@ export function validateGroupProjection(v: unknown): asserts v is GroupProjectio
   for (const e of p.groupEdges) {
     const key = JSON.stringify([e?.a, e?.b].sort());
     if (!e || !ids.has(e.a) || !ids.has(e.b) || pairs.has(key) || !e.carriers || typeof e.carriers.kind !== 'string' || !Array.isArray(e.carriers.ids) || e.carriers.ids.some(c => typeof c !== 'string')) throw new Error('Invalid or duplicate group edge');
+    carrierCount += e.carriers.ids.length;
+    if (limits.carriers > 0 && carrierCount > limits.carriers) throw new Error(`Projection carrier limit exceeded (${limits.carriers})`);
     counts(e.typeCounts);
     if (!Number.isSafeInteger(e.total) || e.total !== Object.values(e.typeCounts).reduce((a, b) => a + b, 0)) throw new Error('Edge total must equal type counts');
     if (e.directional !== undefined) {
       counts(e.directional.aToB); counts(e.directional.bToA);
       const types = new Set([...Object.keys(e.typeCounts), ...Object.keys(e.directional.aToB), ...Object.keys(e.directional.bToA)]);
-      for (const type of types) if ((e.directional.aToB[type] ?? 0) + (e.directional.bToA[type] ?? 0) !== (e.typeCounts[type] ?? 0)) throw new Error('Directional counts must sum to type counts');
+      const own = (counts: Record<string, number>, type: string) => Object.hasOwn(counts, type) ? counts[type]! : 0;
+      for (const type of types) if (own(e.directional.aToB, type) + own(e.directional.bToA, type) !== own(e.typeCounts, type)) throw new Error('Directional counts must sum to type counts');
     }
     pairs.add(key);
   }
@@ -44,7 +51,7 @@ export interface GroupContribution { source: string; target: string; type: strin
 export const pairKey = (a: string, b: string) => JSON.stringify([a, b].sort());
 export function contractGroups(p: Projection, visible: Uint8Array, level = 0): { projection: GroupProjection; contributions: Map<string, GroupContribution[]>; members: Map<string, number[]> } {
   const source = p.groups[level] ?? { values: ['All notes'], codes: new Uint32Array(p.paths.length) };
-  const groups = source.values.map((label, id) => ({ id: String(id), label: label.startsWith('"') ? JSON.parse(label) as string : label, count: 0 }));
+  const groups = source.values.map((label, id) => { let display = label; if ('encoded' in source && source.encoded) { try { const parsed: unknown = JSON.parse(label); if (typeof parsed === 'string') display = parsed; } catch { /* Missing-property sentinel is not JSON. */ } } return { id: String(id), label: display, count: 0 }; });
   const members = new Map<string, number[]>(), contributions = new Map<string, GroupContribution[]>();
   for (let i = 0; i < p.paths.length; i++) if (visible[i]) { const g = groups[source.codes[i]!]!; g.count++; const m = members.get(g.id); if (m) m.push(i); else members.set(g.id, [i]); }
   const pairs = new Map<string, GroupProjection['groupEdges'][number]>();
@@ -63,8 +70,21 @@ export function contractGroups(p: Projection, visible: Uint8Array, level = 0): {
   return { projection: { groups: groups.filter(g => g.count), groupEdges: [...pairs.values()] }, contributions, members };
 }
 /** Null means absent or ambiguous; no body reads, naming heuristics or ontology-specific keys. */
-export function resolveCarrier(rows: readonly FactRow[], d: GraphDeclaration, kind: string, id: string): string | null {
+export function indexCarriers(rows: Iterable<FactRow>, d: GraphDeclaration): Map<string, Map<string, string | null>> {
+  const lookup = new Map((d.carrierResolvers ?? []).map(r => [r.kind, new Map<string, string | null>()]));
+  for (const row of rows) for (const resolver of d.carrierResolvers ?? []) {
+    const value = resolver.key === '$path' ? row.path : row.properties[resolver.key];
+    if (value === undefined) continue;
+    const index = lookup.get(resolver.kind)!, id = String(value);
+    index.set(id, index.has(id) ? null : row.path);
+  }
+  return lookup;
+}
+export function resolveCarrier(rows: Iterable<FactRow>, d: GraphDeclaration, kind: string, id: string): string | null {
   const resolver = d.carrierResolvers?.find(r => r.kind === kind); if (!resolver) return null;
-  const matches = rows.filter(r => resolver.key === '$path' ? r.path === id : r.properties[resolver.key] !== undefined && String(r.properties[resolver.key]) === id);
-  return matches.length === 1 ? matches[0]!.path : null;
+  let match: string | null = null;
+  for (const row of rows) if (resolver.key === '$path' ? row.path === id : row.properties[resolver.key] !== undefined && String(row.properties[resolver.key]) === id) {
+    if (match !== null) return null; match = row.path;
+  }
+  return match;
 }

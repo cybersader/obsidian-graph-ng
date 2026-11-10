@@ -69,7 +69,13 @@ export class GroupRenderer implements Renderer {
     ctx.scale(dpr, dpr); ctx.fillStyle = this.s.backgroundColor; ctx.fillRect(0, 0, w, h);
     this.nodes.clear(); this.edges = [];
     const radius = Math.max(0, Math.min(w, h) / 2 - this.s.groupRadius - this.s.groupRingPadding);
-    this.p.groups.forEach((g, i) => { const angle = i / Math.max(1, this.p.groups.length) * Math.PI * 2 - Math.PI / 2; this.nodes.set(g.id, { x: w / 2 + Math.cos(angle) * radius, y: h / 2 + Math.sin(angle) * radius }); });
+    this.p.groups.forEach((g, i) => {
+      const angle = i / Math.max(1, this.p.groups.length) * Math.PI * 2 - Math.PI / 2;
+      const columns = Math.ceil(Math.sqrt(this.p.groups.length)), rows = Math.ceil(this.p.groups.length / columns);
+      this.nodes.set(g.id, h < 420 || this.p.groups.length > 8 ? { x: (i % columns + 0.5) * w / columns, y: (Math.floor(i / columns) + 0.5) * h / rows - this.s.labelSize } : { x: w / 2 + Math.cos(angle) * radius, y: h / 2 + Math.sin(angle) * radius });
+    });
+    const reserved = [...this.nodes.values()].map(p => ({ x: p.x - this.s.groupRadius - 4, y: p.y - this.s.groupRadius - 4, w: this.s.groupRadius * 2 + 8, h: this.s.groupRadius * 2 + this.s.labelSize * 3 + 12 }));
+    const edgeLabels: { text: string; x: number; box: { x: number; y: number; w: number; h: number } }[] = [];
     for (const edge of this.p.groupEdges) {
       const a = this.nodes.get(edge.a), b = this.nodes.get(edge.b); if (!a || !b) continue;
       const weight = Object.values(edge.typeCounts).reduce((x, y) => x + y, 0), points: Point[] = [];
@@ -77,19 +83,32 @@ export class GroupRenderer implements Renderer {
       ctx.beginPath();
       for (let j = 0; j <= this.s.groupCurveSamples; j++) { const t = j / this.s.groupCurveSamples; const p = edge.a === edge.b ? { x: a.x + Math.sin(t * Math.PI * 2) * this.s.groupRadius * this.s.groupLoopScale, y: a.y - this.s.groupRadius + (Math.cos(t * Math.PI * 2) - 1) * this.s.groupRadius } : { x: (1 - t) ** 2 * a.x + 2 * (1 - t) * t * cx + t * t * b.x, y: (1 - t) ** 2 * a.y + 2 * (1 - t) * t * cy + t * t * b.y }; points.push(p); if (!j) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); }
       ctx.strokeStyle = this.s.edgeColor; ctx.lineWidth = this.s.edgeWidthScale * Math.max(1, Math.log2(weight + 1)); ctx.stroke();
-      const mid = points[Math.floor(this.s.groupCurveSamples / 2)]!; ctx.font = `${this.s.labelSize}px sans-serif`; ctx.textAlign = 'center';
+      ctx.font = `${this.s.labelSize}px sans-serif`; ctx.textAlign = 'center';
       const label = weight.toLocaleString(), textWidth = ctx.measureText(label).width;
-      ctx.fillStyle = this.s.backgroundColor; ctx.fillRect(mid.x - textWidth / 2 - 3, mid.y - this.s.labelSize, textWidth + 6, this.s.labelSize + 5);
-      ctx.fillStyle = this.s.textColor; ctx.fillText(label, mid.x, mid.y);
+      const candidates = [0.5, 0.35, 0.65, 0.2, 0.8].map(t => points[Math.floor(this.s.groupCurveSamples * t)]!);
+      for (const mid of candidates) {
+        const box = { x: mid.x - textWidth / 2 - 3, y: Math.max(3, mid.y - this.s.labelSize), w: textWidth + 6, h: this.s.labelSize + 5 };
+        if (box.x < 0 || box.x + box.w > w || box.y + box.h > h || reserved.some(r => box.x < r.x + r.w && box.x + box.w > r.x && box.y < r.y + r.h && box.y + box.h > r.y)) continue;
+        edgeLabels.push({ text: label, x: mid.x, box }); reserved.push(box); break;
+      }
       this.edges.push({ edge, points });
+    }
+    // Labels are a separate final pass, so later paths cannot strike through earlier counts.
+    ctx.font = `${this.s.labelSize}px sans-serif`; ctx.textAlign = 'center';
+    for (const label of edgeLabels) {
+      ctx.fillStyle = this.s.backgroundColor; ctx.fillRect(label.box.x, label.box.y, label.box.w, label.box.h);
+      ctx.fillStyle = this.s.textColor; ctx.fillText(label.text, label.x, label.box.y + this.s.labelSize);
     }
     for (const g of this.p.groups) {
       const p = this.nodes.get(g.id)!;
       ctx.beginPath(); ctx.arc(p.x, p.y, this.s.groupRadius, 0, Math.PI * 2); ctx.fillStyle = this.s.declaration.colors.find(c => c.name === g.label)?.color ?? this.s.groupColor; ctx.fill();
       ctx.font = `600 ${this.s.labelSize}px sans-serif`; ctx.textAlign = 'center';
-      const countLabel = `${g.count.toLocaleString()} members`, labelWidth = Math.max(ctx.measureText(g.label).width, ctx.measureText(countLabel).width);
+      const countLabel = `${g.count.toLocaleString()} members`, maxWidth = Math.min(180, w / Math.max(2, Math.ceil(Math.sqrt(this.p.groups.length))) - 12);
+      let title = g.label; while (title.length > 1 && ctx.measureText(title + '…').width > maxWidth) title = title.slice(0, -1);
+      if (title !== g.label) title += '…';
+      const labelWidth = Math.max(ctx.measureText(title).width, ctx.measureText(countLabel).width);
       ctx.fillStyle = this.s.backgroundColor; ctx.fillRect(p.x - labelWidth / 2 - 4, p.y + this.s.groupRadius + 4, labelWidth + 8, this.s.labelSize * 3);
-      ctx.fillStyle = this.s.textColor; ctx.fillText(g.label, p.x, p.y + this.s.groupRadius + this.s.labelSize * 1.5);
+      ctx.fillStyle = this.s.textColor; ctx.fillText(title, p.x, p.y + this.s.groupRadius + this.s.labelSize * 1.5);
       ctx.font = `${this.s.labelSize}px sans-serif`; ctx.fillText(countLabel, p.x, p.y + this.s.groupRadius + this.s.labelSize * 2.8);
     }
   }
