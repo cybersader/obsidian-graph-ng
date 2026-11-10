@@ -1,0 +1,75 @@
+{
+  "declaration": {
+    "version": 1,
+    "identity": [],
+    "edges": [
+      {
+        "name": "links",
+        "kind": "producer",
+        "producer": "obsidian-links@1.13.7",
+        "type": "link"
+      }
+    ],
+    "groups": [
+      {
+        "from": "folder",
+        "depth": 1
+      }
+    ],
+    "display": {
+      "reifiedAsNodes": false
+    },
+    "columns": [],
+    "colors": [],
+    "carrierResolvers": [
+      {
+        "kind": "note-path",
+        "key": "$path"
+      }
+    ]
+  },
+  "layout": {
+    "iterations": 100,
+    "relaxIterations": 30,
+    "initialRadius": 100,
+    "seed": 1,
+    "force": {
+      "linLogMode": false,
+      "outboundAttractionDistribution": false,
+      "adjustSizes": false,
+      "edgeWeightInfluence": 1,
+      "scalingRatio": 2,
+      "strongGravityMode": false,
+      "gravity": 1,
+      "slowDown": 1,
+      "barnesHutOptimize": true,
+      "barnesHutTheta": 1.2
+    }
+  },
+  "debounceMs": 5000,
+  "workerTimeoutMs": 120000,
+  "lodZoomRatio": 1.8,
+  "groupLevel": 0,
+  "nodeSize": 3,
+  "edgeSize": 0.5,
+  "labelSize": 13,
+  "groupRadius": 26,
+  "groupCurveDivisor": 5,
+  "groupEdgeHitRadius": 6,
+  "groupCurveSamples": 32,
+  "groupLoopScale": 1.5,
+  "groupRingPadding": 56,
+  "labelDensity": 1,
+  "labelGridCellSize": 100,
+  "labelRenderedSizeThreshold": 6,
+  "edgeWidthScale": 0.8,
+  "listPageSize": 100,
+  "backgroundColor": "#141b26",
+  "nodeColor": "#7fc8e7",
+  "edgeColor": "#43566e",
+  "groupColor": "#7fc8e7",
+  "textColor": "#edf4ff",
+  "persistLayout": true,
+  "cachedDeclarations": 1,
+  "projectionFile": ""
+}

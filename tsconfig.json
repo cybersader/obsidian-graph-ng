@@ -1,0 +1,1 @@
+{"compilerOptions":{"target":"ES2022","module":"ESNext","moduleResolution":"Bundler","lib":["ES2022","DOM","DOM.Iterable","WebWorker"],"strict":true,"noUncheckedIndexedAccess":true,"skipLibCheck":true,"esModuleInterop":true,"types":["bun","node","mocha","@wdio/globals/types","wdio-obsidian-service"]},"include":["src/**/*.ts","tests/**/*.ts","scripts/**/*.ts","wdio.conf.mts"]}

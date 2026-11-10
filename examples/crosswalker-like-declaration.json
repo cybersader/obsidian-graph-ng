@@ -1,0 +1,99 @@
+{
+  "carrierResolvers": [
+    {
+      "kind": "note-path",
+      "key": "$path"
+    },
+    {
+      "kind": "mapping-id",
+      "key": "id"
+    }
+  ],
+  "version": 1,
+  "identity": [
+    {
+      "key": "id"
+    }
+  ],
+  "edges": [
+    {
+      "name": "mapping",
+      "kind": "reified",
+      "sourceKey": "subject_id",
+      "targetKey": "object_id",
+      "typeKey": "predicate"
+    }
+  ],
+  "groups": [
+    {
+      "from": "key",
+      "key": "family"
+    },
+    {
+      "from": "folder",
+      "depth": 1
+    }
+  ],
+  "display": {
+    "reifiedAsNodes": false
+  },
+  "columns": [
+    "family"
+  ],
+  "colors": [
+    {
+      "name": "Family 1",
+      "color": "#56b4e9",
+      "predicate": {
+        "kind": "eq",
+        "key": "family",
+        "value": "Family 1"
+      }
+    },
+    {
+      "name": "Family 2",
+      "color": "#e69f00",
+      "predicate": {
+        "kind": "eq",
+        "key": "family",
+        "value": "Family 2"
+      }
+    },
+    {
+      "name": "Family 3",
+      "color": "#009e73",
+      "predicate": {
+        "kind": "eq",
+        "key": "family",
+        "value": "Family 3"
+      }
+    },
+    {
+      "name": "Family 4",
+      "color": "#cc79a7",
+      "predicate": {
+        "kind": "eq",
+        "key": "family",
+        "value": "Family 4"
+      }
+    },
+    {
+      "name": "Family 5",
+      "color": "#d5c85d",
+      "predicate": {
+        "kind": "eq",
+        "key": "family",
+        "value": "Family 5"
+      }
+    },
+    {
+      "name": "Family 6",
+      "color": "#9caac2",
+      "predicate": {
+        "kind": "eq",
+        "key": "family",
+        "value": "Family 6"
+      }
+    }
+  ]
+}

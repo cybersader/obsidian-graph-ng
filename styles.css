@@ -1,0 +1,12 @@
+.graph-ng-view { display:flex; flex-direction:column; gap:8px; height:100%; overflow:hidden; }
+.graph-ng-toolbar { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+.graph-ng-toolbar input { flex:1; min-width:180px; }
+.graph-ng-stage { position:relative; flex:1 1 300px; min-height:220px; background:#141b26; border-radius:8px; overflow:hidden; }
+.graph-ng-status { font-size:var(--font-ui-small); color:var(--text-muted); }
+.graph-ng-panel { max-height:30%; overflow:auto; flex:0 1 auto; }
+.graph-ng-group-controls { display:flex; flex-wrap:wrap; gap:6px; padding:4px 0; }
+.graph-ng-edge,.graph-ng-member,.graph-ng-carrier { display:block; margin:4px 0; max-width:100%; white-space:normal; height:auto; text-align:left; }
+.graph-ng-contribution { padding:4px; border-bottom:1px solid var(--background-modifier-border); overflow-wrap:anywhere; }
+.graph-ng-json { width:100%; min-height:260px; font-family:var(--font-monospace); font-size:12px; }
+.graph-ng-tooltip { position:absolute; pointer-events:none; color:#edf4ff; background:#141b26; padding:5px; border-radius:3px; max-width:80%; z-index:2; }
+.graph-ng-tooltip:empty { display:none; }
