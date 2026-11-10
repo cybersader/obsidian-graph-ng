@@ -8,6 +8,6 @@ if [[ $# -eq 0 ]]; then
 fi
 if [[ $1 == install ]]; then
   shift
-  exec flock /tmp/obsidian-graph-ng-build.lock build-contained -- bun install "$@"
+  exec flock /tmp/openclast-local-verification.lock build-contained -- bun install --ignore-scripts "$@"
 fi
-exec flock /tmp/obsidian-graph-ng-build.lock build-contained -- bun run "$@"
+exec flock /tmp/openclast-local-verification.lock build-contained -- bun run "$@"

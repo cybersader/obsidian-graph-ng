@@ -18,7 +18,7 @@ Software renderers such as SwiftShader/llvmpipe, major performance caveats, miss
 
 The default declaration has no identity property, no ontology rules, no predefined colors, and no reified-note keys. It uses literal note paths as identities, top-level folders as groups, and the public Obsidian resolved-link producer. Its producer name is pinned to `obsidian-links@<apiVersion>`; this identifies the host link resolver, not a new Markdown parser. A declaration copied from another version must explicitly update that pin.
 
-See [`examples/default-declaration.json`](examples/default-declaration.json), [`examples/default-settings.json`](examples/default-settings.json), and [`examples/concept-mapping-declaration.json`](examples/concept-mapping-declaration.json). The concept/mapping declaration is **only an example**, not a special adapter or a core assumption. One possible use is a Crosswalker-like mapping vault. Its synthetic concepts have `id` and `family`; mapping notes have `subject_id`, `object_id`, and `predicate`.
+See [`examples/default-declaration.json`](examples/default-declaration.json), [`examples/default-settings.json`](examples/default-settings.json), and [`examples/concept-mapping-declaration.json`](examples/concept-mapping-declaration.json). The concept/mapping declaration is **only an example**, not a special adapter or a core assumption. One possible use is a generic concept/reference mapping vault. Its synthetic concepts have `id` and `family`; mapping notes have `subject_id`, `object_id`, and `predicate`.
 
 Declaration v1 supports:
 
@@ -117,6 +117,10 @@ Bun, Node.js, `flock`, and the host’s `build-contained` wrapper are prerequisi
 | Task | Command |
 | --- | --- |
 | Dependencies | `./scripts/run.sh install --frozen-lockfile` |
+| Full deterministic gates | `./scripts/run.sh gates` |
+| Install opt-in pre-commit hook | `./scripts/install-hooks.sh` |
+| Local checksummed release | `./scripts/run.sh release:local` |
+| Repeat-build comparison | `./scripts/verify-release.sh` |
 | Runtime license gate | `./scripts/run.sh licenses` |
 | Typecheck + bundled plugin/worker | `./scripts/run.sh build` |
 | Deterministic unit subset | `./scripts/run.sh test` |
@@ -131,6 +135,8 @@ Bun, Node.js, `flock`, and the host’s `build-contained` wrapper are prerequisi
 | Actual-renderer browser benchmark | `./scripts/run.sh bench:browser` |
 
 `CHROME_BIN` optionally selects an existing Chrome executable for the browser benchmark. Fixtures, generated bundles, screenshots, cached app binaries, raw receipts, and `.workspace/` worklogs are ignored. Fixture generation writes only the named synthetic small/large destinations; regenerate a matching mode before its native invocation. Never aim this generator at personal vaults.
+
+Installations explicitly disable lifecycle scripts. Configure local private terms before full gates; the fast hook is opt-in. See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), [AGENTS.md](AGENTS.md), [changelog](CHANGELOG.md), [declaration v1](docs/declaration-format.md), [projection v0 draft](docs/projection-format.md), [benchmark methodology](docs/benchmarks.md), [decisions](docs/decisions/README.md), [local releasing](docs/releasing.md), and the [pre-publish checklist](docs/publish-checklist.md). This remains a local repository; no release URL or public install path is configured.
 
 ## Measured evidence — 2026-11-10
 

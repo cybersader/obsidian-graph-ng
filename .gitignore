@@ -6,3 +6,5 @@ main.js
 layout-worker.js
 .obsidian-cache/
 *.log
+release/
+private-terms

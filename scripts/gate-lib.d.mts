@@ -1,0 +1,11 @@
+export const root: string;
+export function git(args: string[], cwd?: string): string;
+export function sourceFiles(cwd?: string): string[];
+export function screenshotFiles(cwd?: string): string[];
+export function readSource(file: string, cwd?: string): string;
+export function privateTerms(text: string): string[];
+export function containsPrivate(text: string, terms: string[]): boolean;
+export function containsSecret(text: string): boolean;
+export function containsAttribution(text: string): boolean;
+export const installHooks: string[];
+export function lifecycleHooks(pkg: { scripts?: Record<string, string> }): Record<string, string>;

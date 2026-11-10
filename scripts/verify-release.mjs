@@ -1,0 +1,12 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { root } from './gate-lib.mjs';
+const parent = path.join(root, '.workspace/reproducibility');
+fs.mkdirSync(parent, { recursive: true });
+const run = fs.mkdtempSync(path.join(parent, 'run-'));
+for (const name of ['first', 'second']) execFileSync(process.execPath, ['scripts/release.mjs', '--out', path.join(run, name)], { cwd: root, stdio: 'inherit' });
+const a = path.join(run, 'first'), b = path.join(run, 'second');
+if (JSON.stringify(fs.readdirSync(a).sort()) !== JSON.stringify(fs.readdirSync(b).sort())) throw new Error('Release file set differs');
+for (const name of fs.readdirSync(a)) if (!fs.readFileSync(path.join(a, name)).equals(fs.readFileSync(path.join(b, name)))) throw new Error(`Reproducibility failed: ${name}`);
+console.log('PASS reproducibility: two independent local builds, identical complete asset bytes and SHA256SUMS. Evidence retained in .workspace/reproducibility/.');

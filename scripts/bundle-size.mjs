@@ -1,0 +1,10 @@
+import fs from 'node:fs';
+import { gzipSync, brotliCompressSync } from 'node:zlib';
+import { createHash } from 'node:crypto';
+import { root, git } from './gate-lib.mjs';
+import path from 'node:path';
+const bytes = fs.readFileSync(path.join(root, 'main.js'));
+const report = { commit: git(['rev-parse', 'HEAD']).trim(), bytes: bytes.length, gzipBytes: gzipSync(bytes, { level: 9 }).length, brotliBytes: brotliCompressSync(bytes).length, sha256: createHash('sha256').update(bytes).digest('hex'), policy: 'Report only; no size ceiling. Run build first for current-source evidence.' };
+fs.mkdirSync(path.join(root, '.workspace/evidence'), { recursive: true });
+fs.writeFileSync(path.join(root, '.workspace/evidence/bundle-size.json'), JSON.stringify(report, null, 2) + '\n');
+console.log(JSON.stringify(report, null, 2));
