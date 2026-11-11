@@ -3,7 +3,7 @@
 import { build } from 'esbuild';
 import { expressionBuild } from './expression-build.mjs';
 import { mkdir, writeFile, readFile } from 'node:fs/promises';
-import { exampleDeclaration, fixture } from './fixture';
+import { expressionFixture } from './fixture';
 import { packRows } from '../src/core/columns';
 import { DEFAULT_LAYOUT } from '../src/core/layout-options';
 const shared = await expressionBuild();
@@ -25,8 +25,9 @@ async function request(w: Worker, data: any): Promise<any> {
     w.postMessage({ id, revision: 1, ...data });
   });
 }
-const w = worker(timed), d = { ...exampleDeclaration, display: { reifiedAsNodes: true } };
-const rows = fixture(), expr = 'file.inFolder("Concepts") && note.family == "Family 1" && node.degree > 1';
+const { rows, declaration } = expressionFixture();
+const w = worker(timed), d = { ...declaration, display: { reifiedAsNodes: true } };
+const expr = 'file.inFolder("Concepts") && note.category == "Category 1" && node.degree > 1';
 const receipt: Record<string, any> = { fixture: 'uniform seed 17, literal display, 60600 notes', worker: 'minified production layout-worker IIFE in a Blob worker (Bun runtime)', expressions: { normal: expr }, repetitions: 7, warmup: 2, normalMs: [] };
 try {
   await request(w, { kind: 'configure', config: { declaration: d, layout: DEFAULT_LAYOUT, source: 'synthetic/expr', groupLevel: 0, streamEveryIterations: 5 } });

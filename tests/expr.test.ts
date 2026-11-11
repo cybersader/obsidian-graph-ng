@@ -261,3 +261,98 @@ test('callable docs and autocomplete derive from the parser/checker inventory', 
  const doc = await readFile('docs/declaration-format.md', 'utf8');
  for (const [name, [min, max, result, scope]] of Object.entries(FUNCTIONS)) expect(doc).toContain(`| \`${name}\` | ${scope} | ${min === max ? min : `${min}–${max}`} | ${result} |`);
 });
+
+// Review B1: path reads count nested evaluations deterministically, not by wall clock.
+test('mixed inFolder nesting evaluates its child once per row at every depth', async () => {
+  const rows = Array.from({ length: 2000 }, (_, i) => ({ path: `A/${i}.md`, properties: { x: i % 2 === 0 } }));
+  const p = buildProjection(rows, { ...defaultDeclaration('test@1'), columns: ['x'] });
+  const receipt: unknown[] = [];
+  for (const depth of [4, 8, 10, 12, 14, 15]) {
+    let text = 'note.x'; for (let j = 0; j < depth; j++) text = `file.inFolder(if(${text}, "A", "B"))`;
+    let reads = 0;
+    const paths = new Proxy(p.paths, { get(target, key, receiver) { if (typeof key === 'string' && key !== 'length' && Number.isInteger(Number(key))) reads++; return Reflect.get(target, key, receiver); } });
+    const kernel = compile(checked(text, 'filter'), { ...p, paths }); reads = 0;
+    for (let i = 0; i < p.paths.length; i++) expect(kernel.at(i)).toBe(Number(p.paths[i]!.split("/")[1]!.split(".")[0]) % 2 === 0);
+    expect(reads).toBe(rows.length * depth);
+    const start = performance.now(); expressionFilter(p, checked(text, 'filter'));
+    receipt.push({ depth, rows: rows.length, pathReads: reads, milliseconds: performance.now() - start });
+  }
+  await mkdir('.workspace/evidence', { recursive: true }); await writeFile('.workspace/evidence/expression-nesting.json', JSON.stringify(receipt, null, 2) + '\n');
+});
+
+test('identifier tokens have positioned 128-unit caps without capping legacy AST keys', () => {
+  const key = 'a'.repeat(EXPR_LIMITS.identifier);
+  expect(validate(`note.${key}`).ok).toBe(true);
+  const invalid = validate(`note.${key}a`); expect(invalid.ok).toBe(false); expect(invalid.errors[0]!.pos).toBe(5); expect(invalid.errors[0]!.message).toContain('128');
+  expect(validate('note.' + 'a'.repeat(2000)).ok).toBe(false);
+  for (const name of [key + 'a', 'a'.repeat(EXPR_LIMITS.string)]) {
+    const source = `note["${name}"]`; expect(validate(source).ok).toBe(true);
+    expect(print(checked(source))).toBe(source); expect(validate(print(checked(source))).ok).toBe(true);
+    expect(suggestions('', [name])).toContain(source);
+  }
+  expect(lowerPredicate({ kind: 'eq', key: 'a'.repeat(2000), value: 1 }).kind).toBe('op');
+});
+
+test('escaped quote and backslash payloads chunk by JSON length and round-trip exactly', () => {
+  const safe = (v: unknown): void => {
+    if (typeof v === 'string') expect(/\S{32,}/.test(JSON.stringify(v) + ',')).toBe(false);
+    else if (Array.isArray(v)) v.forEach(safe);
+    else if (v && typeof v === 'object') Object.values(v).forEach(safe);
+  };
+  for (const value of ['x'.repeat(29), '"'.repeat(16), '\\'.repeat(16), '"'.repeat(40), '\\'.repeat(40), '\\"'.repeat(40), '\u0001'.repeat(40), '😀'.repeat(40)]) {
+    // JSON.stringify emits a valid expression literal, including doubled backslashes.
+    const expr = `note.k == ${JSON.stringify(value)}`, s = defaults('test@1');
+    // The language deliberately refuses the JSON short escape for some controls.
+    if (!validate(expr, 'filter').ok) { safe(encodeText(value)); continue; }
+    s.declaration.colors = [{ name: 'Escapes', color: '#123456', predicate: { kind: 'expr', expr } }];
+    s.declaration.groups = [{ from: 'expr', expr: `if(${expr}, 1, 0)` }];
+    s.explore.view.filters = [{ kind: 'expr', expr }];
+    s.explore.savedViews = [{ name: value, view: s.explore.view, camera: null }];
+    const stored = settingsForSave(s);
+    const fields = [(stored.declaration.colors[0]!.predicate as any).expr, (stored.declaration.groups[0] as any).expr, stored.explore];
+    fields.forEach(safe);
+    for (const field of fields.slice(0, 2)) expect(/\S{32,}/.test(JSON.stringify(field, null, 2))).toBe(false);
+    const loaded = upgradeSettings(JSON.parse(JSON.stringify(stored)), 'test@1');
+    expect(loaded.declaration.colors).toEqual(s.declaration.colors); expect(loaded.declaration.groups).toEqual(s.declaration.groups);
+    expect(loaded.explore).toEqual(s.explore);
+  }
+  // R3 excludes schema keys and pre-existing legacy declarations from the guard.
+  const legacy = defaults('test@1'); legacy.declaration.colors = [{ name: 'Legacy', color: '#123456', predicate: { kind: 'eq', key: 'k', value: 'x'.repeat(100000) } }];
+  expect(upgradeSettings(settingsForSave(legacy), 'test@1').declaration.colors).toEqual(legacy.declaration.colors);
+});
+
+test('operation-produced labels preserve legacy string collisions, raw groups remain typed', () => {
+  const p = buildProjection([{ path: 'A.md', properties: { k: 1 } }, { path: 'B.md', properties: { k: '1' } }], { ...defaultDeclaration('test@1'), columns: ['k'] });
+  const raw = expressionGroup(p, checked('note.k')), operated = expressionGroup(p, checked('coalesce(note.k)'));
+  expect(raw.codes[0]).not.toBe(raw.codes[1]); expect(operated.codes[0]).toBe(operated.codes[1]); expect(operated.values).toEqual(['1']);
+});
+
+test('preview and member requests cannot supersede a packaged applied explore view', async () => {
+  const { p, worker, n } = await cancellationFixture();
+  try {
+    let acknowledge!: () => void; const started = new Promise<void>(resolve => { acknowledge = resolve; }), original = worker.onmessage!;
+    worker.onmessage = event => { original.call(worker, event); if (event.data.kind === 'started') acknowledge(); };
+    const view = { ...emptyView(), group: { from: 'expr' as const, expr: '"applied"' }, filters: [{ kind: 'expr' as const, expr: expensiveExpression(true) }] };
+    const applied = p.request<any>(1, { kind: 'explore', view, facetValues: 50 });
+    await started;
+    const count = p.request<any>(1, { kind: 'expression-count', expr: 'true', context: 'filter' });
+    const members = p.request<any>(1, { kind: 'members', group: '0', view: 2 });
+    const result = await applied; expect(result.view).toBe(2); expect(result.explore.matched).toBe(n);
+    expect(await count).toEqual({ matched: n, total: n }); expect((await members).length).toBe(n);
+    const detail = await p.request<any>(1, { kind: 'detail' }); expect(detail.view).toBe(2); expect(detail.explore.groupKeys).toEqual(['applied']);
+  } finally { p.dispose(); }
+});
+
+test('raw packaged worker supersedes within kind only, including queued evaluations', async () => {
+  const { p, worker, n } = await cancellationFixture();
+  try {
+    const original = worker.onmessage!, pending = new Map<number, { resolve(v: any): void; reject(e: Error): void }>();
+    worker.onmessage = event => { if (event.data.id < 100) { original.call(worker, event); return; } if (event.data.kind) return; const waiter = pending.get(event.data.id); if (!waiter) return; pending.delete(event.data.id); event.data.error ? waiter.reject(new Error(event.data.error)) : waiter.resolve(event.data.result); };
+    const send = (id: number, request: object) => new Promise<any>((resolve, reject) => { pending.set(id, { resolve, reject }); worker.postMessage({ id, revision: 1, ...request }); });
+    const applied = send(100, { kind: 'explore', view: { ...emptyView(), filters: [{ kind: 'expr', expr: expensiveExpression(true) }] }, facetValues: 50 });
+    const oldCount = send(101, { kind: 'expression-count', expr: expensiveExpression(), context: 'group' }).catch(String);
+    const latestCount = send(102, { kind: 'expression-count', expr: 'true', context: 'filter' });
+    const detail = send(103, { kind: 'detail' });
+    expect((await applied).view).toBe(2); expect(await oldCount).toContain('Expression superseded'); expect(await latestCount).toEqual({ matched: n, total: n }); expect((await detail).view).toBe(2);
+  } finally { p.dispose(); }
+});

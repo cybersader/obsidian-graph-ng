@@ -63,14 +63,14 @@ export class WorkerPipeline {
     worker.onerror = e => { if (worker === this.worker && !this.closed) this.fail(new Error(e.message)); };
   }
   request<T>(revision: number, request: PipelineRequest): Promise<T> {
-    this.cancelEvaluation();
+    this.cancelEvaluation(request.kind);
     if (this.closed) return Promise.reject(new Error('Worker pipeline closed'));
     if (request.kind === 'expression-count' || request.kind === 'explore') this.pending = this.pending.filter(p => { if (p.request.kind !== request.kind) return true; p.reject(new Error('Expression superseded')); return false; });
     return new Promise((resolve, reject) => { this.pending.push({ id: ++this.next, revision, request, resolve, reject }); this.dispatch(); });
   }
   /** Bypass the serialized RPC queue only to stop cooperative expression work. */
-  cancelEvaluation() {
-    if (this.active && (this.active.request.kind === 'expression-count' || this.active.request.kind === 'explore')) {
+  cancelEvaluation(kind: PipelineRequest['kind']) {
+    if (this.active?.request.kind === kind && (this.active.request.kind === 'expression-count' || this.active.request.kind === 'explore')) {
       try { this.worker.postMessage({ kind: 'cancel-evaluation', id: this.active.id }, []); }
       catch (error) { this.fail(error instanceof Error ? error : new Error(String(error))); }
     }

@@ -45,3 +45,13 @@ export function clusteredFixture(concepts = 16000, mappings = 44600, seed = 17, 
 /** GRAPH_FIXTURE=clustered selects community structure; the default stays the historical uniform benchmark. */
 export const fixtureShape = (env = process.env.GRAPH_FIXTURE) => env === 'clustered' ? 'clustered' as const : 'uniform' as const;
 export const chooseFixture = (shape: 'clustered' | 'uniform') => shape === 'clustered' ? clusteredFixture : fixture;
+
+/** Neutral expression-only fixture; historical benchmark fixtures remain unchanged. */
+export function expressionFixture(concepts = 16000, mappings = 44600) {
+  const rows = fixture(concepts, mappings).map(row => {
+    const { family, ...properties } = row.properties;
+    return { ...row, path: row.path.replace('Family-', 'Category-'), properties: family === undefined ? properties : { ...properties, category: String(family).replace('Family ', 'Category ') } };
+  });
+  const declaration: GraphDeclaration = { ...exampleDeclaration, columns: ['category'], groups: [{ from: 'key', key: 'category' }, { from: 'folder', depth: 1 }], colors: exampleDeclaration.colors.map((c, i) => ({ ...c, name: `Category ${i + 1}`, predicate: { kind: 'eq', key: 'category', value: `Category ${i + 1}` } })) };
+  return { rows, declaration };
+}

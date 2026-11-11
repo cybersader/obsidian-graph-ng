@@ -461,7 +461,7 @@ export class GraphView extends ItemView {
         this.exploring = false; const next = this.exploreQueued; this.exploreQueued = undefined; if (next) void next();
       }
     };
-    if (this.exploring) { this.exploreQueued = run; this.plugin.pipeline.cancelEvaluation(); } else void run();
+    if (this.exploring) { this.exploreQueued = run; this.plugin.pipeline.cancelEvaluation('explore'); } else void run();
   }
   private async previewExpression(expr: string, context: 'filter' | 'group') {
     const revision = this.activeRevision;

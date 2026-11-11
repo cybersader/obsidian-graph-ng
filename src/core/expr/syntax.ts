@@ -1,6 +1,6 @@
 /** SPDX-License-Identifier: MIT
  * Bounded Bases-aligned expression syntax. No host imports or pattern engine. */
-export const EXPR_LIMITS = { text: 2048, nodes: 256, depth: 32, string: 256, input: 4096, list: 10000, references: 16 } as const;
+export const EXPR_LIMITS = { text: 2048, nodes: 256, depth: 32, identifier: 128, string: 256, input: 4096, list: 10000, references: 16 } as const;
 export type Value = undefined | null | boolean | number | string | (null | boolean | number | string)[];
 export type Ast = { kind: 'literal'; value: Value; pos: number } | { kind: 'ref'; space: 'note' | 'file' | 'node'; name: string; pos: number } | { kind: 'call'; name: string; args: Ast[]; receiver?: Ast; pos: number } | { kind: 'op'; name: string; args: Ast[]; pos: number };
 export class ExprError extends Error { constructor(message: string, readonly pos: number) { super(message); } }
@@ -45,6 +45,7 @@ function lex(source: string): Token[] {
     if (alpha(c)) {
       i++; while (alpha(source[i] ?? '') || digit(source[i] ?? '')) i++;
       const text = source.slice(pos, i);
+      if (text.length > EXPR_LIMITS.identifier) fail('Identifier exceeds 128 characters; use a bracket key', pos);
       if (blocked.includes(text)) fail(M.forbidden, pos);
       if (text === 'and' || text === 'or' || text === 'not') fail(`Use ${text === 'and' ? '&&' : text === 'or' ? '||' : '!'} instead of ${text}`, pos);
       tokens.push({ text, pos, type: 'ident' }); continue;
@@ -124,7 +125,7 @@ export const lit = (value: Value): Ast => ({ kind: 'literal', value, pos: 0 });
 export const ref = (space: 'note' | 'file' | 'node', name: string): Ast => ({ kind: 'ref', space, name, pos: 0 });
 export const call = (name: string, args: Ast[], receiver?: Ast): Ast => ({ kind: 'call', name, args, ...(receiver ? { receiver } : {}), pos: 0 });
 export const op = (name: string, args: Ast[]): Ast => ({ kind: 'op', name, args, pos: 0 });
-const identifier = (s: string) => Boolean(s) && alpha(s[0]!) && [...s].every(c => alpha(c) || digit(c)) && !blocked.includes(s);
+const identifier = (s: string) => Boolean(s) && s.length <= EXPR_LIMITS.identifier && alpha(s[0]!) && [...s].every(c => alpha(c) || digit(c)) && !blocked.includes(s);
 /** Print only required parentheses, preserving bounded unary depth and exact precedence. */
 const quote = (v: Value) => (JSON.stringify(v) ?? 'null').replaceAll('\\r', '\\u000d').replaceAll('\\b', '\\u0008').replaceAll('\\f', '\\u000c');
 export function print(n: Ast): string {

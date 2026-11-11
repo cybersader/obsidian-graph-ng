@@ -16,9 +16,16 @@ All notable changes are recorded here. The format follows Keep a Changelog; vers
 - Cooperative expression-count/applied-filter cancellation, configurable evaluation budgets, transactional worker view preparation, and a shared pure factory that avoids shipping duplicate core source.
 - Deterministic expression acceptance tests, a synthetic real-Obsidian editor lane, and bounded production-worker/adversarial benchmarks. Generic examples use category terminology.
 
+### Fixed
+
+- Mixed file/property folder predicates evaluate each child once per row, avoiding exponential nested work.
+- Preview/member reads no longer supersede applied views; pipeline and raw-worker cancellation are scoped by request kind.
+- Expression/view persistence chunks by JSON-escaped length and checks serialized payload strings, while retaining legacy declaration storage and its pre-existing scanner limitation.
+- Identifier tokens are capped at 128 units; expression fixtures use neutral category names. Operation-produced numeric/string label collisions are documented as legacy behavior; raw groups remain typed.
+
 ### Verification status
 
-- Bundle ceilings raised to 205,000 minified / 66,000 gzip bytes by owner decision (2026-11-11); 0.4.0 is 201,786 / 64,139 and passes. Independent review pending. Exact scoped results and unverified lanes are in `docs/benchmarks.md`.
+- Bundle ceilings raised to 205,000 minified / 66,000 gzip bytes by owner decision (2026-11-11); 0.4.0 is 202,475 / 64,312 and passes. Independent review returned SHIP-WITH-FIXES; its blockers now have regression fixes (no second independent review claimed). Exact scoped results and unverified lanes are in `docs/benchmarks.md`.
 
 ## [0.3.1] - 2026-11-11
 

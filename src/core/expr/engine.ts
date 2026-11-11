@@ -184,7 +184,10 @@ function* compileSteps(ast: Ast, p: Projection): Generator<void, Kernel> {
     }
     if (n.kind === 'call') {
       const children: Kernel[] = []; for (const a of n.args) children.push(yield* build(a)); const receiver = n.receiver ? yield* build(n.receiver) : undefined;
-      return { at: i => n.name === 'file.inFolder' ? typeof children[0]!.at(i) === 'string' && inFolder(p.paths[i]!, children[0]!.at(i) as string) : n.name === 'if' ? truth(children[0]!.at(i)) ? children[1]!.at(i) : children[2] ? children[2].at(i) : null : apply(n.name, children.map(c => c.at(i)), receiver?.at(i), Boolean(receiver)) };
+      return { at: i => {
+        if (n.name === 'file.inFolder') { const folder = children[0]!.at(i); return typeof folder === 'string' && inFolder(p.paths[i]!, folder); }
+        return n.name === 'if' ? truth(children[0]!.at(i)) ? children[1]!.at(i) : children[2] ? children[2].at(i) : null : apply(n.name, children.map(c => c.at(i)), receiver?.at(i), Boolean(receiver));
+      } };
     }
     return { at: i => evaluate(n, context(i)) };
   }

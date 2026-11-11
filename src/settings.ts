@@ -85,11 +85,16 @@ export function canonicalExplore(e: ExploreSettings): ExploreSettings {
 }
 /** Settings-sharing scanners refuse long whitespace-free runs. View state can hold
  * note-derived text (group keys, filter values, queries), so persisted `explore`
- * strings with such a run are written as `{"$text": [chunks ≤ 24]}` and joined on load.
+ * strings with such a run are written as `{"$text": [chunks ≤ 24 JSON-escaped units]}` and joined on load.
  * In-memory settings always hold plain strings. */
 const TEXT_CHUNK = 24, OPAQUE_RUN = /\S{32,}/;
 export function encodeText(v: unknown): unknown {
-  if (typeof v === 'string') { if (!OPAQUE_RUN.test(v)) return v; const parts: string[] = []; for (let i = 0; i < v.length; i += TEXT_CHUNK) parts.push(v.slice(i, i + TEXT_CHUNK)); return { $text: parts }; }
+  if (typeof v === 'string') {
+    if (!OPAQUE_RUN.test(JSON.stringify(v) + ',')) return v;
+    const parts: string[] = []; let part = '', length = 0;
+    for (const character of v) { const size = JSON.stringify(character).length - 2; if (length + size > TEXT_CHUNK) { parts.push(part); part = ''; length = 0; } part += character; length += size; }
+    if (part) parts.push(part); return { $text: parts };
+  }
   if (Array.isArray(v)) return v.map(encodeText);
   if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, c]) => [k, encodeText(c)]));
   return v;
@@ -105,11 +110,20 @@ export function decodeText(v: unknown): unknown {
 }
 /** The exact object written to data.json: settings only, explore text scanner-safe. */
 export const persistedSettings = (s: Settings) => ({ ...s, declaration: { ...s.declaration, groups: s.declaration.groups.map(g => g.from === 'expr' ? { ...g, expr: encodeText(g.expr) } : g), colors: s.declaration.colors.map(c => c.predicate.kind === 'expr' ? { ...c, predicate: { ...c.predicate, expr: encodeText(c.predicate.expr) } } : c) }, explore: encodeText(s.explore) });
-/** The only path to data.json: canonicalize, validate, encode. Throws instead of
- * writing anything a later load would reject (and quarantine as invalid). */
+// Include a possible trailing JSON comma when checking a serialized string token.
+function assertText(v: unknown): void {
+  if (typeof v === 'string') { if (OPAQUE_RUN.test(JSON.stringify(v) + ',')) throw new Error('Unsafe encoded text'); }
+  else if (Array.isArray(v)) v.forEach(assertText);
+  else if (v && typeof v === 'object') Object.values(v).forEach(assertText);
+}
+/** The only path to data.json: validate ordinary and encoded reload shapes. */
 export function settingsForSave(s: Settings) {
   const settings = { ...s, declaration: migrateDeclaration(s.declaration), explore: canonicalExplore(s.explore) };
   validateSettings(settings); const stored = persistedSettings(settings);
+  // Payload strings only: schema keys and legacy declaration fields are not migrated.
+  assertText(stored.explore);
+  for (const g of stored.declaration.groups) if (g.from === 'expr') assertText(g.expr);
+  for (const c of stored.declaration.colors) if (c.predicate.kind === 'expr') assertText(c.predicate.expr);
   // Encoding has its own shape bounds. Refuse a payload that our loader rejects.
   validateSettings({ ...settings, declaration: decodeText(stored.declaration), explore: decodeText(stored.explore) });
   if (new TextEncoder().encode(JSON.stringify({ settings: stored })).byteLength > defaults('producer@1').maxSettingsBytes) throw new Error('Settings byte limit exceeded');

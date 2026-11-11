@@ -308,3 +308,23 @@ test('cooperatively built carrier lookup keeps the synchronous duplicate-quarant
   expect(index.lookup).toEqual(indexCarriers(rows, d)); expect(yields).toBe(15);
   expect(index.lookup.get('opaque')!.get('opaque:0')).toBeNull();
 });
+
+
+test('cross-kind preview and members preserve active explore, same-kind requests cancel it', async () => {
+  const fake = fakeTransport(), p = new WorkerPipeline(fake.transport, () => 10000);
+  try {
+    const applied = p.request(1, { kind: 'explore', view: {} as any, facetValues: 5 });
+    fake.emit({ kind: 'started', id: 1, revision: 1 });
+    const count = p.request(1, { kind: 'expression-count', expr: 'true', context: 'filter' });
+    const members = p.request(1, { kind: 'members', group: 'g', view: 2 });
+    expect(fake.sent.map(m => m.kind)).toEqual(['explore']);
+    fake.emit({ id: 1, revision: 1, result: 'paint applied' }); expect(await applied).toBe('paint applied');
+    fake.emit({ id: 2, revision: 1, result: 'count' }); expect(await count).toBe('count');
+    fake.emit({ id: 3, revision: 1, result: 'members' }); expect(await members).toBe('members');
+    const old = p.request(1, { kind: 'explore', view: {} as any, facetValues: 5 }).catch(String);
+    const latest = p.request(1, { kind: 'explore', view: {} as any, facetValues: 5 });
+    expect(fake.sent.at(-1)).toEqual({ kind: 'cancel-evaluation', id: 4 });
+    fake.emit({ id: 4, revision: 1, error: 'Expression superseded' }); expect(await old).toContain('superseded');
+    fake.emit({ id: 5, revision: 1, result: 'paint latest' }); expect(await latest).toBe('paint latest');
+  } finally { p.dispose(); }
+});

@@ -171,21 +171,20 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
 }
 // Serialization prevents async digests/configuration from racing row deltas or newer revisions.
 let queue = Promise.resolve();
-let evaluationId: number | undefined;
+const evaluations = new Map<string, number>();
 const cancelled = new Set<number>();
 self.onmessage = (event: MessageEvent<PipelineRequest & { id: number; revision: number; input?: LayoutInput; options?: any }>) => {
   const recycle = event.data as unknown as { kind: string; buffer?: ArrayBuffer; id: number };
-  if (recycle.kind === 'cancel-evaluation') { if (recycle.id === evaluationId) cancelled.add(recycle.id); return; }
+  if (recycle.kind === 'cancel-evaluation') { if ([...evaluations.values()].includes(recycle.id)) cancelled.add(recycle.id); return; }
   if (recycle.kind === 'recycle') { if (recycle.buffer && recycled.length < 2) recycled.push(recycle.buffer); return; }
   // Backwards-compatible deterministic layout protocol used by existing harness consumers.
   if (event.data.input) { const start = performance.now(); try { const p = runLayout(event.data.input, event.data.options); self.postMessage({ positions: p, milliseconds: performance.now() - start }, { transfer: [p.buffer] }); } catch (error) { self.postMessage({ error: String(error) }); } return; }
   const r = event.data;
-  if (evaluationId !== undefined) cancelled.add(evaluationId);
-  if (r.kind === 'expression-count' || r.kind === 'explore') evaluationId = r.id;
+  if (r.kind === 'expression-count' || r.kind === 'explore') { const old = evaluations.get(r.kind); if (old !== undefined) cancelled.add(old); evaluations.set(r.kind, r.id); }
   queue = queue.then(async () => {
     self.postMessage({ kind: 'started', id: r.id, revision: r.revision });
     try { const result = await handle(r, r.revision, { cancelled: () => cancelled.has(r.id), budgetMs: (r.kind === 'expression-count' || r.kind === 'explore') ? r.budgetMs ?? 120000 : 120000 }); self.postMessage({ id: r.id, revision: r.revision, result }, { transfer: transferables(result) }); }
     catch (error) { self.postMessage({ id: r.id, revision: r.revision, error: String(error) }); }
-    finally { cancelled.delete(r.id); if (evaluationId === r.id) evaluationId = undefined; }
+    finally { cancelled.delete(r.id); if (evaluations.get(r.kind) === r.id) evaluations.delete(r.kind); }
   });
 };
