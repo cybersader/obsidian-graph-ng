@@ -1,6 +1,6 @@
 {
   "name": "obsidian-graph-ng",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Ontology-neutral, declared graph projections for Obsidian",
   "author": "cybersader",
   "license": "MIT",
@@ -8,7 +8,7 @@
   "main": "main.js",
   "scripts": {
     "build": "tsc --noEmit && node esbuild.config.mjs",
-    "test": "bun test tests/core.test.ts tests/adapter.test.ts tests/gates.test.ts tests/pipeline.test.ts tests/declaration-v2.test.ts tests/renderer.test.ts tests/view-lifecycle.test.ts tests/contribution-page.test.ts tests/layout.test.ts",
+    "test": "bun test tests/core.test.ts tests/adapter.test.ts tests/gates.test.ts tests/pipeline.test.ts tests/declaration-v2.test.ts tests/renderer.test.ts tests/view-lifecycle.test.ts tests/contribution-page.test.ts tests/layout.test.ts tests/explore.test.ts",
     "fixture": "bun scripts/generate.ts",
     "bench": "bun scripts/benchmark.ts",
     "project": "bun scripts/project.ts",

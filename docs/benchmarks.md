@@ -377,6 +377,48 @@ Native/profile runs preserve immutable, exclusively created records under `.work
 - `.workspace/evidence/runs/native-large-literal-hardware-1794365640737-3850633`: large-literal-hardware functional receipt and exact clock-correlated CPU samples.
 - `.workspace/evidence/runs/native-large-literal-software-1794365687163-3853135`: large-literal-software functional receipt and exact clock-correlated CPU samples.
 
+## Slice 6: explore controls and visual effects
+
+Version 0.3.0 adds the Explore panel (filters, group-by including derived sources, legend, relationship toggles, display controls, saved views) and the presentation effects. Same host class and fixtures as slice 5: Obsidian 1.13.7 / native Chrome 150.0.7871.212, browser Chrome 151.0.7922.34, discrete NVIDIA ANGLE and forced SwiftShader. Single repetitions unless stated; not capacity guarantees.
+
+### Exact commands
+
+All Bun runs use `flock --exclusive --wait 2400 /tmp/openclast-local-verification.lock build-contained --`, each e2e lane under `timeout 900`.
+
+- `bun run build`; `bun run test` (ten explicit files, **119 pass**).
+- `bun run fixture --small`, then `GRAPH_MEASURE_NATIVE=1 bun run e2e`, `GRAPH_SOFTWARE=1 bun run e2e`, `GRAPH_EXPLORE=1 bun run e2e`, `GRAPH_EXPLORE=1 GRAPH_SOFTWARE=1 bun run e2e`.
+- `bun run fixture --literal`, then `GRAPH_LARGE=1 GRAPH_LITERAL=1 GRAPH_MEASURE_NATIVE=1 GRAPH_CPU=1 bun run e2e`, the same with `GRAPH_SOFTWARE=1` instead of `GRAPH_MEASURE_NATIVE=1`, and `GRAPH_EXPLORE=1 GRAPH_LARGE=1 GRAPH_LITERAL=1 bun run e2e` with and without `GRAPH_SOFTWARE=1`.
+- `CHROME_BIN=<cached Chrome 151> bun run bench:browser`; `bun run gates`.
+
+The explore lane (`tests/e2e/explore.spec.ts`) drives the real panel: live counts, both themes, detail open, `flyTo` landing, hover one-hop highlight, a declared-property filter through the panel (asserting no relayout and identical positions), collapse/expand of two groups into hubs, a saved view with camera restored after clearing, the persisted `data.json` (settings key only, no positions), a folder-depth regroup and a derived `$identity` segment group. It records long tasks around each interaction.
+
+### Results
+
+| Native lane | Result | First actual groups | ≥50 ms open/detail tasks | Explore interaction long tasks |
+| --- | --- | --- | --- | --- |
+| small hardware | graph 11/11, explore 6/6 | 23.4 ms | none | none |
+| small software | graph 11/11, explore 6/6 | 19.9 ms | none | none in the final run (see misses) |
+| large literal hardware (60,600 / 89,200) | graph 7/7, explore 6/6 | **307.9 ms** | none | none (detail, hover, filter, collapse, regroup) |
+| large literal software | graph 7/7 on rerun, explore 3 pass + 3 skipped (Canvas refusal, by design) | **354.2 ms** | none | none (open, regroup) |
+
+Large first groups stay inside the ~320/350 ms slice-5 budget class (307.9 vs 320.0 hardware; 354.2 vs 350.1 software, a 4 ms software overrun within single-run noise, not a proven regression or improvement). Native large hardware detail sampled **58.2 fps, p95 17.9 ms** in `GRAPH_MEASURE_NATIVE` frames. A filter/regroup round trip through the worker takes about **55 ms wall time** (asynchronous; no main-thread long task was observed for it). Effect policy on the 60.6k literal web: glow and halos on, curves automatically off above `curvesMaxEdges` (60,000).
+
+| Browser mode | First groups | Warm open | Retained main JS | Backing storage | FPS / p95 frame | ≥50 ms tasks |
+| --- | --- | --- | --- | --- | --- | --- |
+| semantic (full bench sequence) | 208.0–252.1 ms | 416.9–646.2 ms | 11.05 MiB | 2.30 MiB | 56.6–60.0 / 16.8 ms | none |
+| literal (literal-only probe launch) | 261.5–265.5 ms | 594.9–621.1 ms | 11.02 MiB | 6.13 MiB | 60.0 / 16.7 ms | none |
+
+Main JS heap stays under 12 MiB in both modes (slice 5: 10.97/10.94 MiB, so +0.08 MiB in each mode).
+
+### Honest misses
+
+- **Browser bench does not complete: blocking regression.** In the standard two-mode sequence, the second headless launch (literal) stops executing JavaScript shortly after the hover/select or context-loss step: `page.evaluate` never returns and a CDP `Debugger.pause` is never delivered, so the page is blocked natively, not looping in script. It reproduced 4/4 on this source and 1/1 on the inherited WIP head; untouched slice-5 (`f04c755a`) completed the same command 3/3. Literal launched first completed 3/3, but literal launched twice hangs on the second launch. Turning glow, halos, curves and hover highlight off did not prevent it. The cause is **unattributed**. The literal row above comes from a literal-only launch, not the official sequence. Probe logs are in `.workspace/evidence/bench-hang-probe-literal-twice.log`.
+- One intermittent large-software failure: the first run timed out waiting 180 s for the contribution list after clicking a group pair; the immediate rerun passed 7/7. Unattributed.
+- Earlier small-software explore runs recorded single **76 ms** (regroup) and **59 ms** (collapse) long tasks; the final runs recorded none. Unattributed, kept as misses.
+- Visual judgement (screenshots read, two iterations): the 60.6k literal web is readable as a textured disc with group-colored fringe instead of a solid blob after density-scaled node size, but the synthetic fixture has random topology, so it shows no community structure. Dense-core labels overlap nodes, and the light theme renders the 44,600 neutral relationship nodes as a heavy grey mass. Hub labels for coincident centroids are stacked, not laid out.
+- **Bundle ceiling exceeded.** `bun run gates`: secrets, attribution, privacy, supply-chain and licenses pass; bundle-size **fails** at 170,539 minified / 52,954 gzip bytes against the enforced 150,000 / 45,000 (0.2.1: 115,970 / 35,830). The worker embeds the view compiler, so explore and validation code ships in both realms. This needs an owner decision (raise the ceiling or trim the slice). The gate is unchanged.
+- Native FPS is from one sampling window; software FPS is not measured. Mobile, iGPU and N-2 hosts are not tested.
+
 ## Retention and honest reporting
 
 Keep raw benchmark receipts by source commit and hardware class in `.workspace/evidence/` until their summary is accepted; do not silently overwrite acceptance evidence with another fixture. Screenshots stay in ignored `test-screenshots/`, synthetic only, with visual review before sharing. Downloads/caches and reproducible synthetic outputs may be age-pruned only within their owned paths after evidence capture; there is no automatic broad cleanup. Keep per-version release checksums indefinitely with the release record. Define any future retention knob explicitly rather than deleting evidence opportunistically.
