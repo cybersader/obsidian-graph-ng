@@ -4,10 +4,6 @@
   "workspaces": {
     "": {
       "name": "obsidian-graph-ng",
-      "dependencies": {
-        "graphology": "0.26.0",
-        "graphology-layout-forceatlas2": "0.10.1",
-      },
       "devDependencies": {
         "@types/bun": "1.3.13",
         "@types/mocha": "10.0.10",
@@ -16,6 +12,8 @@
         "@wdio/local-runner": "9.27.1",
         "@wdio/mocha-framework": "9.27.1",
         "esbuild": "0.28.2",
+        "graphology": "0.26.0",
+        "graphology-layout-forceatlas2": "0.10.1",
         "obsidian": "1.12.3",
         "playwright": "1.65.0",
         "typescript": "5.9.3",

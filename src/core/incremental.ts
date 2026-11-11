@@ -26,7 +26,7 @@ export function warmLayout(saved: SavedLayout, current: Projection, seed: number
   if (oldEdges) edgeKeys(current).forEach((key, i) => { if (!oldEdges.has(key)) { movable[current.source[i]!] = 1; movable[current.target[i]!] = 1; } });
   const endpoints = movable.slice();
   for (let i = 0; i < endpoints.length; i++) if (endpoints[i]) for (let j = current.offsets[i]!; j < current.offsets[i + 1]!; j++) movable[current.targets[j]!] = 1;
-  return { count: current.paths.length, source: current.source, target: current.target, initial: positions, movable, seed };
+  return { count: current.paths.length, source: current.source, target: current.target, offsets: current.offsets, targets: current.targets, initial: positions, movable, seed };
 }
 export function incrementalLayout(previous: Projection, oldPositions: Float32Array, current: Projection, seed: number, options: LayoutOptions): LayoutInput {
   return warmLayout({ identities: previous.identities, positions: oldPositions, edgeKeys: edgeKeys(previous) }, current, seed, options);

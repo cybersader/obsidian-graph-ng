@@ -5,7 +5,7 @@ import type { LayoutOptions } from './core/layout';
 import type { BinaryGeneration, GenerationMeta } from './core/binary-layout';
 import type { Projection } from './core/projection';
 import type { GroupProjection } from './core/group-projection';
-export const LAYOUT_PRODUCER = 'graphology-fa2@0.10.1/stream-v2';
+export const LAYOUT_PRODUCER = 'graph-ng-fa2@1';
 export interface PipelineConfig { declaration: GraphDeclaration; layout: LayoutOptions; source: string; groupLevel: number; predicate?: Predicate; streamEveryIterations: number }
 export type PipelineRequest =
   | { kind: 'external'; bytes: Uint8Array; maxBytes: number; limits: { groups: number; pairs: number; carriers: number } }

@@ -1,4 +1,27 @@
 {
+  "settingsVersion": 2,
+  "canvasMaxDetailNodes": 2000,
+  "canvasMaxDetailEdges": 10000,
+  "labelsMaxPerViewport": 400,
+  "labelCandidateMultiplier": 32,
+  "frameBackstopMs": 32,
+  "shaderPollMs": 8,
+  "contextRestoreTimeoutMs": 5000,
+  "cameraMinRatio": 0.02,
+  "cameraMaxRatio": 8,
+  "ingest": {
+    "chunkRows": 2000,
+    "budgetMs": 8
+  },
+  "cache": {
+    "directory": "",
+    "chunkBytes": 1048576,
+    "maxGenerationBytes": 268435456,
+    "retainedArtifacts": 8,
+    "maxRetainedBytes": 268435456
+  },
+  "maxProjectionBytes": 67108864,
+  "maxSettingsBytes": 16777216,
   "declaration": {
     "version": 2,
     "identity": [],
@@ -33,6 +56,12 @@
     "relaxIterations": 30,
     "initialRadius": 100,
     "seed": 1,
+    "batchIterations": 5,
+    "convergenceThreshold": 0,
+    "convergenceIterations": 3,
+    "maxTreeDepth": 32,
+    "nodeRadius": 1,
+    "maxForce": 10,
     "force": {
       "linLogMode": false,
       "outboundAttractionDistribution": false,
@@ -48,6 +77,8 @@
   },
   "debounceMs": 5000,
   "workerTimeoutMs": 120000,
+  "workerRestarts": 2,
+  "streamEveryIterations": 5,
   "lodZoomRatio": 1.8,
   "groupLevel": 0,
   "nodeSize": 3,
@@ -75,30 +106,5 @@
   "groupCanvasPageSize": 6,
   "maxProjectionGroups": 20000,
   "maxProjectionPairs": 200000,
-  "maxProjectionCarriers": 1000000,
-  "ingest": {
-    "chunkRows": 2000,
-    "budgetMs": 8
-  },
-  "cache": {
-    "directory": "",
-    "chunkBytes": 1048576,
-    "maxGenerationBytes": 268435456,
-    "retainedArtifacts": 8,
-    "maxRetainedBytes": 268435456
-  },
-  "maxProjectionBytes": 67108864,
-  "maxSettingsBytes": 16777216,
-  "streamEveryIterations": 5,
-  "settingsVersion": 2,
-  "workerRestarts": 2,
-  "canvasMaxDetailNodes": 2000,
-  "canvasMaxDetailEdges": 10000,
-  "labelsMaxPerViewport": 400,
-  "labelCandidateMultiplier": 32,
-  "frameBackstopMs": 32,
-  "shaderPollMs": 8,
-  "contextRestoreTimeoutMs": 5000,
-  "cameraMinRatio": 0.02,
-  "cameraMaxRatio": 8
+  "maxProjectionCarriers": 1000000
 }

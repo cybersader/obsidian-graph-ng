@@ -62,7 +62,7 @@ function visitInstalled(modules) {
   }
 }
 visitInstalled(path.join(root, 'node_modules'));
-if (!packages || !runtime.size) throw new Error('Dependencies must be installed before this gate');
+if (!packages) throw new Error('Dependencies must be installed before this gate');
 console.log(`PASS install policy: ${runtime.size} runtime / ${packages} installed packages; ${inert} exact inert dev exceptions; trustedDependencies empty.`);
 
 // Isolated manifest/lock validation: never edit the developer's install or lockfile.

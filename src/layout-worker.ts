@@ -91,7 +91,7 @@ async function handle(r: PipelineRequest, revision: number): Promise<unknown> {
           for (let i = 0; i < hashes.length; i += 2) if (!old.has(`${hashes[i]}:${hashes[i + 1]}`)) { input.movable![projection.source[i / 2]!] = 1; input.movable![projection.target[i / 2]!] = 1; }
           const affected = input.movable!.slice();
           for (let i = 0; i < affected.length; i++) if (affected[i]) for (let j = projection.offsets[i]!; j < projection.offsets[i + 1]!; j++) input.movable![projection.targets[j]!] = 1;
-        } else input = { count: projection.paths.length, source: projection.source, target: projection.target, seed };
+        } else input = { count: projection.paths.length, source: projection.source, target: projection.target, offsets: projection.offsets, targets: projection.targets, seed };
         positions = input.movable && !input.movable.some(Boolean) ? input.initial! : await runLayoutStream(input, config.layout, config.streamEveryIterations, p => self.postMessage({ kind: 'positions', revision, positions: p }, { transfer: [p.buffer] }), yieldTask, takeBuffer);
       }
       const milliseconds = performance.now() - start;

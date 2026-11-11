@@ -1,4 +1,4 @@
-import { DEFAULT_LAYOUT, type LayoutOptions } from './core/layout-options';
+import { DEFAULT_LAYOUT, validateLayout, type LayoutOptions } from './core/layout-options';
 import { defaultDeclaration, migrateDeclaration, validateDeclaration, type GraphDeclaration } from './core/declaration';
 export interface Settings {
   settingsVersion: 2;
@@ -84,22 +84,14 @@ export function validateSettings(v: unknown): asserts v is Settings {
   if (typeof s.persistLayout !== 'boolean' || typeof s.projectionFile !== 'string') throw new Error('Invalid persistence or projectionFile');
   if (s.projectionFile && (s.projectionFile.startsWith('/') || s.projectionFile.split('/').includes('..') || !s.projectionFile.endsWith('.json'))) throw new Error('projectionFile must be a vault-relative .json path');
   if (!s.layout || typeof s.layout !== 'object') throw new Error('layout is required');
-  for (const k of Object.keys(s.layout)) if (!['iterations', 'relaxIterations', 'initialRadius', 'seed', 'force'].includes(k)) throw new Error(`Unknown layout setting: ${k}`);
-  for (const key of ['iterations', 'relaxIterations'] as const) if (!Number.isSafeInteger(s.layout[key]) || s.layout[key] <= 0) throw new Error(`${key} must be a positive integer`);
-  if (!Number.isFinite(s.layout.initialRadius) || s.layout.initialRadius <= 0 || !Number.isSafeInteger(s.layout.seed)) throw new Error('Invalid layout radius/seed');
-  if (!s.layout.force || typeof s.layout.force !== 'object') throw new Error('force is required');
-  for (const [key, val] of Object.entries(DEFAULT_LAYOUT.force)) {
-    const actual = s.layout.force[key as keyof typeof s.layout.force];
-    if (typeof val === 'boolean' ? typeof actual !== 'boolean' : typeof actual !== 'number' || !Number.isFinite(actual) || actual <= 0) throw new Error(`Invalid force.${key}`);
-  }
-  for (const key of Object.keys(s.layout.force)) if (!Object.hasOwn(DEFAULT_LAYOUT.force, key)) throw new Error(`Unknown force setting: ${key}`);
+  validateLayout(s.layout);
 }
 /** The recorded version makes the finite-limit upgrade one-time; later explicit zero remains opt-in. */
 export function upgradeSettings(input: unknown, producer: string): Settings {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Settings must be an object');
   const old = input as Partial<Settings>, base = defaults(producer);
   if (old.settingsVersion !== undefined && old.settingsVersion !== 2) throw new Error('Unsupported settings version');
-  const settings = { ...base, ...old, ingest: { ...base.ingest, ...old.ingest }, cache: { ...base.cache, ...old.cache }, declaration: migrateDeclaration(old.declaration ?? base.declaration) };
+  const settings = { ...base, ...old, layout: { ...base.layout, ...old.layout, force: { ...base.layout.force, ...old.layout?.force } }, ingest: { ...base.ingest, ...old.ingest }, cache: { ...base.cache, ...old.cache }, declaration: migrateDeclaration(old.declaration ?? base.declaration) };
   if (old.settingsVersion === undefined) for (const key of ['maxProjectionGroups', 'maxProjectionPairs', 'maxProjectionCarriers'] as const) if (settings[key] === 0) settings[key] = base[key];
   validateSettings(settings); return settings;
 }

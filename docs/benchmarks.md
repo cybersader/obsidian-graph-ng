@@ -226,6 +226,95 @@ The ≤12 MiB retained-main-heap goal remains unmet in both browser modes; the s
 
 Canvas refusal defaults remain **2,000 visible nodes / 10,000 visible edges**, configurable and validated, rather than the plan's proposed 20,000-node default. Deterministic tests cover both over-budget refusal paths and preserve all eligible edges; only the 600/1,400 native software use path is performance-observed. Even the conservative refusal boundary is not benchmarked animation capacity. No claim covers integrated GPUs, mobile/N-2 app versions, physical-storage large warm starts, all-scale readability, native FPS, remote authorization or million-note rendering.
 
+## Slice 4: CSR-native layout
+
+Source: `feat/slice4-layout`, based on slice-3 `8df94ada`; measured locally on 2026-11-10. Plugin version **0.2.0**, producer `graph-ng-fa2@1`, unchanged binary cache format **3**. The layout now uses original typed-array ForceAtlas2/Barnes–Hut in the existing worker, with persistent integrator history across streamed snapshots. Graphology/FA2 are development-only differential oracles. See [ADR-0006](decisions/ADR-0006-csr-layout.md) for equations, approximation and scheduling contracts.
+
+### Exact verification scope
+
+All Bun invocations ran under `flock --exclusive --wait 2400 /tmp/openclast-local-verification.lock build-contained --`, with scripts-disabled dependency installation and synthetic fixtures only. The full matrix was sequential; each mode is one repetition on a desktop i9-12900K / approximately 32 GiB RAM / RTX 4060 Ti class machine, not a hardware population claim.
+
+| Command inside verification boundary | Exact observed result |
+| --- | --- |
+| `bun run build` | Strict TypeScript and both minified bundles pass; complete build-input receipts assert no node_modules inputs. |
+| `bun run test` | **94 pass, 0 fail, 1,150 assertions**, eight explicitly listed files: the existing 83 tests plus 11 layout tests. Repeated after independent-review test hardening. |
+| `bun run bench:layout` | 50 continuous iterations, same seed/initial positions/inputs, both full fixtures; speed and quality gates pass. |
+| `bun run fixture --small`; `GRAPH_MEASURE_NATIVE=1 bun run e2e` | Native small hardware **11 pass / 0 skipped**. |
+| `GRAPH_SOFTWARE=1 bun run e2e` | Native small software **11 pass / 0 skipped**; bounded Canvas detail, not software WebGL acceptance. |
+| `bun run fixture --literal`; `GRAPH_LARGE=1 GRAPH_LITERAL=1 GRAPH_MEASURE_NATIVE=1 bun run e2e` | Native large literal hardware **7 pass / 4 intentional skips**. |
+| `GRAPH_LARGE=1 GRAPH_LITERAL=1 GRAPH_SOFTWARE=1 bun run e2e` | Native large literal software **7 pass / 4 intentional skips**; group/member fallback, not full software node detail. |
+| `bun run bench:browser` | Semantic and literal modes pass renderer/theme/context checks, no page errors, approximately 60 FPS each. |
+| `bun run gates` | All six lanes pass, including **0 runtime packages**, empty runtime notice file, frozen lock and the tighter bundle ceilings. Repeated after evidence/documentation updates. |
+
+The eight unit files are `tests/{core,adapter,gates,pipeline,declaration-v2,renderer,contribution-page,layout}.test.ts`. New layout coverage includes repeated position hashes, stream/task-budget independence, bitwise fixed-node stability without mutating input, convergence bounds, tiny-theta tree forces versus all-pairs including duplicate points/unequal masses, degenerate/self/multiedge graphs, edge-only/CSR parity, 20-step all-pairs oracle comparisons at <1e-6 maximum coordinate error across default/LinLog/strong-gravity/outbound/size-adjustment modes, theta-0.7 relative L2 force error <5% across three seeds, six fixed-seed/mode distribution and median-scale comparisons, malformed inputs and 0.1 settings upgrades. The four large skips remain full app-restart restore, persisted-key-miss incremental restart, carrier incremental update and duplicate quarantine; those run in both small native lanes.
+
+Private evidence: `.workspace/{build-final,unit-final,layout-final,native-hardware,native-software,native-large-literal,native-large-software,browser-final,gates-final}.log`, final review-follow-up logs `.workspace/{build-review-fixes,unit-review-fixes,layout-review-fixes,gates-review-fixes,gates-staged,gates-postcommit}.log`, and `.workspace/evidence/{layout-benchmark,browser-benchmark,bundle-size,bundle-inputs,runtime-licenses,e2e-*}.json`. Contact sheets covering all **64** captured screenshots and representative original PNGs were opened and read. Files remain in ignored `test-screenshots/`; visual-review sheets remain in `.workspace/visual-review/`. Native group counts, light/dark detail/hover/selection, restored contexts, retained contribution lists and explicit software fallback are visible. The literal node view is still a dense hairball, not a readable overview; software notification stacking and dense label contrast remain existing UI limitations.
+
+### Independent review and mutation follow-up
+
+Independent review returned **SHIP-WITH-FIXES**, with test weaknesses but no observed runtime defect. The review follow-up changes tests, benchmark/gate receipts and documentation only; native/browser measurements above and below use the unchanged runtime. Isolated private copies ran `bun test tests/layout.test.ts` under the same lock/containment prefix. The unmutated control passed 11 tests; **M1** reversed tree-force sign, **M3** theta ×10, **M4** tree repulsion ×0.1 and **M5** disabled force-history swap all failed. M3 failed the new mid-theta bound; M5 failed the new 20-step oracle comparison; M4 failed tiny-/mid-theta force and quality checks. **M6** removal of leaf self-exclusion still survived the exercised coincident fixtures; the reviewer described it as equivalent for its probe, not evidence that every possible self-exclusion error is covered. Receipts/logs: `.workspace/evidence/mutation-hardening.json` and `.workspace/mutation-hardening/*.log`.
+
+The bundle receipt now records `dirty`, porcelain `sourceStatus` and `stagedTree` alongside HEAD, avoiding an uncommitted patch being mislabeled as its base commit alone. Full staged and postcommit gates bind the final source and bundle. The inert old graphology cache-migration branch and per-iteration cancellation limitation are explicitly documented in ADR-0006.
+
+### Offline layout speed and quality
+
+`bun run bench:layout`, Bun 1.3.14, synthetic fixture seed 17, options seed 1, 50 iterations, theta 1.2, early convergence disabled. Fixture/projection construction is excluded; solver initialization is included. The current oracle includes its required object-graph construction. Standard own-tree opening uses cell width/distance; the oracle uses twice cell width at the same nominal theta, so these are **not equal approximation-effort timings**. The benchmark records distribution quality rather than claiming identical coordinates.
+
+| Nodes / edges | Own layout | Supplied historical graphology baseline | Historical speedup | Current dev oracle |
+| --- | --- | --- | --- | --- |
+| 16,000 / 44,600 semantic | **576.1 ms** | 3,700 ms | **6.42×** | 8,599.3 ms |
+| 60,600 / 89,200 literal | **2,499.6 ms** | 18,400 ms | **7.36×** | 41,220.5 ms |
+
+Both meet the ≤half historical-time acceptance target. This table uses the post-review rerun with the median-scale gate enabled; the earlier 573.7/2,401.7 ms run is preserved in `.workspace/evidence/layout-benchmark-before-hardening.json`. Numerical hashes and quality values were unchanged. Historical 3.7/18.4-second values are supplied baseline evidence, **not a rerun under the present benchmark**; current oracle numbers must not be silently substituted into that claim. Browser/default-100-iteration streamed timings below are a different runtime/method and must not be conflated with these offline 50-iteration numbers.
+
+Quality uses optimal-uniform-scale unit-edge stress `1 - sum(length)^2 / (edgeCount * sum(length^2))`, plus edge q10/q50/q90 divided by RMS edge length. These are translation/rotation/scale-invariant distribution measures, not global geodesic stress or neighborhood-preservation proof. Declared tolerance is stress absolute delta <0.08, maximum relative normalized quantile deviation <25% and unnormalized median-edge scale ratio within 15%. The last check prevents normalized distributions from hiding absolute force-scale defects.
+
+| Quality at the same 50 iterations | Semantic own / oracle | Literal own / oracle |
+| --- | --- | --- |
+| Unit-edge stress | 0.214506 / 0.214475 | 0.202909 / 0.202978 |
+| Absolute stress delta | **0.00003135** | **0.00006946** |
+| RMS-normalized q10 | 0.324477 / 0.323963 | 0.333741 / 0.333086 |
+| RMS-normalized median | 0.829305 / 0.829214 | 0.849312 / 0.849055 |
+| RMS-normalized q90 | 1.523617 / 1.524779 | 1.509991 / 1.512422 |
+| Maximum quantile relative deviation | **0.1586%** | **0.1967%** |
+| Unnormalized median length ratio | 1.000511 | 1.000428 |
+
+The benchmark's repeated initial/final runs produced identical hashes: semantic `b60362fb60b04c3885bbf128c238be9c69aa9884880e81f2231501a74c859fc5`, literal `0bf7f77abc58a2c46a4af80bf559a425e50e07579abdd8d1d772554c8d73d143`. Unit tests repeat hashes and assert streaming/batch cadence leaves the final result unchanged. Native persisted-key-miss tests keep **600 of 600** old positions unchanged when adding an isolated node; a carrier edit keeps **591** untouched nodes unchanged in each small lane.
+
+### Browser and native use-path measurements
+
+Browser: Chrome 151.0.7922.34, ANGLE NVIDIA discrete GPU, 1280×800 DPR1, labels enabled, 100 iterations, 20 streamed snapshots. Origin is after synthetic host-metadata JSON decode. Warm means new worker + binary **memory-backed disk** decode + complete live verification + first detail frame; it is neither physical disk nor a full app restart.
+
+| Browser measurement | Semantic | Literal |
+| --- | --- | --- |
+| Worker layout (100 streamed iterations) | 1,861.9 ms | 7,540.2 ms |
+| First groups | **403.2 ms** | **458.4 ms** |
+| First full detail | 2,507.1 ms | 8,345.7 ms |
+| Provisional warm groups | 20.7 ms | 48.4 ms |
+| Full verified warm detail | **629.6 ms** | **813.1 ms** |
+| Pan/zoom FPS / p95 frame | 60.00 / 16.7 ms | 60.00 / 16.7 ms |
+| Retained main JS after GC | 13.59 MiB | 16.76 MiB |
+| Observed ≥50 ms tasks in open/cache-write/detail/warm windows | None observed | None observed |
+
+Both browser modes assert zero worker messages on palette-only changes, unchanged graph buffers, one palette upload, GL error 0 and successful context restoration. No observed long tasks is not a meaningful “0 ms p95” acceptance distribution. Main heap still exceeds the ≤12 MiB goal and excludes worker/GPU/native memory. Asynchronous shader polling elapsed time is not a blocking-task measurement.
+
+Native: Obsidian app/installer 1.13.7. Small is 2,000 notes → 600 nodes/1,400 edges; large literal is 60,600 notes/nodes and 89,200 edges. Cold begins after public metadata readiness; native warm is view reopen, not the browser memory-disk method.
+
+| Native lane | Cold open | First groups | Offline reopen | Open ≥50 ms tasks | Detail/refusal ≥50 ms tasks |
+| --- | --- | --- | --- | --- | --- |
+| small hardware | 118 ms | 29.9 ms | 47 ms | None observed | None observed |
+| small software | 319 ms | 159.1 ms | 231 ms | 1 / **140 ms** max | None observed |
+| large literal hardware | 8,414 ms | **512.8 ms** | 454 ms | None observed | 1 / **66 ms** max |
+| large literal software | 9,416 ms | **710.9 ms** | 424 ms | 1 / **145 ms** max | 1 / **75 ms** max |
+
+Large native first groups still miss 500 ms and the marked tasks still miss 50 ms. Software large detail measures explicit refusal/group fallback, not rendering 60,600 nodes. Native rAF sampling remains **unavailable** (zero callbacks at a 10-second harness limit despite visible document); never infer native FPS from browser FPS. Small full restart/restore took 2,902 ms hardware / 3,055 ms software, including app lifecycle; these are not subsecond app-restart claims.
+
+### Bundle and remaining limits
+
+The complete plugin is **112,624 minified / 34,809 gzip / 30,237 Brotli bytes**, SHA-256 `9a3cb6267086ce3a6100777b96d9baf44fa94f5176f2164721549045a074f2d9`. Slice 3 was 184,338 / 49,240 gzip bytes: reductions **38.90% / 29.31%**. Both **150,000 / 45,000** limits are enforced and pass. Runtime package count is **zero**, runtime notices are empty, and the build-input receipt excludes all node_modules inputs. Exact oracle pins remain development-only; this does not certify the licenses of every development transitive tool.
+
+Multilevel coarsening above **250,000 nodes is deferred**. No >60,600-node layout timing, 1M-node acceptance, all-scale readability, mobile/iGPU/N-2 app matrix, native FPS or physical-disk large warm-start claim is added. Own-tree/FA2 floating-point operations can differ between JavaScript engines. Bounded iteration tasks are not a measured per-task millisecond cap. The existing worker deadline remains a backstop; layout similarity does not prove remote authorization or release safety. Independent review and its test-hardening follow-up are recorded above; publication remains separate from these deterministic and synthetic observations.
+
 ## Retention and honest reporting
 
 Keep raw benchmark receipts by source commit and hardware class in `.workspace/evidence/` until their summary is accepted; do not silently overwrite acceptance evidence with another fixture. Screenshots stay in ignored `test-screenshots/`, synthetic only, with visual review before sharing. Downloads/caches and reproducible synthetic outputs may be age-pruned only within their owned paths after evidence capture; there is no automatic broad cleanup. Keep per-version release checksums indefinitely with the release record. Define any future retention knob explicitly rather than deleting evidence opportunistically.

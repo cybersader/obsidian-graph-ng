@@ -4,12 +4,17 @@ All notable changes are recorded here. The format follows Keep a Changelog; vers
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-10
+
 ### Added
+
+- Deterministic CSR-native ForceAtlas2 with flat typed-array Barnes–Hut, persistent integration across streamed snapshots, configurable iteration budgets/convergence/depth and exact fixed-node warm starts.
+- Development-only Graphology/FA2 differential oracle, equation/tree/determinism regressions and fixed-seed speed/edge-distribution benchmarks; no oracle implementation enters either bundle.
 
 - Direct typed-array WebGL2 detail renderer: instanced nodes/edges, position/palette textures, packed grid picking, incident-edge hover, bounded glyph atlas with precomputed label LODs, pan/zoom/touch and context restoration.
 - Host CSS-variable theming refreshes only the palette, without worker calls or graph-buffer reconstruction; bounded Canvas detail supports small software-only views.
 - Generation-bound contribution panels retain stable raw group selection across refresh, show loading/refreshing/failed reads and provide explicit Retry instead of silently disappearing.
-- Renderer and contribution-race regressions, hardware/software native theme/context screenshots and a hard slice-3 bundle-size gate.
+- Renderer and contribution-race regressions, hardware/software native theme/context screenshots and hard bundle-size gates.
 - Slice 2 worker-owned projection/CSR/contraction/digests, revision-tagged columnar transfer, progressive group paint and position streaming, cooperative ingestion/detail construction and paged contribution reads.
 - Separate checksummed binary layout generations with at-most-1-MiB files, resumable matching chunks, scoped source/producer/format labels, bounded retention, corruption quarantine and v1 position-hint migration.
 - Cached provisional group paint followed by public-metadata verification; no persisted property/fact store. Settings JSON now contains settings only.
@@ -21,7 +26,7 @@ All notable changes are recorded here. The format follows Keep a Changelog; vers
 
 ### Changed
 
-- Removed Sigma and main-thread Graphology construction; minified both worker and main bundle. The existing Graphology/FA2 worker runtime remains until the separate layout slice.
+- Removed Sigma and main-thread Graphology construction; minified both worker and main bundle. The worker now uses the original CSR-native solver; the complete plugin has zero runtime dependencies, empty third-party runtime notices and enforced 150,000 minified / 45,000 gzip bundle ceilings.
 - Cache format 3 rebuilds slice-2 keyless summaries. Cached paints have a separate generation identity; clicked relationship keys/legacy labels are captured before any fresh dictionary can reuse IDs.
 - Renderer timing, camera and label-candidate knobs are configurable. Canvas detail refuses both node/edge excess, and permanent context loss falls back visibly; disposal explicitly releases its WebGL context.
 - Dependency installation explicitly disables lifecycle execution. Four exact development-only install declarations are inert reviewed exceptions; runtime install hooks are rejected.
