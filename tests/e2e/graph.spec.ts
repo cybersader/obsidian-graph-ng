@@ -106,10 +106,11 @@ describe('Graph NG synthetic Obsidian path', () => {
     await screenshot('nodes');
     const point = await browser.executeObsidian(({ app }) => {
       const view = app.workspace.getLeavesOfType('graph-ng')[0]!.view as any, renderer = view.detailRenderer;
-      const rect = view.contentEl.querySelector('.graph-ng-stage').getBoundingClientRect();
+      // The canvas, not the bordered stage, is the pick coordinate space.
+      const rect = renderer.canvas.getBoundingClientRect();
       for (let node = 0; node < renderer.visible.length; node++) if (renderer.visible[node]) {
         const p = renderer.screenPoint(node);
-        if (p.x > 30 && p.x < rect.width - 30 && p.y > 30 && p.y < rect.height - 30 && renderer.pick(Math.round(rect.left + p.x) - rect.left, Math.round(rect.top + p.y) - rect.top) === node) return { x: Math.round(rect.left + p.x), y: Math.round(rect.top + p.y), label: renderer.path(node).split('/').pop().replace(/\.md$/, '') };
+        if (p.x > 30 && p.x < rect.width - 30 && p.y > 30 && p.y < rect.height - 30 && renderer.pick(Math.round(rect.left + p.x) - rect.left, Math.round(rect.top + p.y) - rect.top) === node && document.elementFromPoint(Math.round(rect.left + p.x), Math.round(rect.top + p.y)) === renderer.canvas) return { x: Math.round(rect.left + p.x), y: Math.round(rect.top + p.y), label: renderer.path(node).split('/').pop().replace(/\.md$/, '') };
       }
       return null;
     });

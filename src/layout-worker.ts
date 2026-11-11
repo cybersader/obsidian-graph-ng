@@ -2,8 +2,9 @@ import { probeGpu } from './gpu-probe';
 import { renderProjection } from './render-projection';
 import { runLayout, runLayoutStream, type LayoutInput } from './core/layout';
 import { yieldTask } from './core/scheduler';
-import { digest, canonical } from './core/declaration';
-import { buildProjection, filterNodes, colorGroups, type FactRow, type Projection } from './core/projection';
+import { digest, canonical, layoutDeclaration } from './core/declaration';
+import { declaredKeys } from './core/columns';
+import { buildProjection, colorGroups, type FactRow, type Projection } from './core/projection';
 import { contractGroups, validateGroupProjection, type GroupProjection } from './core/group-projection';
 import { unpackRows, transferables } from './core/columns';
 import { generationKey } from './core/generation';
@@ -11,16 +12,28 @@ import { warmLayout, validSavedLayout } from './core/incremental';
 import { CACHE_FORMAT, decodeLayout, encodeLayout, type BinaryLayout, type GenerationMeta } from './core/binary-layout';
 import { edgeHashes, hashEdge, edgeHashSet } from './core/edge-hash';
 import { LAYOUT_PRODUCER, type PipelineRequest, type PipelineConfig } from './pipeline';
+import { emptyView, explore, withoutTypes, type ExploreResult, type ExploreView } from './core/explore';
 const rows = new Map<string, FactRow>();
 let config: PipelineConfig, meta: GenerationMeta, projection: Projection, visible: Uint8Array;
 let contracted: ReturnType<typeof contractGroups>, positions: Float32Array | undefined, saved: BinaryLayout | undefined;
 const recycled: ArrayBuffer[] = [];
 const takeBuffer = (length: number) => { const i = recycled.findIndex(b => b.byteLength === length * 4); return i < 0 ? new Float32Array(length) : new Float32Array(recycled.splice(i, 1)[0]!); };
-let complete = true, projectionRevision = -1;
+let complete = true, projectionRevision = -1, colors: Uint32Array = new Uint32Array(), explored: ExploreResult | undefined;
+/** One view authority: masks, the group dictionary used by members/contributions and the summary all derive together. */
+function applyView(view: ExploreView) {
+  const filters = config.predicate ? [...view.filters, config.predicate] : view.filters;
+  explored = explore(projection, config.declaration, { ...view, filters }, colors, config.groupLevel, { facetValues: config.facetValues ?? 50 });
+  visible = explored.visible;
+  const source = { values: explored.groupKeys, codes: explored.groupCodes, encoded: explored.groupLabels !== explored.groupKeys };
+  contracted = contractGroups({ ...withoutTypes(projection, view.hiddenTypes), groups: [source] }, visible, 0);
+  return explored;
+}
 let declarationHash = '', layoutHash = '', hashes: Uint32Array = new Uint32Array();
 function matches(g: GenerationMeta) {
   return g.format === CACHE_FORMAT && g.declarationHash === declarationHash && g.layoutHash === layoutHash && g.producer === LAYOUT_PRODUCER && g.source === config.source && g.groupLevel === config.groupLevel && g.streamEveryIterations === config.streamEveryIterations && canonical(g.layout) === canonical(config.layout);
 }
+/** Cached paints are the unfiltered declared grouping; a persisted view is reapplied live. */
+function cacheSummary() { return groupSummary(contractGroups(projection, new Uint8Array(projection.paths.length).fill(1), config.groupLevel).projection); }
 function groupSummary(p: GroupProjection): GroupProjection {
   // Carrier/contribution objects remain worker-owned and are read a page at a time.
   return { ...p, groupEdges: p.groupEdges.map(e => ({ ...e, carriers: { kind: e.carriers.kind, ids: [] } })) };
@@ -34,9 +47,9 @@ async function handle(r: PipelineRequest, revision: number): Promise<unknown> {
     }
     case 'configure': {
       config = r.config;
-      declarationHash = await digest(config.declaration); layoutHash = await digest({ layout: config.layout, streamEveryIterations: config.streamEveryIterations });
+      declarationHash = await digest(layoutDeclaration(config.declaration)); layoutHash = await digest({ layout: config.layout, streamEveryIterations: config.streamEveryIterations });
       if (saved && !matches(saved.meta)) saved = undefined;
-      return { declarationHash, layoutHash };
+      return { declarationHash, layoutHash, ingestHash: await digest({ declarationHash, keys: declaredKeys(config.declaration) }) };
     }
     case 'rows':
       if (r.reset) rows.clear();
@@ -66,8 +79,8 @@ async function handle(r: PipelineRequest, revision: number): Promise<unknown> {
       positions = undefined;
       const input = [...rows.values()];
       projection = buildProjection(input, config.declaration);
-      visible = filterNodes(projection, config.predicate);
-      contracted = contractGroups(projection, visible, config.groupLevel);
+      colors = colorGroups(projection, config.declaration);
+      applyView(config.view ?? emptyView());
       self.postMessage({ kind: 'groups', revision, projection: groupSummary(contracted.projection) });
       const key = await generationKey(input, config.declaration, config.layout, `${LAYOUT_PRODUCER}/stream${config.streamEveryIterations}/group${config.groupLevel}/${config.source}/format${CACHE_FORMAT}`);
       meta = { format: CACHE_FORMAT, key, declarationHash, layoutHash, layout: config.layout, producer: LAYOUT_PRODUCER, source: config.source, groupLevel: config.groupLevel, streamEveryIterations: config.streamEveryIterations };
@@ -79,7 +92,7 @@ async function handle(r: PipelineRequest, revision: number): Promise<unknown> {
     case 'detail': {
       // Copies are made in the worker only: the renderer borrows transferred buffers;
       // the authoritative worker buffers remain live for incremental edits and cache encoding.
-      return structuredClone({ projection: renderProjection(projection), visible, colors: colorGroups(projection, config.declaration) });
+      return structuredClone({ projection: renderProjection(projection), visible, colors, explore: explored });
     }
     case 'layout': {
       const start = performance.now(), seed = Number.parseInt(meta.key.slice(0, 8), 16);
@@ -98,12 +111,21 @@ async function handle(r: PipelineRequest, revision: number): Promise<unknown> {
         positions = input.movable && !input.movable.some(Boolean) ? input.initial! : await runLayoutStream(input, config.layout, config.streamEveryIterations, p => self.postMessage({ kind: 'positions', revision, positions: p }, { transfer: [p.buffer] }), yieldTask, takeBuffer);
       }
       const milliseconds = performance.now() - start;
-      if (complete) saved = { meta, identities: projection.identities, positions, edgeKeys: hashes, groups: groupSummary(contracted.projection) };
+      if (complete) saved = { meta, identities: projection.identities, positions, edgeKeys: hashes, groups: cacheSummary() };
       return { positions: positions.slice(), milliseconds, cached: Boolean(exact), stored };
     }
     case 'encode':
       if (!positions) throw new Error('No completed layout');
-      return encodeLayout({ meta, identities: projection.identities, positions, edgeKeys: hashes, groups: groupSummary(contracted.projection) });
+      return encodeLayout({ meta, identities: projection.identities, positions, edgeKeys: hashes, groups: cacheSummary() });
+    case 'explore': {
+      if (revision !== projectionRevision) throw new Error('Projection generation changed');
+      // Colors are presentation-only: a legend edit re-evaluates rules on existing
+      // columns without changing layout identity or re-ingesting notes.
+      if (r.colors) { const declaration = { ...config.declaration, colors: r.colors }; colors = colorGroups(projection, declaration); config = { ...config, declaration }; }
+      config = { ...config, view: r.view, facetValues: r.facetValues };
+      const result = applyView(r.view);
+      return structuredClone({ explore: result, colors, groups: groupSummary(contracted.projection) });
+    }
     case 'members':
       if (revision !== projectionRevision) throw new Error('Projection generation changed');
       return Uint32Array.from(contracted.members.get(r.group) ?? []);

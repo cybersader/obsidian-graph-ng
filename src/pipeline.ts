@@ -5,8 +5,9 @@ import type { LayoutOptions } from './core/layout';
 import type { BinaryGeneration, GenerationMeta } from './core/binary-layout';
 import type { RenderProjection } from './render-projection';
 import type { GroupProjection } from './core/group-projection';
+import type { ExploreResult, ExploreView } from './core/explore';
 export const LAYOUT_PRODUCER = 'graph-ng-fa2@1';
-export interface PipelineConfig { declaration: GraphDeclaration; layout: LayoutOptions; source: string; groupLevel: number; predicate?: Predicate; streamEveryIterations: number }
+export interface PipelineConfig { declaration: GraphDeclaration; layout: LayoutOptions; source: string; groupLevel: number; predicate?: Predicate; view?: ExploreView; facetValues?: number; streamEveryIterations: number }
 export type PipelineRequest =
   | { kind: 'external'; bytes: Uint8Array; maxBytes: number; limits: { groups: number; pairs: number; carriers: number } }
   | { kind: 'configure'; config: PipelineConfig }
@@ -16,9 +17,11 @@ export type PipelineRequest =
   | { kind: 'project'; complete?: boolean } | { kind: 'detail' } | { kind: 'layout' } | { kind: 'encode' }
   | { kind: 'gpu' }
   | { kind: 'members'; group: string }
+  | { kind: 'explore'; view: ExploreView; colors?: GraphDeclaration['colors']; facetValues: number }
   | { kind: 'contributions'; pair: string; offset: number; count: number };
 export interface ProjectResult { invalidSaved?: GenerationMeta; meta: GenerationMeta; nodes: number; edges: number; unresolved: number; quarantined: { path: string; id: string }[] }
-export interface DetailResult { projection: RenderProjection; visible: Uint8Array; colors: Uint32Array }
+export interface DetailResult { projection: RenderProjection; visible: Uint8Array; colors: Uint32Array; explore: ExploreResult }
+export interface ViewResult { explore: ExploreResult; colors: Uint32Array; groups: GroupProjection }
 export interface LayoutResult { positions: Float32Array; milliseconds: number; cached: boolean; stored?: string }
 export interface GroupEvent { kind: 'groups'; revision: number; projection: GroupProjection }
 export interface Transport { postMessage(message: unknown, transfer: Transferable[]): void; terminate(): void; onmessage: ((event: MessageEvent) => void) | null; onerror: ((event: ErrorEvent) => void) | null }

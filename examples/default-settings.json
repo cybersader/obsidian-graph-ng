@@ -106,5 +106,43 @@
   "groupCanvasPageSize": 6,
   "maxProjectionGroups": 20000,
   "maxProjectionPairs": 200000,
-  "maxProjectionCarriers": 1000000
+  "maxProjectionCarriers": 1000000,
+  "visuals": {
+    "degreeSizing": 1.6,
+    "edgeOpacity": 0.55,
+    "edgeDensityReference": 4000,
+    "edgeColorMix": 0.65,
+    "edgeDirection": false,
+    "glow": 0.45,
+    "curvedEdges": true,
+    "curvature": 0.12,
+    "curveSegments": 8,
+    "hoverHighlight": true,
+    "dimOpacity": 0.12,
+    "groupHalos": true,
+    "haloOpacity": 0.1,
+    "autoPalette": true,
+    "labelFade": true,
+    "cameraAnimationMs": 450,
+    "glowMaxNodes": 250000,
+    "curvesMaxEdges": 60000,
+    "halosMaxGroups": 48,
+    "hubsMaxGroups": 256,
+    "softwareEffects": false
+  },
+  "explore": {
+    "panelOpen": true,
+    "facetValues": 50,
+    "legendPageSize": 40,
+    "view": {
+      "query": "",
+      "filters": [],
+      "group": null,
+      "hiddenGroups": [],
+      "collapsedGroups": [],
+      "hiddenColors": [],
+      "hiddenTypes": []
+    },
+    "savedViews": []
+  }
 }

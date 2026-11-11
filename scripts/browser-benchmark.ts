@@ -4,9 +4,10 @@ import { createServer } from 'node:http';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { fixture, exampleDeclaration } from './fixture';
 import os from 'node:os';
+import { glsl } from './glsl.mjs';
 await mkdir('.workspace/evidence', { recursive: true }); await mkdir('test-screenshots', { recursive: true });
 const worker = await build({ entryPoints: ['src/layout-worker.ts'], bundle: true, format: 'iife', write: false, platform: 'browser' });
-const entry = await build({ entryPoints: ['scripts/browser-entry.ts'], bundle: true, format: 'iife', write: false, platform: 'browser', define: { __WORKER_SOURCE__: JSON.stringify(worker.outputFiles[0]!.text) } });
+const entry = await build({ plugins: [glsl], entryPoints: ['scripts/browser-entry.ts'], bundle: true, format: 'iife', write: false, platform: 'browser', define: { __WORKER_SOURCE__: JSON.stringify(worker.outputFiles[0]!.text) } });
 const results = [], rows = fixture(); let literal = false;
 const server = createServer((req, res) => {
   if (req.url === '/fixture.json') { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ rows, declaration: { ...exampleDeclaration, display: { reifiedAsNodes: literal } } })); }

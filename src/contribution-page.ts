@@ -1,5 +1,5 @@
 import { pairKey, type GroupProjection, type GroupContribution } from './core/group-projection';
-export interface ContributionContext { active: number; groups: number; detail: number; level: number; projection?: { groups: { values: string[] }[] }; graph?: GroupProjection }
+export interface ContributionContext { active: number; groups: number; detail: number; level: number; projection?: { groups: { values: string[] }[] }; graph?: GroupProjection; values?: readonly string[] }
 export interface ContributionResult { total: number; items: GroupContribution[] }
 /** A selected relationship is an intent captured from the clicked summary, never
  * a dictionary index to reinterpret against a different cached/live source. */
@@ -36,7 +36,8 @@ export class ContributionPage {
     const s = this.selection; if (!s) return;
     if (!context.projection || !context.graph || context.active !== context.groups || context.active !== context.detail) { this.suspend(); return; }
     if (this.bound === context.active) return;
-    const values = context.projection.groups[context.level]?.values ?? ['All notes'];
+    // A runtime group-by supplies its own raw dictionary; otherwise the declared level.
+    const values = context.values ?? context.projection.groups[context.level]?.values ?? ['All notes'];
     // Legacy keyless paint is display-only. Resolve its captured labels only in a
     // fresh keyed summary, and only when each label has one unambiguous raw key.
     // Missing/duplicate labels remain refreshing; numeric IDs never cross sources.

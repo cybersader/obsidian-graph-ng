@@ -1,15 +1,19 @@
 import { ItemView, Plugin, PluginSettingTab, Setting, Notice, TFile, apiVersion, type WorkspaceLeaf } from 'obsidian';
 import { LocalAdapter } from './adapter/local';
-import { digest, migrateDeclaration, validatePredicate, type Predicate } from './core/declaration';
+import { digest, layoutDeclaration, migrateDeclaration, validateDeclaration, type GraphDeclaration, type Predicate } from './core/declaration';
+import { canonicalView, type ExploreResult, type ExploreView, type ViewCamera } from './core/explore';
+import { ExplorePanel } from './explore-panel';
+import { categorical, NEUTRAL_GROUPS } from './render-effects';
+import { readTheme } from './render-theme';
 import { renderPath, type RenderProjection } from './render-projection';
 import { pairKey, carrierIndexer, indexCarriers, type GroupProjection, type GroupContribution } from './core/group-projection';
 import { BinaryLayoutStore, type BinaryGeneration } from './core/binary-layout';
 import { yieldTask, sliced } from './core/scheduler';
-import { WorkerPipeline, LAYOUT_PRODUCER, currentDetailGeneration, type ProjectResult, type DetailResult, type LayoutResult } from './pipeline';
+import { WorkerPipeline, LAYOUT_PRODUCER, currentDetailGeneration, type ProjectResult, type DetailResult, type LayoutResult, type ViewResult } from './pipeline';
 import { groupPages, page } from './core/group-page';
 import { ContributionPage, type ContributionContext } from './contribution-page';
-import { loadSettings, validateSettings, type Settings } from './settings';
-import { DetailRenderer, GroupRenderer, gpuStatus, type Renderer } from './renderer';
+import { canonicalExplore, loadSettings, persistedSettings, validateSettings, type Settings } from './settings';
+import { DetailRenderer, GroupRenderer, gpuStatus, type Renderer, type RenderView } from './renderer';
 declare const __LAYOUT_WORKER_SOURCE__: string;
 const VIEW = 'graph-ng';
 interface Generation { key: string; identities: string[]; positions: number[]; producer: string; layoutHash?: string; edgeKeys?: string[] }
@@ -47,7 +51,7 @@ export default class GraphPlugin extends Plugin {
     const loaded = await loadSettings(this.app.vault.adapter, dataPath, this.linkProducer, message => { new Notice(message); });
     this.settings = loaded.settings;
     const data = loaded.data as Data | undefined;
-    if (data?.generations && typeof data.generations === 'object' && data.settings?.declaration) { const oldHash = await digest(data.settings.declaration), currentHash = await digest(this.settings.declaration); const old = data.generations[oldHash]; if (old) this.generations[currentHash] = old; }
+    if (data?.generations && typeof data.generations === 'object' && data.settings?.declaration) { const oldHash = await digest(layoutDeclaration(data.settings.declaration)), currentHash = await digest(layoutDeclaration(this.settings.declaration)); const old = data.generations[oldHash]; if (old) this.generations[currentHash] = old; }
     const url = URL.createObjectURL(new Blob([__LAYOUT_WORKER_SOURCE__], { type: 'text/javascript' }));
     this.pipeline = new WorkerPipeline(new Worker(url), () => this.settings.workerTimeoutMs, () => URL.revokeObjectURL(url), {
       restart: () => new Worker(url), maxRestarts: () => this.settings.workerRestarts,
@@ -76,11 +80,16 @@ export default class GraphPlugin extends Plugin {
     await this.app.workspace.revealLeaf(leaf);
   }
   save() {
-    this.writes = this.writes.catch(() => {}).then(() => this.saveData({ settings: this.settings}));
+    clearTimeout(this.saveTimer); this.saveTimer = undefined;
+    this.writes = this.writes.catch(() => {}).then(() => this.saveData({ settings: persistedSettings(this.settings) }));
     return this.writes;
   }
+  private saveTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Coalesced settings write for live controls (sliders, view state); still settings-only. */
+  saveSoon() { clearTimeout(this.saveTimer); this.saveTimer = setTimeout(() => { this.settings.explore = canonicalExplore(this.settings.explore); try { validateSettings(this.settings); void this.save(); } catch (e) { new Notice(`Graph NG did not save invalid settings: ${String(e)}`); } }, 400); }
+  onunload() { if (this.saveTimer !== undefined) void this.save(); }
   async apply(settings: Settings) {
-    settings = { ...settings, declaration: migrateDeclaration(settings.declaration) }; validateSettings(settings);
+    settings = { ...settings, declaration: migrateDeclaration(settings.declaration) }; validateSettings(settings); settings.explore = canonicalExplore(settings.explore);
     await this.serialize(async () => {
       this.settings = settings; this.adapter.configure(settings.declaration); this.resetStore();
       // Event registrations are owned by the original adapter; use its debounce only after reload.
@@ -126,12 +135,21 @@ export class GraphView extends ItemView {
   private positions?: Float32Array;
   private visible?: Uint8Array;
   private predicate?: Predicate;
+  private view: ExploreView;
+  private explored?: ExploreResult;
+  private explorePanel?: ExplorePanel;
+  private exploring = false;
+  private exploreQueued?: () => void;
+  private detailScope?: Uint8Array;
+  private pendingCamera?: ViewCamera;
+  private body!: HTMLElement;
   private gpu = { available: false, reason: 'Not probed' };
   readonly startupTrace: { revision: number; start: number; groupsAt: number; drawMs: number; firstGroupMs: number }[] = [];
   readonly cacheTrace: { expected: string; stored?: string; nodes: number; indexed: number; listed: number; valid: boolean }[] = [];
   detailRenderer?: DetailRenderer;
   constructor(leaf: WorkspaceLeaf, readonly plugin: GraphPlugin) {
     super(leaf);
+    this.view = structuredClone(plugin.settings.explore.view);
     this.contributionPage = new ContributionPage(plugin.settings.listPageSize, (revision, pair, offset, count) => plugin.pipeline.request(revision, { kind: 'contributions', pair, offset, count }), () => this.renderContributionPanel());
   }
   getViewType() { return VIEW; }
@@ -141,23 +159,25 @@ export class GraphView extends ItemView {
     this.contentEl.empty(); this.contentEl.addClass('graph-ng-view');
     this.toolbar = this.contentEl.createDiv({ cls: 'graph-ng-toolbar' });
     this.toolbar.createEl('button', { text: 'Groups' }).onclick = () => this.showGroups();
-    this.toolbar.createEl('button', { text: 'All notes' }).onclick = () => this.showDetails();
-    const filter = this.toolbar.createEl('input', { attr: { placeholder: 'Filter JSON: {"kind":"folder","prefix":"Notes"}', 'aria-label': 'Column predicate JSON' } });
-    const apply = this.toolbar.createEl('button', { text: 'Apply filter' });
-    apply.onclick = () => {
-      try { const pred: unknown = filter.value.trim() ? JSON.parse(filter.value) : undefined; if (pred !== undefined) validatePredicate(pred); this.predicate = pred; void this.refresh(); }
-      catch (e) { new Notice(String(e)); }
-    };
+    this.toolbar.createEl('button', { text: 'All notes' }).onclick = () => { this.detailScope = undefined; void this.showDetails(); };
     this.status = this.contentEl.createDiv({ cls: 'graph-ng-status', attr: { role: 'status' } });
-    this.stage = this.contentEl.createDiv({ cls: 'graph-ng-stage' });
+    this.body = this.contentEl.createDiv({ cls: 'graph-ng-body' });
+    this.stage = this.body.createDiv({ cls: 'graph-ng-stage' });
+    this.explorePanel = new ExplorePanel(this.body, {
+      settings: () => this.plugin.settings, result: () => this.explored, mode: () => this.contentEl.dataset.mode ?? 'groups',
+      policy: () => this.detailRenderer?.policy.reasons ?? [], setView: (view, after) => this.setView(view, after), setColors: colors => this.setColors(colors),
+      visualsChanged: labels => { this.plugin.saveSoon(); this.detailRenderer?.refreshVisuals(labels); if (this.contentEl.dataset.mode === 'groups') this.showGroups(true); },
+      groupColor: code => this.groupColor(code), focusGroup: code => this.focusGroup(code), fit: () => this.detailRenderer?.fitAll(),
+      camera: () => this.detailRenderer ? { ...this.detailRenderer.camera } : null, restoreCamera: camera => this.restoreCamera(camera), persist: () => this.plugin.saveSoon(),
+    }, this.view);
     this.panel = this.contentEl.createDiv({ cls: 'graph-ng-panel' });
     // Creating even a probe GL context can block; the initial group view needs no GPU.
     this.registerEvent(this.app.workspace.on('css-change', () => this.renderer?.refreshTheme?.()));
     this.unsubscribe = this.plugin.subscribe(() => { void this.refresh(); });
     await this.refresh();
   }
-  invalidateSource() { this.contributionPage.clear(); this.groupGeneration = -1; this.revision++; this.renderRevision++; this.provisional = true; if (this.contentEl) this.contentEl.dataset.verified = 'false'; this.renderer?.dispose(); this.renderer = undefined; this.projection = undefined; this.detailGeneration = -1; this.positions = undefined; this.groupGraph = undefined; this.stage?.empty(); this.panel?.empty(); }
-  async onClose() { this.contributionPage.clear(); this.closed = true; this.renderRevision++; this.revision++; this.renderer?.dispose(); this.unsubscribe?.(); }
+  invalidateSource() { this.explored = undefined; this.explorePanel?.render(); this.contributionPage.clear(); this.groupGeneration = -1; this.revision++; this.renderRevision++; this.provisional = true; if (this.contentEl) this.contentEl.dataset.verified = 'false'; this.renderer?.dispose(); this.renderer = undefined; this.projection = undefined; this.detailGeneration = -1; this.positions = undefined; this.groupGraph = undefined; this.stage?.empty(); this.panel?.empty(); }
+  async onClose() { this.explorePanel?.dispose(); this.contributionPage.clear(); this.closed = true; this.renderRevision++; this.revision++; this.renderer?.dispose(); this.unsubscribe?.(); }
   async refresh() {
     if (this.closed) return;
     if (this.refreshing) { this.queued = true; return; }
@@ -166,7 +186,7 @@ export class GraphView extends ItemView {
     finally { this.refreshing = false; }
   }
   private async refreshOnce() {
-    const scope = JSON.stringify([this.plugin.sourceIdentity, this.plugin.settings.projectionFile, this.plugin.settings.groupLevel, this.plugin.settings.declaration.groups]);
+    const scope = JSON.stringify([this.plugin.sourceIdentity, this.plugin.settings.projectionFile, this.plugin.settings.groupLevel, this.plugin.settings.declaration.groups, this.view?.group ?? null]);
     if (scope !== this.contributionScope) this.contributionPage.clear();
     this.contributionScope = scope; this.contributionPage.size = this.plugin.settings.listPageSize; this.contributionPage.suspend();
     const rev = ++this.revision, revision = ++this.plugin.nextRevision; this.activeRevision = revision;
@@ -184,12 +204,12 @@ export class GraphView extends ItemView {
         if (bytes.byteLength > settings.maxProjectionBytes) throw new Error('Projection byte limit exceeded');
         const p = await this.plugin.pipeline.request<GroupProjection>(revision, { kind: 'external', bytes, maxBytes: settings.maxProjectionBytes, limits: { groups: settings.maxProjectionGroups, pairs: settings.maxProjectionPairs, carriers: settings.maxProjectionCarriers } });
         if (!current()) return;
-        this.projection = undefined; this.positions = undefined; this.groupGraph = p; this.groupGeneration = revision; this.members.clear(); this.contributions.clear();
+        this.projection = undefined; this.positions = undefined; this.explored = undefined; this.groupGraph = p; this.groupGeneration = revision; this.members.clear(); this.contributions.clear();
         this.status.textContent = `${p.groups.length} groups · ${p.groupEdges.length} counted group pairs · unverified external aggregate (not merged with live rows)`;
         this.contentEl.dataset.state = 'ready'; this.showGroups(); return;
       }
-      const config = { declaration: settings.declaration, layout: settings.layout, source: `${this.plugin.linkProducer}/${this.plugin.sourceIdentity}`, groupLevel: settings.groupLevel, predicate: this.predicate, streamEveryIterations: settings.streamEveryIterations };
-      const hashes = await this.plugin.pipeline.request<{ declarationHash: string; layoutHash: string }>(revision, { kind: 'configure', config });
+      const config = { declaration: settings.declaration, layout: settings.layout, source: `${this.plugin.linkProducer}/${this.plugin.sourceIdentity}`, groupLevel: settings.groupLevel, predicate: this.predicate, view: this.view, facetValues: settings.explore?.facetValues, streamEveryIterations: settings.streamEveryIterations };
+      const hashes = await this.plugin.pipeline.request<{ declarationHash: string; layoutHash: string; ingestHash: string }>(revision, { kind: 'configure', config });
       if (!current()) return;
       if (settings.persistLayout) {
         await this.plugin.migrate(revision, hashes.declarationHash);
@@ -197,7 +217,7 @@ export class GraphView extends ItemView {
         if (saved) {
           try {
             const cache = await this.plugin.pipeline.request<{ groups?: GroupProjection } | undefined>(revision, { kind: 'load', generation: saved });
-            if (cache?.groups && current() && !this.predicate) {
+            if (cache?.groups && current() && !this.predicate && !(this.view && viewNarrows(this.view))) {
               this.projection = undefined; this.positions = undefined; this.groupGraph = cache.groups; this.groupGeneration = -revision; this.members.clear(); this.contributions.clear(); this.showGroups(true);
               this.status.textContent = `cached · verifying ${this.plugin.adapter.coverage().indexed} of ${this.plugin.adapter.coverage().listed} · filters and members provisional`;
               this.contentEl.dataset.cachedPaintMs = String(performance.now() - start); await yieldTask();
@@ -205,14 +225,14 @@ export class GraphView extends ItemView {
           } catch { await this.plugin.store.quarantine(saved.meta); }
         }
       }
-      const reset = this.plugin.ingestedHash !== hashes.declarationHash;
+      const reset = this.plugin.ingestedHash !== hashes.ingestHash;
       for await (const batch of this.plugin.adapter.columns(reset, settings.ingest)) {
         if (!current()) return;
         await this.plugin.pipeline.request(revision, { kind: 'rows', ...batch });
         const c = this.plugin.adapter.coverage();
         this.status.textContent = `${this.groupGraph ? 'cached · ' : ''}verifying ${c.indexed} of ${c.listed} · filters and members provisional`;
       }
-      this.plugin.ingestedHash = hashes.declarationHash;
+      this.plugin.ingestedHash = hashes.ingestHash;
       this.plugin.pipeline.onGroups = event => {
         if (event.revision !== revision || !current()) return;
         const groupsAt = performance.now();
@@ -234,7 +254,7 @@ export class GraphView extends ItemView {
       await yieldTask();
       const detail = await this.plugin.pipeline.request<DetailResult>(revision, { kind: 'detail' });
       if (!current()) return;
-      this.projection = detail.projection; this.detailGeneration = revision; this.visible = detail.visible; this.colors = detail.colors;
+      this.projection = detail.projection; this.detailGeneration = revision; this.visible = detail.visible; this.colors = detail.colors; this.explored = detail.explore; this.contentEl.dataset.visibleNodes = String(detail.explore.visible.reduce((n, v) => n + v, 0)); this.explorePanel?.render();
       this.contributionPage.update(this.contributionContext());
       if (result.quarantined.length) this.showGroups(true);
       this.plugin.pipeline.onPositions = event => { if (event.revision === revision && current()) { if (this.positions && this.contentEl.dataset.mode === 'groups') this.plugin.pipeline.recycle(this.positions.buffer as ArrayBuffer); this.positions = event.positions; this.contentEl.dataset.streaming = 'true'; } };
@@ -273,7 +293,7 @@ export class GraphView extends ItemView {
     const draw = () => {
       this.renderer?.dispose(); this.stage.empty();
       const selected = pages.canvas(canvasPage);
-      this.renderer = new GroupRenderer(this.stage, selected, settings, id => this.drill(id), edge => this.edgeList(edge, projection, generation));
+      this.renderer = new GroupRenderer(this.stage, selected, settings, id => this.drill(id), edge => this.edgeList(edge, projection, generation), id => this.groupColor(Number(id)));
       previous.disabled = canvasPage === 0; next.disabled = (canvasPage + 1) * settings.groupCanvasPageSize >= projection.groups.length;
       label.textContent = ` Canvas groups ${canvasPage * settings.groupCanvasPageSize + 1}–${Math.min((canvasPage + 1) * settings.groupCanvasPageSize, projection.groups.length)} / ${projection.groups.length} `;
       this.contentEl.dataset.canvasGroups = String(selected.groups.length);
@@ -289,7 +309,7 @@ export class GraphView extends ItemView {
       conflicts.createEl('summary', { text: `${this.projection.quarantined.length} notes share an ID (excluded)` });
       this.paginate(this.projection.quarantined, (note, host) => { host.createEl('button', { text: `${note.path} — ${note.id}` }).onclick = () => this.openPath(note.path); }, conflicts);
     }
-    this.contentEl.dataset.mode = 'groups'; this.contentEl.dataset.groupFirstPageMs = String(performance.now() - start);
+    this.contentEl.dataset.mode = 'groups'; this.contentEl.dataset.groupFirstPageMs = String(performance.now() - start); this.explorePanel?.render();
     if (this.contributionPage.selection) { this.renderContributionPanel(); this.contributionPage.update(this.contributionContext()); }
   }
   private openPath(path: string) {
@@ -329,7 +349,7 @@ export class GraphView extends ItemView {
     try { if (this.gpu.reason === 'Not probed') this.gpu = await this.plugin.pipeline.request<typeof this.gpu | undefined>(revision, { kind: 'gpu' }) ?? gpuStatus(); }
     catch (error) { new Notice(`GPU probe failed: ${String(error)}. Use group member lists.`); }
     if (revision !== this.activeRevision || renderRevision !== this.renderRevision || this.closed) return;
-    if (this.gpu.available && this.positions) { const bits = new Uint8Array(p.nodeCount); for (const i of members) bits[i] = 1; this.showDetails(bits, false); }
+    if (this.gpu.available && this.positions) { const bits = new Uint8Array(p.nodeCount); for (const i of members) bits[i] = 1; this.detailScope = bits; this.showDetails(bits, false); }
     this.paginate(Array.from(members), (i, host) => { host.createEl('button', { text: renderPath(p, i), cls: 'graph-ng-member' }).onclick = () => this.openPath(renderPath(p, i)); });
   }
   private async edgeList(edge: GroupProjection['groupEdges'][number], clickedGraph = this.groupGraph, clickedGeneration = this.groupGeneration) {
@@ -367,7 +387,7 @@ export class GraphView extends ItemView {
     }
   }
   private contributionContext(): ContributionContext {
-    return { active: this.activeRevision, groups: this.groupGeneration, detail: this.detailGeneration, level: this.plugin.settings.groupLevel, projection: this.projection, graph: this.groupGraph };
+    return { active: this.activeRevision, groups: this.groupGeneration, detail: this.detailGeneration, level: this.plugin.settings.groupLevel, projection: this.projection, graph: this.groupGraph, values: this.explored?.groupKeys };
   }
   private renderContributionPanel() {
     const pager = this.contributionPage; if (!pager.selection || this.closed || !this.panel) return;
@@ -385,6 +405,77 @@ export class GraphView extends ItemView {
     controls.createSpan({ text: ` ${total ? pager.offset + 1 : 0}–${Math.min(pager.offset + pager.size, total)} / ${total} ` });
     for (const r of items) { const item = root.createDiv({ cls: 'graph-ng-contribution' }); item.createSpan({ text: `${r.source} → ${r.target} [${r.type}] ` }); if (r.carrier) item.createEl('button', { text: r.carrier }).onclick = () => this.openPath(r.carrier!); }
   }
+  /** Renderer masks for the current explore result: group codes, collapsed groups, hidden types. */
+  private renderView(): RenderView {
+    const r = this.explored; if (!r) return {};
+    const collapsed = new Uint8Array(r.groupKeys.length), keys = new Set(this.view.collapsedGroups), types = new Set(this.view.hiddenTypes);
+    r.groupKeys.forEach((k, i) => { if (keys.has(k)) collapsed[i] = 1; });
+    return { groupCodes: r.groupCodes, groupLabels: r.groupLabels, collapsed, typeHidden: Uint8Array.from(r.types, t => types.has(t) ? 1 : 0), colors: this.colors };
+  }
+  /** Latest-wins worker view recompute; no re-projection, relayout or renderer rebuild. */
+  setView(view: ExploreView, after?: () => void, colors?: GraphDeclaration['colors']) {
+    this.view = view; this.plugin.settings.explore.view = canonicalView(view); this.plugin.saveSoon();
+    const run = async () => {
+      this.exploring = true;
+      const revision = this.activeRevision, started = performance.now();
+      try {
+        if (!this.projection || !currentDetailGeneration(revision, this.activeRevision, this.detailGeneration)) return;
+        const result = await this.plugin.pipeline.request<ViewResult>(revision, { kind: 'explore', view: this.view, colors, facetValues: this.plugin.settings.explore.facetValues });
+        if (this.closed || revision !== this.activeRevision) return;
+        this.explored = result.explore; this.colors = result.colors; this.visible = result.explore.visible; this.groupGraph = result.groups; this.groupGeneration = revision;
+        this.contentEl.dataset.exploreMs = String(performance.now() - started); const g = this.view.group; this.contentEl.dataset.groupSource = !g ? 'declared' : g.from === 'folder' ? `folder:${g.depth}` : `${g.from}:${g.key}`; this.contentEl.dataset.visibleNodes = String(result.explore.visible.reduce((n, v) => n + v, 0));
+        this.contributionPage.update(this.contributionContext());
+        if (this.contentEl.dataset.mode === 'nodes' && this.detailRenderer) {
+          let bits = this.visible; if (this.detailScope) { bits = this.visible.slice(); for (let i = 0; i < bits.length; i++) bits[i]! &= this.detailScope[i]!; }
+          this.detailRenderer.setView(bits, this.renderView());
+        } else if (this.contentEl.dataset.mode === 'groups') this.showGroups(true);
+        this.explorePanel?.setState(this.view); after?.();
+      } catch (error) {
+        if (!this.closed && !String(error).includes('generation changed')) { new Notice(`Graph NG view: ${String(error)}`); this.status.textContent = `View not applied: ${String(error)}`; }
+      } finally {
+        this.exploring = false; const next = this.exploreQueued; this.exploreQueued = undefined; if (next) void next();
+      }
+    };
+    if (this.exploring) this.exploreQueued = run; else void run();
+  }
+  /** Rules are presentation: re-evaluated in the worker on existing columns. A rule on a
+   * property that is not yet materialized falls back to a full apply (re-ingest, no relayout). */
+  private async setColors(colors: GraphDeclaration['colors']) {
+    const declaration = { ...this.plugin.settings.declaration, colors };
+    try { validateDeclaration(declaration); } catch (e) { new Notice(String(e)); return; }
+    const settings = { ...this.plugin.settings, declaration: migrateDeclaration(declaration) };
+    const materialized = new Set(this.explored?.facets.map(f => f.key));
+    if (colors.every(c => c.predicate.kind === 'folder' || materialized.has(c.predicate.key))) {
+      // Mutate in place: live renderers hold this settings object.
+      this.plugin.settings.declaration = settings.declaration; this.plugin.adapter.configure(settings.declaration); this.plugin.saveSoon();
+      this.setView(this.view, () => { this.detailRenderer?.refreshTheme(); this.explorePanel?.render(); }, settings.declaration.colors);
+    } else await this.plugin.apply(settings);
+  }
+  private groupPalette?: { size: number; bg: string; bytes: Uint8Array };
+  /** The same deterministic group palette the renderer uses, for legends and group canvas. */
+  private themeCache?: { at: number; theme: ReturnType<typeof readTheme> };
+  groupColor(code: number): string {
+    // Legends ask once per row; read computed host colors at most once per burst.
+    if (!this.themeCache || performance.now() - this.themeCache.at > 250) this.themeCache = { at: performance.now(), theme: readTheme(this.stage, this.plugin.settings) };
+    const size = Math.max(1, Math.min(this.explored?.groupKeys.length ?? 1, 4096)), theme = this.themeCache.theme;
+    // External aggregates have opaque group ids and no explore dictionary: neutral group color.
+    if (!this.explored || !Number.isSafeInteger(code) || code < 0 || code >= this.explored.groupKeys.length) return theme.group;
+    if (!this.groupPalette || this.groupPalette.size !== size || this.groupPalette.bg !== theme.background) { const p = theme.palette; this.groupPalette = { size, bg: theme.background, bytes: categorical(size, [p[8]!, p[9]!, p[10]!]) }; }
+    // A declared rule named like the group wins, exactly as the group canvas colors it.
+    const rule = this.plugin.settings.declaration.colors.findIndex(c => c.name === this.explored?.groupLabels[code]), p = theme.palette;
+    if (rule >= 0) { const r = (rule + 5) * 4; return `rgb(${p[r]},${p[r + 1]},${p[r + 2]})`; }
+    if (NEUTRAL_GROUPS.has(this.explored.groupLabels[code]!)) return theme.node;
+    const b = this.groupPalette.bytes, k = (code % size) * 4;
+    return this.plugin.settings.visuals.autoPalette ? `rgb(${b[k]},${b[k + 1]},${b[k + 2]})` : theme.group;
+  }
+  private focusGroup(code: number) {
+    if (this.contentEl.dataset.mode === 'nodes' && this.detailRenderer) this.detailRenderer.frameGroup(code);
+    else void this.drill(String(code));
+  }
+  private restoreCamera(camera: ViewCamera) {
+    if (this.detailRenderer && this.contentEl.dataset.mode === 'nodes') this.detailRenderer.flyTo(camera.x, camera.y, camera.ratio);
+    else { this.pendingCamera = camera; this.detailScope = undefined; void this.showDetails(); }
+  }
   async showDetails(bits = this.visible, clearPanel = true) {
     if (!this.projection || !this.positions || !bits) { new Notice('Individual nodes are not ready; the group graph remains usable.'); return; }
     const renderRevision = ++this.renderRevision; this.contentEl.dataset.mode = 'nodes-building';
@@ -397,11 +488,16 @@ export class GraphView extends ItemView {
         if (renderRevision !== this.renderRevision || this.closed) return;
         this.gpu = { available: false, reason: 'WebGL context could not be restored' };
         this.showGroups(); void this.showDetails(bits, clearPanel);
-      });
+      }, this.renderView());
       this.renderer = this.detailRenderer; this.contentEl.dataset.mode = 'nodes';
+      this.detailRenderer.onHub = group => { const key = this.explored?.groupKeys[group]; if (key !== undefined) this.setView({ ...this.view, collapsedGroups: this.view.collapsedGroups.filter(k => k !== key) }, () => this.focusGroup(group)); };
+      if (this.pendingCamera) { const c = this.pendingCamera; this.pendingCamera = undefined; this.detailRenderer.flyTo(c.x, c.y, c.ratio); }
+      this.explorePanel?.render();
     } catch (e) { if (renderRevision !== this.renderRevision) return; this.gpu = { available: false, reason: String(e) }; this.showGroups(); this.status.textContent += ' · GPU unavailable; group fallback active'; }
   }
 }
+/** Whether a view hides anything relative to the unfiltered declared grouping. */
+const viewNarrows = (v: ExploreView) => Boolean(v.query.trim() || v.filters.length || v.group || v.hiddenGroups.length || v.hiddenColors.length || v.hiddenTypes.length);
 class GraphSettings extends PluginSettingTab {
   constructor(private plugin: GraphPlugin) { super(plugin.app, plugin); }
   display() {

@@ -38,11 +38,12 @@ test('late upload-window resize is reconciled before first draw and restoration'
       settings: { workerTimeoutMs: 1000, shaderPollMs: 1 },
       positions: new Float32Array([0, 0]), visible: new Uint8Array([1]), colorIds: new Uint32Array([0]),
       projection: { source: new Uint32Array(), target: new Uint32Array() }, theme: { palette: new Uint8Array(1024) },
-      programs: [], vaos: [], async program() { return {}; }, texture() {}, uploadPalette() {},
+      programs: [], vaos: [], discBuffers: [], async program() { return {}; }, texture() {}, uploadPalette() {}, buffer() {}, uploadView() {},
       integer() { if (!resized) { resized = true; container.clientWidth += 400; r.resize(); expect(r.canvas.width).not.toBe(container.clientWidth); } },
       gl: { SYNC_GPU_COMMANDS_COMPLETE: 1, ALREADY_SIGNALED: 2, CONDITION_SATISFIED: 3, WAIT_FAILED: 4,
         fenceSync() { return {}; }, flush() {}, clientWaitSync(_fence: unknown, _flags: number, timeout: number) { expect(timeout).toBe(0); return 2; }, deleteSync() {},
-        getParameter() { return 2048; }, texImage2D() {}, createVertexArray() { return {}; }, bindVertexArray() {}, enable() {}, blendFunc() {} },
+        getParameter() { return 2048; }, texImage2D() {}, createVertexArray() { return {}; }, bindVertexArray() {}, enable() {}, blendFunc() {},
+        createBuffer() { return {}; }, bindBuffer() {}, enableVertexAttribArray() {}, vertexAttribPointer() {}, vertexAttribDivisor() {} },
     });
     // Both first initialization and context restoration run this same method.
     for (let pass = 0; pass < 2; pass++) {

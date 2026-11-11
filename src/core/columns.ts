@@ -1,4 +1,4 @@
-import type { GraphDeclaration } from './declaration';
+import { groupColumn, predicateColumn, type GraphDeclaration } from './declaration';
 import type { FactRow } from './projection';
 export interface Strings { bytes: Uint8Array; offsets: Uint32Array }
 export interface RowColumns {
@@ -10,8 +10,8 @@ export interface RowColumns {
 }
 export function declaredKeys(d: GraphDeclaration): string[] {
   return [...new Set([...d.identity.map(i => i.key), ...d.columns,
-    ...d.groups.flatMap(g => g.from === 'key' ? [g.key] : []),
-    ...d.colors.flatMap(c => c.predicate.kind === 'eq' ? [c.predicate.key] : []),
+    ...d.groups.flatMap(g => groupColumn(g) ?? []),
+    ...d.colors.flatMap(c => predicateColumn(c.predicate) ?? []),
     ...d.edges.flatMap(e => e.kind === 'reified' ? [e.sourceProperty, e.targetProperty, ...(e.typeProperty ? [e.typeProperty] : [])] : e.kind === 'inline' ? [e.key] : []),
     ...(d.carrierResolvers ?? []).flatMap(r => r.key === '$path' ? [] : [r.key])])].sort();
 }

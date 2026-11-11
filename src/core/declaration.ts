@@ -1,12 +1,19 @@
+import { validateTransform, type DerivedTransform } from './derive';
 export type Scalar = string | number | boolean | null;
 export type FolderPath = string | string[];
 export const folderPath = (path: FolderPath) => (Array.isArray(path) ? path.join('/') : path).replace(/\/+$/, '');
-export type Predicate = { kind: 'eq'; key: string; value: Scalar } | { kind: 'folder'; prefix: FolderPath };
+export type Predicate = { kind: 'eq'; key: string; value: Scalar } | { kind: 'in'; key: string; values: Scalar[] } | { kind: 'exists'; key: string } | { kind: 'folder'; prefix: FolderPath };
+/** Property column a predicate reads, if any. Folder predicates read paths only. */
+export const predicateColumn = (p: Predicate): string | undefined => p.kind === 'folder' ? undefined : p.key;
+/** Colors are presentation. Layout/cache identity excludes them, so a legend edit never reseeds or relayouts. */
+export const layoutDeclaration = (d: GraphDeclaration): GraphDeclaration => ({ ...d, colors: [] });
 export type EdgeDeclaration =
   | { name: string; kind: 'reified'; sourceProperty: string; targetProperty: string; typeProperty?: string; type?: string }
   | { name: string; kind: 'inline'; key: string; type: string }
   | { name: string; kind: 'producer'; producer: string; type: string };
-export type GroupSource = { from: 'key'; key: string } | { from: 'folder'; depth: number; prefix?: FolderPath };
+export type GroupSource = { from: 'key'; key: string } | { from: 'folder'; depth: number; prefix?: FolderPath } | { from: 'derived'; key: string; transform: DerivedTransform };
+/** Property read by a group source; `$identity`/`$path` derive from built-in node text. */
+export const groupColumn = (g: GroupSource): string | undefined => g.from === 'folder' || (g.from === 'derived' && g.key.startsWith('$')) ? undefined : g.key;
 export interface GraphDeclaration {
   version: 2;
   identity: { key: string }[];
@@ -36,6 +43,11 @@ export function validatePredicate(v: unknown): asserts v is Predicate {
     only(v, ['kind', 'key', 'value']); text(v.key);
     if (v.value !== null && !['string', 'number', 'boolean'].includes(typeof v.value)) throw new Error('Equality value must be scalar');
     if (typeof v.value === 'number' && !Number.isFinite(v.value)) throw new Error('Equality number must be finite');
+  } else if (v.kind === 'in') {
+    only(v, ['kind', 'key', 'values']); text(v.key);
+    if (!Array.isArray(v.values) || v.values.length > 10000 || v.values.some(x => x !== null && !['string', 'number', 'boolean'].includes(typeof x) || (typeof x === 'number' && !Number.isFinite(x)))) throw new Error('Membership values must be at most 10,000 finite scalars');
+  } else if (v.kind === 'exists') {
+    only(v, ['kind', 'key']); text(v.key);
   } else if (v.kind === 'folder') {
     only(v, ['kind', 'prefix']);
     validateFolderPath(v.prefix);
@@ -60,7 +72,8 @@ export function validateDeclaration(v: unknown): asserts v is GraphDeclaration {
     record(g);
     if (g.from === 'key') { only(g, ['from', 'key']); text(g.key); }
     else if (g.from === 'folder') { only(g, ['from', 'depth', 'prefix']); if (g.prefix !== undefined) validateFolderPath(g.prefix); if (!Number.isSafeInteger(g.depth) || (g.depth as number) < 1) throw new Error('Folder depth must be a positive integer'); }
-    else throw new Error('Slice 1 supports key and folder group sources');
+    else if (g.from === 'derived') validateDerivedGroup(g);
+    else throw new Error('Group sources are key, folder or derived');
   }
   record(v.display); only(v.display, ['reifiedAsNodes']); if (typeof v.display.reifiedAsNodes !== 'boolean') throw new Error('reifiedAsNodes must be boolean');
   for (const key of v.columns as unknown[]) text(key);
@@ -112,7 +125,19 @@ export function migrateDeclaration(value: unknown): GraphDeclaration {
   validateDeclaration(d);
   // Keep strings valid input, but persist folder paths as segments so ordinary long
   // multi-folder paths are not mistaken for credential-shaped opaque tokens.
-  for (const color of d.colors) if (color.predicate.kind === 'folder' && typeof color.predicate.prefix === 'string') color.predicate.prefix = folderPath(color.predicate.prefix).split('/').filter(Boolean);
+  for (const color of d.colors) canonicalPredicate(color.predicate);
   for (const group of d.groups) if (group.from === 'folder' && typeof group.prefix === 'string') group.prefix = folderPath(group.prefix).split('/').filter(Boolean);
   return d;
+}
+
+/** Persist folder prefixes as segments, the settings-sharing-safe representation. */
+export function canonicalPredicate(p: Predicate): Predicate {
+  if (p.kind === 'folder' && typeof p.prefix === 'string') p.prefix = folderPath(p.prefix).split('/').filter(Boolean);
+  return p;
+}
+
+export function validateDerivedGroup(g: Record<string, unknown>) {
+  only(g, ['from', 'key', 'transform']); text(g.key);
+  if (g.key.startsWith('$') && g.key !== '$identity' && g.key !== '$path') throw new Error('Derived built-in sources are $identity and $path');
+  validateTransform(g.transform);
 }

@@ -1,5 +1,86 @@
 import { DEFAULT_LAYOUT, validateLayout, type LayoutOptions } from './core/layout-options';
 import { defaultDeclaration, migrateDeclaration, validateDeclaration, type GraphDeclaration } from './core/declaration';
+import { canonicalView, emptyView, validateSaved, validateView, type ExploreView, type SavedView } from './core/explore';
+/** Presentation knobs. Each effect has an explicit cost ceiling and software policy. */
+export interface Visuals {
+  degreeSizing: number;
+  edgeOpacity: number;
+  edgeDensityReference: number;
+  edgeColorMix: number;
+  edgeDirection: boolean;
+  glow: number;
+  curvedEdges: boolean;
+  curvature: number;
+  curveSegments: number;
+  hoverHighlight: boolean;
+  dimOpacity: number;
+  groupHalos: boolean;
+  haloOpacity: number;
+  autoPalette: boolean;
+  labelFade: boolean;
+  cameraAnimationMs: number;
+  glowMaxNodes: number;
+  curvesMaxEdges: number;
+  halosMaxGroups: number;
+  hubsMaxGroups: number;
+  softwareEffects: boolean;
+}
+export interface ExploreSettings { panelOpen: boolean; facetValues: number; legendPageSize: number; view: ExploreView; savedViews: SavedView[] }
+export const defaultVisuals = (): Visuals => ({
+  degreeSizing: 1.6, edgeOpacity: .4, edgeDensityReference: 3000, edgeColorMix: .65, edgeDirection: false, glow: .3,
+  curvedEdges: true, curvature: .12, curveSegments: 8, hoverHighlight: true, dimOpacity: .12, groupHalos: true, haloOpacity: .08,
+  autoPalette: true, labelFade: true, cameraAnimationMs: 450, glowMaxNodes: 250000, curvesMaxEdges: 60000, halosMaxGroups: 48, hubsMaxGroups: 256, softwareEffects: false,
+});
+export const defaultExplore = (): ExploreSettings => ({ panelOpen: true, facetValues: 50, legendPageSize: 40, view: emptyView(), savedViews: [] });
+const flags = ['edgeDirection', 'curvedEdges', 'hoverHighlight', 'groupHalos', 'autoPalette', 'labelFade', 'softwareEffects'] as const;
+const unit = ['edgeOpacity', 'edgeColorMix', 'glow', 'dimOpacity', 'haloOpacity'] as const;
+const counts = ['edgeDensityReference', 'curveSegments', 'glowMaxNodes', 'curvesMaxEdges', 'halosMaxGroups', 'hubsMaxGroups'] as const;
+export function validateVisuals(v: unknown): asserts v is Visuals {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('visuals must be an object');
+  const o = v as Record<string, unknown>, known = Object.keys(defaultVisuals());
+  for (const k of Object.keys(o)) if (!known.includes(k)) throw new Error(`Unknown visual setting: ${k}`);
+  for (const k of flags) if (typeof o[k] !== 'boolean') throw new Error(`visuals.${k} must be boolean`);
+  for (const k of unit) if (typeof o[k] !== 'number' || !(o[k] as number >= 0 && o[k] as number <= 1)) throw new Error(`visuals.${k} must be between 0 and 1`);
+  for (const k of counts) if (!Number.isSafeInteger(o[k]) || (o[k] as number) < 0) throw new Error(`visuals.${k} must be a nonnegative integer (0 disables)`);
+  if (typeof o.degreeSizing !== 'number' || !(o.degreeSizing >= 0 && o.degreeSizing <= 8)) throw new Error('visuals.degreeSizing must be between 0 and 8');
+  if (typeof o.curvature !== 'number' || !(o.curvature >= 0 && o.curvature <= .5)) throw new Error('visuals.curvature must be between 0 and 0.5');
+  if ((o.curveSegments as number) < 2 || (o.curveSegments as number) > 32) throw new Error('visuals.curveSegments must be 2–32');
+  if (typeof o.cameraAnimationMs !== 'number' || !(o.cameraAnimationMs >= 0 && o.cameraAnimationMs <= 5000)) throw new Error('visuals.cameraAnimationMs must be 0–5000');
+}
+export function validateExplore(v: unknown): asserts v is ExploreSettings {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('explore must be an object');
+  const o = v as Record<string, unknown>;
+  for (const k of Object.keys(o)) if (!['panelOpen', 'facetValues', 'legendPageSize', 'view', 'savedViews'].includes(k)) throw new Error(`Unknown explore setting: ${k}`);
+  if (typeof o.panelOpen !== 'boolean') throw new Error('explore.panelOpen must be boolean');
+  for (const k of ['facetValues', 'legendPageSize'] as const) if (!Number.isSafeInteger(o[k]) || (o[k] as number) < 1 || (o[k] as number) > 10000) throw new Error(`explore.${k} must be 1–10000`);
+  validateView(o.view); validateSaved(o.savedViews);
+}
+/** Saves folder prefixes as segments so view state stays settings-sharing safe. */
+export function canonicalExplore(e: ExploreSettings): ExploreSettings {
+  return { ...e, view: canonicalView(e.view), savedViews: e.savedViews.map(s => ({ ...s, view: canonicalView(s.view) })) };
+}
+/** Settings-sharing scanners refuse long whitespace-free runs. View state can hold
+ * note-derived text (group keys, filter values, queries), so persisted `explore`
+ * strings with such a run are written as `{"$text": [chunks ≤ 24]}` and joined on load.
+ * In-memory settings always hold plain strings. */
+const TEXT_CHUNK = 24, OPAQUE_RUN = /\S{32,}/;
+export function encodeText(v: unknown): unknown {
+  if (typeof v === 'string') { if (!OPAQUE_RUN.test(v)) return v; const parts: string[] = []; for (let i = 0; i < v.length; i += TEXT_CHUNK) parts.push(v.slice(i, i + TEXT_CHUNK)); return { $text: parts }; }
+  if (Array.isArray(v)) return v.map(encodeText);
+  if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, c]) => [k, encodeText(c)]));
+  return v;
+}
+export function decodeText(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(decodeText);
+  if (v && typeof v === 'object') {
+    const o = v as Record<string, unknown>, keys = Object.keys(o);
+    if (keys.length === 1 && keys[0] === '$text') { const parts = o.$text; if (!Array.isArray(parts) || parts.length > 4096 || parts.some(x => typeof x !== 'string' || x.length > TEXT_CHUNK)) throw new Error('Invalid encoded text'); return parts.join(''); }
+    return Object.fromEntries(keys.map(k => [k, decodeText(o[k])]));
+  }
+  return v;
+}
+/** The exact object written to data.json: settings only, explore text scanner-safe. */
+export const persistedSettings = (s: Settings) => ({ ...s, explore: encodeText(s.explore) });
 export interface Settings {
   settingsVersion: 2;
   ingest: { chunkRows: number; budgetMs: number };
@@ -49,6 +130,8 @@ export interface Settings {
   persistLayout: boolean;
   cachedDeclarations: number;
   projectionFile: string;
+  visuals: Visuals;
+  explore: ExploreSettings;
 }
 export function defaults(producer: string): Settings {
   return {
@@ -61,6 +144,7 @@ export function defaults(producer: string): Settings {
     backgroundColor: '#141b26', nodeColor: '#7fc8e7', edgeColor: '#43566e', groupColor: '#7fc8e7', textColor: '#edf4ff',
     persistLayout: true, cachedDeclarations: 1, projectionFile: '', groupCanvasPageSize: 6,
     maxProjectionGroups: 20000, maxProjectionPairs: 200000, maxProjectionCarriers: 1000000,
+    visuals: defaultVisuals(), explore: defaultExplore(),
   };
 }
 export function validateSettings(v: unknown): asserts v is Settings {
@@ -85,13 +169,16 @@ export function validateSettings(v: unknown): asserts v is Settings {
   if (s.projectionFile && (s.projectionFile.startsWith('/') || s.projectionFile.split('/').includes('..') || !s.projectionFile.endsWith('.json'))) throw new Error('projectionFile must be a vault-relative .json path');
   if (!s.layout || typeof s.layout !== 'object') throw new Error('layout is required');
   validateLayout(s.layout);
+  validateVisuals(s.visuals); validateExplore(s.explore);
 }
 /** The recorded version makes the finite-limit upgrade one-time; later explicit zero remains opt-in. */
 export function upgradeSettings(input: unknown, producer: string): Settings {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Settings must be an object');
   const old = input as Partial<Settings>, base = defaults(producer);
   if (old.settingsVersion !== undefined && old.settingsVersion !== 2) throw new Error('Unsupported settings version');
-  const settings = { ...base, ...old, layout: { ...base.layout, ...old.layout, force: { ...base.layout.force, ...old.layout?.force } }, ingest: { ...base.ingest, ...old.ingest }, cache: { ...base.cache, ...old.cache }, declaration: migrateDeclaration(old.declaration ?? base.declaration) };
+  const settings = { ...base, ...old, layout: { ...base.layout, ...old.layout, force: { ...base.layout.force, ...old.layout?.force } }, ingest: { ...base.ingest, ...old.ingest }, cache: { ...base.cache, ...old.cache }, declaration: migrateDeclaration(old.declaration ?? base.declaration),
+    visuals: { ...base.visuals, ...old.visuals }, explore: { ...base.explore, ...decodeText(old.explore ?? {}) as Partial<ExploreSettings> } };
+  settings.explore = canonicalExplore(settings.explore);
   if (old.settingsVersion === undefined) for (const key of ['maxProjectionGroups', 'maxProjectionPairs', 'maxProjectionCarriers'] as const) if (settings[key] === 0) settings[key] = base[key];
   validateSettings(settings); return settings;
 }

@@ -1,11 +1,11 @@
-import { digest, type GraphDeclaration } from './declaration';
+import { digest, groupColumn, layoutDeclaration, predicateColumn, type GraphDeclaration } from './declaration';
 import type { FactRow } from './projection';
 import type { LayoutOptions } from './layout';
 /** Only declared columns/producers participate; unrelated metadata cannot reseed the layout. */
 export function declaredFacts(rows: readonly FactRow[], d: GraphDeclaration): FactRow[] {
   const keys = new Set([...d.identity.map(i => i.key), ...d.columns,
-    ...d.groups.flatMap(g => g.from === 'key' ? [g.key] : []),
-    ...d.colors.flatMap(c => c.predicate.kind === 'eq' ? [c.predicate.key] : []),
+    ...d.groups.flatMap(g => groupColumn(g) ?? []),
+    ...d.colors.flatMap(c => predicateColumn(c.predicate) ?? []),
     ...d.edges.flatMap(e => e.kind === 'reified' ? [e.sourceProperty, e.targetProperty, ...(e.typeProperty ? [e.typeProperty] : [])] : e.kind === 'inline' ? [e.key] : [])]);
   const producers = [...new Set(d.edges.flatMap(e => e.kind === 'producer' ? [e.producer] : []))].sort();
   return rows.map(row => {
@@ -17,5 +17,6 @@ export function declaredFacts(rows: readonly FactRow[], d: GraphDeclaration): Fa
   }).sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
 }
 export async function generationKey(rows: readonly FactRow[], declaration: GraphDeclaration, layout: LayoutOptions, producer: string): Promise<string> {
+  declaration = layoutDeclaration(declaration);
   return digest({ declaration, layout, producer, rows: declaredFacts(rows, declaration) });
 }
