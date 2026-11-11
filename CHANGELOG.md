@@ -9,7 +9,7 @@ All notable changes are recorded here. The format follows Keep a Changelog; vers
 ### Added
 
 - In-view **Explore** panel styled only with host CSS variables: note search, declared-property filters (`is`, `is any of`, `exists`) with live visible/total counts and removable chips, and live visible node/edge counts.
-- Runtime group-by switching across declared sources, declared properties, folder depth 1–4 and **derived** sources: bounded segment / prefix / restricted-pattern transforms of an existing property, identity or path, computed once per distinct value in the worker. No note needs a new property.
+- Runtime group-by switching across declared sources, declared properties, folder depth 1–4 and **derived** sources: bounded, linear-time segment / prefix transforms of an existing property, identity or path, computed once per distinct value in the worker. No note needs a new property.
 - Editable color legend (color, order, add, delete, hide) re-evaluated in the worker on existing columns, per-group visibility, frame-group, and collapse/expand of groups into hubs in the detail graph.
 - Relation-type toggles with counts and an optional direction fade; display controls for degree sizing, node size, label density, edge opacity and color blend, glow, curvature, mid-zoom group tint, hover highlight and zoom-faded labels.
 - Saved views (filters, query, group source, hidden/collapsed state, normalized camera) in settings; `data.json` stays settings-only and settings-sharing safe.
@@ -18,14 +18,21 @@ All notable changes are recorded here. The format follows Keep a Changelog; vers
 
 ### Changed
 
-- Color rules are excluded from layout/cache identity: a legend edit never relayouts or reseeds.
+- Color rules are excluded from layout/cache identity: a legend edit never relayouts or reseeds. Because the layout identity hash changed, a cached 0.2.x layout is not reused: the first open after upgrading performs **one full relayout**, which is then cached.
 - Fit-all frames the 1st–99th percentile of visible nodes; edge intensity scales relative to that home framing. Node discs shrink with on-screen density and regrow as the camera zooms in. The placeholder groups `(missing)`, `(no match)` and `(outside prefix)` take the neutral node color.
 - Long whitespace-free text in persisted view state is written as short chunks, `{"$text": [...]}`, and joined again on load. This keeps `data.json` settings-sharing safe.
 
 ### Fixed
 
 - External aggregate projections (`projectionFile`) no longer fail with an invalid group color.
+- The Explore panel keeps keyboard focus on the same control across re-renders.
 - The browser benchmark no longer hangs. Bun's Playwright pipe transport broke on a second browser launch when a reply was several MB, so each mode now runs in its own process and the run fails fast on a disconnect. A second-view regression covers hover, select and context loss. The label-glyph receipt now divides by the current 10-float stride.
+
+### Security
+
+- Removed the regex (`pattern`) derived transform after review showed the restricted-regex validator admitted catastrophic backtracking (`[]?(a+)+\]`: 24 characters → 219 ms, ×4 per two more). Only linear split transforms remain. A stored pattern group is migrated to `explore.disabledDerived` and shown in the panel and in a load notice until dismissed; it is never silently dropped.
+- Settings are validated inside every write (`save()`, coalesced saves, unload, cache migration). An invalid in-memory state is refused with a notice, and the last valid `data.json` stays on disk instead of being quarantined and reset on the next load. The panel caps view names (120), saved views (200), collapse-all (20,000 groups) and stored group keys (4,096), and refuses any view change that would fail validation.
+- Each applied view (projection, regroup, filter, derived source) has its own worker generation. Member and contribution reads must name it, and the worker refuses a read from another generation. A selected relationship is cleared with a message when the grouping changes, and re-resolved by raw keys when only filters change. The carrier panel can no longer show a relationship from a different grouping.
 
 ### Added (development)
 
@@ -33,8 +40,8 @@ All notable changes are recorded here. The format follows Keep a Changelog; vers
 
 ### Measured
 
-- Native lanes: small graph 11/11 and explore 6/6 on hardware and software; large literal graph 7/7 and explore 6/6 on hardware; large literal graph 7/7 on the software rerun. Large first groups take 307.9/354.2 ms. The browser bench completes 3/3 sequential runs in both modes: 60.0 fps, main heap 11.06/11.03 MiB, no ≥50 ms tasks. There are 120 unit tests.
-- Bundle: 166,118 minified / 52,418 gzip bytes after private-name mangling and UTF-8 output (from 170,539 / 52,954). This is still over the enforced 150,000 / 45,000 ceilings, so the full-gates bundle lane fails. The other five gate lanes pass.
+- Native lanes: small graph 11/11 and explore 6/6 on hardware and software; large literal graph 7/7 and explore 6/6 on hardware; large literal graph 7/7 on the software rerun. Large first groups take 307.9/354.2 ms. The browser bench completes 3/3 sequential runs in both modes: 60.0 fps, main heap 11.06/11.03 MiB, no ≥50 ms tasks. There are 124 unit tests.
+- Bundle: 169,185 minified / 53,261 gzip bytes after private-name mangling, UTF-8 output and the review fixes (first build: 170,539 / 52,954). This is still over the enforced 150,000 / 45,000 ceilings, so the full-gates bundle lane fails. The other five gate lanes pass.
 - Known misses: one intermittent large-software contribution timeout (not seen in the final matrix) and intermittent 59–76 ms small-software explore tasks are unattributed. Literal display of a clustered corpus is dominated by neutral mapping notes.
 
 ## [0.2.1] - 2026-11-10

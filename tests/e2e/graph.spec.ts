@@ -284,7 +284,7 @@ describe('Graph NG synthetic Obsidian path', () => {
       for (const edge of v.groupGraph.groupEdges) {
         const key = JSON.stringify([edge.a, edge.b].sort());
         for (let offset = 0; offset < edge.total; offset += 100) {
-          const result = await v.plugin.pipeline.request(v.activeRevision, { kind: 'contributions', pair: key, offset, count: 100 });
+          const result = await v.plugin.pipeline.request(v.activeRevision, { kind: 'contributions', pair: key, offset, count: 100, view: v.viewGeneration });
           if (result.items.some((row: any) => row.carrier === 'Mappings/Mapping-000000.md' && row.target === 'Concepts/Family-2/Concept-000007.md')) return true;
         }
       }

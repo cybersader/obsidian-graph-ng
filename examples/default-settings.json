@@ -109,18 +109,18 @@
   "maxProjectionCarriers": 1000000,
   "visuals": {
     "degreeSizing": 1.6,
-    "edgeOpacity": 0.55,
-    "edgeDensityReference": 4000,
+    "edgeOpacity": 0.4,
+    "edgeDensityReference": 3000,
     "edgeColorMix": 0.65,
     "edgeDirection": false,
-    "glow": 0.45,
+    "glow": 0.3,
     "curvedEdges": true,
     "curvature": 0.12,
     "curveSegments": 8,
     "hoverHighlight": true,
     "dimOpacity": 0.12,
     "groupHalos": true,
-    "haloOpacity": 0.1,
+    "haloOpacity": 0.08,
     "autoPalette": true,
     "labelFade": true,
     "cameraAnimationMs": 450,
@@ -143,6 +143,7 @@
       "hiddenColors": [],
       "hiddenTypes": []
     },
-    "savedViews": []
+    "savedViews": [],
+    "disabledDerived": []
   }
 }

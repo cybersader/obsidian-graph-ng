@@ -20,7 +20,11 @@ const recycled: ArrayBuffer[] = [];
 const takeBuffer = (length: number) => { const i = recycled.findIndex(b => b.byteLength === length * 4); return i < 0 ? new Float32Array(length) : new Float32Array(recycled.splice(i, 1)[0]!); };
 let complete = true, projectionRevision = -1, colors: Uint32Array = new Uint32Array(), explored: ExploreResult | undefined;
 /** One view authority: masks, the group dictionary used by members/contributions and the summary all derive together. */
+/** Every applied view (project, regroup, filter, derived source) gets its own generation;
+ * member/contribution reads must name it, so no lookup can cross groupings. */
+let viewGeneration = 0;
 function applyView(view: ExploreView) {
+  viewGeneration++;
   const filters = config.predicate ? [...view.filters, config.predicate] : view.filters;
   explored = explore(projection, config.declaration, { ...view, filters }, colors, config.groupLevel, { facetValues: config.facetValues ?? 50 });
   visible = explored.visible;
@@ -81,7 +85,7 @@ async function handle(r: PipelineRequest, revision: number): Promise<unknown> {
       projection = buildProjection(input, config.declaration);
       colors = colorGroups(projection, config.declaration);
       applyView(config.view ?? emptyView());
-      self.postMessage({ kind: 'groups', revision, projection: groupSummary(contracted.projection) });
+      self.postMessage({ kind: 'groups', revision, view: viewGeneration, projection: groupSummary(contracted.projection) });
       const key = await generationKey(input, config.declaration, config.layout, `${LAYOUT_PRODUCER}/stream${config.streamEveryIterations}/group${config.groupLevel}/${config.source}/format${CACHE_FORMAT}`);
       meta = { format: CACHE_FORMAT, key, declarationHash, layoutHash, layout: config.layout, producer: LAYOUT_PRODUCER, source: config.source, groupLevel: config.groupLevel, streamEveryIterations: config.streamEveryIterations };
       hashes = edgeHashes(projection);
@@ -92,7 +96,7 @@ async function handle(r: PipelineRequest, revision: number): Promise<unknown> {
     case 'detail': {
       // Copies are made in the worker only: the renderer borrows transferred buffers;
       // the authoritative worker buffers remain live for incremental edits and cache encoding.
-      return structuredClone({ projection: renderProjection(projection), visible, colors, explore: explored });
+      return structuredClone({ projection: renderProjection(projection), visible, colors, explore: explored, view: viewGeneration });
     }
     case 'layout': {
       const start = performance.now(), seed = Number.parseInt(meta.key.slice(0, 8), 16);
@@ -124,13 +128,15 @@ async function handle(r: PipelineRequest, revision: number): Promise<unknown> {
       if (r.colors) { const declaration = { ...config.declaration, colors: r.colors }; colors = colorGroups(projection, declaration); config = { ...config, declaration }; }
       config = { ...config, view: r.view, facetValues: r.facetValues };
       const result = applyView(r.view);
-      return structuredClone({ explore: result, colors, groups: groupSummary(contracted.projection) });
+      return structuredClone({ explore: result, colors, groups: groupSummary(contracted.projection), view: viewGeneration });
     }
     case 'members':
       if (revision !== projectionRevision) throw new Error('Projection generation changed');
+      if (r.view !== viewGeneration) throw new Error('View generation changed');
       return Uint32Array.from(contracted.members.get(r.group) ?? []);
     case 'contributions': {
       if (revision !== projectionRevision) throw new Error('Projection generation changed');
+      if (r.view !== viewGeneration) throw new Error('View generation changed');
       const items = contracted.contributions.get(r.pair) ?? [];
       return { total: items.length, items: items.slice(r.offset, r.offset + r.count) };
     }

@@ -203,10 +203,33 @@ test('member/contribution reads are queued and bound to their projection revisio
   try {
     await p.request(1, { kind: 'configure', config }); await p.request(1, { kind: 'rows', reset: true, columns: packRows([{ path: '0.md', properties: {} }], declaration) }); await p.request(1, { kind: 'project' });
     const newer = p.request(2, { kind: 'project' });
-    const stale = p.request(1, { kind: 'members', group: 'anything' }).catch(e => String(e));
+    const stale = p.request(1, { kind: 'members', group: 'anything', view: 1 }).catch(e => String(e));
     await newer; expect(await stale).toContain('generation changed');
-    const stalePage = await p.request(1, { kind: 'contributions', pair: 'anything', offset: 0, count: 1 }).catch(String); expect(stalePage).toContain('generation changed');
-    expect(await p.request<Uint32Array>(2, { kind: 'members', group: 'anything' })).toEqual(new Uint32Array());
+    const stalePage = await p.request(1, { kind: 'contributions', pair: 'anything', offset: 0, count: 1, view: 1 }).catch(String); expect(stalePage).toContain('generation changed');
+    const { view } = await p.request<DetailResult>(2, { kind: 'detail' });
+    expect(await p.request<Uint32Array>(2, { kind: 'members', group: 'anything', view })).toEqual(new Uint32Array());
+  } finally { p.dispose(); }
+});
+test('review probe: a same-revision regroup gets its own view generation; reads from the old grouping are refused', async () => {
+  const p = pipeline();
+  try {
+    const rows = [{ path: 'A/x.md', properties: { kind: 'Alpha' } }, { path: 'B/y.md', properties: { kind: 'Beta' } }, { path: 'B/z.md', properties: { kind: 'Alpha' } }];
+    const d = { ...declaration, columns: ['kind'] };
+    await p.request(1, { kind: 'configure', config: { ...config, declaration: d } }); await p.request(1, { kind: 'rows', reset: true, columns: packRows(rows, d) }); await p.request(1, { kind: 'project' });
+    const detail = await p.request<DetailResult>(1, { kind: 'detail' });
+    const byFolder = await p.request<Uint32Array>(1, { kind: 'members', group: '1', view: detail.view });
+    // Regroup by property in the same projection revision: the dictionary changes.
+    const regrouped = await p.request<{ view: number; explore: { groupKeys: string[] } }>(1, { kind: 'explore', view: { query: '', filters: [], group: { from: 'key', key: 'kind' }, hiddenGroups: [], collapsedGroups: [], hiddenColors: [], hiddenTypes: [] }, facetValues: 10 });
+    expect(regrouped.view).toBeGreaterThan(detail.view);
+    // A click captured on the old canvas (old view generation) can never read the new dictionary.
+    expect(await p.request(1, { kind: 'members', group: '1', view: detail.view }).catch(String)).toContain('View generation changed');
+    expect(await p.request(1, { kind: 'contributions', pair: '[0,1]', offset: 0, count: 5, view: detail.view }).catch(String)).toContain('View generation changed');
+    const byKind = await p.request<Uint32Array>(1, { kind: 'members', group: '1', view: regrouped.view });
+    expect([...byFolder]).not.toEqual([...byKind]);
+    // A filter-only change is a new generation too.
+    const filtered = await p.request<{ view: number }>(1, { kind: 'explore', view: { query: 'x', filters: [], group: { from: 'key', key: 'kind' }, hiddenGroups: [], collapsedGroups: [], hiddenColors: [], hiddenTypes: [] }, facetValues: 10 });
+    expect(filtered.view).toBe(regrouped.view + 1);
+    expect(await p.request(1, { kind: 'members', group: '1', view: regrouped.view }).catch(String)).toContain('View generation changed');
   } finally { p.dispose(); }
 });
 test('legacy hints are never relabelled with a nonlocal view identity', async () => {
@@ -235,7 +258,7 @@ test('member indices cannot use an old detail dictionary during the group-before
   const fake = fakeTransport(), p = new WorkerPipeline(fake.transport, () => 1000);
   let active = 1, detail = 1; const retainedDictionary = ['old-note.md'];
   try {
-    const requested = active, members = p.request<Uint32Array>(requested, { kind: 'members', group: 'g' });
+    const requested = active, members = p.request<Uint32Array>(requested, { kind: 'members', group: 'g', view: 1 });
     // New groups become active while the old detail object is deliberately retained.
     active = 2; expect(currentDetailGeneration(active, active, detail)).toBe(false);
     fake.emit({ id: 1, revision: requested, result: new Uint32Array([0]) }); await members;

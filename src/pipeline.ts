@@ -16,14 +16,14 @@ export type PipelineRequest =
   | { kind: 'migrate'; generation: { key: string; identities: string[]; positions: number[]; producer: string; layoutHash?: string; edgeKeys?: string[] }; declarationHash: string }
   | { kind: 'project'; complete?: boolean } | { kind: 'detail' } | { kind: 'layout' } | { kind: 'encode' }
   | { kind: 'gpu' }
-  | { kind: 'members'; group: string }
+  | { kind: 'members'; group: string; view: number }
   | { kind: 'explore'; view: ExploreView; colors?: GraphDeclaration['colors']; facetValues: number }
-  | { kind: 'contributions'; pair: string; offset: number; count: number };
+  | { kind: 'contributions'; pair: string; offset: number; count: number; view: number };
 export interface ProjectResult { invalidSaved?: GenerationMeta; meta: GenerationMeta; nodes: number; edges: number; unresolved: number; quarantined: { path: string; id: string }[] }
-export interface DetailResult { projection: RenderProjection; visible: Uint8Array; colors: Uint32Array; explore: ExploreResult }
-export interface ViewResult { explore: ExploreResult; colors: Uint32Array; groups: GroupProjection }
+export interface DetailResult { projection: RenderProjection; visible: Uint8Array; colors: Uint32Array; explore: ExploreResult; view: number }
+export interface ViewResult { explore: ExploreResult; colors: Uint32Array; groups: GroupProjection; view: number }
 export interface LayoutResult { positions: Float32Array; milliseconds: number; cached: boolean; stored?: string }
-export interface GroupEvent { kind: 'groups'; revision: number; projection: GroupProjection }
+export interface GroupEvent { kind: 'groups'; revision: number; view: number; projection: GroupProjection }
 export interface Transport { postMessage(message: unknown, transfer: Transferable[]): void; terminate(): void; onmessage: ((event: MessageEvent) => void) | null; onerror: ((event: ErrorEvent) => void) | null }
 interface Pending { id: number; revision: number; request: PipelineRequest; resolve(v: any): void; reject(e: Error): void; timer?: ReturnType<typeof setTimeout> }
 export interface Recovery { restart(): Transport; maxRestarts(): number; onRestart?(): void }

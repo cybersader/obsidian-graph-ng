@@ -25,13 +25,16 @@ export interface Visuals {
   hubsMaxGroups: number;
   softwareEffects: boolean;
 }
-export interface ExploreSettings { panelOpen: boolean; facetValues: number; legendPageSize: number; view: ExploreView; savedViews: SavedView[] }
+/** A regex-derived group from an older version, kept visible (not silently dropped)
+ * after regex transforms were removed; it no longer affects the graph. */
+export interface DisabledDerive { location: string; key: string; pattern: string }
+export interface ExploreSettings { panelOpen: boolean; facetValues: number; legendPageSize: number; view: ExploreView; savedViews: SavedView[]; disabledDerived: DisabledDerive[] }
 export const defaultVisuals = (): Visuals => ({
   degreeSizing: 1.6, edgeOpacity: .4, edgeDensityReference: 3000, edgeColorMix: .65, edgeDirection: false, glow: .3,
   curvedEdges: true, curvature: .12, curveSegments: 8, hoverHighlight: true, dimOpacity: .12, groupHalos: true, haloOpacity: .08,
   autoPalette: true, labelFade: true, cameraAnimationMs: 450, glowMaxNodes: 250000, curvesMaxEdges: 60000, halosMaxGroups: 48, hubsMaxGroups: 256, softwareEffects: false,
 });
-export const defaultExplore = (): ExploreSettings => ({ panelOpen: true, facetValues: 50, legendPageSize: 40, view: emptyView(), savedViews: [] });
+export const defaultExplore = (): ExploreSettings => ({ panelOpen: true, facetValues: 50, legendPageSize: 40, view: emptyView(), savedViews: [], disabledDerived: [] });
 const flags = ['edgeDirection', 'curvedEdges', 'hoverHighlight', 'groupHalos', 'autoPalette', 'labelFade', 'softwareEffects'] as const;
 const unit = ['edgeOpacity', 'edgeColorMix', 'glow', 'dimOpacity', 'haloOpacity'] as const;
 const counts = ['edgeDensityReference', 'curveSegments', 'glowMaxNodes', 'curvesMaxEdges', 'halosMaxGroups', 'hubsMaxGroups'] as const;
@@ -50,7 +53,9 @@ export function validateVisuals(v: unknown): asserts v is Visuals {
 export function validateExplore(v: unknown): asserts v is ExploreSettings {
   if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('explore must be an object');
   const o = v as Record<string, unknown>;
-  for (const k of Object.keys(o)) if (!['panelOpen', 'facetValues', 'legendPageSize', 'view', 'savedViews'].includes(k)) throw new Error(`Unknown explore setting: ${k}`);
+  for (const k of Object.keys(o)) if (!['panelOpen', 'facetValues', 'legendPageSize', 'view', 'savedViews', 'disabledDerived'].includes(k)) throw new Error(`Unknown explore setting: ${k}`);
+  const d = o.disabledDerived;
+  if (!Array.isArray(d) || d.length > 64 || d.some(x => !x || typeof x !== 'object' || Object.keys(x).some(k => !['location', 'key', 'pattern'].includes(k)) || typeof x.location !== 'string' || x.location.length > 160 || typeof x.key !== 'string' || x.key.length > 4096 || typeof x.pattern !== 'string' || x.pattern.length > 64)) throw new Error('explore.disabledDerived must be at most 64 disabled derive records');
   if (typeof o.panelOpen !== 'boolean') throw new Error('explore.panelOpen must be boolean');
   for (const k of ['facetValues', 'legendPageSize'] as const) if (!Number.isSafeInteger(o[k]) || (o[k] as number) < 1 || (o[k] as number) > 10000) throw new Error(`explore.${k} must be 1–10000`);
   validateView(o.view); validateSaved(o.savedViews);
@@ -81,6 +86,12 @@ export function decodeText(v: unknown): unknown {
 }
 /** The exact object written to data.json: settings only, explore text scanner-safe. */
 export const persistedSettings = (s: Settings) => ({ ...s, explore: encodeText(s.explore) });
+/** The only path to data.json: canonicalize, validate, encode. Throws instead of
+ * writing anything a later load would reject (and quarantine as invalid). */
+export function settingsForSave(s: Settings) {
+  const settings = { ...s, explore: canonicalExplore(s.explore) };
+  validateSettings(settings); return persistedSettings(settings);
+}
 export interface Settings {
   settingsVersion: 2;
   ingest: { chunkRows: number; budgetMs: number };
@@ -172,12 +183,29 @@ export function validateSettings(v: unknown): asserts v is Settings {
   validateVisuals(s.visuals); validateExplore(s.explore);
 }
 /** The recorded version makes the finite-limit upgrade one-time; later explicit zero remains opt-in. */
+const regexDerive = (g: unknown): g is { key?: unknown; transform: { pattern?: unknown } } => Boolean(g) && typeof g === 'object' && (g as { from?: unknown }).from === 'derived' && (g as { transform?: { kind?: unknown } }).transform?.kind === 'pattern';
+/** Regex-derived groups were removed (backtracking cost). Move any stored one out of
+ * the declaration, the current view and saved views into a visible disabled list. */
+export function disableRegexDerives(declaration: unknown, explore: Record<string, unknown>): DisabledDerive[] {
+  const out: DisabledDerive[] = [];
+  const take = (g: { key?: unknown; transform: { pattern?: unknown } }, location: string) => out.push({ location: location.slice(0, 160), key: String(g.key ?? '').slice(0, 4096), pattern: String(g.transform.pattern ?? '').slice(0, 64) });
+  const d = declaration as { groups?: unknown[] } | undefined;
+  if (d && Array.isArray(d.groups)) d.groups = d.groups.filter((g, i) => !(regexDerive(g) && take(g, `declared group ${i + 1}`)));
+  const view = explore.view as { group?: unknown } | undefined;
+  if (view && regexDerive(view.group)) { take(view.group, 'current view'); view.group = null; }
+  if (Array.isArray(explore.savedViews)) for (const saved of explore.savedViews as { name?: unknown; view?: { group?: unknown } }[]) if (saved?.view && regexDerive(saved.view.group)) { take(saved.view.group, `saved view “${String(saved.name).slice(0, 120)}”`); saved.view.group = null; }
+  return out;
+}
 export function upgradeSettings(input: unknown, producer: string): Settings {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Settings must be an object');
-  const old = input as Partial<Settings>, base = defaults(producer);
+  const old = structuredClone(input) as Partial<Settings>, base = defaults(producer);
   if (old.settingsVersion !== undefined && old.settingsVersion !== 2) throw new Error('Unsupported settings version');
+  const explore = decodeText(old.explore ?? {}) as Partial<ExploreSettings> & Record<string, unknown>, groupsBefore = (old.declaration as { groups?: unknown[] } | undefined)?.groups?.length ?? 0;
+  const disabled = disableRegexDerives(old.declaration, explore);
+  if (disabled.length) explore.disabledDerived = [...(explore.disabledDerived ?? []), ...disabled].slice(-64);
+  if (old.declaration && (old.declaration.groups?.length ?? 0) < groupsBefore && (old.groupLevel ?? 0) >= (old.declaration.groups?.length ?? 0)) old.groupLevel = 0;
   const settings = { ...base, ...old, layout: { ...base.layout, ...old.layout, force: { ...base.layout.force, ...old.layout?.force } }, ingest: { ...base.ingest, ...old.ingest }, cache: { ...base.cache, ...old.cache }, declaration: migrateDeclaration(old.declaration ?? base.declaration),
-    visuals: { ...base.visuals, ...old.visuals }, explore: { ...base.explore, ...decodeText(old.explore ?? {}) as Partial<ExploreSettings> } };
+    visuals: { ...base.visuals, ...old.visuals }, explore: { ...base.explore, ...explore } };
   settings.explore = canonicalExplore(settings.explore);
   if (old.settingsVersion === undefined) for (const key of ['maxProjectionGroups', 'maxProjectionPairs', 'maxProjectionCarriers'] as const) if (settings[key] === 0) settings[key] = base[key];
   validateSettings(settings); return settings;
@@ -198,7 +226,9 @@ export async function loadSettings(disk: SettingsDisk, path: string, producer: s
     if (new TextEncoder().encode(text).byteLength > fallback.maxSettingsBytes) throw new Error('Settings byte limit exceeded');
     const data = JSON.parse(text);
     if (!data || typeof data !== 'object' || Array.isArray(data) || !data.settings) throw new Error('Missing settings');
-    const settings = upgradeSettings(data.settings, producer);
+    const settings = upgradeSettings(data.settings, producer), before = (data.settings.explore?.disabledDerived ?? []).length;
+    const added = settings.explore.disabledDerived.length - Math.min(before, settings.explore.disabledDerived.length);
+    if (added > 0) notice(`Graph NG: ${added} regex-derived group${added === 1 ? ' was' : 's were'} disabled (regex transforms were removed). See Explore → Groups; use segment or prefix instead.`);
     return { settings, data, persist: true };
   } catch {
     if (!exists) throw new Error('Could not inspect Graph NG settings; original left untouched');

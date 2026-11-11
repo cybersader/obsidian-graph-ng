@@ -1,6 +1,6 @@
 import { ItemView, Plugin, PluginSettingTab, Setting, Notice, TFile, apiVersion, type WorkspaceLeaf } from 'obsidian';
 import { LocalAdapter } from './adapter/local';
-import { digest, layoutDeclaration, migrateDeclaration, validateDeclaration, type GraphDeclaration, type Predicate } from './core/declaration';
+import { canonical, digest, layoutDeclaration, migrateDeclaration, validateDeclaration, type GraphDeclaration, type Predicate } from './core/declaration';
 import { canonicalView, type ExploreResult, type ExploreView, type ViewCamera } from './core/explore';
 import { ExplorePanel } from './explore-panel';
 import { categorical, NEUTRAL_GROUPS } from './render-effects';
@@ -12,7 +12,7 @@ import { yieldTask, sliced } from './core/scheduler';
 import { WorkerPipeline, LAYOUT_PRODUCER, currentDetailGeneration, type ProjectResult, type DetailResult, type LayoutResult, type ViewResult } from './pipeline';
 import { groupPages, page } from './core/group-page';
 import { ContributionPage, type ContributionContext } from './contribution-page';
-import { canonicalExplore, loadSettings, persistedSettings, validateSettings, type Settings } from './settings';
+import { canonicalExplore, loadSettings, settingsForSave, validateSettings, type Settings } from './settings';
 import { DetailRenderer, GroupRenderer, gpuStatus, type Renderer, type RenderView } from './renderer';
 declare const __LAYOUT_WORKER_SOURCE__: string;
 const VIEW = 'graph-ng';
@@ -79,14 +79,18 @@ export default class GraphPlugin extends Plugin {
     if (!leaf) { leaf = this.app.workspace.getLeaf('tab'); await leaf.setViewState({ type: VIEW, active: true }); }
     await this.app.workspace.revealLeaf(leaf);
   }
+  /** Every write (explicit, coalesced, unload, cache migration) validates first; invalid
+   * in-memory settings are refused with a notice and the last valid file stays on disk. */
   save() {
     clearTimeout(this.saveTimer); this.saveTimer = undefined;
-    this.writes = this.writes.catch(() => {}).then(() => this.saveData({ settings: persistedSettings(this.settings) }));
+    let data: ReturnType<typeof settingsForSave>;
+    try { data = settingsForSave(this.settings); } catch (e) { new Notice(`Graph NG did not save invalid settings: ${String(e)}`); return this.writes; }
+    this.writes = this.writes.catch(() => {}).then(() => this.saveData({ settings: data }));
     return this.writes;
   }
   private saveTimer: ReturnType<typeof setTimeout> | undefined;
   /** Coalesced settings write for live controls (sliders, view state); still settings-only. */
-  saveSoon() { clearTimeout(this.saveTimer); this.saveTimer = setTimeout(() => { this.settings.explore = canonicalExplore(this.settings.explore); try { validateSettings(this.settings); void this.save(); } catch (e) { new Notice(`Graph NG did not save invalid settings: ${String(e)}`); } }, 400); }
+  saveSoon() { clearTimeout(this.saveTimer); this.saveTimer = setTimeout(() => void this.save(), 400); }
   onunload() { if (this.saveTimer !== undefined) void this.save(); }
   async apply(settings: Settings) {
     settings = { ...settings, declaration: migrateDeclaration(settings.declaration) }; validateSettings(settings); settings.explore = canonicalExplore(settings.explore);
@@ -127,6 +131,9 @@ export class GraphView extends ItemView {
   private activeRevision = 0;
   private detailGeneration = -1;
   private groupGeneration = -1;
+  /** Worker view generation and grouping identity of the adopted groupGraph/explored. */
+  private viewGeneration = -1;
+  private viewSource = '';
   private contributionScope = '';
   private contributionPage: ContributionPage;
   private queued = false;
@@ -150,7 +157,7 @@ export class GraphView extends ItemView {
   constructor(leaf: WorkspaceLeaf, readonly plugin: GraphPlugin) {
     super(leaf);
     this.view = structuredClone(plugin.settings.explore.view);
-    this.contributionPage = new ContributionPage(plugin.settings.listPageSize, (revision, pair, offset, count) => plugin.pipeline.request(revision, { kind: 'contributions', pair, offset, count }), () => this.renderContributionPanel());
+    this.contributionPage = new ContributionPage(plugin.settings.listPageSize, (revision, pair, offset, count, view) => plugin.pipeline.request(revision, { kind: 'contributions', pair, offset, count, view }), () => this.renderContributionPanel());
   }
   getViewType() { return VIEW; }
   getDisplayText() { return 'Graph NG'; }
@@ -204,11 +211,11 @@ export class GraphView extends ItemView {
         if (bytes.byteLength > settings.maxProjectionBytes) throw new Error('Projection byte limit exceeded');
         const p = await this.plugin.pipeline.request<GroupProjection>(revision, { kind: 'external', bytes, maxBytes: settings.maxProjectionBytes, limits: { groups: settings.maxProjectionGroups, pairs: settings.maxProjectionPairs, carriers: settings.maxProjectionCarriers } });
         if (!current()) return;
-        this.projection = undefined; this.positions = undefined; this.explored = undefined; this.groupGraph = p; this.groupGeneration = revision; this.members.clear(); this.contributions.clear();
+        this.projection = undefined; this.positions = undefined; this.explored = undefined; this.groupGraph = p; this.groupGeneration = revision; this.viewGeneration = -1; this.viewSource = 'external'; this.members.clear(); this.contributions.clear();
         this.status.textContent = `${p.groups.length} groups · ${p.groupEdges.length} counted group pairs · unverified external aggregate (not merged with live rows)`;
         this.contentEl.dataset.state = 'ready'; this.showGroups(); return;
       }
-      const config = { declaration: settings.declaration, layout: settings.layout, source: `${this.plugin.linkProducer}/${this.plugin.sourceIdentity}`, groupLevel: settings.groupLevel, predicate: this.predicate, view: this.view, facetValues: settings.explore?.facetValues, streamEveryIterations: settings.streamEveryIterations };
+      const configuredSource = this.sourceKey(this.view), config = { declaration: settings.declaration, layout: settings.layout, source: `${this.plugin.linkProducer}/${this.plugin.sourceIdentity}`, groupLevel: settings.groupLevel, predicate: this.predicate, view: this.view, facetValues: settings.explore?.facetValues, streamEveryIterations: settings.streamEveryIterations };
       const hashes = await this.plugin.pipeline.request<{ declarationHash: string; layoutHash: string; ingestHash: string }>(revision, { kind: 'configure', config });
       if (!current()) return;
       if (settings.persistLayout) {
@@ -218,7 +225,7 @@ export class GraphView extends ItemView {
           try {
             const cache = await this.plugin.pipeline.request<{ groups?: GroupProjection } | undefined>(revision, { kind: 'load', generation: saved });
             if (cache?.groups && current() && !this.predicate && !(this.view && viewNarrows(this.view))) {
-              this.projection = undefined; this.positions = undefined; this.groupGraph = cache.groups; this.groupGeneration = -revision; this.members.clear(); this.contributions.clear(); this.showGroups(true);
+              this.projection = undefined; this.positions = undefined; this.groupGraph = cache.groups; this.groupGeneration = -revision; this.viewGeneration = -1; this.viewSource = this.sourceKey(null); this.members.clear(); this.contributions.clear(); this.showGroups(true);
               this.status.textContent = `cached · verifying ${this.plugin.adapter.coverage().indexed} of ${this.plugin.adapter.coverage().listed} · filters and members provisional`;
               this.contentEl.dataset.cachedPaintMs = String(performance.now() - start); await yieldTask();
             }
@@ -236,7 +243,7 @@ export class GraphView extends ItemView {
       this.plugin.pipeline.onGroups = event => {
         if (event.revision !== revision || !current()) return;
         const groupsAt = performance.now();
-        this.groupGraph = event.projection; this.groupGeneration = revision; this.members.clear(); this.contributions.clear(); this.showGroups(true);
+        this.groupGraph = event.projection; this.groupGeneration = revision; this.viewGeneration = event.view; this.viewSource = configuredSource; this.members.clear(); this.contributions.clear(); this.showGroups(true);
         const painted = performance.now(), firstGroupMs = painted - start;
         this.startupTrace.push({ revision, start, groupsAt, drawMs: painted - groupsAt, firstGroupMs }); if (this.startupTrace.length > 16) this.startupTrace.shift();
         // A queued metadata refresh must not relabel its later paint as cold startup.
@@ -254,7 +261,7 @@ export class GraphView extends ItemView {
       await yieldTask();
       const detail = await this.plugin.pipeline.request<DetailResult>(revision, { kind: 'detail' });
       if (!current()) return;
-      this.projection = detail.projection; this.detailGeneration = revision; this.visible = detail.visible; this.colors = detail.colors; this.explored = detail.explore; this.contentEl.dataset.visibleNodes = String(detail.explore.visible.reduce((n, v) => n + v, 0)); this.explorePanel?.render();
+      this.projection = detail.projection; this.detailGeneration = revision; this.viewGeneration = detail.view; this.viewSource = configuredSource; this.visible = detail.visible; this.colors = detail.colors; this.explored = detail.explore; this.contentEl.dataset.visibleNodes = String(detail.explore.visible.reduce((n, v) => n + v, 0)); this.explorePanel?.render();
       this.contributionPage.update(this.contributionContext());
       if (result.quarantined.length) this.showGroups(true);
       this.plugin.pipeline.onPositions = event => { if (event.revision === revision && current()) { if (this.positions && this.contentEl.dataset.mode === 'groups') this.plugin.pipeline.recycle(this.positions.buffer as ArrayBuffer); this.positions = event.positions; this.contentEl.dataset.streaming = 'true'; } };
@@ -282,7 +289,7 @@ export class GraphView extends ItemView {
     this.renderRevision++;
     const start = performance.now();
     this.renderer?.dispose(); this.detailRenderer = undefined; this.stage.empty(); this.panel.empty();
-    const projection = this.groupGraph, generation = this.groupGeneration; if (!projection) return;
+    const projection = this.groupGraph, generation = this.groupGeneration, source = this.viewSource; if (!projection) return;
     const settings = this.plugin.settings, pages = groupPages(projection, settings.groupCanvasPageSize);
     let canvasPage = 0;
     const canvasControls = this.panel.createDiv({ cls: 'graph-ng-canvas-pager' });
@@ -293,7 +300,7 @@ export class GraphView extends ItemView {
     const draw = () => {
       this.renderer?.dispose(); this.stage.empty();
       const selected = pages.canvas(canvasPage);
-      this.renderer = new GroupRenderer(this.stage, selected, settings, id => this.drill(id), edge => this.edgeList(edge, projection, generation), id => this.groupColor(Number(id)));
+      this.renderer = new GroupRenderer(this.stage, selected, settings, id => this.drill(id), edge => this.edgeList(edge, projection, generation, source), id => this.groupColor(Number(id)));
       previous.disabled = canvasPage === 0; next.disabled = (canvasPage + 1) * settings.groupCanvasPageSize >= projection.groups.length;
       label.textContent = ` Canvas groups ${canvasPage * settings.groupCanvasPageSize + 1}–${Math.min((canvasPage + 1) * settings.groupCanvasPageSize, projection.groups.length)} / ${projection.groups.length} `;
       this.contentEl.dataset.canvasGroups = String(selected.groups.length);
@@ -302,7 +309,7 @@ export class GraphView extends ItemView {
     this.paginate(projection.groups, (g, host) => { host.createEl('button', { text: `${g.label} (${g.count.toLocaleString()})`, attr: { 'data-group': g.id } }).onclick = () => this.drill(g.id); }, this.panel, 'graph-ng-group-controls');
     const edges = this.panel.createEl('details'); edges.createEl('summary', { text: `Relationships (${projection.groupEdges.length} group pairs)` });
     this.paginate(projection.groupEdges, (edge, host) => {
-      host.createEl('button', { text: `${pages.labels.get(edge.a)} ↔ ${pages.labels.get(edge.b)} · ${edge.total}`, cls: 'graph-ng-edge' }).onclick = () => this.edgeList(edge, projection, generation);
+      host.createEl('button', { text: `${pages.labels.get(edge.a)} ↔ ${pages.labels.get(edge.b)} · ${edge.total}`, cls: 'graph-ng-edge' }).onclick = () => this.edgeList(edge, projection, generation, source);
     }, edges);
     if (this.projection?.quarantined.length) {
       const conflicts = this.panel.createEl('details', { cls: 'graph-ng-quarantine' });
@@ -332,12 +339,12 @@ export class GraphView extends ItemView {
     this.contributionPage.clear();
     const group = this.groupGraph?.groups.find(g => g.id === id); if (!group) return;
     this.panel.empty(); this.panel.createEl('strong', { text: `${group.label}: ${group.count.toLocaleString()} members${this.provisional ? ' · provisional' : ''}` });
-    const revision = this.activeRevision, projection = this.projection, renderRevision = ++this.renderRevision;
+    const revision = this.activeRevision, projection = this.projection, renderRevision = ++this.renderRevision, view = this.viewGeneration;
     if (projection && !currentDetailGeneration(revision, this.activeRevision, this.detailGeneration)) { new Notice('Member dictionary is updating; try this group again when verification finishes.'); return; }
     let members: Uint32Array | undefined;
-    try { members = projection ? await this.plugin.pipeline.request<Uint32Array>(revision, { kind: 'members', group: id }) : undefined; }
+    try { members = projection ? await this.plugin.pipeline.request<Uint32Array>(revision, { kind: 'members', group: id, view }) : undefined; }
     catch { return; } // A changed projection or recovered worker invalidates this interaction.
-    if (revision !== this.activeRevision || (projection && !currentDetailGeneration(revision, this.activeRevision, this.detailGeneration)) || renderRevision !== this.renderRevision || this.closed) return;
+    if (revision !== this.activeRevision || view !== this.viewGeneration || (projection && !currentDetailGeneration(revision, this.activeRevision, this.detailGeneration)) || renderRevision !== this.renderRevision || this.closed) return;
     if (!members || !projection) {
       if (group.openPath) this.panel.createEl('button', { text: 'Open group note' }).onclick = () => this.openPath(group.openPath!);
       const local = group.identityPrefix ? this.plugin.adapter.snapshot().filter(r => this.plugin.settings.declaration.identity.some(k => typeof r.properties[k.key] === 'string' && (r.properties[k.key] as string).startsWith(group.identityPrefix!))) : [];
@@ -352,10 +359,10 @@ export class GraphView extends ItemView {
     if (this.gpu.available && this.positions) { const bits = new Uint8Array(p.nodeCount); for (const i of members) bits[i] = 1; this.detailScope = bits; this.showDetails(bits, false); }
     this.paginate(Array.from(members), (i, host) => { host.createEl('button', { text: renderPath(p, i), cls: 'graph-ng-member' }).onclick = () => this.openPath(renderPath(p, i)); });
   }
-  private async edgeList(edge: GroupProjection['groupEdges'][number], clickedGraph = this.groupGraph, clickedGeneration = this.groupGeneration) {
+  private async edgeList(edge: GroupProjection['groupEdges'][number], clickedGraph = this.groupGraph, clickedGeneration = this.groupGeneration, clickedSource = this.viewSource) {
     this.contributionPage.clear();
     if (!this.plugin.settings.projectionFile) {
-      this.contributionPage.select(edge.a, edge.b, clickedGeneration, clickedGraph);
+      this.contributionPage.select(edge.a, edge.b, clickedGeneration, clickedGraph, clickedSource);
       this.contributionPage.update(this.contributionContext());
       return;
     }
@@ -387,7 +394,11 @@ export class GraphView extends ItemView {
     }
   }
   private contributionContext(): ContributionContext {
-    return { active: this.activeRevision, groups: this.groupGeneration, detail: this.detailGeneration, level: this.plugin.settings.groupLevel, projection: this.projection, graph: this.groupGraph, values: this.explored?.groupKeys };
+    return { active: this.activeRevision, groups: this.groupGeneration, detail: this.detailGeneration, level: this.plugin.settings.groupLevel, projection: this.projection, graph: this.groupGraph, values: this.explored?.groupKeys, view: this.viewGeneration, source: this.viewSource };
+  }
+  /** Grouping identity: the runtime group source (or declared default at the configured level). */
+  private sourceKey(view: ExploreView | null | undefined) {
+    return `${canonical(view?.group ?? null)}@${this.plugin.settings.groupLevel}`;
   }
   private renderContributionPanel() {
     const pager = this.contributionPage; if (!pager.selection || this.closed || !this.panel) return;
@@ -420,9 +431,10 @@ export class GraphView extends ItemView {
       const revision = this.activeRevision, started = performance.now();
       try {
         if (!this.projection || !currentDetailGeneration(revision, this.activeRevision, this.detailGeneration)) return;
-        const result = await this.plugin.pipeline.request<ViewResult>(revision, { kind: 'explore', view: this.view, colors, facetValues: this.plugin.settings.explore.facetValues });
+        const sent = this.view, result = await this.plugin.pipeline.request<ViewResult>(revision, { kind: 'explore', view: sent, colors, facetValues: this.plugin.settings.explore.facetValues });
         if (this.closed || revision !== this.activeRevision) return;
         this.explored = result.explore; this.colors = result.colors; this.visible = result.explore.visible; this.groupGraph = result.groups; this.groupGeneration = revision;
+        this.viewGeneration = result.view; this.viewSource = this.sourceKey(sent); this.members.clear(); this.contributions.clear();
         this.contentEl.dataset.exploreMs = String(performance.now() - started); const g = this.view.group; this.contentEl.dataset.groupSource = !g ? 'declared' : g.from === 'folder' ? `folder:${g.depth}` : `${g.from}:${g.key}`; this.contentEl.dataset.visibleNodes = String(result.explore.visible.reduce((n, v) => n + v, 0));
         this.contributionPage.update(this.contributionContext());
         if (this.contentEl.dataset.mode === 'nodes' && this.detailRenderer) {

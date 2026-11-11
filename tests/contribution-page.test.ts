@@ -16,7 +16,7 @@ test('contribution intent waits for matching active/group/detail generations and
   expect(page.status).toBe('refreshing'); expect(page.message).toContain('Refreshing'); expect(calls).toHaveLength(0);
   // A new alphabetically earlier group shifts both IDs. Raw values retain the intended pair.
   const newer = context(2, ['A', 'B', 'C']); page.update({ ...newer, detail: 1 }); expect(calls).toHaveLength(0);
-  page.update(newer); await settle(); expect(calls).toEqual([[2, pairKey('1', '2'), 0, 100]]); expect(page.result).toEqual(result); expect(page.status).toBe('ready');
+  page.update(newer); await settle(); expect(calls).toEqual([[2, pairKey('1', '2'), 0, 100, -1]]); expect(page.result).toEqual(result); expect(page.status).toBe('ready');
   page.update(newer); expect(calls).toHaveLength(1);
 });
 test('fresh group-summary selection needs no old detail dictionary', async () => {
@@ -75,4 +75,34 @@ test('legacy duplicate or missing display labels remain refreshing, never guesse
     page.select('0', '1', -5, cached.graph); page.update(context(5, names)); await settle();
     expect(page.status).toBe('refreshing'); expect(reads).toHaveLength(0);
   }
+});
+test('review probe: a regroup (same revision) never shows a relationship from the previous grouping', async () => {
+  // Worker model: the dictionary flips when it applies the explore request (FIFO), before main adopts the reply.
+  const oldKeys = ['"Alpha"', '"Beta"', '"Gamma"'], newKeys = ['Archive', 'Inbox', 'Projects'];
+  const worker = { keys: oldKeys, view: 1 };
+  const graph = (keys: string[]): any => ({ groups: keys.map((k, i) => ({ id: String(i), key: k, label: k, count: 1 })), groupEdges: [{ a: '0', b: '1', total: 1, typeCounts: {}, carriers: { kind: 'x', ids: [] } }] });
+  const shown: string[] = [];
+  const page = new ContributionPage(10, async (_r, pair, _o, _c, view) => {
+    if (view !== worker.view) throw new Error('View generation changed');
+    const [a, b] = JSON.parse(pair).map(Number); const rel = `${worker.keys[a!]}<->${worker.keys[b!]}`; shown.push(rel); return { total: 1, items: [rel as any] };
+  }, () => {});
+  const R = 7, base = { active: R, groups: R, detail: R, level: 0, projection: { groups: [{ values: oldKeys }] } };
+  // 1. User regroups by folder: worker applies it first.
+  worker.keys = newKeys; worker.view = 2;
+  // 2. Before the reply, the user clicks Alpha↔Beta on the old canvas (old view generation, old source).
+  page.select('0', '1', R, graph(oldKeys), 'property'); page.update({ ...base, graph: graph(oldKeys), values: oldKeys, view: 1, source: 'property' });
+  await settle(); await settle();
+  expect(page.status).toBe('refreshing'); expect(page.result).toBeUndefined();
+  // 3. Reply adopted: same revision, new dictionary, new view generation and grouping.
+  page.update({ ...base, graph: graph(newKeys), values: newKeys, view: 2, source: 'folder' });
+  await settle(); await settle();
+  expect(page.result).toBeUndefined(); expect(page.status).toBe('error'); expect(page.message).toContain('Grouping changed');
+  expect(shown.filter(r => !r.includes('Alpha'))).toEqual([]);
+  // A filter-only change (same grouping, new generation) re-resolves the same raw keys.
+  const keep = new ContributionPage(10, async (_r, pair, _o, _c, view) => { if (view !== worker.view) throw new Error('View generation changed'); const [a, b] = JSON.parse(pair).map(Number); return { total: 1, items: [`${worker.keys[a!]}<->${worker.keys[b!]}` as any] }; }, () => {});
+  worker.keys = oldKeys; worker.view = 3;
+  keep.select('0', '1', R, graph(oldKeys), 'property'); keep.update({ ...base, graph: graph(oldKeys), values: oldKeys, view: 3, source: 'property' }); await settle(); await settle();
+  expect(keep.result?.items).toEqual(['"Alpha"<->"Beta"' as any]);
+  worker.view = 4; keep.update({ ...base, graph: graph(oldKeys), values: oldKeys, view: 4, source: 'property' }); await settle(); await settle();
+  expect(keep.status).toBe('ready'); expect(keep.result?.items).toEqual(['"Alpha"<->"Beta"' as any]);
 });

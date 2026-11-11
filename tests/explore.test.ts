@@ -4,7 +4,7 @@ import { defaultDeclaration, digest, layoutDeclaration, migrateDeclaration, vali
 import { canonicalView, emptyView, explore, groupColumn, validateSaved, validateView, withoutTypes, NO_COLOR, type ExploreView } from '../src/core/explore';
 import { generationKey } from '../src/core/generation';
 import { DEFAULT_LAYOUT } from '../src/core/layout-options';
-import { canonicalExplore, decodeText, defaults, encodeText, persistedSettings, upgradeSettings, validateSettings, validateVisuals } from '../src/settings';
+import { canonicalExplore, decodeText, defaults, encodeText, loadSettings, persistedSettings, settingsForSave, upgradeSettings, validateSettings, validateVisuals } from '../src/settings';
 import { compatibilityIssues, credentialShapedField } from './support/settings-compatibility';
 import { categorical, contrast, degreeSizes, densityScale, edgeAlpha, effectPolicy, ensureContrast, groupHalos, labelFade, neutralizeGroups, nodeColors, parseHex } from '../src/render-effects';
 import { LABEL_RATIOS } from '../src/render-data';
@@ -170,26 +170,26 @@ test('GLSL minification keeps directive lines and token boundaries', () => {
   expect(out).toBe('const a = glsl`#version 300 es\nprecision highp float;uniform float glow;void main(){float d=length(a)-1.;}`;');
   expect(minifyGlsl('x = `plain  text`')).toBe('x = `plain  text`');
 });
-import { compileTransform, deriveInput, validatePattern, validateTransform, MISSING, NO_MATCH } from '../src/core/derive';
+import { compileTransform, deriveInput, validateTransform, MISSING, NO_MATCH } from '../src/core/derive';
 import { validateDeclaration } from '../src/core/declaration';
 import { declaredKeys } from '../src/core/columns';
-test('derived transforms validate bounded inputs and reject backtracking-prone patterns', () => {
-  for (const ok of [{ kind: 'segment', delimiter: ':', index: 1 }, { kind: 'segment', delimiter: '::', index: -1 }, { kind: 'prefix', delimiter: '/', segments: 2 }, { kind: 'pattern', pattern: '^([^:]+):' }, { kind: 'pattern', pattern: '^concept:(\\w{1,16})' }, { kind: 'pattern', pattern: '([A-Z]{2})-\\d+' }]) expect(() => validateTransform(ok)).not.toThrow();
+test('derived transforms validate bounded inputs; regex transforms are refused entirely', () => {
+  for (const ok of [{ kind: 'segment', delimiter: ':', index: 1 }, { kind: 'segment', delimiter: '::', index: -1 }, { kind: 'prefix', delimiter: '/', segments: 2 }]) expect(() => validateTransform(ok)).not.toThrow();
   for (const bad of [{ kind: 'segment', delimiter: '', index: 0 }, { kind: 'segment', delimiter: '123456789', index: 0 }, { kind: 'segment', delimiter: ':', index: 64 }, { kind: 'prefix', delimiter: ':', segments: 0 }, { kind: 'segment', delimiter: ':', index: 0, extra: 1 }, { kind: 'split', delimiter: ':' }]) expect(() => validateTransform(bad)).toThrow();
-  for (const bad of ['(a+)+', '(a|b)', 'a|b', '(?=x)a', '(?:a)', '(a)\\1', 'a*b*', 'a{0,99}', 'x'.repeat(32), '[a[b]]', '(a)(b)', '((a))', '*a', '\\p{L}', '(a']) expect(() => validatePattern(bad)).toThrow();
-  // Worst admitted shape on a maximal input stays fast: one unbounded quantifier, capped input.
-  const run = compileTransform({ kind: 'pattern', pattern: '^(a+)b' }), started = performance.now();
-  for (let i = 0; i < 200; i++) expect(run(deriveInput('a'.repeat(400) + '!'))).toBe(NO_MATCH);
+  // Review probe: these shapes once passed a restricted-regex validator and backtracked
+  // exponentially ('[]?(a+)+\]': 24 chars → 219 ms, ×4 per 2 chars). No pattern kind exists now.
+  for (const pattern of ['[]?(a+)+\\]', '[]?(a|aa)+\\]', '[]?(?=a)(\\w)\\1\\]', '^([^:]+):']) expect(() => validateTransform({ kind: 'pattern', pattern })).toThrow('no longer supported');
+  // Split transforms stay linear on the capped input.
+  const started = performance.now(), seg = compileTransform({ kind: 'prefix', delimiter: 'a', segments: 32 });
+  for (let i = 0; i < 2000; i++) seg(deriveInput('a'.repeat(5000) + '!'));
   expect(performance.now() - started).toBeLessThan(250);
 });
-test('derived values: segment, prefix and pattern semantics with explicit missing/no-match groups', () => {
+test('derived values: segment and prefix semantics with explicit missing/no-match groups', () => {
   expect([deriveInput('x'), deriveInput(3), deriveInput(true), deriveInput(null), deriveInput(undefined), deriveInput([null, 'a', 'b']), deriveInput({}), deriveInput('y'.repeat(999))!.length]).toEqual(['x', '3', 'true', undefined, undefined, 'a', undefined, 256]);
   const seg = compileTransform({ kind: 'segment', delimiter: ':', index: 1 }), last = compileTransform({ kind: 'segment', delimiter: ':', index: -1 });
   expect([seg('concept:alpha:1'), seg('plain'), seg('a:'), seg(undefined), last('a:b:c')]).toEqual(['alpha', NO_MATCH, NO_MATCH, MISSING, 'c']);
   const pre = compileTransform({ kind: 'prefix', delimiter: ':', segments: 2 });
   expect([pre('concept:alpha:1'), pre('concept:1'), pre('a:b:c:d')]).toEqual(['concept:alpha', NO_MATCH, 'a:b']);
-  const pat = compileTransform({ kind: 'pattern', pattern: '^([^:]+):' }), whole = compileTransform({ kind: 'pattern', pattern: '\\d{2}' });
-  expect([pat('ns:rest'), pat('nocolon'), whole('ab12cd'), whole('x')]).toEqual(['ns', NO_MATCH, '12', NO_MATCH]);
 });
 test('declared and runtime derived groups agree and need no new note properties', async () => {
   const facts: FactRow[] = ['alpha', 'beta', 'alpha', 'gamma', 'beta', 'alpha'].map((ns, i) => ({ path: `Concepts/C-${i}.md`, properties: { id: i === 3 ? 'unprefixed' : `concept:${ns}:${i}` } }));
@@ -204,11 +204,11 @@ test('declared and runtime derived groups agree and need no new note properties'
   const runtime = { ...d, groups: [], columns: ['id'] }, q = buildProjection(facts, runtime);
   const fromColumn = groupColumn(q, runtime, { from: 'derived', key: 'id', transform: { kind: 'prefix', delimiter: ':', segments: 2 } }, 0);
   expect(q.paths.map((_, i) => fromColumn.values[fromColumn.codes[i]!])).toEqual(p.paths.map((_, i) => byProperty.values[byProperty.codes[i]!]));
-  const fromIdentity = groupColumn(q, runtime, { from: 'derived', key: '$identity', transform: { kind: 'pattern', pattern: '^concept:([a-z]+)' } }, 0);
+  const fromIdentity = groupColumn(q, runtime, { from: 'derived', key: '$identity', transform: { kind: 'segment', delimiter: ':', index: 1 } }, 0);
   expect(q.paths.map((_, i) => fromIdentity.values[fromIdentity.codes[i]!])).toEqual(['alpha', 'beta', 'alpha', NO_MATCH, 'beta', 'alpha', NO_MATCH]);
   expect(() => groupColumn(q, runtime, { from: 'derived', key: 'missing', transform: { kind: 'segment', delimiter: ':', index: 0 } }, 0)).toThrow('Undeclared column');
   expect(() => validateDeclaration({ ...d, groups: [{ from: 'derived', key: '$body', transform: { kind: 'segment', delimiter: ':', index: 0 } }] })).toThrow('built-in');
-  const s = defaults('obsidian-links@1.13.7'); s.declaration = d; s.explore.view = { ...emptyView(), group: { from: 'derived', key: '$path', transform: { kind: 'pattern', pattern: '^([^/]+)/' } } };
+  const s = defaults('obsidian-links@1.13.7'); s.declaration = d; s.explore.view = { ...emptyView(), group: { from: 'derived', key: '$path', transform: { kind: 'segment', delimiter: '/', index: 0 } } };
   validateSettings(s); expect(compatibilityIssues(s)).toEqual([]);
   expect(await generationKey(facts, d, DEFAULT_LAYOUT, 'p')).not.toBe(await generationKey(facts, { ...d, groups: [] }, DEFAULT_LAYOUT, 'p'));
 });
@@ -235,4 +235,36 @@ test('dense webs shrink nodes by screen density and placeholder groups stay neut
   neutralizeGroups(palette, ['"A"', '(missing)', '(no match)', '(outside prefix)'], base);
   expect([...palette.slice(4, 8)]).toEqual([120, 121, 122, 255]); expect([...palette.slice(12, 16)]).toEqual([120, 121, 122, 255]);
   expect([...palette.slice(0, 3)]).not.toEqual([120, 121, 122]);
+});
+test('review probe: panel-reachable invalid states are never written (save validates), valid ones reload', () => {
+  const cases: [string, (s: ReturnType<typeof defaults>) => void][] = [
+    ['saved view name 121 chars', s => { s.explore.savedViews = [{ name: 'n'.repeat(121), view: structuredClone(s.explore.view), camera: null }]; }],
+    ['collapse all over 20000 groups', s => { s.explore.view.collapsedGroups = Array.from({ length: 20001 }, (_, i) => `g${i}`); }],
+    ['hide group whose key > 4096 chars', s => { s.explore.view.hiddenGroups = ['"' + 'x'.repeat(5000) + '"']; }],
+    ['201 saved views', s => { s.explore.savedViews = Array.from({ length: 201 }, (_, i) => ({ name: `v${i}`, view: structuredClone(s.explore.view), camera: null })); }],
+  ];
+  for (const [, mutate] of cases) { const s = defaults('p@1'); mutate(s); expect(() => settingsForSave(s)).toThrow(); }
+  // At the caps the same states save and reload unchanged (no quarantine/default reset).
+  const s = defaults('p@1');
+  s.explore.savedViews = Array.from({ length: 200 }, (_, i) => ({ name: `${'n'.repeat(110)}${i}`, view: structuredClone(s.explore.view), camera: null }));
+  s.explore.view.collapsedGroups = Array.from({ length: 20000 }, (_, i) => `g${i}`); s.explore.view.hiddenGroups = ['"' + 'x'.repeat(4094) + '"'];
+  const reloaded = upgradeSettings(JSON.parse(JSON.stringify(settingsForSave(s))), 'p@1');
+  expect(reloaded.explore.savedViews).toHaveLength(200); expect(reloaded.explore.view.collapsedGroups).toHaveLength(20000); expect(reloaded.explore.view.hiddenGroups[0]!.length).toBe(4096);
+});
+test('stored regex-derived groups migrate to a visible disabled list, never silently dropped', async () => {
+  const s = defaults('p@1') as any, regex = (pattern: string, key = '$identity') => ({ from: 'derived', key, transform: { kind: 'pattern', pattern } });
+  s.declaration.groups = [regex('^([A-Z]+)-'), { from: 'folder', depth: 1 }]; s.groupLevel = 1;
+  s.explore.view.group = regex('^(\\w+):', 'id'); s.explore.savedViews = [{ name: 'Old', view: { ...structuredClone(s.explore.view) }, camera: null }];
+  const stored = { settings: { ...s, explore: encodeText(s.explore) } };
+  const notices: string[] = [];
+  const loaded = await loadSettings({ async stat() { return { size: 10 }; }, async read() { return JSON.stringify(stored); }, async copy() { throw new Error('must not quarantine'); } }, 'data.json', 'p@1', m => notices.push(m));
+  const e = loaded.settings.explore;
+  expect(e.disabledDerived.map(d => [d.location, d.key, d.pattern])).toEqual([['declared group 1', '$identity', '^([A-Z]+)-'], ['current view', 'id', '^(\\w+):'], ['saved view “Old”', 'id', '^(\\w+):']]);
+  expect(loaded.settings.declaration.groups).toEqual([{ from: 'folder', depth: 1 }]); expect(loaded.settings.groupLevel).toBe(0);
+  expect(e.view.group).toBeNull(); expect(e.savedViews[0]!.view.group).toBeNull();
+  expect(notices).toHaveLength(1); expect(notices[0]).toContain('3 regex-derived groups were disabled');
+  // Saving and reloading keeps the record (visible until dismissed) and raises no second notice.
+  const again: string[] = [], text = JSON.stringify({ settings: settingsForSave(loaded.settings) });
+  const reloaded = await loadSettings({ async stat() { return { size: 10 }; }, async read() { return text; }, async copy() { throw new Error('must not quarantine'); } }, 'data.json', 'p@1', m => again.push(m));
+  expect(reloaded.settings.explore.disabledDerived).toHaveLength(3); expect(again).toEqual([]);
 });

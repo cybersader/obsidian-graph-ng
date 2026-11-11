@@ -43,7 +43,6 @@ Users should not have to stamp new properties onto notes so the graph can group 
 ```json
 {"from": "derived", "key": "entity_id", "transform": {"kind": "segment", "delimiter": ":", "index": 0}}
 {"from": "derived", "key": "$path", "transform": {"kind": "prefix", "delimiter": "/", "segments": 2}}
-{"from": "derived", "key": "$identity", "transform": {"kind": "pattern", "pattern": "^([A-Z]+)-"}}
 ```
 
 `key` is a declared property column, or the built-ins `$identity` (resolved node identity) and `$path` (exact note path); other `$` names are refused. Property inputs use the scalar text, or the first scalar of a list. Every input is truncated to 256 UTF-16 units before the transform.
@@ -52,9 +51,8 @@ Users should not have to stamp new properties onto notes so the graph can group 
 | --- | --- | --- |
 | `segment` | `delimiter` (1–8 characters), `index` (−64…63; negative counts from the end) | That segment. A value without the delimiter, or an empty segment, is `(no match)`. |
 | `prefix` | `delimiter`, `segments` (1…32) | The first N segments joined by the delimiter, when the value has more than N segments; otherwise `(no match)`. |
-| `pattern` | `pattern` (1–31 characters) | First capture group (or whole match) of a restricted regular expression; no match is `(no match)`. |
 
-Missing input values form `(missing)`. Patterns accept a deliberately small regex subset that cannot backtrack catastrophically: at most one plain capture group that cannot itself be quantified, no alternation, nesting, lookaround, backreferences or `\b`/`\p`/`\u`/`\x`/`\c` escapes, at most three quantified atoms with at most one unbounded (`*`/`+`), and bounded counts `{m,n}` with n ≤ 16. The 31-character limit also keeps settings free of long opaque strings. A transform runs once per distinct dictionary value and remaps node codes, so cost is bounded by distinct values, not notes. Derived groups are presentation: they are computed in the worker from existing columns and never written to notes.
+Missing input values form `(missing)`. Both transforms are a single split of the capped input, so their cost is linear. Regular-expression transforms are deliberately not supported: a restricted regex validator was shown to admit catastrophic backtracking. A stored `pattern` group from an earlier 0.3.0 build is moved, on load, out of the declaration, the current view and saved views into `explore.disabledDerived`. The Explore panel and a notice show it until the user dismisses it; it never affects the graph. A transform runs once per distinct dictionary value and remaps node codes, so cost is bounded by distinct values, not notes. Derived groups are presentation: they are computed in the worker from existing columns and never written to notes.
 
 ## Validation diagnostics
 

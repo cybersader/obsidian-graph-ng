@@ -19,8 +19,10 @@ export interface ViewCamera { x: number; y: number; ratio: number }
 export interface SavedView { name: string; view: ExploreView; camera: ViewCamera | null }
 export const emptyView = (): ExploreView => ({ query: '', filters: [], group: null, hiddenGroups: [], collapsedGroups: [], hiddenColors: [], hiddenTypes: [] });
 export const NO_COLOR = '(no rule)';
+/** Persisted view limits, shared by validation and the panel's own input caps. */
+export const VIEW_LIMITS = { query: 512, filters: 64, keys: 20000, keyLength: 4096, savedViews: 200, viewName: 120 } as const;
 const strings = (v: unknown, name: string, max: number) => {
-  if (!Array.isArray(v) || v.length > max || v.some(x => typeof x !== 'string' || x.length > 4096)) throw new Error(`${name} must be at most ${max} strings`);
+  if (!Array.isArray(v) || v.length > max || v.some(x => typeof x !== 'string' || x.length > VIEW_LIMITS.keyLength)) throw new Error(`${name} must be at most ${max} strings of at most ${VIEW_LIMITS.keyLength} characters`);
 };
 function validateGroup(g: unknown): asserts g is GroupSource {
   if (!g || typeof g !== 'object' || Array.isArray(g)) throw new Error('Invalid group source');
@@ -36,18 +38,18 @@ export function validateView(v: unknown): asserts v is ExploreView {
   if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('View must be an object');
   const o = v as Record<string, unknown>;
   for (const k of Object.keys(o)) if (!['query', 'filters', 'group', 'hiddenGroups', 'collapsedGroups', 'hiddenColors', 'hiddenTypes'].includes(k)) throw new Error(`Unknown view field: ${k}`);
-  if (typeof o.query !== 'string' || o.query.length > 512) throw new Error('query must be a string of at most 512 characters');
-  if (!Array.isArray(o.filters) || o.filters.length > 64) throw new Error('filters must be at most 64 predicates');
+  if (typeof o.query !== 'string' || o.query.length > VIEW_LIMITS.query) throw new Error(`query must be a string of at most ${VIEW_LIMITS.query} characters`);
+  if (!Array.isArray(o.filters) || o.filters.length > VIEW_LIMITS.filters) throw new Error(`filters must be at most ${VIEW_LIMITS.filters} predicates`);
   for (const f of o.filters) validatePredicate(f);
   if (o.group !== null) validateGroup(o.group);
-  for (const k of ['hiddenGroups', 'collapsedGroups', 'hiddenColors', 'hiddenTypes'] as const) strings(o[k], k, 20000);
+  for (const k of ['hiddenGroups', 'collapsedGroups', 'hiddenColors', 'hiddenTypes'] as const) strings(o[k], k, VIEW_LIMITS.keys);
 }
 export function validateSaved(v: unknown): asserts v is SavedView[] {
-  if (!Array.isArray(v) || v.length > 200) throw new Error('savedViews must be at most 200 entries');
+  if (!Array.isArray(v) || v.length > VIEW_LIMITS.savedViews) throw new Error(`savedViews must be at most ${VIEW_LIMITS.savedViews} entries`);
   const names = new Set<string>();
   for (const s of v) {
     if (!s || typeof s !== 'object' || Array.isArray(s) || Object.keys(s).some(k => !['name', 'view', 'camera'].includes(k))) throw new Error('Invalid saved view');
-    if (typeof s.name !== 'string' || !s.name.trim() || s.name.length > 120 || names.has(s.name)) throw new Error('Saved view names must be unique, nonempty and at most 120 characters');
+    if (typeof s.name !== 'string' || !s.name.trim() || s.name.length > VIEW_LIMITS.viewName || names.has(s.name)) throw new Error(`Saved view names must be unique, nonempty and at most ${VIEW_LIMITS.viewName} characters`);
     names.add(s.name); validateView(s.view);
     if (s.camera !== null && (!s.camera || typeof s.camera !== 'object' || Object.keys(s.camera).some((k: string) => !['x', 'y', 'ratio'].includes(k)) || ![s.camera.x, s.camera.y, s.camera.ratio].every(Number.isFinite) || s.camera.ratio <= 0)) throw new Error('Invalid saved camera');
   }
