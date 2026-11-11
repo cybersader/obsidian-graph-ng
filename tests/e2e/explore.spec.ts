@@ -1,10 +1,13 @@
 import { browser, $, $$ } from '@wdio/globals';
 import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
+import { chooseFixture, fixtureShape } from '../../scripts/fixture';
 // Slice 6 exploration lane: real Obsidian, real WebGL, synthetic vaults only.
 const literal = Boolean(process.env.GRAPH_LITERAL), large = Boolean(process.env.GRAPH_LARGE), software = Boolean(process.env.GRAPH_SOFTWARE);
-const tag = `explore-${large ? 'large' : 'small'}${literal ? '-literal' : ''}-${software ? 'software' : 'hardware'}`;
+const tag = `explore-${large ? 'large' : 'small'}${process.env.GRAPH_FIXTURE === 'clustered' ? '-clustered' : ''}${literal ? '-literal' : ''}-${software ? 'software' : 'hardware'}`;
 const evidence: Record<string, unknown> = { tag };
+// The filter expectation follows the generated synthetic shape (uniform or clustered).
+const family1 = chooseFixture(fixtureShape())(large ? 16000 : 600, large ? 44600 : 1400).filter(r => r.properties.family === 'Family 1').length;
 const view = () => $('.graph-ng-view');
 const choose = (selector: string, value: string) => browser.execute((s, v) => { const el = document.querySelector(s) as HTMLSelectElement; el.value = v; el.dispatchEvent(new Event('change')); return el.value === v; }, selector, value);
 const clickText = (selector: string, text: string) => browser.execute((s, t) => { const el = [...document.querySelectorAll(s)].find(e => e.textContent === t) as HTMLElement | undefined; el?.click(); return Boolean(el); }, selector, text);
@@ -79,7 +82,7 @@ describe('Graph NG explore controls and visuals', () => {
     const after = await browser.executeObsidian(({ app }) => { const v = app.workspace.getLeavesOfType('graph-ng')[0]!.view as any; return { visible: Number(v.contentEl.dataset.visibleNodes), exploreMs: Number(v.contentEl.dataset.exploreMs), counts: v.contentEl.querySelector('.graph-ng-explore-counts').textContent, mode: v.contentEl.dataset.mode, samePositions: v.positions === v.detailRenderer.positions, chips: v.contentEl.querySelectorAll('.graph-ng-chip').length }; });
     evidence.filter = after;
     assert.equal(after.mode, 'nodes'); assert.equal(after.chips, 1); assert.ok(after.samePositions); assert.equal(before.layoutMs, await view().getAttribute('data-layout-ms'));
-    assert.equal(after.visible, literal ? Math.ceil(16000 / 6) : large ? Math.ceil(16000 / 6) : 100);
+    assert.equal(after.visible, family1);
     await settle(600); await shot('dark-filter');
     await $('.graph-ng-chip').click(); await browser.waitUntil(async () => (await visibleNodes()) === Number(evidence.nodes), { timeout: 30000 });
   });

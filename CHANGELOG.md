@@ -25,12 +25,17 @@ All notable changes are recorded here. The format follows Keep a Changelog; vers
 ### Fixed
 
 - External aggregate projections (`projectionFile`) no longer fail with an invalid group color.
+- The browser benchmark no longer hangs. Bun's Playwright pipe transport broke on a second browser launch when a reply was several MB, so each mode now runs in its own process and the run fails fast on a disconnect. A second-view regression covers hover, select and context loss. The label-glyph receipt now divides by the current 10-float stride.
+
+### Added (development)
+
+- `clusteredFixture` / `--clustered` / `GRAPH_FIXTURE=clustered`: a seeded synthetic corpus with community structure for visual judgement, written to its own synthetic vault.
 
 ### Measured
 
-- Native lanes: small graph 11/11 and explore 6/6 on hardware and software; large literal graph 7/7 and explore 6/6 on hardware; large literal graph 7/7 on the software rerun. Large first groups take 307.9/354.2 ms. The browser main heap is 11.05/11.02 MiB. There are 119 unit tests.
-- Bundle: 170,539 minified / 52,954 gzip bytes, over the enforced 150,000 / 45,000 ceilings, so the full-gates bundle lane fails. The other five gate lanes pass.
-- Known misses: the browser benchmark's second headless launch blocks natively (unattributed regression; slice 5 passes the same command). One intermittent large-software contribution timeout and intermittent 59–76 ms small-software explore tasks are also unattributed.
+- Native lanes: small graph 11/11 and explore 6/6 on hardware and software; large literal graph 7/7 and explore 6/6 on hardware; large literal graph 7/7 on the software rerun. Large first groups take 307.9/354.2 ms. The browser bench completes 3/3 sequential runs in both modes: 60.0 fps, main heap 11.06/11.03 MiB, no ≥50 ms tasks. There are 120 unit tests.
+- Bundle: 166,118 minified / 52,418 gzip bytes after private-name mangling and UTF-8 output (from 170,539 / 52,954). This is still over the enforced 150,000 / 45,000 ceilings, so the full-gates bundle lane fails. The other five gate lanes pass.
+- Known misses: one intermittent large-software contribution timeout (not seen in the final matrix) and intermittent 59–76 ms small-software explore tasks are unattributed. Literal display of a clustered corpus is dominated by neutral mapping notes.
 
 ## [0.2.1] - 2026-11-10
 

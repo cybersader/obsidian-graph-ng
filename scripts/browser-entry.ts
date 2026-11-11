@@ -74,6 +74,12 @@ async function main() {
     requestAnimationFrame(sample);
   });
   (window as any).graphRenderer = renderer;
+  // Second-view regression seam: dispose this view and open a fresh renderer in the same page.
+  (window as any).reopenGraph = async () => {
+    const previous = renderer; previous.dispose(); container.replaceChildren();
+    renderer = await DetailRenderer.create(container, detail.projection, warm.positions, detail.visible, settings, () => {}, () => {}, detail.colors);
+    renderer.refresh(); await frame(); (window as any).graphRenderer = renderer; return previous;
+  };
   await yieldTask(); tasks.push(...observer.takeRecords()); observer.disconnect(); pipeline.dispose(); URL.revokeObjectURL(url);
   const between = (a: number, b: number) => summarize(tasks.filter(t => t.startTime >= a && t.startTime < b).map(t => t.duration));
   const frames = intervals.slice(5).sort((a, b) => a - b), open = between(start, coldReady), warmTasks = between(warmStart, warmEnd);

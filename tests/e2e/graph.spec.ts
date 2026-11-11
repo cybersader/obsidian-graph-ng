@@ -4,7 +4,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { chromium, type Browser, type CDPSession } from 'playwright';
 const literal = Boolean(process.env.GRAPH_LITERAL);
 const large = Boolean(process.env.GRAPH_LARGE), software = Boolean(process.env.GRAPH_SOFTWARE);
-const tag = `${large ? 'large' : 'small'}${literal ? '-literal' : ''}-${software ? 'software' : 'hardware'}`;
+const tag = `${large ? 'large' : 'small'}${process.env.GRAPH_FIXTURE === 'clustered' ? '-clustered' : ''}${literal ? '-literal' : ''}-${software ? 'software' : 'hardware'}`;
 const runDirectory = `.workspace/evidence/runs/native-${tag}-${Date.now()}-${process.pid}`;
 const evidence: Record<string, unknown> = { runDirectory, tag, app: '1.13.7', installer: '1.13.7', notes: large ? 60600 : 2000 };
 async function ready() { await browser.waitUntil(async () => (await $('.graph-ng-view').getAttribute('data-state')) === 'ready', { timeout: 180000, timeoutMsg: 'Graph did not become ready' }); }

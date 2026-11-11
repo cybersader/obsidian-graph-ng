@@ -97,3 +97,17 @@ test('opt-in installer refuses overwrites/custom paths and installs an executabl
   execFileSync('git', ['config', 'core.hooksPath', 'custom-hooks'], { cwd: dir });
   expect(install().status).not.toBe(0);
 }));
+test('mangled bundle properties are private to the main bundle', async () => {
+  const { MANGLED_PROPS } = await import('../scripts/mangle-props.mjs');
+  const read = (p: string) => fs.readFileSync(p, 'utf8'), ids = (text: string) => new Set(text.match(/[A-Za-z_$][\w$]*/g));
+  const lib = path.join(import.meta.dir, '../node_modules/typescript/lib'), reserved = new Set<string>();
+  for (const file of [...fs.readdirSync(lib).filter(f => /^lib\..*\.d\.ts$/.test(f)).map(f => path.join(lib, f)), path.join(import.meta.dir, '../node_modules/obsidian/obsidian.d.ts')]) for (const id of ids(read(file))) reserved.add(id);
+  const src = path.join(import.meta.dir, '../src'), dir = (d: string) => fs.readdirSync(d).filter(f => /\.m?ts$/.test(f)).map(f => path.join(d, f));
+  // Worker-bundle sources and harness/e2e code may cross the bundle boundary by property name.
+  const crossing = [...dir(path.join(src, 'core')), ...['layout-worker.ts', 'pipeline.ts', 'render-projection.ts', 'gpu-probe.ts'].map(f => path.join(src, f)), ...dir(path.join(import.meta.dir, 'e2e')), ...dir(path.join(import.meta.dir, '../scripts'))];
+  for (const file of crossing) for (const id of ids(read(file))) reserved.add(id);
+  const literals = new Set<string>();
+  for (const file of [...dir(src), ...dir(path.join(src, 'adapter'))]) for (const m of read(file).matchAll(/['"`]([A-Za-z_]\w*)['"`]/g)) literals.add(m[1]!);
+  expect(MANGLED_PROPS.length).toBeGreaterThan(0);
+  expect(MANGLED_PROPS.filter((n: string) => reserved.has(n) || literals.has(n))).toEqual([]);
+});
