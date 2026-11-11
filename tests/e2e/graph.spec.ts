@@ -9,6 +9,10 @@ const runDirectory = `.workspace/evidence/runs/native-${tag}-${Date.now()}-${pro
 const evidence: Record<string, unknown> = { runDirectory, tag, app: '1.13.7', installer: '1.13.7', notes: large ? 60600 : 2000 };
 async function ready() { await browser.waitUntil(async () => (await $('.graph-ng-view').getAttribute('data-state')) === 'ready', { timeout: 180000, timeoutMsg: 'Graph did not become ready' }); }
 async function open() { await browser.executeObsidianCommand('graph-ng:open'); await ready(); }
+/** A ready local view can still be finishing a queued cached refresh that repaints the panel; wait for the verified, idle pass. */
+async function settled() { await browser.waitUntil(async () => browser.executeObsidian(({ app }) => { const v = app.workspace.getLeavesOfType('graph-ng')[0]?.view as any; return Boolean(v) && v.contentEl.dataset.state === 'ready' && v.contentEl.dataset.verified === 'true' && !v.refreshing && !v.queued; }), { timeout: 180000, timeoutMsg: 'Graph did not settle' }); }
+/** Open the Relationships section unless a preserved open state already shows it. */
+async function relationships() { const d = await $('.graph-ng-panel details.graph-ng-relationships'); if (!(await d.getProperty('open'))) await d.$('summary').click(); }
 async function screenshot(name: string) { await browser.saveScreenshot(`test-screenshots/${tag}-${name}.png`); }
 let profileConnection: Browser | undefined, profileCdp: CDPSession | undefined;
 describe('Graph NG synthetic Obsidian path', () => {
@@ -60,7 +64,10 @@ describe('Graph NG synthetic Obsidian path', () => {
     assert.equal(await $('.graph-ng-view').getAttribute('data-mode'), 'groups');
     assert.equal(await $$('.graph-ng-group-controls button').length, literal ? 7 : 6);
     await screenshot('groups');
-    await $('.graph-ng-panel summary').click(); await $('.graph-ng-edge').click();
+    await settled(); await relationships();
+    await browser.executeObsidian(({ app }) => (app.workspace.getLeavesOfType('graph-ng')[0]!.view as any).showGroups(true));
+    assert.equal(await $('.graph-ng-panel details.graph-ng-relationships').getProperty('open'), true, 'a group re-render must keep an opened section open');
+    await $('.graph-ng-edge').click();
     const button = await $('.graph-ng-contribution button'); await button.waitForExist({ timeout: 180000 }); const carrier = await button.getText();
     await screenshot('carriers'); await button.click();
     await browser.waitUntil(async () => browser.executeObsidian(({ app }, path) => app.workspace.getActiveFile()?.path === path, carrier));
@@ -68,7 +75,7 @@ describe('Graph NG synthetic Obsidian path', () => {
   });
   it('retains contributing mappings across generation refresh and exposes failed reads with Retry', async () => {
     await $('.graph-ng-toolbar button').click();
-    await $('.graph-ng-panel summary').click(); await $('.graph-ng-edge').click();
+    await relationships(); await $('.graph-ng-edge').click();
     await $('.graph-ng-contribution button').waitForExist({ timeout: 15000 });
     await browser.waitUntil(async () => browser.executeObsidian(({ app }) => !(app.workspace.getLeavesOfType('graph-ng')[0]!.view as any).refreshing));
     const state = await browser.executeObsidian(async ({ app }) => {
@@ -84,7 +91,7 @@ describe('Graph NG synthetic Obsidian path', () => {
       const pipeline = (app.workspace.getLeavesOfType('graph-ng')[0]!.view as any).plugin.pipeline, original = pipeline.request.bind(pipeline);
       pipeline.request = (revision: number, request: any) => { if (request.kind === 'contributions') { pipeline.request = original; return Promise.reject(new Error('synthetic contribution failure')); } return original(revision, request); };
     });
-    await $('.graph-ng-panel summary').click(); await $('.graph-ng-edge').click();
+    await relationships(); await $('.graph-ng-edge').click();
     await browser.waitUntil(async () => (await $('.graph-ng-contribution-status').getText()).includes('synthetic contribution failure'));
     await $('.graph-ng-contribution-status button').click();
     await $('.graph-ng-contribution button').waitForExist({ timeout: 15000 });
@@ -316,7 +323,7 @@ describe('Graph NG synthetic Obsidian path', () => {
       await view.plugin.apply(settings);
     });
     await ready(); await screenshot('precomputed');
-    await $('.graph-ng-panel summary').click(); await $('.graph-ng-edge').click();
+    await relationships(); await $('.graph-ng-edge').click();
     const carrier = await $('.graph-ng-carrier'); assert.equal(await carrier.isEnabled(), true); await carrier.click();
     await browser.waitUntil(async () => browser.executeObsidian(({ app }) => app.workspace.getActiveFile()?.path === 'Mappings/Mapping-000000.md'));
   });
@@ -336,7 +343,7 @@ describe('Graph NG synthetic Obsidian path', () => {
     assert.ok(firstPageMs < 1000, 'First-page synchronous rendering must stay below 1 second');
     assert.ok(Date.now() - start < 5000, 'Full aggregate first-page load must stay below 5 seconds');
     assert.equal(await $$('.graph-ng-group-controls button').length, 25); assert.equal(await $('.graph-ng-view').getAttribute('data-canvas-groups'), '6');
-    await $('.graph-ng-panel summary').click(); assert.equal(await $$('.graph-ng-edge').length, 25); assert.ok((await $('.graph-ng-edge').getText()).includes('↔'));
+    await relationships(); assert.equal(await $$('.graph-ng-edge').length, 25); assert.ok((await $('.graph-ng-edge').getText()).includes('↔'));
     const first = await $('.graph-ng-group-controls button').getAttribute('data-group');
     await $('.graph-ng-panel > .graph-ng-pagination .graph-ng-page-controls button:last-child').click();
     assert.notEqual(await $('.graph-ng-group-controls button').getAttribute('data-group'), first); assert.equal(await $$('.graph-ng-group-controls button').length, 25);

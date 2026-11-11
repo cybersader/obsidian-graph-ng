@@ -8,7 +8,13 @@ All notable changes are recorded here. The format follows Keep a Changelog; vers
 
 ### Changed
 
-- Literal display (`reifiedAsNodes`): edge notes (relationship notes drawn as nodes) take their color from the displayed colors of their endpoints instead of the neutral `(missing)` group, draw small in their own pass beneath the other notes without glow, and fade with edge-note density. Bridges between different colors blend both endpoints or keep the source color, with a configurable accent. At mid and far zoom they fold into their edges and cannot be picked. New `visuals` keys: `carrierTint`, `carrierBridge`, `carrierBridgeAccent`, `carrierOpacity`, `carrierSize`, `carrierDensityReference`, `carrierLod`, `carrierLodNear`, `carrierLodFar`; missing keys migrate to defaults. The legend explains the treatment; Display adds edge-note opacity, size, tint and fold controls. The projection gains a per-node `carrierNodes` flag (all zero outside literal display).
+- Literal display (`reifiedAsNodes`): edge notes (relationship notes drawn as nodes) take their color from the displayed colors of their endpoints instead of the neutral `(missing)` group, draw small in their own pass beneath the other notes without glow, and fade with edge-note density. Bridges between different colors blend both endpoints or keep the source color, with a configurable accent. At mid and far zoom they fold into their edges and cannot be picked. New `visuals` keys: `carrierTint`, `carrierBridge`, `carrierBridgeAccent`, `carrierOpacity`, `carrierSize`, `carrierDensityReference`, `carrierLod`, `carrierLodNear`, `carrierLodFar`; missing keys migrate to defaults. The legend explains the treatment; Display adds edge-note opacity, size, tint and fold controls. The projection gains a per-node `carrierNodes` column (1 + the note's own carrier row; all zero outside literal display), and the render projection now carries the per-edge `carrier` column, so an edge note's colour comes only from its own relationship's endpoints, never from inline or link edges that touch the note. A highlighted (hovered or selected) edge note folds with the level of detail.
+
+### Fixed
+
+- A density reference of 0 (`edgeDensityReference`, `carrierDensityReference`) now disables density thinning, as the settings error text states; previously it pinned alpha to its floor.
+- Re-rendering the group screen keeps the Relationships and duplicate-ID sections open if the user opened them, instead of collapsing them.
+- The native graph lane waits for a verified, idle view before opening relationships, fixing a flake where a queued cached refresh repainted the panel under the click.
 
 ## [0.3.0] - 2026-11-11
 

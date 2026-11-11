@@ -16,8 +16,9 @@ export interface Projection {
   target: Uint32Array;
   type: Uint32Array;
   carrier: Uint32Array;
-  /** Per node: 1 when the node is a reified edge declaration drawn as a node (literal display). */
-  carrierNodes: Uint8Array;
+  /** Per node: 1 + its `carrier` row when the node is a reified edge declaration drawn as a
+   * node (literal display), else 0. An edge belongs to that note when `carrier[e] + 1` matches. */
+  carrierNodes: Uint32Array;
   types: string[];
   columns: Record<string, DictionaryColumn>;
   groups: DictionaryColumn[];
@@ -111,7 +112,7 @@ export function buildProjection(input: readonly FactRow[], d: GraphDeclaration):
   });
   const tc = column(typ);
   return { paths, identities, carrierPaths: rows.map(r => r.path), offsets, targets,
-    source: Uint32Array.from(src), target: Uint32Array.from(dst), type: tc.codes, carrier: Uint32Array.from(carrier), carrierNodes: Uint8Array.from(paths, x => carriers.has(x) ? 1 : 0), types: tc.values,
+    source: Uint32Array.from(src), target: Uint32Array.from(dst), type: tc.codes, carrier: Uint32Array.from(carrier), carrierNodes: Uint32Array.from(nodes, r => carriers.has(r.path) ? rowIndex.get(r.path)! + 1 : 0), types: tc.values,
     columns, groups, folders, unresolved, quarantined };
 }
 export function filterNodes(p: Projection, predicate?: Predicate): Uint8Array {

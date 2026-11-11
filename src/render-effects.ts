@@ -74,11 +74,13 @@ export function effectPolicy(v: Visuals, nodes: number, edges: number, groups: n
   if (halos && groups > v.halosMaxGroups) reasons.push(`halos limited to the ${v.halosMaxGroups.toLocaleString()} largest groups`);
   return { glow, curves, segments: curves ? v.curveSegments : 1, halos: halos && v.halosMaxGroups > 0, additive: dark, reasons };
 }
+/** Density thinning in (0, 1]: sqrt(reference / count); a reference of 0 disables it. */
+export const thinning = (reference: number, count: number) => reference > 0 ? Math.min(1, Math.sqrt(reference / Math.max(1, count))) : 1;
 /** Edge alpha falls with visible density and rises when zoomed in past the home
  * (fit) framing; additive blending gets a lower per-edge ceiling so dense cores
  * glow without saturating to white. `zoom` is camera ratio / home ratio. */
 export function edgeAlpha(v: Visuals, visibleEdges: number, zoom: number, additive: boolean): number {
-  const density = Math.min(1, Math.sqrt(v.edgeDensityReference / Math.max(1, visibleEdges))), boost = Math.min(3, Math.max(1, 1 / Math.sqrt(Math.max(zoom, 1e-6))));
+  const density = thinning(v.edgeDensityReference, visibleEdges), boost = Math.min(3, Math.max(1, 1 / Math.sqrt(Math.max(zoom, 1e-6))));
   return additive ? Math.min(.5, Math.max(.02, v.edgeOpacity * .45 * density * boost)) : Math.min(1, Math.max(.05, v.edgeOpacity * 1.25 * density * boost));
 }
 /** Zoom-dependent label opacity and importance cut within the current label LOD band. */
@@ -103,12 +105,14 @@ export function groupHalos(positions: Float32Array, visible: Uint8Array, codes: 
 /** Alpha byte for an edge note whose endpoints share one colour; bridges keep 255. */
 export const CARRIER_SAME_ALPHA = 160;
 /** Edge notes (reified edges drawn as nodes) take a colour derived from the displayed
- * colours of their non-edge-note endpoints, in place over per-node RGBA `colors`.
+ * colours of the endpoints of their own relationship (edges whose `carrier` row is that note;
+ * inline or link edges touching the note do not count), skipping endpoints that are themselves
+ * edge notes, in place over per-node RGBA `colors`.
  * One shared colour: that colour, alpha CARRIER_SAME_ALPHA. Different colours (a bridge):
  * their average (`blend`) or the first source endpoint's (`source`), moved `accent` toward
  * `accentRgb`, full alpha. Edge notes without such endpoints keep their colour. O(n + m).
  * Ontology-neutral: "same" means the same displayed colour, whatever rule or group set it. */
-export function carrierColors(carriers: Uint8Array, source: Uint32Array, target: Uint32Array, colors: Uint8Array, bridge: 'blend' | 'source', accentRgb: ArrayLike<number>, accent: number): number {
+export function carrierColors(carriers: Uint32Array, source: Uint32Array, target: Uint32Array, carrier: Uint32Array, colors: Uint8Array, bridge: 'blend' | 'source', accentRgb: ArrayLike<number>, accent: number): number {
   const n = carriers.length, sum = new Float32Array(n * 3), count = new Uint32Array(n), first = new Int32Array(n).fill(-1), from = new Int32Array(n).fill(-1), mixed = new Uint8Array(n);
   const add = (c: number, end: number, isSource: boolean) => {
     const k = end * 4, rgb = colors[k]! << 16 | colors[k + 1]! << 8 | colors[k + 2]!;
@@ -117,8 +121,8 @@ export function carrierColors(carriers: Uint8Array, source: Uint32Array, target:
     sum[c * 3]! += colors[k]!; sum[c * 3 + 1]! += colors[k + 1]!; sum[c * 3 + 2]! += colors[k + 2]!; count[c]!++;
   };
   for (let e = 0; e < source.length; e++) {
-    const s = source[e]!, t = target[e]!;
-    if (carriers[t] && !carriers[s]) add(t, s, true); else if (carriers[s] && !carriers[t]) add(s, t, false);
+    const s = source[e]!, t = target[e]!, own = carrier[e]! + 1;
+    if (carriers[t] === own && !carriers[s]) add(t, s, true); else if (carriers[s] === own && !carriers[t]) add(s, t, false);
   }
   let bridges = 0;
   for (let c = 0; c < n; c++) if (carriers[c]) {
@@ -142,6 +146,6 @@ export function carrierVisibility(zoom: number, near: number, far: number, enabl
 /** Edge-note opacity: configured opacity, thinned by visible edge-note density and raised
  * when zoomed in (like edges), times the level-of-detail visibility. */
 export function carrierAlpha(v: Visuals, visibleCarriers: number, zoom: number): number {
-  const density = Math.min(1, Math.sqrt(v.carrierDensityReference / Math.max(1, visibleCarriers))), boost = Math.min(3, Math.max(1, 1 / Math.sqrt(Math.max(zoom, 1e-6))));
+  const density = thinning(v.carrierDensityReference, visibleCarriers), boost = Math.min(3, Math.max(1, 1 / Math.sqrt(Math.max(zoom, 1e-6))));
   return carrierVisibility(zoom, v.carrierLodNear, v.carrierLodFar, v.carrierLod) * Math.min(1, Math.max(.1, v.carrierOpacity * density * boost));
 }

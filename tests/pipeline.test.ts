@@ -287,7 +287,7 @@ test('render-only detail transfers packed paths without facts, identities or mem
     const detail = await p.request<DetailResult>(1, { kind: 'detail' });
     expect(detail.projection.nodeCount).toBe(2);
     expect([renderPath(detail.projection, 0), renderPath(detail.projection, 1)]).toEqual(rows.map(r => r.path));
-    expect(Object.keys(detail.projection).sort()).toEqual(['carrierNodes', 'groups', 'nodeCount', 'offsets', 'paths', 'quarantined', 'source', 'target', 'type', 'types']);
+    expect(Object.keys(detail.projection).sort()).toEqual(['carrier', 'carrierNodes', 'groups', 'nodeCount', 'offsets', 'paths', 'quarantined', 'source', 'target', 'type', 'types']);
     expect(detail.projection.groups.every(g => Object.keys(g).join() === 'values')).toBe(true);
     for (const index of [-1, 2, .5, NaN]) expect(() => renderPath(detail.projection, index)).toThrow('RENDER_PATH_INDEX');
     // Detail transfer never detaches the worker authority or its membership data.

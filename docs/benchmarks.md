@@ -430,7 +430,7 @@ Version 0.3.1 addresses the slice-6 visual miss for literal display: edge notes 
 
 All Bun runs use `flock --exclusive --wait 2400 /tmp/openclast-local-verification.lock build-contained --`, each e2e lane under `timeout 900`.
 
-- `bun run build`; `bun run test` (ten explicit files, **129 pass**).
+- `bun run build`; `bun run test` (ten explicit files, **131 pass** after the review fixes).
 - `bun run fixture --small`, then `GRAPH_MEASURE_NATIVE=1 bun run e2e`, `GRAPH_SOFTWARE=1 bun run e2e`, `GRAPH_EXPLORE=1 bun run e2e`, `GRAPH_EXPLORE=1 GRAPH_SOFTWARE=1 bun run e2e`.
 - `bun run fixture --literal`, then `GRAPH_LARGE=1 GRAPH_LITERAL=1 GRAPH_MEASURE_NATIVE=1 GRAPH_CPU=1 bun run e2e` (4 runs), the same with `GRAPH_SOFTWARE=1` instead of `GRAPH_MEASURE_NATIVE=1`, and `GRAPH_EXPLORE=1 GRAPH_LARGE=1 GRAPH_LITERAL=1 bun run e2e`.
 - `bun scripts/generate.ts --literal --clustered`, then `GRAPH_FIXTURE=clustered GRAPH_LARGE=1 GRAPH_EXPLORE=1 GRAPH_LITERAL=1 bun run e2e` (2 runs; the second on the final source). The explore lane now also captures `*-detail-notes` screenshots with the fold turned off, so the derived colours are judged directly.
@@ -450,11 +450,15 @@ Native large hardware detail sampled **58.2–58.3 fps, p95 17.6–17.9 ms**. Br
 
 Visual judgement (screenshots read): **clustered literal (60,600 / 89,200), dark and light, at home zoom**: the six family hues and the section lobes are clearly visible; the neutral grey mass is gone. With the fold turned off, the edge notes tint their lobes in the same hues instead of covering them. Zoomed in (`*-hover`), edge notes appear as small tinted dots around the concepts. Bridge threads between lobes remain faint at home zoom.
 
+### Review fixes (final source)
+
+An independent review returned SHIP-WITH-FIXES: colour only from the note's own relationship (the render projection now carries the per-edge `carrier` column), fold a highlighted edge note too, make a density reference of 0 disable thinning, reflect a zero accent in the legend, preserve opened group-screen sections across re-renders, and make the native lane wait for a verified, idle view before opening relationships. Re-run on the final source: `bun run test` 131 pass; build; `GRAPH_MEASURE_NATIVE=1 bun run e2e` and `GRAPH_SOFTWARE=1 bun run e2e` (small) 11/11 each; `GRAPH_LARGE=1 GRAPH_LITERAL=1 GRAPH_MEASURE_NATIVE=1 GRAPH_CPU=1 bun run e2e` ×2: 7/7 both, first groups 310.5 / 318.0 ms, no ≥50 ms open or detail tasks, 58.1–58.2 fps, p95 17.7–17.8 ms; clustered literal explore 6/6 with no interaction long tasks; browser bench ×3: semantic first groups 202.2–210.8 ms, warm open 425.1–437.7 ms, literal 249.6–263.5 / 604.5–641.9 ms, 60.0 fps, p95 16.7–16.8 ms, no ≥50 ms tasks, heap 11.07 / 11.09 MiB. Backing storage rises to 2.60 / 6.94 MiB (from 2.39 / 6.42) because the per-edge `carrier` column and the 32-bit `carrierNodes` column now cross to the main thread. The small-hardware first-groups value of the final run was 59.3 ms (earlier runs 17.7–18.1 ms); single sample, unattributed.
+
 ### Bundle and misses
 
-- Bundle: **173,052 minified / 54,678 gzip** (slice 6: 169,376 / 53,368; delta **+3,676 / +1,310**). `visibleCarriers` joins the mangled private names. The bundle gate still fails against 150,000 / 45,000, pending the owner's ceiling decision; secrets, attribution, privacy, supply-chain and licenses pass.
-- The 64 ms detail task and the Groups-screen interactability failure are each single occurrences in four runs; neither is reproduced or proven unrelated.
-- "Same" means the same displayed colour, so a rule colour and a group colour that happen to match count as one. Edge notes chained only to other edge notes keep their own colour. Software FPS, iGPU, mobile and N-2 hosts are not measured.
+- Bundle: **173,448 minified / 54,838 gzip** on the final source (slice 6: 169,376 / 53,368; delta **+4,072 / +1,470**). `visibleCarriers` and `openSections` join the mangled private names. The bundle gate still fails against 150,000 / 45,000, pending the owner's ceiling decision; secrets, attribution, privacy, supply-chain and licenses pass.
+- The 64 ms detail task (one of four pre-review runs) was not reproduced in later runs. The Groups-screen interactability failure was a harness race and is addressed by the settle wait.
+- "Same" means the same displayed colour, so a rule colour and a group colour that happen to match count as one. Endpoints that are themselves edge notes are skipped, so an edge note related only to other edge notes keeps its own colour. Software FPS, iGPU, mobile and N-2 hosts are not measured.
 
 ## Retention and honest reporting
 

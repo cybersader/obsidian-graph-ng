@@ -137,6 +137,8 @@ export class GraphView extends ItemView {
   private contributionScope = '';
   private contributionPage: ContributionPage;
   private queued = false;
+  /** Disclosure sections the user opened; a re-render restores them instead of collapsing. */
+  private openSections = new Set<string>();
   private refreshing = false;
   private closed = false;
   private positions?: Float32Array;
@@ -307,17 +309,22 @@ export class GraphView extends ItemView {
     };
     previous.onclick = () => { canvasPage--; draw(); }; next.onclick = () => { canvasPage++; draw(); }; draw();
     this.paginate(projection.groups, (g, host) => { host.createEl('button', { text: `${g.label} (${g.count.toLocaleString()})`, attr: { 'data-group': g.id } }).onclick = () => this.drill(g.id); }, this.panel, 'graph-ng-group-controls');
-    const edges = this.panel.createEl('details'); edges.createEl('summary', { text: `Relationships (${projection.groupEdges.length} group pairs)` });
+    const edges = this.section('relationships'); edges.createEl('summary', { text: `Relationships (${projection.groupEdges.length} group pairs)` });
     this.paginate(projection.groupEdges, (edge, host) => {
       host.createEl('button', { text: `${pages.labels.get(edge.a)} ↔ ${pages.labels.get(edge.b)} · ${edge.total}`, cls: 'graph-ng-edge' }).onclick = () => this.edgeList(edge, projection, generation, source);
     }, edges);
     if (this.projection?.quarantined.length) {
-      const conflicts = this.panel.createEl('details', { cls: 'graph-ng-quarantine' });
+      const conflicts = this.section('quarantine', 'graph-ng-quarantine');
       conflicts.createEl('summary', { text: `${this.projection.quarantined.length} notes share an ID (excluded)` });
       this.paginate(this.projection.quarantined, (note, host) => { host.createEl('button', { text: `${note.path} — ${note.id}` }).onclick = () => this.openPath(note.path); }, conflicts);
     }
     this.contentEl.dataset.mode = 'groups'; this.contentEl.dataset.groupFirstPageMs = String(performance.now() - start); this.explorePanel?.render();
     if (this.contributionPage.selection) { this.renderContributionPanel(); this.contributionPage.update(this.contributionContext()); }
+  }
+  private section(key: string, cls = `graph-ng-${key}`) {
+    const details = this.panel.createEl('details', { cls }); details.open = this.openSections.has(key);
+    details.addEventListener('toggle', () => { if (details.open) this.openSections.add(key); else this.openSections.delete(key); });
+    return details;
   }
   private openPath(path: string) {
     if (!(this.app.vault.getAbstractFileByPath(path) instanceof TFile)) { new Notice('The referenced note is not available locally.'); return; }

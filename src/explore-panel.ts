@@ -161,7 +161,7 @@ export class ExplorePanel {
       }
     }
     const notes = nodes ? this.host.carriers() : 0, v = this.host.settings().visuals;
-    if (notes) host.createDiv({ cls: 'graph-ng-explore-note graph-ng-carrier-note', text: `${notes.toLocaleString()} edge notes draw small and beneath${v.carrierTint ? `, in their endpoints' color (bridges: ${v.carrierBridge === 'blend' ? 'blended' : 'source color'}, accented)` : ''}.${v.carrierLod ? ' Zoomed out, they fold into their edges.' : ''}` });
+    if (notes) host.createDiv({ cls: 'graph-ng-explore-note graph-ng-carrier-note', text: `${notes.toLocaleString()} edge notes draw small and beneath${v.carrierTint ? `, in their endpoints' color (bridges: ${v.carrierBridge === 'blend' ? 'blended' : 'source color'}${v.carrierBridgeAccent ? ', accented' : ''})` : ''}.${v.carrierLod ? ' Zoomed out, they fold into their edges.' : ''}` });
     if (order.length > this.groupLimit) host.createEl('button', { text: `Show ${Math.min(this.host.settings().explore.legendPageSize, order.length - this.groupLimit)} more of ${(order.length - this.groupLimit).toLocaleString()}` }).onclick = () => { this.groupLimit += this.host.settings().explore.legendPageSize; this.render(); };
   }
   /** Group by a bounded transform of an existing value; no note needs a new property. */

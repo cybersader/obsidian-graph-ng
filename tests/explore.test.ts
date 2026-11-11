@@ -287,27 +287,29 @@ test('edge notes are flagged per node only in literal display', () => {
   const facts: FactRow[] = [{ path: 'a.md', properties: { id: 'a' } }, { path: 'b.md', properties: { id: 'b' } }, { path: 'm.md', properties: { id: 'm', s: 'a', o: 'b' } }];
   expect([...buildProjection(facts, d).carrierNodes]).toEqual([0, 0]);
   const literal = buildProjection(facts, { ...d, display: { reifiedAsNodes: true } });
-  expect(literal.paths).toEqual(['a.md', 'b.md', 'm.md']); expect([...literal.carrierNodes]).toEqual([0, 0, 1]);
+  expect(literal.paths).toEqual(['a.md', 'b.md', 'm.md']); expect([...literal.carrierNodes]).toEqual([0, 0, 3]);
+  expect([...literal.carrier].map(c => c + 1)).toEqual([3, 3]);
 });
 test('edge-note colour derives from endpoint colours: same colour, blend or source bridge with accent', () => {
   // Nodes 0,1 red; 2 blue; 3 grey (no endpoint); carriers 4 (0->1 same), 5 (0->2 bridge), 6 (isolated), 7 (2->0 bridge).
   const rgb = [[200, 0, 0], [200, 0, 0], [0, 0, 200], [9, 9, 9], [1, 1, 1], [1, 1, 1], [7, 7, 7], [1, 1, 1]];
   const make = () => Uint8Array.from(rgb.flatMap(c => [...c, 255]));
-  const carriers = Uint8Array.from([0, 0, 0, 0, 1, 1, 1, 1]);
-  const source = Uint32Array.from([0, 4, 0, 5, 2, 7]), target = Uint32Array.from([4, 1, 5, 2, 7, 0]);
+  // carrierNodes hold 1 + the note's own carrier row; every edge here belongs to its note.
+  const carriers = Uint32Array.from([0, 0, 0, 0, 5, 6, 7, 8]);
+  const source = Uint32Array.from([0, 4, 0, 5, 2, 7]), target = Uint32Array.from([4, 1, 5, 2, 7, 0]), carrier = Uint32Array.from([4, 4, 5, 5, 7, 7]);
   const at = (c: Uint8Array, i: number) => [...c.subarray(i * 4, i * 4 + 4)];
   let c = make();
-  expect(carrierColors(carriers, source, target, c, 'blend', [255, 255, 255], 0)).toBe(2);
+  expect(carrierColors(carriers, source, target, carrier, c, 'blend', [255, 255, 255], 0)).toBe(2);
   expect(at(c, 4)).toEqual([200, 0, 0, CARRIER_SAME_ALPHA]);
   expect(at(c, 5)).toEqual([100, 0, 100, 255]); expect(at(c, 7)).toEqual([100, 0, 100, 255]);
   expect(at(c, 6)).toEqual([7, 7, 7, CARRIER_SAME_ALPHA]);
   expect(at(c, 0)).toEqual([200, 0, 0, 255]);
-  c = make(); carrierColors(carriers, source, target, c, 'source', [255, 255, 255], 0);
+  c = make(); carrierColors(carriers, source, target, carrier, c, 'source', [255, 255, 255], 0);
   expect(at(c, 5)).toEqual([200, 0, 0, 255]); expect(at(c, 7)).toEqual([0, 0, 200, 255]);
-  c = make(); carrierColors(carriers, source, target, c, 'source', [0, 255, 0], .5);
+  c = make(); carrierColors(carriers, source, target, carrier, c, 'source', [0, 255, 0], .5);
   expect(at(c, 5)).toEqual([100, 128, 0, 255]); expect(at(c, 4)).toEqual([200, 0, 0, CARRIER_SAME_ALPHA]);
   // Edge notes chained to edge notes take no colour from each other; no carriers is a no-op.
-  c = make(); expect(carrierColors(new Uint8Array(8), source, target, c, 'blend', [0, 0, 0], 1)).toBe(0); expect(c).toEqual(make());
+  c = make(); expect(carrierColors(new Uint32Array(8), source, target, carrier, c, 'blend', [0, 0, 0], 1)).toBe(0); expect(c).toEqual(make());
 });
 test('edge-note level of detail: shown zoomed in, folded zoomed out, smooth between, off when disabled', () => {
   expect(carrierVisibility(.1, .3, .6, true)).toBe(1); expect(carrierVisibility(.3, .3, .6, true)).toBe(1);
@@ -328,4 +330,20 @@ test('edge-note visual settings validate', () => {
     expect(() => validateVisuals({ ...v, ...bad })).toThrow();
   const old = structuredClone(defaults('t@1')) as any; for (const k of Object.keys(old.visuals)) if (k.startsWith('carrier')) delete old.visuals[k];
   expect(upgradeSettings(old, 't@1').visuals).toEqual(v);
+});
+test('edge-note colour uses only its own relationship, not inline links touching the note', () => {
+  const d: GraphDeclaration = { ...defaultDeclaration('t@1'), identity: [{ key: 'id' }], display: { reifiedAsNodes: true },
+    edges: [{ name: 'm', kind: 'reified', sourceProperty: 's', targetProperty: 'o' }, { name: 'see', kind: 'inline', key: 'see', type: 'see' }] };
+  // red -> red relationship note with an extra inline link to a blue note.
+  const facts: FactRow[] = [{ path: 'a.md', properties: { id: 'a' } }, { path: 'b.md', properties: { id: 'b' } }, { path: 'c.md', properties: { id: 'c' } }, { path: 'm.md', properties: { id: 'm', s: 'a', o: 'b', see: 'c' } }];
+  const p = buildProjection(facts, d); expect(p.paths).toEqual(['a.md', 'b.md', 'c.md', 'm.md']); expect(p.source.length).toBe(3);
+  const colors = Uint8Array.from([200, 0, 0, 255, 200, 0, 0, 255, 0, 0, 200, 255, 9, 9, 9, 255]);
+  expect(carrierColors(p.carrierNodes, p.source, p.target, p.carrier, colors, 'blend', [255, 255, 255], .35)).toBe(0);
+  expect([...colors.subarray(12)]).toEqual([200, 0, 0, CARRIER_SAME_ALPHA]);
+});
+test('a density reference of 0 disables thinning for edge notes and edges', () => {
+  const v = { ...defaults('t@1').visuals, carrierLod: false };
+  expect(carrierAlpha({ ...v, carrierDensityReference: 0 }, 1e6, 1)).toBeCloseTo(v.carrierOpacity, 6);
+  expect(carrierAlpha(v, 1e6, 1)).toBeLessThan(v.carrierOpacity);
+  expect(edgeAlpha({ ...v, edgeDensityReference: 0 }, 1e6, 1, false)).toBeCloseTo(edgeAlpha(v, 1, 1, false), 6);
 });
