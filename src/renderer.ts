@@ -1,11 +1,8 @@
-import Sigma from 'sigma';
-import { MultiDirectedGraph } from 'graphology';
-import type { Projection } from './core/projection';
-import { colorGroups, edgeVisibility } from './core/projection';
 import type { GroupProjection } from './core/group-projection';
 import type { Settings } from './settings';
-import { sliced } from './core/scheduler';
-export interface Renderer { dispose(): void }
+import { readTheme } from './render-theme';
+export { DetailRenderer } from './webgl-renderer';
+export interface Renderer { dispose(): void; refreshTheme?(): void }
 export function gpuStatus(): { available: boolean; reason: string } {
   const canvas = document.createElement('canvas');
   const gl = canvas.getContext('webgl2', { failIfMajorPerformanceCaveat: true });
@@ -16,30 +13,6 @@ export function gpuStatus(): { available: boolean; reason: string } {
   gl.getExtension('WEBGL_lose_context')?.loseContext();
   return { available: !software, reason: software ? `Software renderer (${name})` : name };
 }
-export class DetailRenderer implements Renderer {
-  readonly sigma: Sigma;
-  static async create(container: HTMLElement, p: Projection, positions: Float32Array, visible: Uint8Array, settings: Settings, onNode: (i: number) => void, onZoomOut: () => void, colors: Uint32Array, current = () => true) {
-    const graph = new MultiDirectedGraph();
-    function* indices(n: number) { for (let i = 0; i < n; i++) yield i; }
-    await sliced(indices(p.paths.length), settings.ingest, i => {
-      if (visible[i]) { const path = p.paths[i]!; graph.addNode(String(i), { x: positions[i * 2], y: positions[i * 2 + 1], label: path.slice(path.lastIndexOf('/') + 1).replace(/\.md$/, ''), size: settings.nodeSize, color: settings.declaration.colors[colors[i]!] ?.color ?? settings.nodeColor }); }
-    });
-    await sliced(indices(p.source.length), settings.ingest, i => { if (visible[p.source[i]!] && visible[p.target[i]!]) graph.addDirectedEdgeWithKey(String(i), String(p.source[i]), String(p.target[i]), { size: settings.edgeSize, color: settings.edgeColor }); });
-    if (!current()) throw new Error('Renderer superseded');
-    return new DetailRenderer(container, p, positions, visible, settings, onNode, onZoomOut, graph);
-  }
-  constructor(container: HTMLElement, p: Projection, positions: Float32Array, visible: Uint8Array, settings: Settings, onNode: (i: number) => void, onZoomOut: () => void, prepared?: MultiDirectedGraph) {
-    const graph = prepared ?? new MultiDirectedGraph(), colors = prepared ? [] : colorGroups(p, settings.declaration), edges = prepared ? [] : edgeVisibility(p, visible);
-    for (let i = 0; !prepared && i < p.paths.length; i++) if (visible[i]) graph.addNode(String(i), { x: positions[i * 2], y: positions[i * 2 + 1], label: p.paths[i]!.split('/').pop()!.replace(/\.md$/, ''), size: settings.nodeSize, color: settings.declaration.colors[colors[i]!] ?.color ?? settings.nodeColor });
-    for (let i = 0; !prepared && i < p.source.length; i++) if (edges[i]) graph.addDirectedEdgeWithKey(String(i), String(p.source[i]), String(p.target[i]), { size: settings.edgeSize, color: settings.edgeColor });
-    this.sigma = new Sigma(graph, container, { renderLabels: true, labelSize: settings.labelSize, labelDensity: settings.labelDensity, labelGridCellSize: settings.labelGridCellSize, labelRenderedSizeThreshold: settings.labelRenderedSizeThreshold, labelColor: { color: settings.textColor }, defaultNodeColor: settings.nodeColor, defaultEdgeColor: settings.edgeColor, hideEdgesOnMove: false, allowInvalidContainer: false });
-    this.sigma.on('clickNode', ({ node }) => onNode(Number(node)));
-    this.sigma.on('enterNode', ({ node }) => { container.title = p.paths[Number(node)]!; });
-    this.sigma.on('leaveNode', () => { container.title = ''; });
-    this.sigma.getCamera().on('updated', state => { if (state.ratio >= settings.lodZoomRatio) onZoomOut(); });
-  }
-  dispose() { this.sigma.kill(); }
-}
 type Point = { x: number; y: number };
 interface Hit { edge: GroupProjection['groupEdges'][number]; points: Point[] }
 /** Small, first-class group graph. No WebGL, ontology or body parsing needed. */
@@ -49,8 +22,13 @@ export class GroupRenderer implements Renderer {
   private observer: ResizeObserver;
   private nodes = new Map<string, Point>();
   private edges: Hit[] = [];
+  private groupColors: string[] = [];
+  private media = matchMedia('(prefers-color-scheme: dark)');
+  private base: Settings;
   constructor(private container: HTMLElement, private p: GroupProjection, private s: Settings,
     private onGroup: (id: string) => void, private onEdge: (edge: GroupProjection['groupEdges'][number]) => void) {
+    this.base = s; this.refreshTheme();
+    this.media.addEventListener('change', this.refreshTheme);
     this.canvas = document.createElement('canvas'); this.canvas.className = 'graph-ng-groups'; this.canvas.setAttribute('aria-label', 'Declared groups and counted relationships'); container.append(this.canvas);
     this.tooltip = document.createElement('div'); this.tooltip.className = 'graph-ng-tooltip'; container.append(this.tooltip);
     this.canvas.addEventListener('click', this.click);
@@ -58,6 +36,7 @@ export class GroupRenderer implements Renderer {
     this.canvas.addEventListener('mouseleave', this.leave);
     this.observer = new ResizeObserver(() => this.draw()); this.observer.observe(container); this.draw();
   }
+  refreshTheme = () => { const t = readTheme(this.container, this.base); this.groupColors = this.base.declaration.colors.map((_, i) => { const k = (i + 5) * 4, p = t.palette; return `rgba(${p[k]},${p[k+1]},${p[k+2]},${p[k+3]! / 255})`; }); this.s = { ...this.s, backgroundColor: t.background, nodeColor: t.node, edgeColor: t.edge, groupColor: t.group, textColor: t.text }; if (this.canvas) this.draw(); };
   private point(event: MouseEvent) { const r = this.canvas.getBoundingClientRect(); return { x: event.clientX - r.left, y: event.clientY - r.top }; }
   private nodeAt(point: Point) { return this.p.groups.find(g => { const n = this.nodes.get(g.id)!; return Math.hypot(n.x - point.x, n.y - point.y) <= this.s.groupRadius; }); }
   private edgeAt(point: Point) {
@@ -112,7 +91,7 @@ export class GroupRenderer implements Renderer {
     }
     for (const g of this.p.groups) {
       const p = this.nodes.get(g.id)!;
-      ctx.beginPath(); ctx.arc(p.x, p.y, this.s.groupRadius, 0, Math.PI * 2); ctx.fillStyle = this.s.declaration.colors.find(c => c.name === g.label)?.color ?? this.s.groupColor; ctx.fill();
+      ctx.beginPath(); ctx.arc(p.x, p.y, this.s.groupRadius, 0, Math.PI * 2); ctx.fillStyle = this.groupColors[this.s.declaration.colors.findIndex(c => c.name === g.label)] ?? this.s.groupColor; ctx.fill();
       ctx.font = `600 ${this.s.labelSize}px sans-serif`; ctx.textAlign = 'center';
       const countLabel = `${g.count.toLocaleString()} members`, maxWidth = Math.min(180, w / Math.max(2, Math.ceil(Math.sqrt(this.p.groups.length))) - 12);
       let title = g.label; while (title.length > 1 && ctx.measureText(title + '…').width > maxWidth) title = title.slice(0, -1);
@@ -123,5 +102,5 @@ export class GroupRenderer implements Renderer {
       ctx.font = `${this.s.labelSize}px sans-serif`; ctx.fillText(countLabel, p.x, p.y + this.s.groupRadius + this.s.labelSize * 2.8);
     }
   }
-  dispose() { this.observer.disconnect(); this.canvas.removeEventListener('click', this.click); this.canvas.removeEventListener('mousemove', this.hover); this.canvas.removeEventListener('mouseleave', this.leave); this.canvas.remove(); this.tooltip.remove(); }
+  dispose() { this.media.removeEventListener('change', this.refreshTheme); this.observer.disconnect(); this.canvas.removeEventListener('click', this.click); this.canvas.removeEventListener('mousemove', this.hover); this.canvas.removeEventListener('mouseleave', this.leave); this.canvas.remove(); this.tooltip.remove(); }
 }

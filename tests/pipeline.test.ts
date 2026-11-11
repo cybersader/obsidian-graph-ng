@@ -83,8 +83,13 @@ test('source/view mismatch never loads or warm seeds; format and layout mismatch
       const g = await generation(1, hashes.declarationHash); g.meta[mismatch as 'source'] = 'different';
       expect(await p.request(1, { kind: 'load', generation: g })).toBeUndefined();
     }
-    const g = await generation(1, hashes.declarationHash); g.meta.format = 99;
-    await expect(p.request(1, { kind: 'load', generation: g })).rejects.toThrow('Invalid binary layout');
+    for (const format of [2, 99]) {
+      const g = await generation(1, hashes.declarationHash); g.meta.format = format;
+      await expect(p.request(1, { kind: 'load', generation: g })).rejects.toThrow('Invalid binary layout');
+      const store = new BinaryLayoutStore(new MemoryAdapter(), options); await store.write(g);
+      expect(await store.latest(g.meta.declarationHash)).toBeUndefined();
+      expect(store.trace.at(-1)?.action).toBe('quarantined');
+    }
   } finally { p.dispose(); }
 });
 test('worker builds/groups first, transfers detail buffers, reuses exact cache and rejects foreign identities', async () => {

@@ -91,5 +91,14 @@
   "maxSettingsBytes": 16777216,
   "streamEveryIterations": 5,
   "settingsVersion": 2,
-  "workerRestarts": 2
+  "workerRestarts": 2,
+  "canvasMaxDetailNodes": 2000,
+  "canvasMaxDetailEdges": 10000,
+  "labelsMaxPerViewport": 400,
+  "labelCandidateMultiplier": 32,
+  "frameBackstopMs": 32,
+  "shaderPollMs": 8,
+  "contextRestoreTimeoutMs": 5000,
+  "cameraMinRatio": 0.02,
+  "cameraMaxRatio": 8
 }

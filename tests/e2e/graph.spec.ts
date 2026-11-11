@@ -34,27 +34,55 @@ describe('Graph NG synthetic Obsidian path', () => {
     assert.equal(await $$('.graph-ng-group-controls button').length, literal ? 7 : 6);
     await screenshot('groups');
     await $('.graph-ng-panel summary').click(); await $('.graph-ng-edge').click();
-    const button = await $('.graph-ng-contribution button'), carrier = await button.getText();
+    const button = await $('.graph-ng-contribution button'); await button.waitForExist({ timeout: 180000 }); const carrier = await button.getText();
     await screenshot('carriers'); await button.click();
     await browser.waitUntil(async () => browser.executeObsidian(({ app }, path) => app.workspace.getActiveFile()?.path === path, carrier));
     await open();
   });
+  it('retains contributing mappings across generation refresh and exposes failed reads with Retry', async () => {
+    await $('.graph-ng-toolbar button').click();
+    await $('.graph-ng-panel summary').click(); await $('.graph-ng-edge').click();
+    await $('.graph-ng-contribution button').waitForExist({ timeout: 15000 });
+    await browser.waitUntil(async () => browser.executeObsidian(({ app }) => !(app.workspace.getLeavesOfType('graph-ng')[0]!.view as any).refreshing));
+    const state = await browser.executeObsidian(async ({ app }) => {
+      const view = app.workspace.getLeavesOfType('graph-ng')[0]!.view as any;
+      void view.refresh(); await Promise.resolve(); await Promise.resolve();
+      return view.panel.querySelector('.graph-ng-contribution-status')?.dataset.state;
+    });
+    assert.equal(state, 'refreshing'); await ready();
+    await $('.graph-ng-contribution button').waitForExist({ timeout: 15000 });
+    await screenshot('carriers-refreshed');
+    await $('.graph-ng-toolbar button').click();
+    await browser.executeObsidian(({ app }) => {
+      const pipeline = (app.workspace.getLeavesOfType('graph-ng')[0]!.view as any).plugin.pipeline, original = pipeline.request.bind(pipeline);
+      pipeline.request = (revision: number, request: any) => { if (request.kind === 'contributions') { pipeline.request = original; return Promise.reject(new Error('synthetic contribution failure')); } return original(revision, request); };
+    });
+    await $('.graph-ng-panel summary').click(); await $('.graph-ng-edge').click();
+    await browser.waitUntil(async () => (await $('.graph-ng-contribution-status').getText()).includes('synthetic contribution failure'));
+    await $('.graph-ng-contribution-status button').click();
+    await $('.graph-ng-contribution button').waitForExist({ timeout: 15000 });
+    evidence.contributionRecovery = { retainedAfterRefresh: true, failedReadVisible: true, explicitRetry: true };
+  });
   it('drills into members and opens an individual graph node when GPU is available', async () => {
+    await $('.graph-ng-toolbar button').click();
     await $('.graph-ng-group-controls button').click();
     const member = await $('.graph-ng-member'), path = await member.getText(); await member.click();
     await browser.waitUntil(async () => browser.executeObsidian(({ app }, path) => app.workspace.getActiveFile()?.path === path, path));
-    await open(); await $('.graph-ng-toolbar button:nth-child(2)').click();
+    await open();
+    await browser.executeObsidian(() => { const state = window as any; state.graphDetailTasks = []; state.graphDetailObserver = new PerformanceObserver(list => state.graphDetailTasks.push(...list.getEntries())); state.graphDetailObserver.observe({ type: 'longtask', buffered: false }); });
+    await $('.graph-ng-toolbar button:nth-child(2)').click();
     await browser.waitUntil(async () => (await $('.graph-ng-view').getAttribute('data-mode')) !== 'nodes-building');
+    evidence.detailTasks = await browser.executeObsidian(() => { const state = window as any; state.graphDetailTasks.push(...state.graphDetailObserver.takeRecords()); state.graphDetailObserver.disconnect(); const durations = state.graphDetailTasks.map((t: PerformanceEntry) => t.duration).sort((a: number, b: number) => a - b); return { count: durations.length, durations, p95Ms: durations.length ? durations[Math.floor(durations.length * .95)] : null, maxMs: durations.at(-1) ?? null }; });
     const mode = await $('.graph-ng-view').getAttribute('data-mode'); evidence.mode = mode;
     if (mode !== 'nodes') { assert.ok(software || (await $('.graph-ng-status').getText()).includes('GPU unavailable')); await screenshot('fallback'); return; }
-    assert.equal(software, false, 'Software GL must not render full graph');
+    assert.equal(await browser.executeObsidian(({ app }) => (app.workspace.getLeavesOfType('graph-ng')[0]!.view as any).detailRenderer.gpu), !software);
     await screenshot('nodes');
     const point = await browser.executeObsidian(({ app }) => {
-      const view = app.workspace.getLeavesOfType('graph-ng')[0]!.view as any, sigma = view.detailRenderer.sigma;
+      const view = app.workspace.getLeavesOfType('graph-ng')[0]!.view as any, renderer = view.detailRenderer;
       const rect = view.contentEl.querySelector('.graph-ng-stage').getBoundingClientRect();
-      const nodes = sigma.getGraph().nodes().map((node: string) => ({ node, p: sigma.framedGraphToViewport(sigma.getNodeDisplayData(node)) }));
-      for (const { node, p } of nodes) {
-        if (p.x > 30 && p.x < rect.width - 30 && p.y > 30 && p.y < rect.height - 30 && nodes.every((n: any) => n.node === node || Math.hypot(n.p.x - p.x, n.p.y - p.y) > 12)) return { x: Math.round(rect.left + p.x), y: Math.round(rect.top + p.y), label: sigma.getGraph().getNodeAttribute(node, 'label') };
+      for (let node = 0; node < renderer.visible.length; node++) if (renderer.visible[node]) {
+        const p = renderer.screenPoint(node);
+        if (p.x > 30 && p.x < rect.width - 30 && p.y > 30 && p.y < rect.height - 30 && renderer.pick(Math.round(rect.left + p.x) - rect.left, Math.round(rect.top + p.y) - rect.top) === node) return { x: Math.round(rect.left + p.x), y: Math.round(rect.top + p.y), label: renderer.projection.paths[node].split('/').pop().replace(/\.md$/, '') };
       }
       return null;
     });
@@ -64,15 +92,15 @@ describe('Graph NG synthetic Obsidian path', () => {
     await browser.waitUntil(async () => (await $('.graph-ng-view').getAttribute('data-mode')) !== 'nodes-building');
     if (process.env.GRAPH_MEASURE_NATIVE) {
     await browser.executeObsidian(({ app }) => {
-      const view = app.workspace.getLeavesOfType('graph-ng')[0]!.view as any, sigma = view.detailRenderer.sigma, camera = sigma.getCamera();
+      const view = app.workspace.getLeavesOfType('graph-ng')[0]!.view as any, renderer = view.detailRenderer;
       const intervals: number[] = [], start = performance.now(); let previous = start, i = 0, ended = false;
-      const finish = (error?: string) => { if (ended) return; ended = true; const sorted = intervals.slice(5).sort((a, b) => a - b); view.contentEl.dataset.frameResult = JSON.stringify({ samplerError: error, samples: sorted.length, durationMs: performance.now() - start, fps: sorted.length ? 1000 / (sorted.reduce((a, b) => a + b, 0) / sorted.length) : 0, p95Ms: sorted[Math.floor(sorted.length * 0.95)], rawSamples: intervals.length, visibility: document.visibilityState }); };
+      const finish = (error?: string) => { if (ended) return; ended = true; const sorted = intervals.slice(5).sort((a, b) => a - b); view.contentEl.dataset.frameResult = JSON.stringify({ samplerError: error, samples: sorted.length, durationMs: performance.now() - start, fps: sorted.length ? 1000 / (sorted.reduce((a, b) => a + b, 0) / sorted.length) : null, p95Ms: sorted[Math.floor(sorted.length * 0.95)], rawSamples: intervals.length, visibility: document.visibilityState }); };
       setTimeout(() => finish('Sampler reached 10s wall limit'), 10000);
       function frame(_timestamp: number) {
         const now = performance.now();
         if (ended) return;
         try { intervals.push(now - previous); previous = now; i++;
-          camera.setState({ x: 0.5 + Math.sin(i / 35) * 0.12, y: 0.5 + Math.cos(i / 41) * 0.12, ratio: 0.9 + Math.sin(i / 49) * 0.1 }); sigma.refresh({ partialGraph: {}, skipIndexation: true });
+          renderer.setCamera(0.5 + Math.sin(i / 35) * 0.12, 0.5 + Math.cos(i / 41) * 0.12, 0.9 + Math.sin(i / 49) * 0.1);
           if (now - start < 3000) requestAnimationFrame(frame); else finish();
         } catch (e) { finish(String(e)); }
       }
@@ -81,6 +109,82 @@ describe('Graph NG synthetic Obsidian path', () => {
     await browser.waitUntil(async () => Boolean(await $('.graph-ng-view').getAttribute('data-frame-result')), { timeout: 15000, interval: 500 });
     evidence.frames = JSON.parse((await $('.graph-ng-view').getAttribute('data-frame-result'))!);
     } else evidence.frames = 'Not sampled: this native harness yielded no rAF callbacks; use the separately labelled browser benchmark.';
+    await $('.graph-ng-toolbar button').click();
+  });
+  it('redraws both themes without worker calls and restores WebGL buffers after context loss', async () => {
+    await open();
+    // Startup metadata may still have its real five-second coalescing timer. Wait
+    // for that refresh before this deliberately stable-buffer screenshot lane.
+    await browser.waitUntil(async () => browser.executeObsidian(({ app }) => { const view = app.workspace.getLeavesOfType('graph-ng')[0]!.view as any; return !view.refreshing && !view.queued && view.plugin.adapter.index.timer === undefined; }), { timeout: 30000 });
+    const themeResults = [];
+    for (const theme of ['light', 'dark']) {
+      await browser.executeObsidian(({ app }, theme) => {
+        const view = app.workspace.getLeavesOfType('graph-ng')[0]!.view as any;
+        document.body.classList.toggle('theme-light', theme === 'light'); document.body.classList.toggle('theme-dark', theme === 'dark');
+        view.stage.style.setProperty('--graph-ng-bg', theme === 'light' ? '#f4f5f8' : '#141b26');
+        view.stage.style.setProperty('--graph-ng-text', theme === 'light' ? '#18212e' : '#edf4ff');
+        view.stage.style.setProperty('--graph-ng-edge', theme === 'light' ? '#a4b0c2' : '#43566e');
+        app.workspace.trigger('css-change'); view.showGroups();
+      }, theme);
+      await screenshot(`${theme}-groups`);
+      await $('.graph-ng-toolbar button:nth-child(2)').click();
+      await browser.waitUntil(async () => (await $('.graph-ng-view').getAttribute('data-mode')) !== 'nodes-building');
+      if ((await $('.graph-ng-view').getAttribute('data-mode')) !== 'nodes') continue;
+      const check = await browser.executeObsidian(async ({ app }) => {
+        const view = app.workspace.getLeavesOfType('graph-ng')[0]!.view as any, r = view.detailRenderer;
+        const buffers = r.buffers, positions = r.positions, before = r.paletteUploads;
+        let messages = 0; const original = Worker.prototype.postMessage;
+        Worker.prototype.postMessage = function (...args: any[]) { messages++; return original.apply(this, args as any); };
+        try { app.workspace.trigger('css-change'); await new Promise(resolve => setTimeout(resolve, 100)); }
+        finally { Worker.prototype.postMessage = original; }
+        r.setCamera(.5, .5, .2);
+        const rect = r.canvas.getBoundingClientRect(); let point: { x: number; y: number; node: number } | undefined;
+        for (let i = 0; i < r.visible.length; i++) if (r.visible[i]) { const p = r.screenPoint(i), x = Math.round(rect.left + p.x), y = Math.round(rect.top + p.y); if (p.x > 30 && p.x < r.canvas.clientWidth - 30 && p.y > 30 && p.y < r.canvas.clientHeight - 30 && r.pick(x - rect.left, y - rect.top) === i) { point = { x, y, node: i }; break; } }
+        // A format-key change changes the deterministic layout seed. At tight zoom
+        // the bounding-box center may be empty; frame a real high-degree note.
+        if (!point) {
+          let target = -1, degree = -1;
+          for (let i = 0; i < r.visible.length; i++) if (r.visible[i]) { const d = r.projection.offsets[i + 1] - r.projection.offsets[i]; if (d > degree) { degree = d; target = i; } }
+          r.setCamera((r.positions[target * 2] - r.grid.minX) / r.grid.width, (r.positions[target * 2 + 1] - r.grid.minY) / r.grid.height, .2);
+          const x = Math.round(rect.left + r.canvas.clientWidth / 2), y = Math.round(rect.top + r.canvas.clientHeight / 2), node = r.pick(x - rect.left, y - rect.top);
+          if (node >= 0) point = { x, y, node };
+        }
+        r.selected = -1; r.refresh();
+        return { messages, stableBuffers: r.buffers === buffers && r.positions === positions, uploads: r.paletteUploads - before, gpu: r.gpu, point };
+      });
+      assert.equal(check.messages, 0); assert.equal(check.stableBuffers, true); assert.equal(check.uploads, check.gpu ? 1 : 0); themeResults.push(check);
+      assert.ok(check.point); await browser.action('pointer').move({ x: check.point.x, y: check.point.y }).perform();
+      await browser.waitUntil(async () => browser.executeObsidian(({ app }, node) => (app.workspace.getLeavesOfType('graph-ng')[0]!.view as any).detailRenderer?.hovered === node, check.point!.node));
+      await screenshot(`${theme}-detail-hover`);
+      await browser.executeObsidian(({ app }) => { const r = (app.workspace.getLeavesOfType('graph-ng')[0]!.view as any).detailRenderer; r.selected = r.hovered; r.refresh(); });
+      await screenshot(`${theme}-detail-selected`);
+    }
+    evidence.themes = themeResults;
+    const canRestore = await browser.executeObsidian(({ app }) => {
+      const r = (app.workspace.getLeavesOfType('graph-ng')[0]!.view as any).detailRenderer;
+      if (!r?.gpu) return false;
+      const ext = r.gl.getExtension('WEBGL_lose_context');
+      if (!ext) return false; (window as any).restoreGraph = () => ext.restoreContext(); ext.loseContext(); return true;
+    });
+    if (canRestore) {
+      await browser.waitUntil(async () => (await $('.graph-ng-detail').getAttribute('data-context')) === 'lost');
+      await browser.execute(() => (window as any).restoreGraph());
+      await browser.waitUntil(async () => (await $('.graph-ng-detail').getAttribute('data-context')) === 'restored');
+      await screenshot('context-restored'); evidence.contextRestored = true;
+      await browser.executeObsidian(({ app }) => { const v = app.workspace.getLeavesOfType('graph-ng')[0]!.view as any; (window as any).disposedGraphGL = v.detailRenderer.gl; v.showGroups(); });
+      await browser.waitUntil(async () => browser.execute(() => (window as any).disposedGraphGL.isContextLost())); evidence.disposedContextReleased = true;
+      await $('.graph-ng-toolbar button:nth-child(2)').click();
+      await browser.waitUntil(async () => (await $('.graph-ng-view').getAttribute('data-mode')) === 'nodes');
+      await browser.executeObsidian(({ app }) => {
+        const v = app.workspace.getLeavesOfType('graph-ng')[0]!.view as any, r = v.detailRenderer;
+        (window as any).previousRestoreTimeout = v.plugin.settings.contextRestoreTimeoutMs;
+        v.plugin.settings.contextRestoreTimeoutMs = 25; r.gl.getExtension('WEBGL_lose_context').loseContext();
+      });
+      await browser.waitUntil(async () => browser.executeObsidian(({ app }, large) => { const v = app.workspace.getLeavesOfType('graph-ng')[0]!.view as any; return large ? v.contentEl.dataset.mode === 'groups' && !v.detailRenderer : v.contentEl.dataset.mode === 'nodes' && v.detailRenderer?.gpu === false; }, large));
+      evidence.permanentContextFallback = large ? 'group/member canvas' : 'bounded Canvas2D detail';
+      await screenshot('context-permanent-fallback');
+      await browser.executeObsidian(({ app }) => { (app.workspace.getLeavesOfType('graph-ng')[0]!.view as any).plugin.settings.contextRestoreTimeoutMs = (window as any).previousRestoreTimeout; });
+    } else evidence.contextRestored = 'Not applicable: Canvas fallback or no extension';
     await $('.graph-ng-toolbar button').click();
   });
   it('reopens offline from persisted layout without recomputation', async () => {

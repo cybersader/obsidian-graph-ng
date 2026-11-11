@@ -69,7 +69,7 @@ export function validateDeclaration(v: unknown): asserts v is GraphDeclaration {
     const kinds = new Set<string>();
     for (const resolver of v.carrierResolvers) { record(resolver); only(resolver, ['kind', 'key']); text(resolver.kind); text(resolver.key); if (kinds.has(resolver.kind)) throw new Error('Duplicate carrier resolver'); kinds.add(resolver.kind); }
   }
-  for (const c of v.colors as unknown[]) { record(c); only(c, ['name', 'color', 'predicate']); text(c.name); if (typeof c.color !== 'string' || !/^#[0-9a-f]{6}$/i.test(c.color)) throw new Error('Color must be #rrggbb'); validatePredicate(c.predicate); }
+  for (const c of v.colors as unknown[]) { record(c); only(c, ['name', 'color', 'predicate']); text(c.name); if (typeof c.color !== 'string' || !/^(?:#[0-9a-f]{6}(?:[0-9a-f]{2})?|var\(--[a-z0-9-]+\))$/i.test(c.color)) throw new Error('Color must be #rrggbb[aa] or var(--name)'); validatePredicate(c.predicate); }
 }
 export function canonical(v: unknown): string {
   if (v === null || typeof v !== 'object') return JSON.stringify(v) ?? 'undefined';

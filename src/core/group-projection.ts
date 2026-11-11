@@ -4,7 +4,7 @@ import type { GraphDeclaration } from './declaration';
 export interface GroupProjection {
   schema?: string;
   producer?: { name: string; projection: string; asOf: string };
-  groups: { id: string; label: string; count: number; openPath?: string; identityPrefix?: string }[];
+  groups: { id: string; label: string; count: number; key?: string; openPath?: string; identityPrefix?: string }[];
   groupEdges: { a: string; b: string; total: number; typeCounts: Record<string, number>;
     directional?: { aToB: Record<string, number>; bToA: Record<string, number> };
     carriers: { kind: string; ids: string[] } }[];
@@ -27,7 +27,7 @@ export function validateGroupProjection(v: unknown, limits: ProjectionLimits = {
   const ids = new Set<string>();
   for (const g of p.groups) {
     if (!g || typeof g.id !== 'string' || !g.id || typeof g.label !== 'string' || !Number.isSafeInteger(g.count) || g.count < 0 || ids.has(g.id)) throw new Error('Invalid or duplicate group');
-    if ((g.openPath !== undefined && typeof g.openPath !== 'string') || (g.identityPrefix !== undefined && typeof g.identityPrefix !== 'string')) throw new Error('Invalid group navigation');
+    if ((g.key !== undefined && typeof g.key !== 'string') || (g.openPath !== undefined && typeof g.openPath !== 'string') || (g.identityPrefix !== undefined && typeof g.identityPrefix !== 'string')) throw new Error('Invalid group navigation');
     ids.add(g.id);
   }
   const pairs = new Set<string>();
@@ -51,7 +51,7 @@ export interface GroupContribution { source: string; target: string; type: strin
 export const pairKey = (a: string, b: string) => JSON.stringify([a, b].sort());
 export function contractGroups(p: Projection, visible: Uint8Array, level = 0): { projection: GroupProjection; contributions: Map<string, GroupContribution[]>; members: Map<string, number[]> } {
   const source = p.groups[level] ?? { values: ['All notes'], codes: new Uint32Array(p.paths.length) };
-  const groups = source.values.map((label, id) => { let display = label; if ('encoded' in source && source.encoded) { try { const parsed: unknown = JSON.parse(label); if (typeof parsed === 'string') display = parsed; } catch { /* Missing-property sentinel is not JSON. */ } } return { id: String(id), label: display, count: 0 }; });
+  const groups = source.values.map((label, id) => { let display = label; if ('encoded' in source && source.encoded) { try { const parsed: unknown = JSON.parse(label); if (typeof parsed === 'string') display = parsed; } catch { /* Missing-property sentinel is not JSON. */ } } return { id: String(id), key: label, label: display, count: 0 }; });
   const members = new Map<string, number[]>(), contributions = new Map<string, GroupContribution[]>();
   for (let i = 0; i < p.paths.length; i++) if (visible[i]) { const g = groups[source.codes[i]!]!; g.count++; const m = members.get(g.id); if (m) m.push(i); else members.set(g.id, [i]); }
   const pairs = new Map<string, GroupProjection['groupEdges'][number]>();

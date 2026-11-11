@@ -7,7 +7,7 @@ Results belong to an exact invocation, fixture, source revision and hardware cla
 | Class | Evidence |
 | --- | --- |
 | Desktop discrete GPU | Measured: Intel i9-12900K, approximately 31 GiB RAM, NVIDIA RTX 4060 Ti (ANGLE), Linux. Bun 1.3.14; native app/installer 1.13.7; browser Chrome 151.0.7922.34. |
-| Desktop software GL | Measured: SwiftShader on the same desktop. Group/member/carrier fallback only; no individual-node GPU graph acceptance. |
+| Desktop software GL | Measured: SwiftShader on the same desktop. Slice 3 adds bounded small Canvas detail; large views retain group/member/carrier fallback. No individual-node GPU graph acceptance. |
 | Laptop/integrated GPU | Not measured. Desktop results cannot substitute for this class. |
 | Mobile | Not measured. No real-device performance/support claim. |
 
@@ -33,7 +33,7 @@ Generate fixtures only at the scripts' owned synthetic destinations. Regenerate 
 
 The pure-core fixture uses seed 17, one full ForceAtlas2 layout per mode, 100 iterations, Barnes–Hut theta 1.2; filters/colors use 20 repetitions. Column bytes exclude string dictionaries, object rows, contribution lists and renderer allocations. Position bytes are only coordinate storage. RSS/heap of sequential fixture construction is not isolated plugin/GPU memory. Bun layout time is not Electron-worker time.
 
-Browser sampling uses actual core/worker/Sigma at 1280×800, DPR 1, configured label density/size threshold, three seconds of scripted pan/zoom, five discarded warmup frames, **one repetition per mode**, and a final GL finish. Heap is retained main-realm JavaScript after forced GC, not GPU/native/worker memory. Static buffers use public Sigma partial refresh; the earlier every-frame-rebuild baseline was invalidated. Dense literal overview readability is not captured by FPS.
+Current browser sampling uses the actual core/worker/direct WebGL2 renderer at 1280×800, DPR 1, configured label density/size threshold, three seconds of scripted pan/zoom and five discarded warmup frames, **one repetition per mode**. Camera draws retain typed arrays and GPU buffers; palette changes have separate assertions. Heap is retained main-realm JavaScript after forced GC, not GPU/native/worker memory. Historical slice-1/2 measurements below used Sigma's public partial refresh, not the invalidated every-frame-rebuild baseline. Dense literal overview readability is not captured by FPS.
 
 Native cold-open begins after metadata readiness; full invocation includes metadata indexing/startup. Cached view reopen differs from full app restart + cache restore. Incremental settle includes the configured 5,000 ms debounce. Native rAF sampling returned no callbacks: native FPS is unavailable, not zero and not accepted. Report p95 frame/load long task separately from steady-state FPS; load tasks target at most 50 ms and currently fail.
 
@@ -145,6 +145,86 @@ Current native hardware/software cold opens: **133/118 ms**; first groups **28.8
 The same exact `bun run gates` containment invocation passed all six lanes again after staging: **282 secrets / 245 attribution / 282 privacy checks**, six permissive runtime packages, scripts-disabled frozen lock unchanged. That reviewed bundle: **680,336 raw / 114,346 gzip / 83,707 Brotli bytes**, SHA-256 `9ed75c713e6f1b1bad66f768fc5472bc47bc45e9c5ee61cf70dfbc97cf322ff7`; receipt `slice2-review-fixes-gates.log` still names the baseline source commit because the patch was staged but uncommitted.
 
 The final review follow-up closes the group-before-detail member race by checking the requested generation against both active groups and the detail dictionary, not object-reference equality. Exact containment prefix plus `bash -c 'bun run build && bun run test'` passed **65 tests / 401 assertions / the same five files** (`slice2-final-race-units.log`). Browser/native screenshots and metrics above precede only this narrow guard; they were not rerun afterward. Final `main.js`: **680,834 raw / 114,476 gzip / 83,872 Brotli bytes**, SHA-256 `1ae42bc81cfda7880db41cdc8984279d7772f4d33ffa2d8ea131a6a5f05f9145`. Final full gates use the identical containment invocation and are recorded in `slice2-final-gates.log`.
+
+## Slice 3 direct renderer
+
+Source: `feat/slice3-renderer` from untouched slice-2 `f24c75de`; measured locally on 2026-11-10, no push/publication. Sigma and main-thread Graphology construction are removed; the existing worker layout remains. Cache format 3 rebuilds incompatible slice-2 cached summaries, so cold layout seeds/coordinates are not a bitwise comparison across cache formats. Current evidence follows the independent review corrections, including the keyless-cache selection probe and permanent context-loss fallback.
+
+### Exact final invocation and coverage
+
+Every command below ran in the repository with `flock --exclusive --wait 2400 /tmp/openclast-local-verification.lock build-contained --`; a private sequential script held that lock for the complete matrix. `CHROME_BIN` selected an existing local Chrome, `OBSIDIAN_CACHE` an existing app cache; neither binary was committed or uploaded.
+
+| Command / flags / subset | Result |
+| --- | --- |
+| `bun run build` | Typecheck and minified worker/plugin build pass |
+| `bun run test` | 83 pass, 0 fail / 896 assertions / seven explicit files listed below |
+| `bun run fixture --small`, then `GRAPH_MEASURE_NATIVE=1 bun run e2e` | Small hardware: 11 pass, 0 fail |
+| Same small fixture, `GRAPH_SOFTWARE=1 bun run e2e` | Small software: 11 pass, 0 fail |
+| `bun run fixture --literal`, then `GRAPH_LARGE=1 GRAPH_LITERAL=1 GRAPH_MEASURE_NATIVE=1 bun run e2e` | Large literal hardware: 7 pass, 4 intentional skips |
+| Same literal fixture, `GRAPH_LARGE=1 GRAPH_LITERAL=1 GRAPH_SOFTWARE=1 bun run e2e` | Large literal software: 7 pass, 4 intentional skips |
+| `bun run bench:browser` | One semantic and one literal repetition; zero page errors |
+| `bun run gates` | All six lanes: secrets, attribution, privacy, scripts-disabled/frozen lock, permissive runtime licenses and bundle ceilings |
+
+The seven explicit unit files are `tests/core.test.ts`, `tests/adapter.test.ts`, `tests/gates.test.ts`, `tests/pipeline.test.ts`, `tests/declaration-v2.test.ts`, `tests/renderer.test.ts` and `tests/contribution-page.test.ts`. The four large-only skips are full app-restart restore, persisted-key-miss incremental restart, carrier incremental update and duplicate quarantine; all four run in each small native lane. A passing fallback test does not mean the large graph was drawn in software.
+
+Private logs: `.workspace/{build-final,unit-final,native-hardware,native-software,native-large-literal,native-large-software,browser-final,gates-final}.log`. Receipts: `.workspace/evidence/browser-benchmark.json`, `e2e-{small-hardware,small-software,large-literal-hardware,large-literal-software}.json`, `bundle-size.json` and `runtime-licenses.json`. Earlier complete pre-review-fix receipts are retained separately in `.workspace/evidence/pre-review-fixes/`, not silently relabelled as reviewed source.
+
+The earlier pre-review-fix run missed first-group targets too: literal browser **508.1 ms**, native large hardware/software **572.9/760.5 ms**, with native open/detail/fallback long tasks of **65–81 ms**. These are prior-source observations, not the reviewed-source table below. The reviewed run's browser groups were **463.8/495.2 ms**, but semantic open still recorded a **54 ms** task; native large groups were **776/625 ms**, with **70/73 ms** open and **72/66 ms** detail/fallback tasks in the affected lanes. One improved browser repetition does not erase the earlier miss or establish repeatable target acceptance.
+
+### Browser before/after
+
+Same single desktop discrete-GPU class, Chrome 151.0.7922.34, 1280×800 DPR1, 60,600 synthetic host notes. Semantic projection has 16,000 nodes / 44,600 edges; literal has 60,600 / 89,200. The before column uses the slice-2 reviewed receipt, not a re-run on an artificially slow rebuild path. Both timing origins start after host-metadata JSON decode. Warm means a new worker + binary **memory-backed disk** decode + complete live verification + first node frame; it is not a full app restart or physical-storage test. Heap retains the host fixture and excludes worker/GPU/native memory. One repetition per mode is observation, not a distribution or hardware-matrix claim.
+
+| Metric | Semantic slice 2 → slice 3 | Literal slice 2 → slice 3 |
+| --- | --- | --- |
+| Cold first groups | 391.3 ms → 463.8 ms | 459.9 ms → 495.2 ms |
+| Full verified warm node frame | 807.3 ms → 625.3 ms | 961.3 ms → 806.9 ms |
+| Retained main JS after GC | 33.17 MiB → 13.6 MiB | 75.37 MiB → 16.8 MiB |
+| Pan/zoom FPS | 58.97 → 60.0 | 56.88 → 60.0 |
+| p95 frame | 16.8 ms → 16.8 ms | 33.3 ms → 16.8 ms |
+| Explicit detail / warm ≥50 ms task maximum | 318 / 247 ms → None observed / None observed | 277 / 274 ms → None observed / None observed |
+
+| Current browser phase | Semantic | Literal |
+| --- | --- | --- |
+| Cold worker layout | 2,752.5 ms | 12,721.9 ms |
+| Cold layout ready | 3,309.4 ms | 13,361.4 ms |
+| First instanced detail view | 3,531.6 ms | 13,565.7 ms |
+| Provisional cached group frame | 23.4 ms | 56.9 ms |
+| Default group-open tasks ≥50 ms | 1 / 54.0 ms max | None observed |
+| Cache-write tasks ≥50 ms | None observed | None observed |
+
+Each browser mode asserts zero worker messages for a palette-only theme change, one palette upload, identical graph-buffer references, GL error 0 and restoration from retained CPU buffers. Both return exact warm hits and 20 streamed position snapshots. Parallel shader-completion waits are elapsed asynchronous waits, not synonymous with blocking tasks; drivers lacking `KHR_parallel_shader_compile` remain unmeasured. Empty long-task windows mean **no observed ≥50 ms tasks**, never a meaningful “0 ms p95” acceptance value.
+
+### Native app lanes and remaining responsiveness misses
+
+Obsidian app/installer 1.13.7, native Chromium 150.0.7871.212, same desktop. Small fixture: 2,000 notes → 600 nodes / 1,400 edges; large literal: 60,600 notes/nodes / 89,200 edges. Cold-open timing begins after public metadata readiness; full invocation also pays startup/indexing. Warm below is offline view reopen in the same app, not the separate complete-restart test or the browser memory-disk method.
+
+| Native lane | Cold open | First groups | Offline reopen | Open ≥50 ms tasks | Detail/fallback-request ≥50 ms tasks |
+| --- | --- | --- | --- | --- | --- |
+| small-hardware | 219.0 ms | 34.7 ms | 34.0 ms | None observed | None observed |
+| small-software | 223.0 ms | 110.2 ms | 207.0 ms | 1 / 70.0 ms max | None observed |
+| large-literal-hardware | 15,131.0 ms | 776.0 ms | 464.0 ms | None observed | 1 / 72.0 ms max |
+| large-literal-software | 14,120.0 ms | 625.0 ms | 426.0 ms | 1 / 73.0 ms max | 1 / 66.0 ms max |
+
+Small hardware draws actual node detail and opens an existing note from pointer picking; small software draws bounded Canvas detail. Large hardware reaches the full literal node graph; large software explicitly retains Canvas groups/member lists because it exceeds the detail budget. Hardware tests restore a lost context, assert disposal releases that context, and deliberately leave another context unrestored with a shortened test-only deadline: small falls back to Canvas detail, large to group/member Canvas. Production restoration deadline is a configurable 5 seconds, not the injected test value. Light/dark host frames, groups, detail, hovered/selected notes and restored/fallback screenshots are captured under `test-screenshots/`; final representative PNGs were opened and read. The large node view remains a dense hairball: frame rate is not overview readability.
+
+Native rAF sampling received zero callbacks even though the document reported visible; FPS is **unavailable**, not zero, not inferred from the browser and not accepted. The renderer uses one configurable on-demand paint backstop, not a perpetual timer loop. Native long-task maxima above are explicit misses wherever they exceed 50 ms; the large software detail-request observer measures refusal/fallback work, not a hidden full software rendering pass.
+
+### Proven contribution-panel repair
+
+A separate private native reproduction ran untouched slice-2 `f24c75de` on the 60,600-note literal fixture. The click naturally raced refresh: `contributions` revision 2 ran while retained detail was revision 1, the worker rejected “Projection generation changed”, the view swallowed it and the fresh group paint erased selection. Baseline `.workspace/evidence/carrier-repro.json`/PNG are retained in the separate untouched reproduction worktree; the fixed equivalent shows 100 navigable mapping rows on the first click and after revision 3 refresh without another relationship click. This was an existing slice-2 failure, not projection-semantic ambiguity.
+
+The tracked native suite now checks retained selection after real refresh plus a synthetic rejected read with visible error and explicit Retry in all four lanes. Controller units additionally reproduce the reviewer's keyless cached-paint / same-revision shifted-ID case: capture clicked raw keys or legacy display labels immediately, wait for a fresh keyed summary, and resolve legacy labels only when unambiguous. Cached paint has a distinct negative generation, format-2 caches are rejected/quarantined, and stale replies cannot overwrite the refreshed page. Equal-looking typed groups stay distinct; missing/duplicate legacy labels remain refreshing rather than select a wrong relationship.
+
+### Bundle, dependencies and acceptance boundary
+
+Reconstructed `f24c75de` baseline: **681,062 raw / 114,503 gzip bytes**. Equal-minification comparison (main and embedded worker both minified): **324,036 min / 81,810 gzip → 184,338 min / 49,240 gzip bytes**, a **43.11% / 39.81%** reduction. Current Brotli: **42,726 bytes**; SHA-256 `ee348e886de667ded0de98893952fb804e69fe4e7aa421888eda6333312e300a`. Receipts: `.workspace/evidence/baseline-size.json` / `bundle-size.json`. Gates regenerate the bundle receipt after the authorized local commit to bind its commit field; pre-commit receipts correctly identify the base plus staged patch, not a nonexistent final commit.
+
+The slice-3 250,000 minified / 70,000 gzip ceilings pass. Eventual 150,000 / 45,000 ceilings do not. The renderer has zero runtime packages, but the complete worker layout still audits **five MIT packages** (Graphology, FA2 and their transitive packages), down from six; the plan's one-package intermediate target is **not met**. Replacing the layout stack belongs to slice 4. Regenerated `THIRD_PARTY_NOTICES.txt` contains all five license texts; installations remain frozen/scripts-disabled with an empty trusted-dependency list.
+
+The ≤12 MiB retained-main-heap goal remains unmet in both browser modes; the substantial reduction is not full memory acceptance. First-group and ≥50 ms task observations above must be compared to their 500/50 ms targets without rounding away misses. Full verified warm-node views meet the 1-second target in this single browser run. Native large first-group and main-thread task failures remain explicit, not hidden behind 60 FPS.
+
+Canvas refusal defaults remain **2,000 visible nodes / 10,000 visible edges**, configurable and validated, rather than the plan's proposed 20,000-node default. Deterministic tests cover both over-budget refusal paths and preserve all eligible edges; only the 600/1,400 native software use path is performance-observed. Even the conservative refusal boundary is not benchmarked animation capacity. No claim covers integrated GPUs, mobile/N-2 app versions, physical-storage large warm starts, all-scale readability, native FPS, remote authorization or million-note rendering.
 
 ## Retention and honest reporting
 

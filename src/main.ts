@@ -7,6 +7,7 @@ import { BinaryLayoutStore, type BinaryGeneration } from './core/binary-layout';
 import { yieldTask } from './core/scheduler';
 import { WorkerPipeline, LAYOUT_PRODUCER, currentDetailGeneration, type ProjectResult, type DetailResult, type LayoutResult } from './pipeline';
 import { groupPages, page } from './core/group-page';
+import { ContributionPage, type ContributionContext } from './contribution-page';
 import { loadSettings, validateSettings, type Settings } from './settings';
 import { DetailRenderer, GroupRenderer, gpuStatus, type Renderer } from './renderer';
 declare const __LAYOUT_WORKER_SOURCE__: string;
@@ -116,6 +117,9 @@ export class GraphView extends ItemView {
   private provisional = true;
   private activeRevision = 0;
   private detailGeneration = -1;
+  private groupGeneration = -1;
+  private contributionScope = '';
+  private contributionPage: ContributionPage;
   private queued = false;
   private refreshing = false;
   private closed = false;
@@ -125,7 +129,10 @@ export class GraphView extends ItemView {
   private gpu = { available: false, reason: 'Not probed' };
   readonly cacheTrace: { expected: string; stored?: string; nodes: number; indexed: number; listed: number; valid: boolean }[] = [];
   detailRenderer?: DetailRenderer;
-  constructor(leaf: WorkspaceLeaf, readonly plugin: GraphPlugin) { super(leaf); }
+  constructor(leaf: WorkspaceLeaf, readonly plugin: GraphPlugin) {
+    super(leaf);
+    this.contributionPage = new ContributionPage(plugin.settings.listPageSize, (revision, pair, offset, count) => plugin.pipeline.request(revision, { kind: 'contributions', pair, offset, count }), () => this.renderContributionPanel());
+  }
   getViewType() { return VIEW; }
   getDisplayText() { return 'Graph NG'; }
   getIcon() { return 'git-fork'; }
@@ -144,11 +151,12 @@ export class GraphView extends ItemView {
     this.stage = this.contentEl.createDiv({ cls: 'graph-ng-stage' });
     this.panel = this.contentEl.createDiv({ cls: 'graph-ng-panel' });
     // Creating even a probe GL context can block; the initial group view needs no GPU.
+    this.registerEvent(this.app.workspace.on('css-change', () => this.renderer?.refreshTheme?.()));
     this.unsubscribe = this.plugin.subscribe(() => { void this.refresh(); });
     await this.refresh();
   }
-  invalidateSource() { this.revision++; this.renderRevision++; this.provisional = true; if (this.contentEl) this.contentEl.dataset.verified = 'false'; this.renderer?.dispose(); this.renderer = undefined; this.projection = undefined; this.detailGeneration = -1; this.positions = undefined; this.groupGraph = undefined; this.stage?.empty(); this.panel?.empty(); }
-  async onClose() { this.closed = true; this.renderRevision++; this.revision++; this.renderer?.dispose(); this.unsubscribe?.(); }
+  invalidateSource() { this.contributionPage.clear(); this.groupGeneration = -1; this.revision++; this.renderRevision++; this.provisional = true; if (this.contentEl) this.contentEl.dataset.verified = 'false'; this.renderer?.dispose(); this.renderer = undefined; this.projection = undefined; this.detailGeneration = -1; this.positions = undefined; this.groupGraph = undefined; this.stage?.empty(); this.panel?.empty(); }
+  async onClose() { this.contributionPage.clear(); this.closed = true; this.renderRevision++; this.revision++; this.renderer?.dispose(); this.unsubscribe?.(); }
   async refresh() {
     if (this.closed) return;
     if (this.refreshing) { this.queued = true; return; }
@@ -157,6 +165,9 @@ export class GraphView extends ItemView {
     finally { this.refreshing = false; }
   }
   private async refreshOnce() {
+    const scope = JSON.stringify([this.plugin.sourceIdentity, this.plugin.settings.projectionFile, this.plugin.settings.groupLevel, this.plugin.settings.declaration.groups]);
+    if (scope !== this.contributionScope) this.contributionPage.clear();
+    this.contributionScope = scope; this.contributionPage.size = this.plugin.settings.listPageSize; this.contributionPage.suspend();
     const rev = ++this.revision, revision = ++this.plugin.nextRevision; this.activeRevision = revision;
     const current = () => !this.closed && rev === this.revision;
     const settings = this.plugin.settings, start = performance.now();
@@ -172,7 +183,7 @@ export class GraphView extends ItemView {
         if (bytes.byteLength > settings.maxProjectionBytes) throw new Error('Projection byte limit exceeded');
         const p = await this.plugin.pipeline.request<GroupProjection>(revision, { kind: 'external', bytes, maxBytes: settings.maxProjectionBytes, limits: { groups: settings.maxProjectionGroups, pairs: settings.maxProjectionPairs, carriers: settings.maxProjectionCarriers } });
         if (!current()) return;
-        this.projection = undefined; this.positions = undefined; this.groupGraph = p; this.members.clear(); this.contributions.clear();
+        this.projection = undefined; this.positions = undefined; this.groupGraph = p; this.groupGeneration = revision; this.members.clear(); this.contributions.clear();
         this.status.textContent = `${p.groups.length} groups · ${p.groupEdges.length} counted group pairs · unverified external aggregate (not merged with live rows)`;
         this.contentEl.dataset.state = 'ready'; this.showGroups(); return;
       }
@@ -186,7 +197,7 @@ export class GraphView extends ItemView {
           try {
             const cache = await this.plugin.pipeline.request<{ groups?: GroupProjection } | undefined>(revision, { kind: 'load', generation: saved });
             if (cache?.groups && current() && !this.predicate) {
-              this.projection = undefined; this.positions = undefined; this.groupGraph = cache.groups; this.members.clear(); this.contributions.clear(); this.showGroups();
+              this.projection = undefined; this.positions = undefined; this.groupGraph = cache.groups; this.groupGeneration = -revision; this.members.clear(); this.contributions.clear(); this.showGroups(true);
               this.status.textContent = `cached · verifying ${this.plugin.adapter.coverage().indexed} of ${this.plugin.adapter.coverage().listed} · filters and members provisional`;
               this.contentEl.dataset.cachedPaintMs = String(performance.now() - start); await yieldTask();
             }
@@ -203,7 +214,7 @@ export class GraphView extends ItemView {
       this.plugin.ingestedHash = hashes.declarationHash;
       this.plugin.pipeline.onGroups = event => {
         if (event.revision !== revision || !current()) return;
-        this.groupGraph = event.projection; this.members.clear(); this.contributions.clear(); this.showGroups();
+        this.groupGraph = event.projection; this.groupGeneration = revision; this.members.clear(); this.contributions.clear(); this.showGroups(true);
         this.contentEl.dataset.firstGroupMs = String(performance.now() - start);
       };
       const result = await this.plugin.pipeline.request<ProjectResult>(revision, { kind: 'project', complete: this.plugin.adapter.coverage().indexed === this.plugin.adapter.coverage().listed });
@@ -218,7 +229,8 @@ export class GraphView extends ItemView {
       const detail = await this.plugin.pipeline.request<DetailResult>(revision, { kind: 'detail' });
       if (!current()) return;
       this.projection = detail.projection; this.detailGeneration = revision; this.visible = detail.visible; this.colors = detail.colors;
-      if (result.quarantined.length) this.showGroups();
+      this.contributionPage.update(this.contributionContext());
+      if (result.quarantined.length) this.showGroups(true);
       this.plugin.pipeline.onPositions = event => { if (event.revision === revision && current()) { if (this.positions && this.contentEl.dataset.mode === 'groups') this.plugin.pipeline.recycle(this.positions.buffer as ArrayBuffer); this.positions = event.positions; this.contentEl.dataset.streaming = 'true'; } };
       let layout: LayoutResult;
       try { layout = await this.plugin.pipeline.request<LayoutResult>(revision, { kind: 'layout' }); }
@@ -234,16 +246,17 @@ export class GraphView extends ItemView {
       }
     } catch (e) {
       this.plugin.adapter.invalidate(); this.plugin.ingestedHash = ''; this.provisional = true; this.contentEl.dataset.verified = 'false';
-      if (current()) { this.status.textContent = `Graph NG: ${String(e)}`; this.contentEl.dataset.state = 'error'; }
+      if (current()) { this.status.textContent = `Graph NG: ${String(e)}`; this.contentEl.dataset.state = 'error'; this.contributionPage.fail(`Projection refresh failed: ${String(e)}`); }
     } finally {
       if (!current()) { this.plugin.adapter.invalidate(); this.plugin.ingestedHash = ''; this.contentEl.dataset.verified = 'false'; }
     }
   }
-  showGroups() {
+  showGroups(preserveSelection = false) {
+    if (!preserveSelection) this.contributionPage.clear();
     this.renderRevision++;
     const start = performance.now();
     this.renderer?.dispose(); this.detailRenderer = undefined; this.stage.empty(); this.panel.empty();
-    const projection = this.groupGraph; if (!projection) return;
+    const projection = this.groupGraph, generation = this.groupGeneration; if (!projection) return;
     const settings = this.plugin.settings, pages = groupPages(projection, settings.groupCanvasPageSize);
     let canvasPage = 0;
     const canvasControls = this.panel.createDiv({ cls: 'graph-ng-canvas-pager' });
@@ -254,7 +267,7 @@ export class GraphView extends ItemView {
     const draw = () => {
       this.renderer?.dispose(); this.stage.empty();
       const selected = pages.canvas(canvasPage);
-      this.renderer = new GroupRenderer(this.stage, selected, settings, id => this.drill(id), edge => this.edgeList(edge));
+      this.renderer = new GroupRenderer(this.stage, selected, settings, id => this.drill(id), edge => this.edgeList(edge, projection, generation));
       previous.disabled = canvasPage === 0; next.disabled = (canvasPage + 1) * settings.groupCanvasPageSize >= projection.groups.length;
       label.textContent = ` Canvas groups ${canvasPage * settings.groupCanvasPageSize + 1}–${Math.min((canvasPage + 1) * settings.groupCanvasPageSize, projection.groups.length)} / ${projection.groups.length} `;
       this.contentEl.dataset.canvasGroups = String(selected.groups.length);
@@ -263,7 +276,7 @@ export class GraphView extends ItemView {
     this.paginate(projection.groups, (g, host) => { host.createEl('button', { text: `${g.label} (${g.count.toLocaleString()})`, attr: { 'data-group': g.id } }).onclick = () => this.drill(g.id); }, this.panel, 'graph-ng-group-controls');
     const edges = this.panel.createEl('details'); edges.createEl('summary', { text: `Relationships (${projection.groupEdges.length} group pairs)` });
     this.paginate(projection.groupEdges, (edge, host) => {
-      host.createEl('button', { text: `${pages.labels.get(edge.a)} ↔ ${pages.labels.get(edge.b)} · ${edge.total}`, cls: 'graph-ng-edge' }).onclick = () => this.edgeList(edge);
+      host.createEl('button', { text: `${pages.labels.get(edge.a)} ↔ ${pages.labels.get(edge.b)} · ${edge.total}`, cls: 'graph-ng-edge' }).onclick = () => this.edgeList(edge, projection, generation);
     }, edges);
     if (this.projection?.quarantined.length) {
       const conflicts = this.panel.createEl('details', { cls: 'graph-ng-quarantine' });
@@ -271,6 +284,7 @@ export class GraphView extends ItemView {
       this.paginate(this.projection.quarantined, (note, host) => { host.createEl('button', { text: `${note.path} — ${note.id}` }).onclick = () => this.openPath(note.path); }, conflicts);
     }
     this.contentEl.dataset.mode = 'groups'; this.contentEl.dataset.groupFirstPageMs = String(performance.now() - start);
+    if (this.contributionPage.selection) { this.renderContributionPanel(); this.contributionPage.update(this.contributionContext()); }
   }
   private openPath(path: string) {
     if (!(this.app.vault.getAbstractFileByPath(path) instanceof TFile)) { new Notice('The referenced note is not available locally.'); return; }
@@ -289,6 +303,7 @@ export class GraphView extends ItemView {
     previous.onclick = () => { index--; draw(); }; next.onclick = () => { index++; draw(); }; draw();
   }
   private async drill(id: string) {
+    this.contributionPage.clear();
     const group = this.groupGraph?.groups.find(g => g.id === id); if (!group) return;
     this.panel.empty(); this.panel.createEl('strong', { text: `${group.label}: ${group.count.toLocaleString()} members${this.provisional ? ' · provisional' : ''}` });
     const revision = this.activeRevision, projection = this.projection, renderRevision = this.renderRevision;
@@ -309,12 +324,17 @@ export class GraphView extends ItemView {
     if (this.gpu.available && this.positions) { const bits = new Uint8Array(p.paths.length); for (const i of members) bits[i] = 1; this.showDetails(bits, false); }
     this.paginate(Array.from(members), (i, host) => { host.createEl('button', { text: p.paths[i]!, cls: 'graph-ng-member' }).onclick = () => this.openPath(p.paths[i]!); });
   }
-  private edgeList(edge: GroupProjection['groupEdges'][number]) {
+  private edgeList(edge: GroupProjection['groupEdges'][number], clickedGraph = this.groupGraph, clickedGeneration = this.groupGeneration) {
+    this.contributionPage.clear();
+    if (!this.plugin.settings.projectionFile) {
+      this.contributionPage.select(edge.a, edge.b, clickedGeneration, clickedGraph);
+      this.contributionPage.update(this.contributionContext());
+      return;
+    }
     this.panel.empty();
     this.panel.createEl('strong', { text: Object.entries(edge.typeCounts).map(([t, n]) => `${t}: ${n.toLocaleString()}`).join(' · ') });
     if (edge.directional) this.panel.createDiv({ text: `A → B: ${JSON.stringify(edge.directional.aToB)} · B → A: ${JSON.stringify(edge.directional.bToA)}` });
     const rows = this.contributions.get(pairKey(edge.a, edge.b));
-    if (this.projection) { void this.contributionPages(pairKey(edge.a, edge.b)); return; }
     if (rows) this.paginate(rows, (r, host) => { const item = host.createDiv({ cls: 'graph-ng-contribution' }); item.createSpan({ text: `${r.source} → ${r.target} [${r.type}] ` }); if (r.carrier) item.createEl('button', { text: r.carrier }).onclick = () => this.openPath(r.carrier!); });
     else this.paginate(edge.carriers.ids, (id, host) => {
       this.carrierLookup ??= indexCarriers(this.plugin.adapter.values(), this.plugin.settings.declaration);
@@ -323,27 +343,37 @@ export class GraphView extends ItemView {
       button.disabled = !path; if (path) button.onclick = () => this.openPath(path);
     });
   }
-  private async contributionPages(pair: string) {
-    let offset = 0; const revision = this.activeRevision, size = this.plugin.settings.listPageSize;
-    const root = this.panel.createDiv({ cls: 'graph-ng-pagination' }), controls = root.createDiv(), previous = controls.createEl('button', { text: 'Previous page' }), next = controls.createEl('button', { text: 'Next page' }), list = root.createDiv();
-    const draw = async () => {
-      let result: { total: number; items: GroupContribution[] };
-      try { result = await this.plugin.pipeline.request<typeof result>(revision, { kind: 'contributions', pair, offset, count: size }); }
-      catch { return; } // Stale generation/worker recovery: never display another generation's page.
-      if (revision !== this.activeRevision || !root.isConnected) return;
-      list.empty(); previous.disabled = offset === 0; next.disabled = offset + size >= result.total;
-      for (const r of result.items) { const item = list.createDiv({ cls: 'graph-ng-contribution' }); item.createSpan({ text: `${r.source} → ${r.target} [${r.type}] ` }); if (r.carrier) item.createEl('button', { text: r.carrier }).onclick = () => this.openPath(r.carrier!); }
-    };
-    previous.onclick = () => { offset -= size; void draw(); }; next.onclick = () => { offset += size; void draw(); }; await draw();
+  private contributionContext(): ContributionContext {
+    return { active: this.activeRevision, groups: this.groupGeneration, detail: this.detailGeneration, level: this.plugin.settings.groupLevel, projection: this.projection, graph: this.groupGraph };
+  }
+  private renderContributionPanel() {
+    const pager = this.contributionPage; if (!pager.selection || this.closed || !this.panel) return;
+    this.panel.empty();
+    const edge = pager.edge;
+    this.panel.createEl('strong', { text: edge ? Object.entries(edge.typeCounts).map(([t, n]) => `${t}: ${n.toLocaleString()}`).join(' · ') : 'Contributing mappings' });
+    if (edge?.directional) this.panel.createDiv({ text: `A → B: ${JSON.stringify(edge.directional.aToB)} · B → A: ${JSON.stringify(edge.directional.bToA)}` });
+    const status = this.panel.createDiv({ cls: 'graph-ng-contribution-status', attr: { role: 'status', 'data-state': pager.status }, text: pager.message });
+    if (pager.status === 'error') status.createEl('button', { text: 'Retry' }).onclick = () => pager.retry(this.contributionContext());
+    if (pager.status !== 'ready' || !pager.result) return;
+    const { total, items } = pager.result, root = this.panel.createDiv({ cls: 'graph-ng-pagination' }), controls = root.createDiv();
+    const previous = controls.createEl('button', { text: 'Previous page' }), next = controls.createEl('button', { text: 'Next page' });
+    previous.disabled = pager.offset === 0; next.disabled = pager.offset + pager.size >= total;
+    previous.onclick = () => pager.move(-1, this.contributionContext()); next.onclick = () => pager.move(1, this.contributionContext());
+    controls.createSpan({ text: ` ${total ? pager.offset + 1 : 0}–${Math.min(pager.offset + pager.size, total)} / ${total} ` });
+    for (const r of items) { const item = root.createDiv({ cls: 'graph-ng-contribution' }); item.createSpan({ text: `${r.source} → ${r.target} [${r.type}] ` }); if (r.carrier) item.createEl('button', { text: r.carrier }).onclick = () => this.openPath(r.carrier!); }
   }
   async showDetails(bits = this.visible, clearPanel = true) {
     if (!this.projection || !this.positions || !bits) { new Notice('Individual nodes are not ready; the group graph remains usable.'); return; }
     if (this.gpu.reason === 'Not probed') this.gpu = gpuStatus();
-    if (!this.gpu.available) { this.status.textContent += ' · GPU unavailable — use group member lists'; new Notice(`GPU unavailable: ${this.gpu.reason}. Use group member lists.`); return; }
+    if (!this.gpu.available && bits.reduce((n, b) => n + (b ? 1 : 0), 0) > this.plugin.settings.canvasMaxDetailNodes) { this.status.textContent += ' · GPU unavailable — use group member lists'; new Notice(`GPU unavailable: ${this.gpu.reason}. Use group member lists.`); return; }
     const renderRevision = ++this.renderRevision; this.contentEl.dataset.mode = 'nodes-building';
-    this.renderer?.dispose(); this.stage.empty(); if (clearPanel) this.panel.empty();
+    this.renderer?.dispose(); this.stage.empty(); if (clearPanel) { this.contributionPage.clear(); this.panel.empty(); }
     try {
-      this.detailRenderer = await DetailRenderer.create(this.stage, this.projection, this.positions, bits, this.plugin.settings, i => this.openPath(this.projection!.paths[i]!), () => this.showGroups(), this.colors!, () => renderRevision === this.renderRevision);
+      this.detailRenderer = await DetailRenderer.create(this.stage, this.projection, this.positions, bits, this.plugin.settings, i => this.openPath(this.projection!.paths[i]!), () => this.showGroups(), this.colors!, () => renderRevision === this.renderRevision, !this.gpu.available, () => {
+        if (renderRevision !== this.renderRevision || this.closed) return;
+        this.gpu = { available: false, reason: 'WebGL context could not be restored' };
+        this.showGroups(); void this.showDetails(bits, clearPanel);
+      });
       this.renderer = this.detailRenderer; this.contentEl.dataset.mode = 'nodes';
     } catch (e) { if (renderRevision !== this.renderRevision) return; this.gpu = { available: false, reason: String(e) }; this.showGroups(); this.status.textContent += ' · GPU unavailable; group fallback active'; }
   }

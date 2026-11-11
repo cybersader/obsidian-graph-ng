@@ -1,6 +1,7 @@
 import { encodeStrings, decodeStrings } from './columns';
 import type { LayoutOptions } from './layout';
-export const CACHE_FORMAT = 2;
+// Keyed group summaries are not dictionary-compatible with slice-2 cached paint.
+export const CACHE_FORMAT = 3;
 export const MAX_CHUNK_BYTES = 1024 * 1024;
 export interface GenerationMeta {
   format: number; declarationHash: string; key: string; layoutHash: string; layout: LayoutOptions;

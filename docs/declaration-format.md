@@ -27,7 +27,7 @@ All top-level fields except `carrierResolvers` are required. Unknown declaration
 | `groups` | Ordered selectable groupings: `{from:"key",key}` or `{from:"folder",depth,prefix?}` with positive safe integer depth. `groupLevel` tuning selects one, not an inferred hierarchy. Missing keys form an explicit missing group; no rules means All notes. |
 | `display` | Required boolean `reifiedAsNodes`. False connects endpoints with a carrier; true makes the relationship note an intermediate node. |
 | `columns` | Nonempty property-key strings materialized as dictionary-coded columns for filtering. Color/group keys are also materialized. |
-| `colors` | Ordered `{name,color,predicate}` rules, first match wins. Colors must be six-digit `#rrggbb`. These are explicit declarations, not a hidden palette tied to any ontology. |
+| `colors` | Ordered `{name,color,predicate}` rules, first match wins. Colors must be `#rrggbb`, `#rrggbbaa`, or a restricted `var(--name)` reference resolved from computed host CSS. These are explicit declarations, not a hidden palette tied to any ontology. |
 | `carrierResolvers` | Optional unique `{kind,key}` bindings. `$path` means an exact local note path; other keys are declared frontmatter lookups. Absent/ambiguous matches cannot navigate. Carrier strings have no guessed meaning. |
 
 Unresolved edge endpoints are dropped and counted. Self-links and parallel edges survive. Directed edge columns retain direction; CSR adjacency includes both traversal directions. Filters compare scalar type exactly (`1`, `"1"`, `true`, null and missing differ). Folder prefixes use path boundaries, not arbitrary string prefixes.
@@ -38,9 +38,9 @@ Unresolved edge endpoints are dropped and counted. Self-links and parallel edges
 
 ## Validation diagnostics
 
-Current validators throw ordinary `Error` messages, not stable machine-readable error codes. Representative exact messages: `Unknown field: <key>`, `Declaration version must be 2`, `Duplicate edge declaration: <name>`, `Unknown edge kind`, `Folder depth must be a positive integer`, `reifiedAsNodes must be boolean`, `Duplicate carrier resolver`, `Color must be #rrggbb`, `Unknown predicate kind`, and `Equality number must be finite`. Treat diagnostics as draft UI strings until a versioned error contract exists.
+Current validators throw ordinary `Error` messages, not stable machine-readable error codes. Representative exact messages: `Unknown field: <key>`, `Declaration version must be 2`, `Duplicate edge declaration: <name>`, `Unknown edge kind`, `Folder depth must be a positive integer`, `reifiedAsNodes must be boolean`, `Duplicate carrier resolver`, `Color must be #rrggbb[aa] or var(--name)`, `Unknown predicate kind`, and `Equality number must be finite`. Treat diagnostics as draft UI strings until a versioned error contract exists.
 
-Generation keys include the declaration, selected producer data, layout parameters and exact paths. Changing a declaration invalidates compatible layout/cache assumptions. This declaration configures the engine-neutral core; renderer-specific Graphology/Sigma objects do not become part of it. See [ADR-0001](decisions/ADR-0001-ontology-neutral-core.md) and [ADR-0002](decisions/ADR-0002-typed-array-core.md).
+Generation keys include the declaration, selected producer data, layout parameters and exact paths. Changing a declaration invalidates compatible layout/cache assumptions. This declaration configures the engine-neutral core; GPU-specific buffers do not become part of it. See [ADR-0001](decisions/ADR-0001-ontology-neutral-core.md) and [ADR-0005](decisions/ADR-0005-direct-renderer.md).
 
 ## Input migration and settings sharing
 

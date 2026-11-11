@@ -21,15 +21,54 @@ try {
     try {
       const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1 });
       const errors: string[] = []; page.on('pageerror', e => errors.push(String(e)));
+      const trace = process.env.GRAPH_TRACE ? await page.context().newCDPSession(page) : undefined;
+      if (trace) await trace.send('Tracing.start', { categories: 'devtools.timeline,toplevel,v8,v8.execute,blink.user_timing', transferMode: 'ReturnAsStream' });
       await page.goto(`http://127.0.0.1:${address.port}/`);
       await page.waitForFunction(() => (window as any).groupReady || (window as any).failure, {}, { timeout: 180000 });
       await page.screenshot({ path: `test-screenshots/browser-${literal ? 'literal' : 'semantic'}-groups.png` });
       await page.waitForFunction(() => (window as any).result || (window as any).failure, {}, { timeout: 180000 });
       const value = await page.evaluate(() => ({ result: (window as any).result, failure: (window as any).failure }));
       if (value.failure) throw new Error(value.failure);
+      if (trace) {
+        const done = new Promise<any>(resolve => trace.once('Tracing.tracingComplete', resolve)); await trace.send('Tracing.end');
+        const { stream } = await done; let data = '';
+        for (;;) { const chunk = await trace.send('IO.read', { handle: stream }); data += chunk.data; if (chunk.eof) break; }
+        await trace.send('IO.close', { handle: stream }); await trace.detach(); await writeFile(`.workspace/evidence/trace-${literal ? 'literal' : 'semantic'}.json`, data);
+      }
       const cdp = await page.context().newCDPSession(page); await cdp.send('HeapProfiler.collectGarbage'); const heap = await cdp.send('Runtime.getHeapUsage');
       await page.screenshot({ path: `test-screenshots/browser-${literal ? 'literal' : 'semantic'}.png` });
-      results.push({ literal, ...value.result, mainHeapMiB: heap.usedSize / 1048576, browser: browser.version(), errors });
+      const rendererChecks = await page.evaluate(async () => {
+        const r = (window as any).graphRenderer, buffers = r.buffers, positions = r.positions;
+        let messages = 0; const original = Worker.prototype.postMessage;
+        Worker.prototype.postMessage = function (...args: any[]) { messages++; return original.apply(this, args as any); };
+        const before = r.paletteUploads;
+        try { r.canvas.parentElement.style.setProperty('--graph-ng-bg', '#f4f5f8'); r.refreshTheme(); await new Promise(requestAnimationFrame); }
+        finally { Worker.prototype.postMessage = original; }
+        if (messages || r.buffers !== buffers || r.positions !== positions || r.paletteUploads !== before + 1) throw new Error('THEME_REBUILT_GRAPH');
+        r.setCamera(.5, .5, .2); await new Promise(requestAnimationFrame);
+        return { themeWorkerMessages: messages, paletteUploadDelta: r.paletteUploads - before, stableBuffers: r.buffers === buffers, glError: r.gl.getError(), labelGlyphs: r.atlas.levels.map((l: Float32Array) => l.length / 9) };
+      });
+      if (rendererChecks.glError) throw new Error(`GL_ERROR: ${rendererChecks.glError}`);
+      for (const theme of ['light', 'dark']) {
+        const point = await page.evaluate(async theme => {
+          const r = (window as any).graphRenderer, c = r.canvas.parentElement;
+          c.style.setProperty('--graph-ng-bg', theme === 'light' ? '#f4f5f8' : '#141b26');
+          c.style.setProperty('--graph-ng-text', theme === 'light' ? '#18212e' : '#edf4ff');
+          c.style.setProperty('--graph-ng-edge', theme === 'light' ? '#a4b0c2' : '#43566e'); r.refreshTheme(); await new Promise(requestAnimationFrame);
+          for (let i = 0; i < r.visible.length; i++) if (r.visible[i]) { const p = r.screenPoint(i); if (p.x > 50 && p.x < 1230 && p.y > 50 && p.y < 750 && r.pick(p.x, p.y) === i) return { ...p, id: i }; }
+          throw new Error('NO_PICKABLE_NODE');
+        }, theme);
+        await page.mouse.move(point.x, point.y); await page.waitForFunction(id => (window as any).graphRenderer.hovered === id, point.id);
+        await page.screenshot({ path: `test-screenshots/browser-${literal ? 'literal' : 'semantic'}-${theme}-hover.png` });
+        await page.mouse.click(point.x, point.y); await page.waitForFunction(id => (window as any).graphRenderer.selected === id, point.id);
+        await page.screenshot({ path: `test-screenshots/browser-${literal ? 'literal' : 'semantic'}-${theme}-selected.png` });
+      }
+      await page.evaluate(() => { const r = (window as any).graphRenderer, ext = r.gl.getExtension('WEBGL_lose_context'); if (!ext) throw new Error('NO_CONTEXT_LOSS_EXTENSION'); ext.loseContext(); (window as any).restoreGraph = () => ext.restoreContext(); });
+      await page.waitForFunction(() => (window as any).graphRenderer.canvas.dataset.context === 'lost');
+      await page.evaluate(() => (window as any).restoreGraph());
+      await page.waitForFunction(() => (window as any).graphRenderer.canvas.dataset.context === 'restored');
+      await page.screenshot({ path: `test-screenshots/browser-${literal ? 'literal' : 'semantic'}-restored.png` });
+      results.push({ literal, ...value.result, rendererChecks: { ...rendererChecks, contextRestored: true }, mainHeapMiB: heap.usedSize / 1048576, browser: browser.version(), errors });
       console.log(JSON.stringify(results.at(-1)));
     } finally { await browser.close(); }
   }

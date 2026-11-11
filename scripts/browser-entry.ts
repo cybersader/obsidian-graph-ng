@@ -47,10 +47,11 @@ async function main() {
   const cacheWriteEnd = performance.now(); await frame();
   group?.dispose(); container.replaceChildren();
   let renderer = await DetailRenderer.create(container, detail.projection, answer.positions, detail.visible, settings, () => {}, () => {}, detail.colors);
-  renderer.sigma.refresh(); await frame(); const firstViewMs = performance.now() - start, detailEnd = performance.now();
+  renderer.refresh(); await frame(); const firstViewMs = performance.now() - start, detailEnd = performance.now();
   // A new worker exercises binary decoding, cold fact ingestion and live verification,
   // not merely an in-memory position hit. Disk I/O is simulated, and named in the receipt.
-  renderer.dispose(); container.replaceChildren(); pipeline.dispose(); pipeline = new WorkerPipeline(new Worker(url), () => settings.workerTimeoutMs);
+  const coldRendererTimings = { ...renderer.timings }, disposeStart = performance.now();
+  renderer.dispose(); const disposeMs = performance.now() - disposeStart; container.replaceChildren(); pipeline.dispose(); pipeline = new WorkerPipeline(new Worker(url), () => settings.workerTimeoutMs);
   const warmStart = performance.now();
   const hashes = await pipeline.request<{ declarationHash: string }>(2, { kind: 'configure', config });
   const loaded = await store.latest(hashes.declarationHash);
@@ -62,16 +63,17 @@ async function main() {
   const warm = await pipeline.request<LayoutResult>(2, { kind: 'layout' });
   group?.dispose(); container.replaceChildren(); container.dataset.status = 'verified';
   renderer = await DetailRenderer.create(container, detail.projection, warm.positions, detail.visible, settings, () => {}, () => {}, detail.colors);
-  renderer.sigma.refresh(); await frame(); const warmEnd = performance.now(), warmOpenMs = warmEnd - warmStart;
-  const intervals: number[] = [], camera = renderer.sigma.getCamera(), frameStart = performance.now(); let previous = frameStart, i = 0;
+  renderer.refresh(); await frame(); const warmEnd = performance.now(), warmOpenMs = warmEnd - warmStart;
+  const intervals: number[] = [], frameStart = performance.now(); let previous = frameStart, i = 0;
   await new Promise<void>(resolve => {
     function sample(now: number) {
       intervals.push(now - previous); previous = now; i++;
-      camera.setState({ x: .5 + Math.sin(i / 35) * .12, y: .5 + Math.cos(i / 41) * .12, ratio: .9 + Math.sin(i / 49) * .1 }); renderer.sigma.refresh({ partialGraph: {}, skipIndexation: true });
+      renderer.setCamera(.5 + Math.sin(i / 35) * .12, .5 + Math.cos(i / 41) * .12, .9 + Math.sin(i / 49) * .1);
       if (now - frameStart < 3000) requestAnimationFrame(sample); else resolve();
     }
     requestAnimationFrame(sample);
   });
+  (window as any).graphRenderer = renderer;
   await yieldTask(); tasks.push(...observer.takeRecords()); observer.disconnect(); pipeline.dispose(); URL.revokeObjectURL(url);
   const between = (a: number, b: number) => summarize(tasks.filter(t => t.startTime >= a && t.startTime < b).map(t => t.duration));
   const frames = intervals.slice(5).sort((a, b) => a - b), open = between(start, coldReady), warmTasks = between(warmStart, warmEnd);
@@ -79,6 +81,6 @@ async function main() {
     layoutMs: answer.milliseconds, firstGroupMs, coldReadyMs: coldReady - start, firstViewMs, warmGroupMs, warmOpenMs, warmCacheHit: warm.cached,
     longTasks: open.count, p95LongTaskMs: open.p95Ms, openTasks: open, cacheWriteTasks: between(coldReady, cacheWriteEnd), detailTasks: between(cacheWriteEnd, detailEnd), warmTasks,
     samples: frames.length, fps: 1000 / (frames.reduce((a, b) => a + b, 0) / frames.length), p95FrameMs: frames[Math.floor(frames.length * .95)], gpu: gpuStatus(), labels: true,
-    origin: 'after synthetic host metadata JSON decode', warmMethod: 'new worker + binary memory-disk decode + full live verification + first Sigma node frame; not app restart or physical disk' };
+    coldRendererTimings, disposeMs, rendererTimings: renderer.timings, origin: 'after synthetic host metadata JSON decode', warmMethod: 'new worker + binary memory-disk decode + full live verification + first instanced node frame; not app restart or physical disk' };
 }
 main().catch(e => { state.failure = String(e); });
