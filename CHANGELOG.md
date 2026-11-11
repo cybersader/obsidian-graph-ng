@@ -4,6 +4,12 @@ All notable changes are recorded here. The format follows Keep a Changelog; vers
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-11
+
+### Changed
+
+- Literal display (`reifiedAsNodes`): edge notes (relationship notes drawn as nodes) take their color from the displayed colors of their endpoints instead of the neutral `(missing)` group, draw small in their own pass beneath the other notes without glow, and fade with edge-note density. Bridges between different colors blend both endpoints or keep the source color, with a configurable accent. At mid and far zoom they fold into their edges and cannot be picked. New `visuals` keys: `carrierTint`, `carrierBridge`, `carrierBridgeAccent`, `carrierOpacity`, `carrierSize`, `carrierDensityReference`, `carrierLod`, `carrierLodNear`, `carrierLodFar`; missing keys migrate to defaults. The legend explains the treatment; Display adds edge-note opacity, size, tint and fold controls. The projection gains a per-node `carrierNodes` flag (all zero outside literal display).
+
 ## [0.3.0] - 2026-11-11
 
 ### Added

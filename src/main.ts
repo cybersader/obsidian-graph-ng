@@ -172,7 +172,7 @@ export class GraphView extends ItemView {
     this.stage = this.body.createDiv({ cls: 'graph-ng-stage' });
     this.explorePanel = new ExplorePanel(this.body, {
       settings: () => this.plugin.settings, result: () => this.explored, mode: () => this.contentEl.dataset.mode ?? 'groups',
-      policy: () => this.detailRenderer?.policy.reasons ?? [], setView: (view, after) => this.setView(view, after), setColors: colors => this.setColors(colors),
+      policy: () => this.detailRenderer?.policy.reasons ?? [], carriers: () => this.detailRenderer?.carrierCount ?? 0, setView: (view, after) => this.setView(view, after), setColors: colors => this.setColors(colors),
       visualsChanged: labels => { this.plugin.saveSoon(); this.detailRenderer?.refreshVisuals(labels); if (this.contentEl.dataset.mode === 'groups') this.showGroups(true); },
       groupColor: code => this.groupColor(code), focusGroup: code => this.focusGroup(code), fit: () => this.detailRenderer?.fitAll(),
       camera: () => this.detailRenderer ? { ...this.detailRenderer.camera } : null, restoreCamera: camera => this.restoreCamera(camera), persist: () => this.plugin.saveSoon(),

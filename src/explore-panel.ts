@@ -7,6 +7,8 @@ export interface PanelHost {
   result(): ExploreResult | undefined;
   mode(): string;
   policy(): string[];
+  /** Edge notes (reified edges drawn as nodes) in the detail view; 0 otherwise. */
+  carriers(): number;
   setView(view: ExploreView, after?: () => void): void;
   setColors(colors: GraphDeclaration['colors']): Promise<void>;
   visualsChanged(labels: boolean): void;
@@ -158,6 +160,8 @@ export class ExplorePanel {
         fold.onclick = () => this.update({ collapsedGroups: collapsed.has(key) ? this.view.collapsedGroups.filter(k => k !== key) : [...this.view.collapsedGroups, key] }, collapsed.has(key) ? () => this.host.focusGroup(i) : undefined);
       }
     }
+    const notes = nodes ? this.host.carriers() : 0, v = this.host.settings().visuals;
+    if (notes) host.createDiv({ cls: 'graph-ng-explore-note graph-ng-carrier-note', text: `${notes.toLocaleString()} edge notes draw small and beneath${v.carrierTint ? `, in their endpoints' color (bridges: ${v.carrierBridge === 'blend' ? 'blended' : 'source color'}, accented)` : ''}.${v.carrierLod ? ' Zoomed out, they fold into their edges.' : ''}` });
     if (order.length > this.groupLimit) host.createEl('button', { text: `Show ${Math.min(this.host.settings().explore.legendPageSize, order.length - this.groupLimit)} more of ${(order.length - this.groupLimit).toLocaleString()}` }).onclick = () => { this.groupLimit += this.host.settings().explore.legendPageSize; this.render(); };
   }
   /** Group by a bounded transform of an existing value; no note needs a new property. */
@@ -244,6 +248,12 @@ export class ExplorePanel {
     this.flag(host, 'autoPalette', 'Color by group when no rule matches');
     this.flag(host, 'hoverHighlight', 'Highlight neighbors on hover');
     this.flag(host, 'labelFade', 'Fade labels by zoom and importance', true);
+    if (this.host.carriers()) {
+      this.slider(host, 'Edge-note opacity', 0, 1, .05, () => v.carrierOpacity, x => { v.carrierOpacity = x; });
+      this.slider(host, 'Edge-note size', .2, 2, .1, () => v.carrierSize, x => { v.carrierSize = x; });
+      this.flag(host, 'carrierTint', 'Color edge notes by their endpoints');
+      this.flag(host, 'carrierLod', 'Fold edge notes into edges when zoomed out');
+    }
     for (const reason of this.host.policy()) host.createDiv({ cls: 'graph-ng-explore-note', text: `Performance guard: ${reason}.` });
     host.createEl('button', { text: 'Fit graph' }).onclick = () => this.host.fit();
   }

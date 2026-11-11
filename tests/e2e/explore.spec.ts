@@ -68,6 +68,13 @@ describe('Graph NG explore controls and visuals', () => {
     await theme('light'); await shot('light-hover');
     await browser.action('pointer').move({ x: 5, y: 5 }).perform(); await settle(300);
     await browser.executeObsidian(({ app }) => (app.workspace.getLeavesOfType('graph-ng')[0]!.view as any).detailRenderer.fitAll(0)); await settle(500); await shot('light-detail');
+    // Literal display: edge notes fold into edges at home zoom; also judge them drawn (LOD off).
+    evidence.carriers = await browser.executeObsidian(({ app }) => { const r = (app.workspace.getLeavesOfType('graph-ng')[0]!.view as any).detailRenderer; return { count: r.carrierCount, home: r.carrierLevel() }; });
+    if ((evidence.carriers as { count: number }).count) {
+      const lod = (on: boolean) => browser.executeObsidian(({ app }, on) => { const v = app.workspace.getLeavesOfType('graph-ng')[0]!.view as any; v.plugin.settings.visuals.carrierLod = on; v.detailRenderer.refreshVisuals(); }, on);
+      await measured('carrierLod', async () => { await lod(false); await settle(500); }); await shot('light-detail-notes');
+      await theme('dark'); await shot('dark-detail-notes'); await lod(true); await settle(300);
+    }
     await theme('dark');
   });
   it('filters by a declared property through the panel without relayout', async function () {

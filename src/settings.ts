@@ -24,6 +24,21 @@ export interface Visuals {
   halosMaxGroups: number;
   hubsMaxGroups: number;
   softwareEffects: boolean;
+  /** Edge notes (reified edges drawn as nodes): tint from endpoint colours. */
+  carrierTint: boolean;
+  /** Endpoints of different colours: average them, or keep the source endpoint's colour. */
+  carrierBridge: 'blend' | 'source';
+  /** How far a bridging edge note moves toward the theme accent (0 = none). */
+  carrierBridgeAccent: number;
+  carrierOpacity: number;
+  /** Edge-note radius relative to a concept node of the same degree. */
+  carrierSize: number;
+  carrierDensityReference: number;
+  /** Fold edge notes into their edges when zoomed out; fully shown at or below `carrierLodNear`
+   * (camera ratio / home ratio), gone at or above `carrierLodFar`. */
+  carrierLod: boolean;
+  carrierLodNear: number;
+  carrierLodFar: number;
 }
 /** A regex-derived group from an older version, kept visible (not silently dropped)
  * after regex transforms were removed; it no longer affects the graph. */
@@ -33,11 +48,12 @@ export const defaultVisuals = (): Visuals => ({
   degreeSizing: 1.6, edgeOpacity: .4, edgeDensityReference: 3000, edgeColorMix: .65, edgeDirection: false, glow: .3,
   curvedEdges: true, curvature: .12, curveSegments: 8, hoverHighlight: true, dimOpacity: .12, groupHalos: true, haloOpacity: .08,
   autoPalette: true, labelFade: true, cameraAnimationMs: 450, glowMaxNodes: 250000, curvesMaxEdges: 60000, halosMaxGroups: 48, hubsMaxGroups: 256, softwareEffects: false,
+  carrierTint: true, carrierBridge: 'blend', carrierBridgeAccent: .35, carrierOpacity: .7, carrierSize: .6, carrierDensityReference: 8000, carrierLod: true, carrierLodNear: .3, carrierLodFar: .6,
 });
 export const defaultExplore = (): ExploreSettings => ({ panelOpen: true, facetValues: 50, legendPageSize: 40, view: emptyView(), savedViews: [], disabledDerived: [] });
-const flags = ['edgeDirection', 'curvedEdges', 'hoverHighlight', 'groupHalos', 'autoPalette', 'labelFade', 'softwareEffects'] as const;
-const unit = ['edgeOpacity', 'edgeColorMix', 'glow', 'dimOpacity', 'haloOpacity'] as const;
-const counts = ['edgeDensityReference', 'curveSegments', 'glowMaxNodes', 'curvesMaxEdges', 'halosMaxGroups', 'hubsMaxGroups'] as const;
+const flags = ['edgeDirection', 'curvedEdges', 'hoverHighlight', 'groupHalos', 'autoPalette', 'labelFade', 'softwareEffects', 'carrierTint', 'carrierLod'] as const;
+const unit = ['edgeOpacity', 'edgeColorMix', 'glow', 'dimOpacity', 'haloOpacity', 'carrierOpacity', 'carrierBridgeAccent'] as const;
+const counts = ['edgeDensityReference', 'curveSegments', 'glowMaxNodes', 'curvesMaxEdges', 'halosMaxGroups', 'hubsMaxGroups', 'carrierDensityReference'] as const;
 export function validateVisuals(v: unknown): asserts v is Visuals {
   if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('visuals must be an object');
   const o = v as Record<string, unknown>, known = Object.keys(defaultVisuals());
@@ -48,6 +64,9 @@ export function validateVisuals(v: unknown): asserts v is Visuals {
   if (typeof o.degreeSizing !== 'number' || !(o.degreeSizing >= 0 && o.degreeSizing <= 8)) throw new Error('visuals.degreeSizing must be between 0 and 8');
   if (typeof o.curvature !== 'number' || !(o.curvature >= 0 && o.curvature <= .5)) throw new Error('visuals.curvature must be between 0 and 0.5');
   if ((o.curveSegments as number) < 2 || (o.curveSegments as number) > 32) throw new Error('visuals.curveSegments must be 2–32');
+  if (o.carrierBridge !== 'blend' && o.carrierBridge !== 'source') throw new Error('visuals.carrierBridge must be blend or source');
+  const { carrierSize: z, carrierLodNear: a, carrierLodFar: b } = o as Record<string, number>;
+  if (![z, a, b].every(x => typeof x === 'number') || !(z! > 0 && z! <= 4 && a! > 0 && a! < b! && b! <= 8)) throw new Error('visuals: need 0 < carrierSize ≤ 4 and 0 < carrierLodNear < carrierLodFar ≤ 8');
   if (typeof o.cameraAnimationMs !== 'number' || !(o.cameraAnimationMs >= 0 && o.cameraAnimationMs <= 5000)) throw new Error('visuals.cameraAnimationMs must be 0–5000');
 }
 export function validateExplore(v: unknown): asserts v is ExploreSettings {

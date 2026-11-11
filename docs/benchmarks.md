@@ -422,6 +422,40 @@ Main JS heap stays under 12 MiB in both modes (slice 5: 10.97/10.94 MiB, so +0.0
 - **Bundle ceiling exceeded.** `bun run gates`: secrets, attribution, privacy, supply-chain and licenses pass. bundle-size **fails** at **169,376 minified / 53,368 gzip** bytes against the enforced 150,000 / 45,000 (first slice-6 build: 170,539 / 52,954; after the trim: 166,118 / 52,418; review fixes for view generations, save validation and the disabled-derive notice add about 3 KB; 0.2.1: 115,970 / 35,830). The trim shortens 89 main-bundle-only private member names (`scripts/mangle-props.mjs`; a gate test proves none appears in DOM/ES/Obsidian typings, worker sources, e2e/scripts or string literals) and emits UTF-8 instead of `\u` escapes. The main bundle without the embedded worker is already 136,585 / 41,613, and the worker adds about 34 KB minified / 11.3 KB gzip. So 45,000 gzip cannot be reached without removing slice-6 features. Embedding the worker deflate-compressed would bring the minified size to about 147 KB, but gzip size would not change and the shipped code would be harder to review. Both options need an owner decision. The gate limits are unchanged.
 - Native FPS is from one sampling window; software FPS is not measured. Mobile, iGPU and N-2 hosts are not tested.
 
+## Slice 7: literal edge-note visuals
+
+Version 0.3.1 addresses the slice-6 visual miss for literal display: edge notes (reified relationship notes drawn as nodes) take the displayed colour of their endpoints, draw small in their own pass beneath the other notes without glow, thin with edge-note density, and fold into their edges at mid and far zoom (default: fully shown at camera/home ratio ≤ 0.3, gone at ≥ 0.6, not pickable below 25 % visibility). Same host class and fixtures as slice 6. Single repetitions unless stated.
+
+### Exact commands
+
+All Bun runs use `flock --exclusive --wait 2400 /tmp/openclast-local-verification.lock build-contained --`, each e2e lane under `timeout 900`.
+
+- `bun run build`; `bun run test` (ten explicit files, **129 pass**).
+- `bun run fixture --small`, then `GRAPH_MEASURE_NATIVE=1 bun run e2e`, `GRAPH_SOFTWARE=1 bun run e2e`, `GRAPH_EXPLORE=1 bun run e2e`, `GRAPH_EXPLORE=1 GRAPH_SOFTWARE=1 bun run e2e`.
+- `bun run fixture --literal`, then `GRAPH_LARGE=1 GRAPH_LITERAL=1 GRAPH_MEASURE_NATIVE=1 GRAPH_CPU=1 bun run e2e` (4 runs), the same with `GRAPH_SOFTWARE=1` instead of `GRAPH_MEASURE_NATIVE=1`, and `GRAPH_EXPLORE=1 GRAPH_LARGE=1 GRAPH_LITERAL=1 bun run e2e`.
+- `bun scripts/generate.ts --literal --clustered`, then `GRAPH_FIXTURE=clustered GRAPH_LARGE=1 GRAPH_EXPLORE=1 GRAPH_LITERAL=1 bun run e2e` (2 runs; the second on the final source). The explore lane now also captures `*-detail-notes` screenshots with the fold turned off, so the derived colours are judged directly.
+- `CHROME_BIN=<cached Chrome 151> bun run bench:browser`, three sequential runs; `bun run gates`.
+
+### Results
+
+| Lane | Result | First groups | ≥50 ms graph tasks |
+| --- | --- | --- | --- |
+| small hardware / software | graph 11/11, explore 6/6 each | 17.7 ms (hw rerun) | none in explore interactions; one 51 ms open task in the first small-hardware run, none on rerun (unattributed) |
+| large literal hardware (4 runs) | 7/7 in 3 runs; 1 run failed on the Groups screen (`graph-ng-edge` button not interactable), passed on rerun | 297.4 / 313.4 / 303.1 / 345.7 ms | one 64 ms detail-open task in run 1 (CPU profile: 39.5 ms inside `getContext('webgl2')`, about 24 ms graph JS in renderer construction); none in runs 2–4 |
+| large literal software | 7/7 | — | none |
+| large literal explore hardware | 6/6 | — | none (detail, hover, fold toggle, filter, collapse, regroup) |
+| clustered literal explore hardware | 6/6 (×2) | — | none |
+
+Native large hardware detail sampled **58.2–58.3 fps, p95 17.6–17.9 ms**. Browser bench, three runs: semantic first groups 205.1–233.2 ms, warm open 425.4–623.8 ms, heap 11.07 MiB, backing 2.39 MiB; literal first groups 253.4–257.2 ms, warm open 598.8–612.2 ms, heap 11.09 MiB, backing 6.42 MiB; 60.0 fps / p95 16.7–16.8 ms; no ≥50 ms tasks; second-view checks pass in all six.
+
+Visual judgement (screenshots read): **clustered literal (60,600 / 89,200), dark and light, at home zoom**: the six family hues and the section lobes are clearly visible; the neutral grey mass is gone. With the fold turned off, the edge notes tint their lobes in the same hues instead of covering them. Zoomed in (`*-hover`), edge notes appear as small tinted dots around the concepts. Bridge threads between lobes remain faint at home zoom.
+
+### Bundle and misses
+
+- Bundle: **173,052 minified / 54,678 gzip** (slice 6: 169,376 / 53,368; delta **+3,676 / +1,310**). `visibleCarriers` joins the mangled private names. The bundle gate still fails against 150,000 / 45,000, pending the owner's ceiling decision; secrets, attribution, privacy, supply-chain and licenses pass.
+- The 64 ms detail task and the Groups-screen interactability failure are each single occurrences in four runs; neither is reproduced or proven unrelated.
+- "Same" means the same displayed colour, so a rule colour and a group colour that happen to match count as one. Edge notes chained only to other edge notes keep their own colour. Software FPS, iGPU, mobile and N-2 hosts are not measured.
+
 ## Retention and honest reporting
 
 Keep raw benchmark receipts by source commit and hardware class in `.workspace/evidence/` until their summary is accepted; do not silently overwrite acceptance evidence with another fixture. Screenshots stay in ignored `test-screenshots/`, synthetic only, with visual review before sharing. Downloads/caches and reproducible synthetic outputs may be age-pruned only within their owned paths after evidence capture; there is no automatic broad cleanup. Keep per-version release checksums indefinitely with the release record. Define any future retention knob explicitly rather than deleting evidence opportunistically.

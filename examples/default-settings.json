@@ -128,7 +128,16 @@
     "curvesMaxEdges": 60000,
     "halosMaxGroups": 48,
     "hubsMaxGroups": 256,
-    "softwareEffects": false
+    "softwareEffects": false,
+    "carrierTint": true,
+    "carrierBridge": "blend",
+    "carrierBridgeAccent": 0.35,
+    "carrierOpacity": 0.7,
+    "carrierSize": 0.6,
+    "carrierDensityReference": 8000,
+    "carrierLod": true,
+    "carrierLodNear": 0.3,
+    "carrierLodFar": 0.6
   },
   "explore": {
     "panelOpen": true,

@@ -6,7 +6,7 @@ import { generationKey } from '../src/core/generation';
 import { DEFAULT_LAYOUT } from '../src/core/layout-options';
 import { canonicalExplore, decodeText, defaults, encodeText, loadSettings, persistedSettings, settingsForSave, upgradeSettings, validateSettings, validateVisuals } from '../src/settings';
 import { compatibilityIssues, credentialShapedField } from './support/settings-compatibility';
-import { categorical, contrast, degreeSizes, densityScale, edgeAlpha, effectPolicy, ensureContrast, groupHalos, labelFade, neutralizeGroups, nodeColors, parseHex } from '../src/render-effects';
+import { CARRIER_SAME_ALPHA, carrierAlpha, carrierColors, carrierVisibility, categorical, contrast, degreeSizes, densityScale, edgeAlpha, effectPolicy, ensureContrast, groupHalos, labelFade, neutralizeGroups, nodeColors, parseHex } from '../src/render-effects';
 import { LABEL_RATIOS } from '../src/render-data';
 import { minifyGlsl } from '../scripts/glsl.mjs';
 
@@ -280,4 +280,52 @@ test('removing migrated regex groups keeps groupLevel on the same declared group
   const reset = load(3);
   expect(reset.groupLevel).toBe(0);
   expect(reset.explore.disabledDerived.map(d => d.location)).toEqual(['declared group 2', 'declared group 4 (was the selected group level; reset to the first group)']);
+});
+
+test('edge notes are flagged per node only in literal display', () => {
+  const d: GraphDeclaration = { ...defaultDeclaration('t@1'), identity: [{ key: 'id' }], edges: [{ name: 'm', kind: 'reified', sourceProperty: 's', targetProperty: 'o' }] };
+  const facts: FactRow[] = [{ path: 'a.md', properties: { id: 'a' } }, { path: 'b.md', properties: { id: 'b' } }, { path: 'm.md', properties: { id: 'm', s: 'a', o: 'b' } }];
+  expect([...buildProjection(facts, d).carrierNodes]).toEqual([0, 0]);
+  const literal = buildProjection(facts, { ...d, display: { reifiedAsNodes: true } });
+  expect(literal.paths).toEqual(['a.md', 'b.md', 'm.md']); expect([...literal.carrierNodes]).toEqual([0, 0, 1]);
+});
+test('edge-note colour derives from endpoint colours: same colour, blend or source bridge with accent', () => {
+  // Nodes 0,1 red; 2 blue; 3 grey (no endpoint); carriers 4 (0->1 same), 5 (0->2 bridge), 6 (isolated), 7 (2->0 bridge).
+  const rgb = [[200, 0, 0], [200, 0, 0], [0, 0, 200], [9, 9, 9], [1, 1, 1], [1, 1, 1], [7, 7, 7], [1, 1, 1]];
+  const make = () => Uint8Array.from(rgb.flatMap(c => [...c, 255]));
+  const carriers = Uint8Array.from([0, 0, 0, 0, 1, 1, 1, 1]);
+  const source = Uint32Array.from([0, 4, 0, 5, 2, 7]), target = Uint32Array.from([4, 1, 5, 2, 7, 0]);
+  const at = (c: Uint8Array, i: number) => [...c.subarray(i * 4, i * 4 + 4)];
+  let c = make();
+  expect(carrierColors(carriers, source, target, c, 'blend', [255, 255, 255], 0)).toBe(2);
+  expect(at(c, 4)).toEqual([200, 0, 0, CARRIER_SAME_ALPHA]);
+  expect(at(c, 5)).toEqual([100, 0, 100, 255]); expect(at(c, 7)).toEqual([100, 0, 100, 255]);
+  expect(at(c, 6)).toEqual([7, 7, 7, CARRIER_SAME_ALPHA]);
+  expect(at(c, 0)).toEqual([200, 0, 0, 255]);
+  c = make(); carrierColors(carriers, source, target, c, 'source', [255, 255, 255], 0);
+  expect(at(c, 5)).toEqual([200, 0, 0, 255]); expect(at(c, 7)).toEqual([0, 0, 200, 255]);
+  c = make(); carrierColors(carriers, source, target, c, 'source', [0, 255, 0], .5);
+  expect(at(c, 5)).toEqual([100, 128, 0, 255]); expect(at(c, 4)).toEqual([200, 0, 0, CARRIER_SAME_ALPHA]);
+  // Edge notes chained to edge notes take no colour from each other; no carriers is a no-op.
+  c = make(); expect(carrierColors(new Uint8Array(8), source, target, c, 'blend', [0, 0, 0], 1)).toBe(0); expect(c).toEqual(make());
+});
+test('edge-note level of detail: shown zoomed in, folded zoomed out, smooth between, off when disabled', () => {
+  expect(carrierVisibility(.1, .3, .6, true)).toBe(1); expect(carrierVisibility(.3, .3, .6, true)).toBe(1);
+  expect(carrierVisibility(.6, .3, .6, true)).toBe(0); expect(carrierVisibility(1, .3, .6, true)).toBe(0);
+  const mid = carrierVisibility(Math.sqrt(.18), .3, .6, true); expect(mid).toBeCloseTo(.5, 6);
+  let last = 1; for (let z = .3; z <= .6; z += .01) { const v = carrierVisibility(z, .3, .6, true); expect(v).toBeLessThanOrEqual(last + 1e-12); last = v; }
+  for (const z of [1e-9, .45, 1, 8]) expect(carrierVisibility(z, .3, .6, false)).toBe(1);
+  const v = defaults('t@1').visuals;
+  expect(carrierAlpha(v, 44600, 1)).toBe(0); expect(carrierAlpha({ ...v, carrierLod: false }, 44600, 1)).toBeGreaterThan(0);
+  expect(carrierAlpha(v, 44600, .1)).toBeGreaterThan(carrierAlpha(v, 44600, .25));
+  expect(carrierAlpha({ ...v, carrierLod: false }, 100, 1)).toBeCloseTo(v.carrierOpacity, 6);
+  expect(carrierAlpha({ ...v, carrierLod: false }, 1e6, 1)).toBeLessThan(carrierAlpha({ ...v, carrierLod: false }, 1e4, 1));
+  for (const n of [0, 1, 1e7]) for (const z of [1e-6, .2, .5, 8]) { const a = carrierAlpha({ ...v, carrierLod: false }, n, z); expect(a).toBeGreaterThanOrEqual(.1); expect(a).toBeLessThanOrEqual(1); }
+});
+test('edge-note visual settings validate', () => {
+  const v = defaults('t@1').visuals; expect(() => validateVisuals(v)).not.toThrow();
+  for (const bad of [{ carrierBridge: 'mix' }, { carrierSize: 0 }, { carrierSize: 5 }, { carrierLodNear: .6, carrierLodFar: .6 }, { carrierLodNear: 0 }, { carrierLodFar: 9 }, { carrierSize: '2' }, { carrierLodNear: '.3' }, { carrierOpacity: 1.5 }, { carrierLod: 1 }, { carrierDensityReference: -1 }])
+    expect(() => validateVisuals({ ...v, ...bad })).toThrow();
+  const old = structuredClone(defaults('t@1')) as any; for (const k of Object.keys(old.visuals)) if (k.startsWith('carrier')) delete old.visuals[k];
+  expect(upgradeSettings(old, 't@1').visuals).toEqual(v);
 });

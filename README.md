@@ -2,7 +2,7 @@
 
 A standalone, local-first Obsidian graph plugin. Start with a readable graph of declared groups, inspect counted relationships and their carrier notes, then drill into individual notes when hardware WebGL is available. No ontology, framework name, relation vocabulary, or ID format is built into the core.
 
-**Version 0.3.0 / test-backed alpha.** This is not production, mobile, integrated-GPU, or remote-authorization acceptance. No server, remote repository, hosted service, or telemetry is configured. All fixtures and captured evidence are synthetic.
+**Version 0.3.1 / test-backed alpha.** This is not production, mobile, integrated-GPU, or remote-authorization acceptance. No server, remote repository, hosted service, or telemetry is configured. All fixtures and captured evidence are synthetic.
 
 ## Use
 
@@ -21,6 +21,7 @@ An **Explore** panel sits beside the graph (it overlays narrow panes and collaps
 - **Legend.** Per-group visibility, member counts, click to frame a group and, in the detail graph, collapse/expand a group into a single hub. Color rules are editable in place (color, order, add, delete, hide); notes matching no rule take a calm categorical group color. Color edits re-evaluate in the worker on existing columns.
 - **Relationships.** Per-type visibility with visible/total counts and an optional source→target direction fade.
 - **Display.** Degree sizing, node size, label density, edge opacity, edge color blend, glow, curvature, curved edges, mid-zoom group tint, hover neighborhood highlight and zoom-faded labels.
+- **Edge notes.** With `display.reifiedAsNodes`, relationship notes are drawn as nodes. They usually match no group, so they used to render as one neutral mass over the group colors. They now draw small, beneath the other notes, in the displayed color of their endpoints: one shared color gives that color at reduced alpha; endpoints of different colors (a bridge) blend both (`carrierBridge: "blend"`) or keep the source color (`"source"`), moved `carrierBridgeAccent` toward the theme accent. Opacity thins with edge-note density and rises when zoomed in. Zoomed out (camera ratio over home ratio above `carrierLodNear`, gone at `carrierLodFar`), they fold into their edges and are not pickable. All `carrier*` knobs live in `visuals`; the legend explains the treatment and Display offers opacity, size, tint and fold controls.
 - **Saved views.** Named filter + query + group source + hidden/collapsed state + normalized camera presets, kept in settings (`explore.savedViews`). `data.json` remains settings-only and settings-sharing safe.
 
 Dark themes draw edges with additive, density-scaled blending (per-edge ceiling 0.5, so dense cores glow instead of saturating to white); light themes use ordinary alpha blending. Camera moves ease over `visuals.cameraAnimationMs` and respect reduced motion. Cost guards are configurable in `visuals` (`glowMaxNodes`, `curvesMaxEdges`, `halosMaxGroups`, `hubsMaxGroups`); the software renderer turns glow, curves and halos off unless `softwareEffects` is set. Active guards are listed under **Display**.
@@ -170,6 +171,8 @@ Bun, Node.js, `flock`, and the host’s `build-contained` wrapper are prerequisi
 Installations explicitly disable lifecycle scripts. Configure local private terms before full gates; the fast hook is opt-in. See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), [AGENTS.md](AGENTS.md), [changelog](CHANGELOG.md), [declaration v2](docs/declaration-format.md), [projection v0 draft](docs/projection-format.md), [benchmark methodology](docs/benchmarks.md), [decisions](docs/decisions/README.md), [local releasing](docs/releasing.md), and the [pre-publish checklist](docs/publish-checklist.md). This remains a local repository; no release URL or public install path is configured.
 
 ## Current renderer evidence
+
+Version 0.3.1 colors literal-display edge notes by their endpoints, draws them beneath the other notes and folds them into their edges when zoomed out, so the clustered 60,600-node literal web shows its group colors instead of a grey mass. Native small and large lanes and the browser bench (3/3, both modes, 60.0 fps) pass; one 64 ms detail task and one Groups-screen flake occurred once in four large runs. See [slice-7 evidence](docs/benchmarks.md#slice-7-literal-edge-note-visuals).
 
 Version 0.3.0 adds the Explore panel and visual effects. Native lanes pass: small graph 11/11 and explore 6/6 on hardware and software; the large literal web of 60,600 nodes passes graph 7/7 and explore 6/6 on hardware. Large first groups take **307.9/354.2 ms** (hardware/software). No ≥50 ms task was recorded around detail open, hover, filter, collapse or regroup in the final runs, and the browser main heap is **11.06/11.03 MiB**. The browser benchmark completes in both modes (3/3 sequential runs, 60.0 fps). An earlier hang was caused by the Bun runtime's Playwright pipe connection failing on a second browser launch in one process, not by graph-ng. The bench now runs each mode in its own process. See [slice-6 evidence and misses](docs/benchmarks.md#slice-6-explore-controls-and-visual-effects).
 

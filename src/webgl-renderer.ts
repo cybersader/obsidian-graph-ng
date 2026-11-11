@@ -3,7 +3,7 @@ import type { Settings } from './settings';
 import { PickGrid, positionTexture, incidentEdges, segmentDistance, labelLOD, canvasDetailEdges, resizeDrawingBuffer, LABEL_RATIOS } from './render-data';
 import { readTheme, type GraphTheme } from './render-theme';
 import { buildLabels, type LabelAtlas } from './render-labels';
-import { categorical, degreeSizes, densityScale, edgeAlpha, effectPolicy, neutralizeGroups, easeInOut, groupHalos, isDark, labelFade, nodeColors, type EffectPolicy, type Halo, type RGB } from './render-effects';
+import { carrierAlpha, carrierColors, carrierVisibility, categorical, degreeSizes, densityScale, edgeAlpha, effectPolicy, neutralizeGroups, easeInOut, groupHalos, isDark, labelFade, nodeColors, type EffectPolicy, type Halo, type RGB } from './render-effects';
 import { yieldTask } from './core/scheduler';
 
 /** Identity tag; the production build strips GLSL whitespace/comments at load time. */
@@ -29,6 +29,9 @@ uniform float focus;
 uniform int focusNode;
 uniform float dim;
 uniform float additive;
+uniform float carrierAlpha;
+uniform float carrierSize;
+uniform int layer;
 ivec2 cell(int id) { return ivec2(id % positionWidth, id / positionWidth); }
 vec2 point(int id) { return (texelFetch(positions, cell(id), 0).xy - center) * scale; }
 vec4 color(int id) { return texelFetch(palette, ivec2(id % 256, id / 256), 0); }
@@ -46,13 +49,15 @@ out vec4 tint;
 out float spread;
 void main() {
  int id = gl_InstanceID; vec4 st = state(id);
- bool hot = id == hovered || id == selected;
- float radius = nodeSize * size + (hot ? 2. : 0.);
+ bool hot = id == hovered || id == selected, note = st.a > .5;
+ // Edge notes (state alpha) draw in their own pass beneath the other nodes.
+ float k = note && !hot ? carrierAlpha : 1.;
+ float radius = nodeSize * size * (note ? carrierSize : 1.) + (hot ? 2. : 0.);
  spread = glow > 0. ? 2.3 : 1.;
  local = corners[gl_VertexID] * spread;
- gl_Position = st.r < .5 || st.b > .5 ? offscreen : clip(point(id) + local * radius);
+ gl_Position = st.r < .5 || st.b > .5 || note != (layer == 0) || k < .004 ? offscreen : clip(point(id) + local * radius);
  vec4 c = hot ? color(4) : nodeColor(id);
- tint = vec4(c.rgb, c.a * (focus > 0. && st.g < .5 && !hot ? mix(1., dim, focus) : 1.));
+ tint = vec4(c.rgb, c.a * k * (focus > 0. && st.g < .5 && !hot ? mix(1., dim, focus) : 1.));
 }`;
 const nodeFragment = glsl`#version 300 es
 precision highp float;
@@ -136,7 +141,7 @@ void main() {
  float core = 1. - smoothstep(.92, 1., d), ring = smoothstep(.74, .8, d);
  float a = core * tint.a * mix(.62, 1., ring); outputColor = vec4(tint.rgb * mix(.7, 1.08, ring) * a, a);
 }`;
-const UNIFORMS = ['positions', 'palette', 'nodeColors', 'nodeState', 'positionWidth', 'center', 'viewport', 'scale', 'nodeSize', 'hovered', 'selected', 'focus', 'focusNode', 'dim', 'additive', 'glow', 'edgeSize', 'edgeHovered', 'segments', 'curvature', 'edgeAlpha', 'direction', 'colorMix', 'labelAlpha', 'labelCut', 'atlas', 'outline', 'texel', 'discAlpha', 'hub'];
+const UNIFORMS = ['positions', 'palette', 'nodeColors', 'nodeState', 'positionWidth', 'center', 'viewport', 'scale', 'nodeSize', 'hovered', 'selected', 'focus', 'focusNode', 'dim', 'additive', 'glow', 'edgeSize', 'edgeHovered', 'segments', 'curvature', 'edgeAlpha', 'direction', 'colorMix', 'labelAlpha', 'labelCut', 'atlas', 'outline', 'texel', 'discAlpha', 'hub', 'carrierAlpha', 'carrierSize', 'layer'];
 interface Program { handle: WebGLProgram; uniforms: Record<string, WebGLUniformLocation | null> }
 interface Camera { x: number; y: number; ratio: number }
 /** Runtime view masks from the worker's explore result; colors stay worker-computed. */
@@ -207,6 +212,9 @@ export class DetailRenderer {
   private edgeOn: Uint8Array;
   private visibleEdges = 0;
   private visibleNodes = 0;
+  /** Edge notes (reified edges drawn as nodes): total and render-visible. */
+  readonly carrierCount: number;
+  private visibleCarriers = 0;
   private near: number[] = [];
   private focusNode = -1;
   private focusLevel = 0;
@@ -234,6 +242,7 @@ export class DetailRenderer {
     let started = performance.now();
     this.grid = new PickGrid(positions, visible); this.edges = incidentEdges(projection);
     this.filterVisible = visible; this.visible = visible; this.picker = this.grid; this.display = positions; this.colors = colors;
+    this.carrierCount = projection.carrierNodes.reduce((n, v) => n + v, 0);
     this.sizes = degreeSizes(projection.offsets, settings.visuals.degreeSizing); this.edgeOn = new Uint8Array(projection.source.length).fill(1);
     this.timings.grid = performance.now() - started; started = performance.now();
     this.theme = readTheme(container, settings);
@@ -280,8 +289,8 @@ export class DetailRenderer {
     this.display = display; this.visible = render;
     const hiddenTypes = view.typeHidden; this.visibleEdges = 0;
     for (let e = 0; e < p.source.length; e++) { const on = hiddenTypes?.[p.type[e]!] ? 0 : 1; this.edgeOn[e] = on; if (on && filterVisible[p.source[e]!] && filterVisible[p.target[e]!]) this.visibleEdges++; }
-    this.visibleNodes = 0;
-    for (let i = 0; i < n; i++) { const o = i * 4; this.stateBytes[o] = filterVisible[i] ? 255 : 0; this.stateBytes[o + 2] = filterVisible[i] && !render[i] ? 255 : 0; if (render[i]) this.visibleNodes++; }
+    this.visibleNodes = this.visibleCarriers = 0; const notes = p.carrierNodes;
+    for (let i = 0; i < n; i++) { const o = i * 4; this.stateBytes[o] = filterVisible[i] ? 255 : 0; this.stateBytes[o + 2] = filterVisible[i] && !render[i] ? 255 : 0; this.stateBytes[o + 3] = notes[i] ? 255 : 0; if (render[i]) { this.visibleNodes++; if (notes[i]) this.visibleCarriers++; } }
     // Halos only for spatially coherent groups; a group spread across the web would be fog.
     const coherent = Math.max(this.grid.width, this.grid.height) * .22;
     this.halos = all.filter(h => !collapsed?.[h.group] && h.radius < coherent);
@@ -304,6 +313,7 @@ export class DetailRenderer {
     const p = this.theme.palette, bg: RGB = [p[8]!, p[9]!, p[10]!], v = this.settings.visuals;
     this.groupPalette = v.autoPalette && this.view.groupCodes && this.groupCount ? neutralizeGroups(categorical(Math.min(this.groupCount, 4096), bg), this.view.groupLabels, p) : undefined;
     nodeColors(this.colors, this.settings.declaration.colors.length, p, this.view.groupCodes, this.groupPalette, this.colorBytes);
+    if (v.carrierTint && this.carrierCount) carrierColors(this.projection.carrierNodes, this.projection.source, this.projection.target, this.colorBytes, v.carrierBridge, p.subarray(16, 19), v.carrierBridgeAccent);
     this.packDiscs();
   }
   /** Group tint for legends and hubs: the same bytes the node texture uses. */
@@ -495,7 +505,10 @@ export class DetailRenderer {
   path(id: number) { return renderPath(this.projection, id); }
   screenPoint(id: number) { return { x: (this.display[id * 2]! - this.centerX) * this.scale + this.width / 2, y: (this.display[id * 2 + 1]! - this.centerY) * this.scale + this.height / 2 }; }
   private worldPoint(x: number, y: number) { return { x: (x - this.width / 2) / this.scale + this.centerX, y: (y - this.height / 2) / this.scale + this.centerY }; }
-  pick(x: number, y: number) { const w = this.worldPoint(x, y); return this.picker.pick(w.x, w.y, (this.settings.nodeSize * (1 + this.settings.visuals.degreeSizing) + 4) / this.scale); }
+  /** Edge-note level of detail at this zoom: LOD visibility and the drawn alpha. */
+  carrierLevel(zoom = this.camera.ratio / this.homeRatio) { const v = this.settings.visuals; return { visibility: carrierVisibility(zoom, v.carrierLodNear, v.carrierLodFar, v.carrierLod), alpha: carrierAlpha(v, this.visibleCarriers, zoom) }; }
+  /** Edge notes folded away by the level of detail are not pickable. */
+  pick(x: number, y: number) { const w = this.worldPoint(x, y); return this.picker.pick(w.x, w.y, (this.settings.nodeSize * (1 + this.settings.visuals.degreeSizing) + 4) / this.scale, this.carrierCount && this.carrierLevel().visibility < .25 ? this.projection.carrierNodes : undefined); }
   pickHub(x: number, y: number) {
     for (let i = this.hubs.length - 1; i >= 0; i--) { const h = this.hubs[i]!, sx = (h.x - this.centerX) * this.scale + this.width / 2, sy = (h.y - this.centerY) * this.scale + this.height / 2; if (Math.hypot(sx - x, sy - y) <= h.radius + 3) return h.group; }
     return -1;
@@ -559,20 +572,24 @@ export class DetailRenderer {
     if (!gl) { this.drawCanvas(); this.placeOverlay(); if (more) this.refresh(); return; }
     gl.viewport(0, 0, this.canvas.width, this.canvas.height); gl.clearColor(p[8]! / 255, p[9]! / 255, p[10]! / 255, 1); gl.clear(gl.COLOR_BUFFER_BIT);
     const lod = labelLOD(this.camera.ratio), v = this.settings.visuals, policy = this.policy, fade = labelFade(this.settings.nodeSize, this.settings.labelRenderedSizeThreshold, this.camera.ratio, LABEL_RATIOS, v.labelFade);
-    const nodeSize = this.settings.nodeSize * densityScale(this.width, this.height, this.visibleNodes, this.camera.ratio / this.homeRatio, this.settings.nodeSize);
+    const zoom = this.camera.ratio / this.homeRatio, notes = this.carrierLevel(zoom);
+    const nodeSize = this.settings.nodeSize * densityScale(this.width, this.height, this.visibleNodes - this.visibleCarriers * (1 - notes.visibility), zoom, this.settings.nodeSize);
     const focus = v.hoverHighlight ? this.focusLevel : 0, haloAlpha = v.haloOpacity * Math.min(1, Math.max(0, (this.camera.ratio - .06) / .25));
-    // Halos (under), edges, nodes, collapsed hubs, labels.
-    const passes: [number, number, number][] = [];
+    // Halos (under), edges, edge notes, other nodes, collapsed hubs, labels.
+    const passes: [number, number, number, number?][] = [];
     if (policy.halos && haloAlpha > .002 && this.discData[0]!.length) passes.push([3, 2, 0]);
-    passes.push([0, 0, 0], [1, 1, 0]);
+    passes.push([0, 0, 0]);
+    if (this.visibleCarriers) passes.push([1, 1, 0, 0]);
+    passes.push([1, 1, 0, 1]);
     if (this.discData[1]!.length) passes.push([3, 3, 1]);
     if (this.atlas && fade.alpha > .004) passes.push([2, -1, 0]);
-    for (const [i, vaoIndex, hub] of passes) {
+    for (const [i, vaoIndex, hub, layer = 1] of passes) {
       const program = this.programs[i]!, u = program.uniforms;
       gl.useProgram(program.handle); gl.uniform1i(u.positions!, 0); gl.uniform1i(u.palette!, 1); gl.uniform1i(u.atlas!, 2); gl.uniform1i(u.nodeColors!, 3); gl.uniform1i(u.nodeState!, 4); gl.uniform1i(u.positionWidth!, this.positionWidth);
       gl.uniform2f(u.center!, this.centerX, this.centerY); gl.uniform2f(u.viewport!, this.width, this.height); gl.uniform1f(u.scale!, this.scale); gl.uniform1f(u.nodeSize!, nodeSize); gl.uniform1f(u.edgeSize!, this.settings.edgeSize); gl.uniform1i(u.hovered!, this.hovered); gl.uniform1i(u.selected!, this.selected); gl.uniform1i(u.edgeHovered!, this.hoveredEdge);
-      gl.uniform1f(u.focus!, focus); gl.uniform1i(u.focusNode!, this.focusNode); gl.uniform1f(u.dim!, v.dimOpacity); gl.uniform1f(u.additive!, policy.additive ? 1 : 0); gl.uniform1f(u.glow!, policy.glow);
-      gl.uniform1i(u.segments!, policy.segments); gl.uniform1f(u.curvature!, policy.curves ? v.curvature : 0); gl.uniform1f(u.edgeAlpha!, edgeAlpha(v, this.visibleEdges, this.camera.ratio / this.homeRatio, policy.additive)); gl.uniform1f(u.direction!, v.edgeDirection ? 1 : 0); gl.uniform1f(u.colorMix!, v.edgeColorMix);
+      gl.uniform1f(u.focus!, focus); gl.uniform1i(u.focusNode!, this.focusNode); gl.uniform1f(u.dim!, v.dimOpacity); gl.uniform1f(u.additive!, policy.additive ? 1 : 0); gl.uniform1f(u.glow!, layer ? policy.glow : 0);
+      gl.uniform1f(u.carrierAlpha!, notes.alpha); gl.uniform1f(u.carrierSize!, v.carrierSize); gl.uniform1i(u.layer!, layer);
+      gl.uniform1i(u.segments!, policy.segments); gl.uniform1f(u.curvature!, policy.curves ? v.curvature : 0); gl.uniform1f(u.edgeAlpha!, edgeAlpha(v, this.visibleEdges, zoom, policy.additive)); gl.uniform1f(u.direction!, v.edgeDirection ? 1 : 0); gl.uniform1f(u.colorMix!, v.edgeColorMix);
       gl.uniform1f(u.labelAlpha!, fade.alpha); gl.uniform1f(u.labelCut!, fade.cut); gl.uniform3f(u.outline!, p[8]! / 255, p[9]! / 255, p[10]! / 255); gl.uniform2f(u.texel!, 1 / 2048, 1 / 2048); gl.uniform1f(u.discAlpha!, hub ? 1 : haloAlpha); gl.uniform1f(u.hub!, hub);
       gl.bindVertexArray(vaoIndex < 0 ? this.labelVaos[lod]! : this.vaos[vaoIndex]!);
       if (i === 0) gl.drawArraysInstanced(gl.TRIANGLES, 0, 6 * policy.segments, this.projection.source.length);
@@ -603,10 +620,13 @@ export class DetailRenderer {
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0); ctx.fillStyle = this.theme.background; ctx.fillRect(0, 0, this.width, this.height); ctx.strokeStyle = this.theme.edge; ctx.lineWidth = s.edgeSize;
     ctx.globalAlpha = dim; ctx.beginPath();
     for (const e of this.canvasEdges) { const a = this.projection.source[e]!, b = this.projection.target[e]!; if (!this.edgeOn[e] || !this.filterVisible[a] || !this.filterVisible[b]) continue; ctx.moveTo(x(a), y(a)); ctx.lineTo(x(b), y(b)); } ctx.stroke();
-    for (let n = 0; n < this.visible.length; n++) if (this.visible[n]) {
-      const hot = n === this.selected || n === this.hovered, k = n * 4, p = this.theme.palette;
-      ctx.globalAlpha = hot || this.stateBytes[k + 1] || !focus ? 1 : dim;
-      ctx.fillStyle = hot ? `rgb(${p[16]},${p[17]},${p[18]})` : `rgb(${c[k]},${c[k + 1]},${c[k + 2]})`; ctx.beginPath(); ctx.arc(x(n), y(n), s.nodeSize * this.sizes[n]! + (hot ? 2 : 0), 0, Math.PI * 2); ctx.fill();
+    const notes = this.projection.carrierNodes, level = this.carrierLevel().alpha;
+    // Edge notes first (beneath), then the other nodes.
+    for (const layer of [1, 0]) for (let n = 0; n < this.visible.length; n++) if (this.visible[n] && notes[n] === layer) {
+      const hot = n === this.selected || n === this.hovered, k = n * 4, p = this.theme.palette, a = layer && !hot ? level * c[k + 3]! / 255 : 1;
+      if (a < .004) continue;
+      ctx.globalAlpha = a * (hot || this.stateBytes[k + 1] || !focus ? 1 : dim);
+      ctx.fillStyle = hot ? `rgb(${p[16]},${p[17]},${p[18]})` : `rgb(${c[k]},${c[k + 1]},${c[k + 2]})`; ctx.beginPath(); ctx.arc(x(n), y(n), s.nodeSize * this.sizes[n]! * (layer ? s.visuals.carrierSize : 1) + (hot ? 2 : 0), 0, Math.PI * 2); ctx.fill();
     }
     ctx.globalAlpha = 1;
     for (const h of this.hubs) { ctx.fillStyle = this.groupColor(h.group); ctx.beginPath(); ctx.arc((h.x - this.centerX) * this.scale + this.width / 2, (h.y - this.centerY) * this.scale + this.height / 2, h.radius, 0, Math.PI * 2); ctx.fill(); }

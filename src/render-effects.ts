@@ -100,3 +100,48 @@ export function groupHalos(positions: Float32Array, visible: Uint8Array, codes: 
   for (let g = 0; g < groups; g++) if (n[g]! > 1) { const cx = x[g]! / n[g]!, cy = y[g]! / n[g]!; out.push({ group: g, x: cx, y: cy, radius: Math.sqrt(Math.max(0, xx[g]! / n[g]! - cx * cx - cy * cy)), count: n[g]! }); }
   return out.sort((a, b) => b.count - a.count || a.group - b.group).slice(0, limit);
 }
+/** Alpha byte for an edge note whose endpoints share one colour; bridges keep 255. */
+export const CARRIER_SAME_ALPHA = 160;
+/** Edge notes (reified edges drawn as nodes) take a colour derived from the displayed
+ * colours of their non-edge-note endpoints, in place over per-node RGBA `colors`.
+ * One shared colour: that colour, alpha CARRIER_SAME_ALPHA. Different colours (a bridge):
+ * their average (`blend`) or the first source endpoint's (`source`), moved `accent` toward
+ * `accentRgb`, full alpha. Edge notes without such endpoints keep their colour. O(n + m).
+ * Ontology-neutral: "same" means the same displayed colour, whatever rule or group set it. */
+export function carrierColors(carriers: Uint8Array, source: Uint32Array, target: Uint32Array, colors: Uint8Array, bridge: 'blend' | 'source', accentRgb: ArrayLike<number>, accent: number): number {
+  const n = carriers.length, sum = new Float32Array(n * 3), count = new Uint32Array(n), first = new Int32Array(n).fill(-1), from = new Int32Array(n).fill(-1), mixed = new Uint8Array(n);
+  const add = (c: number, end: number, isSource: boolean) => {
+    const k = end * 4, rgb = colors[k]! << 16 | colors[k + 1]! << 8 | colors[k + 2]!;
+    if (first[c]! < 0) first[c] = rgb; else if (first[c] !== rgb) mixed[c] = 1;
+    if (isSource && from[c]! < 0) from[c] = end;
+    sum[c * 3]! += colors[k]!; sum[c * 3 + 1]! += colors[k + 1]!; sum[c * 3 + 2]! += colors[k + 2]!; count[c]!++;
+  };
+  for (let e = 0; e < source.length; e++) {
+    const s = source[e]!, t = target[e]!;
+    if (carriers[t] && !carriers[s]) add(t, s, true); else if (carriers[s] && !carriers[t]) add(s, t, false);
+  }
+  let bridges = 0;
+  for (let c = 0; c < n; c++) if (carriers[c]) {
+    const o = c * 4;
+    if (!count[c]) { colors[o + 3] = CARRIER_SAME_ALPHA; continue; }
+    if (!mixed[c]) { const rgb = first[c]!; colors[o] = rgb >> 16 & 255; colors[o + 1] = rgb >> 8 & 255; colors[o + 2] = rgb & 255; colors[o + 3] = CARRIER_SAME_ALPHA; continue; }
+    bridges++;
+    const k = from[c]! * 4;
+    for (let j = 0; j < 3; j++) { const base = bridge === 'source' && k >= 0 ? colors[k + j]! : sum[c * 3 + j]! / count[c]!; colors[o + j] = Math.round(base + (accentRgb[j]! - base) * accent); }
+    colors[o + 3] = 255;
+  }
+  return bridges;
+}
+/** Edge-note level of detail: 1 at or below `near` (zoom = camera ratio / home ratio),
+ * 0 at or above `far`, smooth in log-zoom between; always 1 when disabled. */
+export function carrierVisibility(zoom: number, near: number, far: number, enabled: boolean): number {
+  if (!enabled) return 1;
+  const t = Math.min(1, Math.max(0, Math.log(Math.max(zoom, 1e-6) / near) / Math.log(far / near)));
+  return 1 - t * t * (3 - 2 * t);
+}
+/** Edge-note opacity: configured opacity, thinned by visible edge-note density and raised
+ * when zoomed in (like edges), times the level-of-detail visibility. */
+export function carrierAlpha(v: Visuals, visibleCarriers: number, zoom: number): number {
+  const density = Math.min(1, Math.sqrt(v.carrierDensityReference / Math.max(1, visibleCarriers))), boost = Math.min(3, Math.max(1, 1 / Math.sqrt(Math.max(zoom, 1e-6))));
+  return carrierVisibility(zoom, v.carrierLodNear, v.carrierLodFar, v.carrierLod) * Math.min(1, Math.max(.1, v.carrierOpacity * density * boost));
+}

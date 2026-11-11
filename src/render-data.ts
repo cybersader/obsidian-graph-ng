@@ -34,9 +34,9 @@ export class PickGrid {
     const c = Math.max(0, Math.floor((y - radius - this.minY) / this.cell)), d = Math.min(this.rows - 1, Math.floor((y + radius - this.minY) / this.cell));
     for (let row = c; row <= d; row++) for (let col = a; col <= b; col++) for (let i = this.heads[row * this.columns + col]!; i !== -1; i = this.next[i]!) visit(i);
   }
-  pick(x: number, y: number, radius: number): number {
+  pick(x: number, y: number, radius: number, skip?: Uint8Array): number {
     let best = -1, distance = radius * radius;
-    this.visit(x, y, radius, i => { const dx = this.positions[i * 2]! - x, dy = this.positions[i * 2 + 1]! - y, dd = dx * dx + dy * dy; if (dd <= distance && (dd < distance || best < 0 || i < best)) { best = i; distance = dd; } });
+    this.visit(x, y, radius, i => { if (skip?.[i]) return; const dx = this.positions[i * 2]! - x, dy = this.positions[i * 2 + 1]! - y, dd = dx * dx + dy * dy; if (dd <= distance && (dd < distance || best < 0 || i < best)) { best = i; distance = dd; } });
     return best;
   }
 }
