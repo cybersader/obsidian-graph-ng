@@ -268,3 +268,16 @@ test('stored regex-derived groups migrate to a visible disabled list, never sile
   const reloaded = await loadSettings({ async stat() { return { size: 10 }; }, async read() { return text; }, async copy() { throw new Error('must not quarantine'); } }, 'data.json', 'p@1', m => again.push(m));
   expect(reloaded.settings.explore.disabledDerived).toHaveLength(3); expect(again).toEqual([]);
 });
+test('removing migrated regex groups keeps groupLevel on the same declared group, or resets it visibly', () => {
+  const regex = { from: 'derived', key: '$identity', transform: { kind: 'pattern', pattern: '^(x)' } };
+  const groups = [{ from: 'folder', depth: 1 }, regex, { from: 'key', key: 'family' }, regex, { from: 'folder', depth: 2 }];
+  const load = (groupLevel: number) => { const s = defaults('p@1') as any; s.declaration = { ...s.declaration, columns: ['family'], groups: structuredClone(groups) }; s.groupLevel = groupLevel; return upgradeSettings(s, 'p@1'); };
+  const kept = [{ from: 'folder', depth: 1 }, { from: 'key', key: 'family' }, { from: 'folder', depth: 2 }];
+  for (const [level, expected] of [[0, 0], [2, 1], [4, 2]] as const) {
+    const s = load(level); expect(s.declaration.groups).toEqual(kept as any);
+    expect(s.declaration.groups[s.groupLevel]).toEqual(groups[level] as any); expect(s.groupLevel).toBe(expected);
+  }
+  const reset = load(3);
+  expect(reset.groupLevel).toBe(0);
+  expect(reset.explore.disabledDerived.map(d => d.location)).toEqual(['declared group 2', 'declared group 4 (was the selected group level; reset to the first group)']);
+});

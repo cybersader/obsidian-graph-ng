@@ -200,10 +200,17 @@ export function upgradeSettings(input: unknown, producer: string): Settings {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Settings must be an object');
   const old = structuredClone(input) as Partial<Settings>, base = defaults(producer);
   if (old.settingsVersion !== undefined && old.settingsVersion !== 2) throw new Error('Unsupported settings version');
-  const explore = decodeText(old.explore ?? {}) as Partial<ExploreSettings> & Record<string, unknown>, groupsBefore = (old.declaration as { groups?: unknown[] } | undefined)?.groups?.length ?? 0;
+  const explore = decodeText(old.explore ?? {}) as Partial<ExploreSettings> & Record<string, unknown>;
+  // groupLevel indexes declared groups: removing regex groups before it shifts it down so it
+  // keeps naming the same group; removing the selected group itself resets it to 0 (noted).
+  const declared = (old.declaration as { groups?: unknown[] } | undefined)?.groups, level = old.groupLevel;
+  const removed = Array.isArray(declared) ? declared.flatMap((g, i) => regexDerive(g) ? [i] : []) : [];
   const disabled = disableRegexDerives(old.declaration, explore);
+  if (removed.length && Number.isSafeInteger(level)) {
+    if (removed.includes(level!)) { old.groupLevel = 0; const record = disabled.find(d => d.location === `declared group ${level! + 1}`); if (record) record.location = `${record.location} (was the selected group level; reset to the first group)`; }
+    else old.groupLevel = level! - removed.filter(i => i < level!).length;
+  }
   if (disabled.length) explore.disabledDerived = [...(explore.disabledDerived ?? []), ...disabled].slice(-64);
-  if (old.declaration && (old.declaration.groups?.length ?? 0) < groupsBefore && (old.groupLevel ?? 0) >= (old.declaration.groups?.length ?? 0)) old.groupLevel = 0;
   const settings = { ...base, ...old, layout: { ...base.layout, ...old.layout, force: { ...base.layout.force, ...old.layout?.force } }, ingest: { ...base.ingest, ...old.ingest }, cache: { ...base.cache, ...old.cache }, declaration: migrateDeclaration(old.declaration ?? base.declaration),
     visuals: { ...base.visuals, ...old.visuals }, explore: { ...base.explore, ...explore } };
   settings.explore = canonicalExplore(settings.explore);
