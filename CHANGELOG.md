@@ -4,6 +4,10 @@ All notable changes are recorded here. The format follows Keep a Changelog; vers
 
 ## [Unreleased]
 
+- Raised the enforced bundle ceilings to 180,000 minified / 58,000 gzip bytes by owner decision (2026-11-11), from 150,000 / 45,000, to fit the explore panel and visuals.
+
+## [Unreleased]
+
 ## [0.3.1] - 2026-11-11
 
 ### Changed
