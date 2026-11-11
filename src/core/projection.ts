@@ -1,5 +1,5 @@
-import { canonical, folderPath, predicateColumn, type GraphDeclaration, type Predicate, type Scalar } from './declaration';
-import { compileTransform, deriveInput } from './derive';
+import { expressionFilter, expressionGroup, lowerGroup, lowerPredicate } from './expr/engine';
+import { canonical, folderPath, groupColumn as declaredGroupColumn, predicateColumn, type GraphDeclaration, type Predicate, type Scalar } from './declaration';
 export interface FactRow {
   path: string;
   properties: Record<string, unknown>;
@@ -92,16 +92,9 @@ export function buildProjection(input: readonly FactRow[], d: GraphDeclaration):
   for (let i = 1; i < offsets.length; i++) offsets[i]! += offsets[i - 1]!;
   const cursor = offsets.slice(), targets = new Uint32Array(src.length * 2);
   for (let i = 0; i < src.length; i++) { targets[cursor[src[i]!]!++] = dst[i]!; targets[cursor[dst[i]!]!++] = src[i]!; }
-  const keys = new Set([...d.columns, ...d.groups.flatMap(g => g.from === 'key' ? [g.key] : []), ...d.colors.flatMap(c => predicateColumn(c.predicate) ?? [])]);
+  const keys = new Set([...d.columns, ...d.groups.flatMap(g => declaredGroupColumn(g) ?? []), ...d.colors.flatMap(c => predicateColumn(c.predicate) ?? [])]);
   const columns: Record<string, DictionaryColumn> = Object.create(null);
   for (const key of keys) columns[key] = column(nodes.map(r => canonical(r.properties[key])));
-  const groups = d.groups.map(g => {
-    if (g.from === 'key') return { ...column(nodes.map(r => canonical(r.properties[g.key]))), encoded: true };
-    if (g.from === 'folder') return { ...column(nodes.map(r => folderGroup(r.path, g.depth, g.prefix))), encoded: false };
-    const derive = compileTransform(g.transform), memo = new Map<string | undefined, string>();
-    const value = (text: string | undefined) => { let v = memo.get(text); if (v === undefined) { v = derive(text); memo.set(text, v); } return v; };
-    return { ...column(nodes.map((r, i) => value(g.key === '$path' ? r.path.slice(0, 256) : g.key === '$identity' ? identities[i]!.slice(0, 256) : deriveInput(r.properties[g.key])))), encoded: false };
-  });
   const folders = new Map<string, [number, number]>();
   paths.forEach((path, i) => {
     const parts = path.split('/'); parts.pop();
@@ -110,28 +103,19 @@ export function buildProjection(input: readonly FactRow[], d: GraphDeclaration):
       if (old) old[1] = i + 1; else folders.set(key, [i, i + 1]);
     }
   });
+  const groups = d.groups.map(g => {
+    if (g.from === 'expr') return expressionGroup({ paths, identities, columns, offsets, folders } as Projection, lowerGroup(g));
+    if (g.from === 'key') return { ...column(nodes.map(r => canonical(r.properties[g.key]))), encoded: true };
+    if (g.from === 'folder') return { ...column(nodes.map(r => folderGroup(r.path, g.depth, g.prefix))), encoded: false };
+    return expressionGroup({ paths, identities, columns, offsets, folders } as Projection, lowerGroup(g));
+  });
   const tc = column(typ);
   return { paths, identities, carrierPaths: rows.map(r => r.path), offsets, targets,
     source: Uint32Array.from(src), target: Uint32Array.from(dst), type: tc.codes, carrier: Uint32Array.from(carrier), carrierNodes: Uint32Array.from(nodes, r => carriers.has(r.path) ? rowIndex.get(r.path)! + 1 : 0), types: tc.values,
     columns, groups, folders, unresolved, quarantined };
 }
 export function filterNodes(p: Projection, predicate?: Predicate): Uint8Array {
-  const bits = new Uint8Array(p.paths.length);
-  if (!predicate) { bits.fill(1); return bits; }
-  if (predicate.kind === 'folder') {
-    const range = p.folders.get(folderPath(predicate.prefix));
-    if (range) bits.fill(1, range[0], range[1]);
-  } else {
-    const c = p.columns[predicate.key];
-    if (!c) throw new Error(`Undeclared column: ${predicate.key}; add it to columns`);
-    // Compile to dictionary codes once; the node loop is a typed-array lookup.
-    const wanted = new Uint8Array(c.values.length + 1);
-    if (predicate.kind === 'eq') { const code = c.values.indexOf(canonical(predicate.value)); if (code >= 0) wanted[code] = 1; }
-    else if (predicate.kind === 'in') for (const v of predicate.values) { const code = c.values.indexOf(canonical(v)); if (code >= 0) wanted[code] = 1; }
-    else { wanted.fill(1); const missing = c.values.indexOf('undefined'); if (missing >= 0) wanted[missing] = 0; }
-    for (let i = 0; i < bits.length; i++) bits[i] = wanted[c.codes[i]!]!;
-  }
-  return bits;
+  return predicate ? expressionFilter(p, lowerPredicate(predicate)) : new Uint8Array(p.paths.length).fill(1);
 }
 export function edgeVisibility(p: Projection, nodes: Uint8Array): Uint8Array {
   return Uint8Array.from(p.source, (s, i) => nodes[s] && nodes[p.target[i]!] ? 1 : 0);

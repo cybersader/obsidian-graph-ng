@@ -1,3 +1,5 @@
+import { expressionPrelude } from './core/expr/expression-prelude';
+import { predicateColumn, groupColumn as sourceColumn } from './core/declaration';
 import { ItemView, Plugin, PluginSettingTab, Setting, Notice, TFile, apiVersion, type WorkspaceLeaf } from 'obsidian';
 import { LocalAdapter } from './adapter/local';
 import { canonical, digest, layoutDeclaration, migrateDeclaration, validateDeclaration, type GraphDeclaration, type Predicate } from './core/declaration';
@@ -52,7 +54,7 @@ export default class GraphPlugin extends Plugin {
     this.settings = loaded.settings;
     const data = loaded.data as Data | undefined;
     if (data?.generations && typeof data.generations === 'object' && data.settings?.declaration) { const oldHash = await digest(layoutDeclaration(data.settings.declaration)), currentHash = await digest(layoutDeclaration(this.settings.declaration)); const old = data.generations[oldHash]; if (old) this.generations[currentHash] = old; }
-    const url = URL.createObjectURL(new Blob([__LAYOUT_WORKER_SOURCE__], { type: 'text/javascript' }));
+    const url = URL.createObjectURL(new Blob([expressionPrelude(), __LAYOUT_WORKER_SOURCE__], { type: 'text/javascript' }));
     this.pipeline = new WorkerPipeline(new Worker(url), () => this.settings.workerTimeoutMs, () => URL.revokeObjectURL(url), {
       restart: () => new Worker(url), maxRestarts: () => this.settings.workerRestarts,
       onRestart: () => {
@@ -174,7 +176,7 @@ export class GraphView extends ItemView {
     this.stage = this.body.createDiv({ cls: 'graph-ng-stage' });
     this.explorePanel = new ExplorePanel(this.body, {
       settings: () => this.plugin.settings, result: () => this.explored, mode: () => this.contentEl.dataset.mode ?? 'groups',
-      policy: () => this.detailRenderer?.policy.reasons ?? [], carriers: () => this.detailRenderer?.carrierCount ?? 0, setView: (view, after) => this.setView(view, after), setColors: colors => this.setColors(colors),
+      policy: () => this.detailRenderer?.policy.reasons ?? [], carriers: () => this.detailRenderer?.carrierCount ?? 0, setView: (view, after) => this.setView(view, after), setColors: colors => this.setColors(colors), preview: (expr, context) => this.previewExpression(expr, context),
       visualsChanged: labels => { this.plugin.saveSoon(); this.detailRenderer?.refreshVisuals(labels); if (this.contentEl.dataset.mode === 'groups') this.showGroups(true); },
       groupColor: code => this.groupColor(code), focusGroup: code => this.focusGroup(code), fit: () => this.detailRenderer?.fitAll(),
       camera: () => this.detailRenderer ? { ...this.detailRenderer.camera } : null, restoreCamera: camera => this.restoreCamera(camera), persist: () => this.plugin.saveSoon(),
@@ -432,6 +434,10 @@ export class GraphView extends ItemView {
   }
   /** Latest-wins worker view recompute; no re-projection, relayout or renderer rebuild. */
   setView(view: ExploreView, after?: () => void, colors?: GraphDeclaration['colors']) {
+    const needed = [...view.filters.flatMap(f => predicateColumn(f) ?? []), ...(view.group ? [sourceColumn(view.group)].flatMap(k => k ?? []) : [])];
+    const known = new Set(this.explored?.facets.map(f => f.key));
+    const missing = needed.filter(k => !known.has(k));
+    if (missing.length) { this.view = view; const settings = this.plugin.settings; settings.explore.view = canonicalView(view); void this.plugin.apply({ ...settings, declaration: { ...settings.declaration, columns: [...new Set([...settings.declaration.columns, ...missing])] } }); return; }
     this.view = view; this.plugin.settings.explore.view = canonicalView(view); this.plugin.saveSoon();
     const run = async () => {
       this.exploring = true;
@@ -442,7 +448,7 @@ export class GraphView extends ItemView {
         if (this.closed || revision !== this.activeRevision) return;
         this.explored = result.explore; this.colors = result.colors; this.visible = result.explore.visible; this.groupGraph = result.groups; this.groupGeneration = revision;
         this.viewGeneration = result.view; this.viewSource = this.sourceKey(sent); this.members.clear(); this.contributions.clear();
-        this.contentEl.dataset.exploreMs = String(performance.now() - started); const g = this.view.group; this.contentEl.dataset.groupSource = !g ? 'declared' : g.from === 'folder' ? `folder:${g.depth}` : `${g.from}:${g.key}`; this.contentEl.dataset.visibleNodes = String(result.explore.visible.reduce((n, v) => n + v, 0));
+        this.contentEl.dataset.exploreMs = String(performance.now() - started); const g = this.view.group; this.contentEl.dataset.groupSource = !g ? 'declared' : g.from === 'folder' ? `folder:${g.depth}` : g.from === 'expr' ? 'expression' : `${g.from}:${g.key}`; this.contentEl.dataset.visibleNodes = String(result.explore.visible.reduce((n, v) => n + v, 0));
         this.contributionPage.update(this.contributionContext());
         if (this.contentEl.dataset.mode === 'nodes' && this.detailRenderer) {
           let bits = this.visible; if (this.detailScope) { bits = this.visible.slice(); for (let i = 0; i < bits.length; i++) bits[i]! &= this.detailScope[i]!; }
@@ -450,12 +456,18 @@ export class GraphView extends ItemView {
         } else if (this.contentEl.dataset.mode === 'groups') this.showGroups(true);
         this.explorePanel?.setState(this.view); after?.();
       } catch (error) {
-        if (!this.closed && !String(error).includes('generation changed')) { new Notice(`Graph NG view: ${String(error)}`); this.status.textContent = `View not applied: ${String(error)}`; }
+        if (!this.closed && !String(error).includes('generation changed') && !String(error).includes('Expression superseded')) { new Notice(`Graph NG view: ${String(error)}`); this.status.textContent = `View not applied: ${String(error)}`; }
       } finally {
         this.exploring = false; const next = this.exploreQueued; this.exploreQueued = undefined; if (next) void next();
       }
     };
-    if (this.exploring) this.exploreQueued = run; else void run();
+    if (this.exploring) { this.exploreQueued = run; this.plugin.pipeline.cancelEvaluation(); } else void run();
+  }
+  private async previewExpression(expr: string, context: 'filter' | 'group') {
+    const revision = this.activeRevision;
+    const result = await this.plugin.pipeline.request<{ matched: number; total: number; groups?: number }>(revision, { kind: 'expression-count', expr, context });
+    if (revision !== this.activeRevision || this.closed) throw new Error('Projection generation changed');
+    return result;
   }
   /** Rules are presentation: re-evaluated in the worker on existing columns. A rule on a
    * property that is not yet materialized falls back to a full apply (re-ingest, no relayout). */
@@ -464,7 +476,7 @@ export class GraphView extends ItemView {
     try { validateDeclaration(declaration); } catch (e) { new Notice(String(e)); return; }
     const settings = { ...this.plugin.settings, declaration: migrateDeclaration(declaration) };
     const materialized = new Set(this.explored?.facets.map(f => f.key));
-    if (colors.every(c => c.predicate.kind === 'folder' || materialized.has(c.predicate.key))) {
+    if (colors.every(c => [predicateColumn(c.predicate)].flatMap(k => k ?? []).every(k => materialized.has(k)))) {
       // Mutate in place: live renderers hold this settings object.
       this.plugin.settings.declaration = settings.declaration; this.plugin.adapter.configure(settings.declaration); this.plugin.saveSoon();
       this.setView(this.view, () => { this.detailRenderer?.refreshTheme(); this.explorePanel?.render(); }, settings.declaration.colors);

@@ -17,7 +17,8 @@ export type PipelineRequest =
   | { kind: 'project'; complete?: boolean } | { kind: 'detail' } | { kind: 'layout' } | { kind: 'encode' }
   | { kind: 'gpu' }
   | { kind: 'members'; group: string; view: number }
-  | { kind: 'explore'; view: ExploreView; colors?: GraphDeclaration['colors']; facetValues: number }
+  | { kind: 'expression-count'; expr: string; context: 'filter' | 'group'; budgetMs?: number }
+  | { kind: 'explore'; view: ExploreView; colors?: GraphDeclaration['colors']; facetValues: number; budgetMs?: number }
   | { kind: 'contributions'; pair: string; offset: number; count: number; view: number };
 export interface ProjectResult { invalidSaved?: GenerationMeta; meta: GenerationMeta; nodes: number; edges: number; unresolved: number; quarantined: { path: string; id: string }[] }
 export interface DetailResult { projection: RenderProjection; visible: Uint8Array; colors: Uint32Array; explore: ExploreResult; view: number }
@@ -62,15 +63,24 @@ export class WorkerPipeline {
     worker.onerror = e => { if (worker === this.worker && !this.closed) this.fail(new Error(e.message)); };
   }
   request<T>(revision: number, request: PipelineRequest): Promise<T> {
+    this.cancelEvaluation();
     if (this.closed) return Promise.reject(new Error('Worker pipeline closed'));
+    if (request.kind === 'expression-count' || request.kind === 'explore') this.pending = this.pending.filter(p => { if (p.request.kind !== request.kind) return true; p.reject(new Error('Expression superseded')); return false; });
     return new Promise((resolve, reject) => { this.pending.push({ id: ++this.next, revision, request, resolve, reject }); this.dispatch(); });
+  }
+  /** Bypass the serialized RPC queue only to stop cooperative expression work. */
+  cancelEvaluation() {
+    if (this.active && (this.active.request.kind === 'expression-count' || this.active.request.kind === 'explore')) {
+      try { this.worker.postMessage({ kind: 'cancel-evaluation', id: this.active.id }, []); }
+      catch (error) { this.fail(error instanceof Error ? error : new Error(String(error))); }
+    }
   }
   private dispatch() {
     if (this.closed || this.active || !this.pending.length) return;
     const p = this.active = this.pending.shift()!;
     // A separate startup/dispatch watchdog covers a worker that never acknowledges.
     p.timer = setTimeout(() => this.fail(new Error('Graph worker did not start processing')), this.timeoutMs());
-    try { this.worker.postMessage({ id: p.id, revision: p.revision, ...p.request }, transferables(p.request)); }
+    try { this.worker.postMessage({ id: p.id, revision: p.revision, ...p.request, ...((p.request.kind === 'expression-count' || p.request.kind === 'explore') ? { budgetMs: p.request.budgetMs ?? this.timeoutMs() * .9 } : {}) }, transferables(p.request)); }
     catch (error) { this.fail(error instanceof Error ? error : new Error(String(error))); }
   }
   private rejectAll(error: Error) {

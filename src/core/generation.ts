@@ -1,4 +1,4 @@
-import { digest, groupColumn, layoutDeclaration, predicateColumn, type GraphDeclaration } from './declaration';
+import { identityDeclaration, digest, groupColumn, layoutDeclaration, predicateColumn, type GraphDeclaration } from './declaration';
 import type { FactRow } from './projection';
 import type { LayoutOptions } from './layout';
 /** Only declared columns/producers participate; unrelated metadata cannot reseed the layout. */
@@ -18,5 +18,5 @@ export function declaredFacts(rows: readonly FactRow[], d: GraphDeclaration): Fa
 }
 export async function generationKey(rows: readonly FactRow[], declaration: GraphDeclaration, layout: LayoutOptions, producer: string): Promise<string> {
   declaration = layoutDeclaration(declaration);
-  return digest({ declaration, layout, producer, rows: declaredFacts(rows, declaration) });
+  return digest({ declaration: identityDeclaration(declaration), layout, producer, rows: declaredFacts(rows, declaration) });
 }

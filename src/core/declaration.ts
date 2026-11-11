@@ -1,19 +1,22 @@
+import { checked, expressionReferences, groupIdentity, predicateIdentity, print } from './expr/engine';
 import { validateTransform, type DerivedTransform } from './derive';
 export type Scalar = string | number | boolean | null;
 export type FolderPath = string | string[];
 export const folderPath = (path: FolderPath) => (Array.isArray(path) ? path.join('/') : path).replace(/\/+$/, '');
-export type Predicate = { kind: 'eq'; key: string; value: Scalar } | { kind: 'in'; key: string; values: Scalar[] } | { kind: 'exists'; key: string } | { kind: 'folder'; prefix: FolderPath };
+export type Predicate = { kind: 'expr'; expr: string } | { kind: 'eq'; key: string; value: Scalar } | { kind: 'in'; key: string; values: Scalar[] } | { kind: 'exists'; key: string } | { kind: 'folder'; prefix: FolderPath };
 /** Property column a predicate reads, if any. Folder predicates read paths only. */
-export const predicateColumn = (p: Predicate): string | undefined => p.kind === 'folder' ? undefined : p.key;
+export const predicateColumn = (p: Predicate): string | string[] | undefined => p.kind === 'expr' ? expressionReferences(p.expr) : p.kind === 'folder' ? undefined : p.key;
 /** Colors are presentation. Layout/cache identity excludes them, so a legend edit never reseeds or relayouts. */
 export const layoutDeclaration = (d: GraphDeclaration): GraphDeclaration => ({ ...d, colors: [] });
 export type EdgeDeclaration =
   | { name: string; kind: 'reified'; sourceProperty: string; targetProperty: string; typeProperty?: string; type?: string }
   | { name: string; kind: 'inline'; key: string; type: string }
   | { name: string; kind: 'producer'; producer: string; type: string };
-export type GroupSource = { from: 'key'; key: string } | { from: 'folder'; depth: number; prefix?: FolderPath } | { from: 'derived'; key: string; transform: DerivedTransform };
+export type GroupSource = { from: 'expr'; expr: string } | { from: 'key'; key: string } | { from: 'folder'; depth: number; prefix?: FolderPath } | { from: 'derived'; key: string; transform: DerivedTransform };
 /** Property read by a group source; `$identity`/`$path` derive from built-in node text. */
-export const groupColumn = (g: GroupSource): string | undefined => g.from === 'folder' || (g.from === 'derived' && g.key.startsWith('$')) ? undefined : g.key;
+export const groupColumn = (g: GroupSource): string | string[] | undefined => g.from === 'expr' ? expressionReferences(g.expr) : g.from === 'folder' || (g.from === 'derived' && g.key.startsWith('$')) ? undefined : g.key;
+/** Recognized compiled shapes retain historical digest bytes across an upgrade. */
+export const identityDeclaration = (d: GraphDeclaration) => ({ ...d, groups: d.groups.map(groupIdentity), colors: d.colors.map(c => ({ ...c, predicate: predicateIdentity(c.predicate) })) });
 export interface GraphDeclaration {
   version: 2;
   identity: { key: string }[];
@@ -39,7 +42,7 @@ function only(v: Record<string, unknown>, keys: string[]) {
 }
 export function validatePredicate(v: unknown): asserts v is Predicate {
   record(v);
-  if (v.kind === 'eq') {
+  if (v.kind === 'expr') { only(v, ['kind', 'expr']); text(v.expr); checked(v.expr, 'filter'); } else if (v.kind === 'eq') {
     only(v, ['kind', 'key', 'value']); text(v.key);
     if (v.value !== null && !['string', 'number', 'boolean'].includes(typeof v.value)) throw new Error('Equality value must be scalar');
     if (typeof v.value === 'number' && !Number.isFinite(v.value)) throw new Error('Equality number must be finite');
@@ -70,7 +73,7 @@ export function validateDeclaration(v: unknown): asserts v is GraphDeclaration {
   }
   for (const g of v.groups as unknown[]) {
     record(g);
-    if (g.from === 'key') { only(g, ['from', 'key']); text(g.key); }
+    if (g.from === 'expr') { only(g, ['from', 'expr']); text(g.expr); checked(g.expr); } else if (g.from === 'key') { only(g, ['from', 'key']); text(g.key); }
     else if (g.from === 'folder') { only(g, ['from', 'depth', 'prefix']); if (g.prefix !== undefined) validateFolderPath(g.prefix); if (!Number.isSafeInteger(g.depth) || (g.depth as number) < 1) throw new Error('Folder depth must be a positive integer'); }
     else if (g.from === 'derived') validateDerivedGroup(g);
     else throw new Error('Group sources are key, folder or derived');
@@ -126,12 +129,14 @@ export function migrateDeclaration(value: unknown): GraphDeclaration {
   // Keep strings valid input, but persist folder paths as segments so ordinary long
   // multi-folder paths are not mistaken for credential-shaped opaque tokens.
   for (const color of d.colors) canonicalPredicate(color.predicate);
+  for (const group of d.groups) if (group.from === 'expr') group.expr = print(checked(group.expr));
   for (const group of d.groups) if (group.from === 'folder' && typeof group.prefix === 'string') group.prefix = folderPath(group.prefix).split('/').filter(Boolean);
   return d;
 }
 
 /** Persist folder prefixes as segments, the settings-sharing-safe representation. */
 export function canonicalPredicate(p: Predicate): Predicate {
+  if (p.kind === 'expr') p.expr = print(checked(p.expr, 'filter'));
   if (p.kind === 'folder' && typeof p.prefix === 'string') p.prefix = folderPath(p.prefix).split('/').filter(Boolean);
   return p;
 }

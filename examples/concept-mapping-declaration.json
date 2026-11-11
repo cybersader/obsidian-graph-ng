@@ -27,7 +27,7 @@
   "groups": [
     {
       "from": "key",
-      "key": "family"
+      "key": "category"
     },
     {
       "from": "folder",
@@ -38,61 +38,61 @@
     "reifiedAsNodes": false
   },
   "columns": [
-    "family"
+    "category"
   ],
   "colors": [
     {
-      "name": "Family 1",
+      "name": "Category 1",
       "color": "#56b4e9",
       "predicate": {
         "kind": "eq",
-        "key": "family",
-        "value": "Family 1"
+        "key": "category",
+        "value": "Category 1"
       }
     },
     {
-      "name": "Family 2",
+      "name": "Category 2",
       "color": "#e69f00",
       "predicate": {
         "kind": "eq",
-        "key": "family",
-        "value": "Family 2"
+        "key": "category",
+        "value": "Category 2"
       }
     },
     {
-      "name": "Family 3",
+      "name": "Category 3",
       "color": "#009e73",
       "predicate": {
         "kind": "eq",
-        "key": "family",
-        "value": "Family 3"
+        "key": "category",
+        "value": "Category 3"
       }
     },
     {
-      "name": "Family 4",
+      "name": "Category 4",
       "color": "#cc79a7",
       "predicate": {
         "kind": "eq",
-        "key": "family",
-        "value": "Family 4"
+        "key": "category",
+        "value": "Category 4"
       }
     },
     {
-      "name": "Family 5",
+      "name": "Category 5",
       "color": "#d5c85d",
       "predicate": {
         "kind": "eq",
-        "key": "family",
-        "value": "Family 5"
+        "key": "category",
+        "value": "Category 5"
       }
     },
     {
-      "name": "Family 6",
+      "name": "Category 6",
       "color": "#9caac2",
       "predicate": {
         "kind": "eq",
-        "key": "family",
-        "value": "Family 6"
+        "key": "category",
+        "value": "Category 6"
       }
     }
   ]

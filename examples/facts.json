@@ -3,14 +3,14 @@
     "path": "Concepts/Alpha.md",
     "properties": {
       "id": "concept:alpha:1",
-      "family": "Family 1"
+      "category": "Category 1"
     }
   },
   {
     "path": "Concepts/Beta.md",
     "properties": {
       "id": "concept:beta:1",
-      "family": "Family 2"
+      "category": "Category 2"
     }
   },
   {

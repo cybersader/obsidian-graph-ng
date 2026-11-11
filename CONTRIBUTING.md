@@ -15,7 +15,7 @@ Use Bun **1.3.14**, Node.js **22.x** (CI pins 22.14.0), `flock`, and an installe
 1. Configure the local private-terms file described below.
 2. `./scripts/run.sh install --frozen-lockfile` installs without lifecycle execution.
 3. `./scripts/run.sh build` typechecks and bundles the plugin/worker.
-4. `./scripts/run.sh test` runs exactly `tests/core.test.ts`, `tests/adapter.test.ts`, `tests/gates.test.ts`, `tests/pipeline.test.ts`, `tests/declaration-v2.test.ts`, `tests/renderer.test.ts`, `tests/view-lifecycle.test.ts`, `tests/contribution-page.test.ts`, and `tests/layout.test.ts`.
+4. `./scripts/run.sh test` runs exactly `tests/core.test.ts`, `tests/adapter.test.ts`, `tests/gates.test.ts`, `tests/pipeline.test.ts`, `tests/declaration-v2.test.ts`, `tests/renderer.test.ts`, `tests/view-lifecycle.test.ts`, `tests/contribution-page.test.ts`, `tests/layout.test.ts`, `tests/explore.test.ts`, and `tests/expr.test.ts`.
 5. `./scripts/run.sh gates` runs the full deterministic gates. `bun run gates` is the same entry point when already inside the lock/containment boundary.
 6. For authorized synthetic native testing, use `./scripts/run-native-smoke.sh`; `GRAPH_SOFTWARE=1 ./scripts/run-native-smoke.sh` selects the software fallback. This creates/replaces only the documented synthetic fixture destinations, not personal vaults.
 
@@ -30,7 +30,7 @@ Use Bun **1.3.14**, Node.js **22.x** (CI pins 22.14.0), `flock`, and an installe
 | Privacy | `scripts/check-content.mjs privacy`: local fixed-string private terms in current/index content, README, filenames and ignored `test-screenshots/` bytes/names. Binary metadata is scanned as bytes; visual content still requires human/approved visual inspection. |
 | Supply chain | `scripts/check-supply-chain.mjs`: exact direct pins, version lockstep, empty trust list, no root install hooks, no runtime install hooks, exact hashed inert dev exceptions, and isolated `bun install --lockfile-only --frozen-lockfile --ignore-scripts` with unchanged lock bytes. |
 | Runtime licenses | `scripts/check-licenses.mjs`: enforces zero runtime dependencies and generates an empty notice file. The build separately rejects bundled node_modules inputs; the development-only layout oracle is not shipped. Separate from dev-toolchain exceptions. |
-| Bundle report | `scripts/bundle-size.mjs`: raw/gzip/Brotli bytes and SHA-256 for existing `main.js`, plus source commit, in ignored `.workspace/evidence/bundle-size.json`. Build first. Enforces slice-4 ceilings of 150,000 minified bytes and 45,000 gzip bytes. |
+| Bundle report | `scripts/bundle-size.mjs`: raw/gzip/Brotli bytes and SHA-256 for existing `main.js`, plus source commit, in ignored `.workspace/evidence/bundle-size.json`. Build first. Enforces slice-4 ceilings of 180,000 minified bytes and 58,000 gzip bytes. |
 
 To scan **all reachable history** before publication, run `./scripts/run.sh gates` and `./scripts/run.sh audit:history`. The latter runs the three standalone content scanners with `--history` inside the verification boundary. Unlike default content scans, `--history` checks every reachable commit's metadata, filenames, and unique blobs. See [the publication checklist](docs/publish-checklist.md). Unreachable objects, external backups, screenshots' rendered content, and unknown private terms still need separate scrutiny.
 
@@ -59,3 +59,5 @@ Four exact dev-toolchain packages currently contain inert install declarations, 
 ## Knowledge and artifact lifecycle
 
 Update the owning format doc/ADR when behavior changes, retain truthful gaps in the README, add a changelog entry, and record exact test commands/subsets. Receipts belong to a commit and hardware class, never a hostname/username. Keep release assets and checksums per version; local reproducibility receipts are retained until accepted. Test app caches and synthetic artifacts are ignored; prune only owned, reproducible outputs after review, never personal vaults or unbacked evidence. See [releasing](docs/releasing.md) for the local-only flow and the owner decisions that still gate publication.
+
+Expression callable metadata lives in `src/core/expr/syntax.ts`; regenerate its reference with `./scripts/run.sh docs:expressions`. `esbuild.config.mjs` performs used-export discovery before the final shared-core/worker/main build and records nested metafiles. UI autocomplete must remain outside the worker/core inputs. Run build before expression tests/benchmarks: packaged-worker tests use the built main bundle to reproduce the production export inventory.

@@ -28,6 +28,7 @@ function rows(n = 240, seed = 7): FactRow[] {
 }
 /** Independent row-level oracle for one predicate; scalar types are exact. */
 function oracle(row: FactRow, p: Predicate): boolean {
+  if (p.kind === 'expr') throw new Error('Legacy-only oracle');
   if (p.kind === 'folder') { const prefix = (Array.isArray(p.prefix) ? p.prefix.join('/') : p.prefix).replace(/\/+$/, ''); return !prefix || row.path.startsWith(prefix + '/'); }
   const has = Object.hasOwn(row.properties, p.key), v = row.properties[p.key];
   if (p.kind === 'exists') return has;
@@ -36,7 +37,7 @@ function oracle(row: FactRow, p: Predicate): boolean {
 }
 test('filter compilation matches a brute-force oracle for eq/in/exists/folder and AND', () => {
   const input = rows(), d = declaration(), p = buildProjection(input, d), byPath = new Map(input.map(r => [r.path, r]));
-  const predicates: Predicate[] = [
+  const predicates: Exclude<Predicate, { kind: 'expr' }>[] = [
     { kind: 'eq', key: 'family', value: 'Alpha' }, { kind: 'eq', key: 'rank', value: 1 }, { kind: 'eq', key: 'rank', value: '1' }, { kind: 'eq', key: 'family', value: null },
     { kind: 'in', key: 'family', values: ['Beta', 'Gamma'] }, { kind: 'in', key: 'flag', values: [true, false] }, { kind: 'in', key: 'family', values: [] },
     { kind: 'exists', key: 'rank' }, { kind: 'exists', key: 'flag' }, { kind: 'folder', prefix: ['Notes'] }, { kind: 'folder', prefix: 'Notes/Deep' }, { kind: 'folder', prefix: '' },

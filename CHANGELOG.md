@@ -6,7 +6,19 @@ All notable changes are recorded here. The format follows Keep a Changelog; vers
 
 - Raised the enforced bundle ceilings to 180,000 minified / 58,000 gzip bytes by owner decision (2026-11-11), from 150,000 / 45,000, to fit the explore panel and visuals.
 
-## [Unreleased]
+## [0.4.0] - Unreleased
+
+### Added
+
+- Bounded Bases-aligned node expressions: handwritten lexer/parser, positioned checker, canonical printer, pure whitelist, typed distinct-value kernels, expression filters/color predicates/group sources, and read-only worker counts.
+- Explore expression inputs, property/method completion, debounced counts, positional errors, explicit cap-checked conversion, and retained structured builders. Folder-depth grouping stays built in.
+- Additive expression storage with scanner-safe declaration text chunks, historical plan/cache identity, exact null/missing migration, and direct lowering of oversized legacy values without text parsing.
+- Cooperative expression-count/applied-filter cancellation, configurable evaluation budgets, transactional worker view preparation, and a shared pure factory that avoids shipping duplicate core source.
+- Deterministic expression acceptance tests, a synthetic real-Obsidian editor lane, and bounded production-worker/adversarial benchmarks. Generic examples use category terminology.
+
+### Verification status
+
+- Bundle ceilings raised to 205,000 minified / 66,000 gzip bytes by owner decision (2026-11-11); 0.4.0 is 201,786 / 64,139 and passes. Independent review pending. Exact scoped results and unverified lanes are in `docs/benchmarks.md`.
 
 ## [0.3.1] - 2026-11-11
 

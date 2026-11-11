@@ -2,9 +2,10 @@ import { probeGpu } from './gpu-probe';
 import { renderProjection } from './render-projection';
 import { runLayout, runLayoutStream, type LayoutInput } from './core/layout';
 import { yieldTask } from './core/scheduler';
-import { digest, canonical, layoutDeclaration } from './core/declaration';
+import { checked, cooperative, filterSteps, groupSteps, lowerPredicate, lowerGroup, type EvaluationControl } from './core/expr/engine';
+import { identityDeclaration, digest, canonical, layoutDeclaration } from './core/declaration';
 import { declaredKeys } from './core/columns';
-import { buildProjection, colorGroups, type FactRow, type Projection } from './core/projection';
+import { buildProjection, colorGroups, type FactRow, type Projection, type DictionaryColumn } from './core/projection';
 import { contractGroups, validateGroupProjection, type GroupProjection } from './core/group-projection';
 import { unpackRows, transferables } from './core/columns';
 import { generationKey } from './core/generation';
@@ -12,7 +13,7 @@ import { warmLayout, validSavedLayout } from './core/incremental';
 import { CACHE_FORMAT, decodeLayout, encodeLayout, type BinaryLayout, type GenerationMeta } from './core/binary-layout';
 import { edgeHashes, hashEdge, edgeHashSet } from './core/edge-hash';
 import { LAYOUT_PRODUCER, type PipelineRequest, type PipelineConfig } from './pipeline';
-import { emptyView, explore, withoutTypes, type ExploreResult, type ExploreView } from './core/explore';
+import { emptyView, explore, groupColumn, withoutTypes, type ExploreResult, type ExploreView } from './core/explore';
 const rows = new Map<string, FactRow>();
 let config: PipelineConfig, meta: GenerationMeta, projection: Projection, visible: Uint8Array;
 let contracted: ReturnType<typeof contractGroups>, positions: Float32Array | undefined, saved: BinaryLayout | undefined;
@@ -23,14 +24,33 @@ let complete = true, projectionRevision = -1, colors: Uint32Array = new Uint32Ar
 /** Every applied view (project, regroup, filter, derived source) gets its own generation;
  * member/contribution reads must name it, so no lookup can cross groupings. */
 let viewGeneration = 0;
-function applyView(view: ExploreView) {
+function applyView(view: ExploreView, prepared?: { base: Uint8Array; group: DictionaryColumn }) {
   viewGeneration++;
   const filters = config.predicate ? [...view.filters, config.predicate] : view.filters;
-  explored = explore(projection, config.declaration, { ...view, filters }, colors, config.groupLevel, { facetValues: config.facetValues ?? 50 });
+  explored = explore(projection, config.declaration, { ...view, filters }, colors, config.groupLevel, { facetValues: config.facetValues ?? 50 }, prepared);
   visible = explored.visible;
   const source = { values: explored.groupKeys, codes: explored.groupCodes, encoded: explored.groupLabels !== explored.groupKeys };
   contracted = contractGroups({ ...withoutTypes(projection, view.hiddenTypes), groups: [source] }, visible, 0);
   return explored;
+}
+/** Prepare expression work cooperatively; only commit config/view state on success. */
+function* viewSteps(view: ExploreView, rules: PipelineConfig['declaration']['colors'] | undefined): Generator<void, { base: Uint8Array; group: DictionaryColumn; colors: Uint32Array }> {
+  const base = new Uint8Array(projection.paths.length).fill(1);
+  for (const predicate of [...view.filters, ...(config.predicate ? [config.predicate] : [])]) {
+    const bits = yield* filterSteps(projection, lowerPredicate(predicate));
+    for (let i = 0; i < base.length; i++) { base[i]! &= bits[i]!; if (i % 1024 === 1023) yield; }
+  }
+  let nextColors = colors;
+  if (rules) {
+    nextColors = new Uint32Array(base.length).fill(rules.length);
+    for (let k = 0; k < rules.length; k++) {
+      const bits = yield* filterSteps(projection, lowerPredicate(rules[k]!.predicate));
+      for (let i = 0; i < base.length; i++) { if (bits[i] && nextColors[i] === rules.length) nextColors[i] = k; if (i % 1024 === 1023) yield; }
+    }
+  }
+  const g = view.group;
+  const group = g && (g.from === 'expr' || g.from === 'derived') ? yield* groupSteps(projection, lowerGroup(g)) : groupColumn(projection, config.declaration, g, config.groupLevel);
+  return { base, group, colors: nextColors };
 }
 let declarationHash = '', layoutHash = '', hashes: Uint32Array = new Uint32Array();
 function matches(g: GenerationMeta) {
@@ -42,7 +62,7 @@ function groupSummary(p: GroupProjection): GroupProjection {
   // Carrier/contribution objects remain worker-owned and are read a page at a time.
   return { ...p, groupEdges: p.groupEdges.map(e => ({ ...e, carriers: { kind: e.carriers.kind, ids: [] } })) };
 }
-async function handle(r: PipelineRequest, revision: number): Promise<unknown> {
+async function handle(r: PipelineRequest, revision: number, control: EvaluationControl): Promise<unknown> {
   switch (r.kind) {
     case 'gpu': return typeof OffscreenCanvas === 'undefined' ? undefined : probeGpu(new OffscreenCanvas(1, 1));
     case 'external': {
@@ -51,7 +71,7 @@ async function handle(r: PipelineRequest, revision: number): Promise<unknown> {
     }
     case 'configure': {
       config = r.config;
-      declarationHash = await digest(layoutDeclaration(config.declaration)); layoutHash = await digest({ layout: config.layout, streamEveryIterations: config.streamEveryIterations });
+      declarationHash = await digest(identityDeclaration(layoutDeclaration(config.declaration))); layoutHash = await digest({ layout: config.layout, streamEveryIterations: config.streamEveryIterations });
       if (saved && !matches(saved.meta)) saved = undefined;
       return { declarationHash, layoutHash, ingestHash: await digest({ declarationHash, keys: declaredKeys(config.declaration) }) };
     }
@@ -125,10 +145,17 @@ async function handle(r: PipelineRequest, revision: number): Promise<unknown> {
       if (revision !== projectionRevision) throw new Error('Projection generation changed');
       // Colors are presentation-only: a legend edit re-evaluates rules on existing
       // columns without changing layout identity or re-ingesting notes.
-      if (r.colors) { const declaration = { ...config.declaration, colors: r.colors }; colors = colorGroups(projection, declaration); config = { ...config, declaration }; }
-      config = { ...config, view: r.view, facetValues: r.facetValues };
-      const result = applyView(r.view);
+      const prepared = await cooperative(viewSteps(r.view, r.colors), control);
+      colors = prepared.colors;
+      config = { ...config, declaration: r.colors ? { ...config.declaration, colors: r.colors } : config.declaration, view: r.view, facetValues: r.facetValues };
+      const result = applyView(r.view, prepared);
       return structuredClone({ explore: result, colors, groups: groupSummary(contracted.projection), view: viewGeneration });
+    }
+    case 'expression-count': {
+      if (revision !== projectionRevision) throw new Error('Projection generation changed');
+      const ast = checked(r.expr, r.context);
+      if (r.context === 'group') return { matched: projection.paths.length, total: projection.paths.length, groups: (await cooperative(groupSteps(projection, ast), control)).values.length };
+      return { matched: (await cooperative(filterSteps(projection, ast), control)).reduce((a, b) => a + b, 0), total: projection.paths.length };
     }
     case 'members':
       if (revision !== projectionRevision) throw new Error('Projection generation changed');
@@ -144,15 +171,21 @@ async function handle(r: PipelineRequest, revision: number): Promise<unknown> {
 }
 // Serialization prevents async digests/configuration from racing row deltas or newer revisions.
 let queue = Promise.resolve();
+let evaluationId: number | undefined;
+const cancelled = new Set<number>();
 self.onmessage = (event: MessageEvent<PipelineRequest & { id: number; revision: number; input?: LayoutInput; options?: any }>) => {
-  const recycle = event.data as unknown as { kind: string; buffer?: ArrayBuffer };
+  const recycle = event.data as unknown as { kind: string; buffer?: ArrayBuffer; id: number };
+  if (recycle.kind === 'cancel-evaluation') { if (recycle.id === evaluationId) cancelled.add(recycle.id); return; }
   if (recycle.kind === 'recycle') { if (recycle.buffer && recycled.length < 2) recycled.push(recycle.buffer); return; }
   // Backwards-compatible deterministic layout protocol used by existing harness consumers.
   if (event.data.input) { const start = performance.now(); try { const p = runLayout(event.data.input, event.data.options); self.postMessage({ positions: p, milliseconds: performance.now() - start }, { transfer: [p.buffer] }); } catch (error) { self.postMessage({ error: String(error) }); } return; }
   const r = event.data;
+  if (evaluationId !== undefined) cancelled.add(evaluationId);
+  if (r.kind === 'expression-count' || r.kind === 'explore') evaluationId = r.id;
   queue = queue.then(async () => {
     self.postMessage({ kind: 'started', id: r.id, revision: r.revision });
-    try { const result = await handle(r, r.revision); self.postMessage({ id: r.id, revision: r.revision, result }, { transfer: transferables(result) }); }
+    try { const result = await handle(r, r.revision, { cancelled: () => cancelled.has(r.id), budgetMs: (r.kind === 'expression-count' || r.kind === 'explore') ? r.budgetMs ?? 120000 : 120000 }); self.postMessage({ id: r.id, revision: r.revision, result }, { transfer: transferables(result) }); }
     catch (error) { self.postMessage({ id: r.id, revision: r.revision, error: String(error) }); }
+    finally { cancelled.delete(r.id); if (evaluationId === r.id) evaluationId = undefined; }
   });
 };

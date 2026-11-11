@@ -55,3 +55,6 @@
 .graph-ng-hover-label:empty { display:none; }
 .graph-ng-hub-label { font-weight:var(--font-semibold, 600); font-size:var(--font-ui-smaller); }
 @media (prefers-reduced-motion: reduce) { .graph-ng-explore * { transition:none !important; } }
+
+.graph-ng-expression input[type="text"] { width: 100%; min-width: 0; }
+.graph-ng-expression-status { white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--font-ui-small); margin: 8px 0; }

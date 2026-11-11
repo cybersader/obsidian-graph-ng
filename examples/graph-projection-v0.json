@@ -8,13 +8,13 @@
   "groups": [
     {
       "id": "a",
-      "label": "Family 1",
+      "label": "Category 1",
       "count": 1,
       "identityPrefix": "concept:alpha:"
     },
     {
       "id": "b",
-      "label": "Family 2",
+      "label": "Category 2",
       "count": 1,
       "identityPrefix": "concept:beta:"
     }

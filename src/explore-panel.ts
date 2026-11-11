@@ -1,9 +1,14 @@
+import { editAsExpression, builderPredicate, checked } from './core/expr/engine';
+import { validate } from './core/expr/syntax';
+import { suggestions } from './core/expr/autocomplete';
+import { declaredKeys } from './core/columns';
 import { describePredicate, groupLabel, NO_COLOR, VIEW_LIMITS, validateSaved, validateView, type ExploreResult, type ExploreView, type SavedView, type ViewCamera } from './core/explore';
 import { canonical, validateDerivedGroup, validatePredicate, type GraphDeclaration, type GroupSource, type Predicate, type Scalar } from './core/declaration';
 import type { Settings, Visuals } from './settings';
 /** The view owns the worker, renderer and persistence; the panel only edits state. */
 export interface PanelHost {
   settings(): Settings;
+  preview(expr: string, context: 'filter' | 'group'): Promise<{ matched: number; total: number; groups?: number }>;
   result(): ExploreResult | undefined;
   mode(): string;
   policy(): string[];
@@ -21,10 +26,14 @@ export interface PanelHost {
 }
 type Section = 'filters' | 'groups' | 'colors' | 'edges' | 'display' | 'views';
 const SECTIONS: [Section, string][] = [['filters', 'Filters'], ['groups', 'Groups'], ['colors', 'Color rules'], ['edges', 'Relationships'], ['display', 'Display'], ['views', 'Saved views']];
+let expressionPanelId = 0;
 const parseRaw = (raw: string): Scalar => { try { const v: unknown = JSON.parse(raw); return v === null || ['string', 'number', 'boolean'].includes(typeof v) ? v as Scalar : raw; } catch { return raw; } };
 /** Collapsible in-view controls styled only with host CSS variables. */
 export class ExplorePanel {
   readonly root: HTMLElement;
+  private expressionPanelId = ++expressionPanelId;
+  private drafts = new Map<string, string>();
+  private expressionTimers = new Set<ReturnType<typeof setTimeout>>();
   private counts: HTMLElement;
   private search: HTMLInputElement;
   private body: HTMLElement;
@@ -47,7 +56,7 @@ export class ExplorePanel {
     this.body = this.root.createDiv({ cls: 'graph-ng-explore-body' });
     this.layout();
   }
-  dispose() { clearTimeout(this.searchTimer); this.root.remove(); }
+  dispose() { this.expressionTimers.forEach(clearTimeout); clearTimeout(this.searchTimer); this.root.remove(); }
   setState(view: ExploreView) { this.view = view; if (document.activeElement !== this.search) this.search.value = view.query; this.render(); }
   /** A view that would fail settings validation is never applied or persisted. */
   private update(patch: Partial<ExploreView>, after?: () => void) {
@@ -66,7 +75,9 @@ export class ExplorePanel {
     if (this.body.hidden) return;
     // Re-render rebuilds controls; keep keyboard focus on the same control (by accessible name).
     const active = document.activeElement instanceof HTMLElement && this.body.contains(document.activeElement) ? document.activeElement : null;
+    const selection = active instanceof HTMLInputElement ? [active.selectionStart, active.selectionEnd] as const : undefined;
     const focusName = active ? `${active.tagName}|${active.getAttribute('aria-label') ?? active.textContent}` : '';
+    this.expressionTimers.forEach(clearTimeout); this.expressionTimers.clear();
     const scroll = this.body.scrollTop; this.body.empty();
     for (const [id, title] of SECTIONS) {
       const details = this.body.createEl('details', { cls: `graph-ng-explore-section graph-ng-explore-${id}` });
@@ -78,13 +89,51 @@ export class ExplorePanel {
       else if (id === 'filters') this.filters(content, r!); else if (id === 'groups') this.groups(content, r!); else if (id === 'colors') this.colors(content, r!); else this.edges(content, r!);
     }
     this.body.scrollTop = scroll;
-    if (focusName) [...this.body.querySelectorAll<HTMLElement>('button,input,select,summary')].find(e => `${e.tagName}|${e.getAttribute('aria-label') ?? e.textContent}` === focusName)?.focus();
+    if (focusName) { const replacement = [...this.body.querySelectorAll<HTMLElement>('button,input,select,summary')].find(e => `${e.tagName}|${e.getAttribute('aria-label') ?? e.textContent}` === focusName); replacement?.focus(); if (replacement instanceof HTMLInputElement && selection && replacement.type === 'text') replacement.setSelectionRange(selection[0], selection[1]); }
+  }
+  /** One bounded text editor serves filters, colours and custom group values. */
+  private expressionField(host: HTMLElement, r: ExploreResult, label: string, context: 'filter' | 'group', submit: (expr: string) => void) {
+    const details = host.createEl('details', { cls: 'graph-ng-expression' }); details.open = this.drafts.has(label);
+    details.createEl('summary', { text: label });
+    const input = details.createEl('input', { attr: { type: 'text', 'aria-label': label, placeholder: context === 'filter' ? 'note.status == "open"' : 'note.category', spellcheck: 'false' } });
+    input.value = this.drafts.get(label) ?? '';
+    const completions = details.createEl('datalist'), id = `graph-ng-expr-${this.expressionPanelId}-${label.split(' ').join('-')}`; completions.id = id; input.setAttribute('list', id);
+    const feedback = details.createEl('pre', { cls: 'graph-ng-expression-status', attr: { role: 'status', 'aria-live': 'polite' } });
+    const apply = details.createEl('button', { text: context === 'group' ? 'Group by expression' : 'Apply expression', cls: 'mod-cta' });
+    const sync = () => {
+      this.drafts.set(label, input.value);
+      completions.empty(); for (const value of suggestions(input.value.slice(0, input.selectionStart ?? input.value.length), [...declaredKeys(this.host.settings().declaration), ...r.facets.map(f => f.key)])) completions.createEl('option', { value });
+      const result = validate(input.value, context); apply.disabled = !result.ok; feedback.toggleClass('graph-ng-explore-error', !result.ok);
+      if (!result.ok) { const error = result.errors[0]!; feedback.textContent = `At ${error.pos + 1}: ${error.message}\n${' '.repeat(Math.min(error.pos, 80))}^`; return; }
+      const shape = context === 'filter' ? builderPredicate(result.ast) : undefined;
+      feedback.textContent = shape ? `Builder: ${describePredicate(shape)} · counting…` : 'Custom expression · counting…';
+      const source = input.value, timer = setTimeout(() => {
+        this.expressionTimers.delete(timer);
+        void this.host.preview(source, context).then(count => {
+          if (input.isConnected && source === input.value) feedback.textContent = `${count.matched.toLocaleString()} / ${count.total.toLocaleString()} matched${count.groups === undefined ? '' : ` · ${count.groups.toLocaleString()} groups`}`;
+        }).catch(e => { if (input.isConnected && source === input.value) feedback.textContent = String(e).includes('generation changed') ? 'Projection changed; edit to refresh count' : `Preview: ${String(e)}`; });
+      }, 150); this.expressionTimers.add(timer);
+    };
+    let pending: ReturnType<typeof setTimeout> | undefined;
+    input.oninput = () => { if (pending) { clearTimeout(pending); this.expressionTimers.delete(pending); } const before = new Set(this.expressionTimers); sync(); pending = [...this.expressionTimers].find(t => !before.has(t)); };
+    apply.onclick = () => { try { const ast = checked(input.value, context); const source = editAsExpression(context === 'filter' ? { kind: 'expr', expr: input.value } : { from: 'expr', expr: input.value }); if (!source.text) throw new Error(source.reason); submit(source.text); } catch (e) { feedback.textContent = String(e); } };
+    if (input.value) sync(); else apply.disabled = true;
   }
   private filters(host: HTMLElement, r: ExploreResult) {
     const chips = host.createDiv({ cls: 'graph-ng-chips' });
     this.view.filters.forEach((f, i) => {
       const chip = chips.createEl('button', { cls: 'graph-ng-chip', text: `${describePredicate(f)} ×`, attr: { 'aria-label': `Remove filter ${describePredicate(f)}` } });
       chip.onclick = () => this.update({ filters: this.view.filters.filter((_, j) => j !== i) });
+      const converted = editAsExpression(f), edit = chips.createEl('button', { text: 'Edit as expression', attr: { 'aria-label': `Edit filter ${i + 1} as expression` } });
+      edit.disabled = !converted.text; if (converted.reason) edit.title = converted.reason;
+      edit.onclick = () => { this.drafts.set(`Edit filter ${i + 1}`, converted.text!); this.render(); };
+      if (this.drafts.has(`Edit filter ${i + 1}`)) this.expressionField(host, r, `Edit filter ${i + 1}`, 'filter', expr => { this.drafts.delete(`Edit filter ${i + 1}`); this.update({ filters: this.view.filters.map((p, j) => j === i ? { kind: 'expr', expr } : p) }); });
+      if (f.kind !== 'expr') {
+        const builder = host.createEl('details'); builder.createEl('summary', { text: `Edit builder filter ${i + 1}` });
+        const input = builder.createEl('textarea', { attr: { 'aria-label': `Builder filter ${i + 1}` } }); input.value = JSON.stringify(f, null, 2);
+        const error = builder.createDiv({ attr: { role: 'alert' } });
+        builder.createEl('button', { text: 'Save builder entry' }).onclick = () => { try { const value: unknown = JSON.parse(input.value); validatePredicate(value); this.update({ filters: this.view.filters.map((p, j) => j === i ? value : p) }); } catch (e) { error.textContent = String(e); } };
+      }
     });
     if (!this.view.filters.length) chips.createSpan({ cls: 'graph-ng-explore-note', text: 'No property filters. Filters combine with AND.' });
     this.predicateForm(host, r, 'Add filter', p => this.update({ filters: [...this.view.filters, p] }), true);
@@ -118,6 +167,7 @@ export class ExplorePanel {
         error.textContent = ''; submit(p);
       } catch (e) { error.textContent = e instanceof Error ? e.message : String(e); }
     };
+    this.expressionField(host, r, action === 'Add filter' ? 'Filter expression' : 'Rule expression', 'filter', expr => submit({ kind: 'expr', expr }));
   }
   private groups(host: HTMLElement, r: ExploreResult) {
     const d = this.host.settings().declaration, row = host.createDiv({ cls: 'graph-ng-row' });
@@ -126,9 +176,11 @@ export class ExplorePanel {
     for (const f of r.facets) if (!d.groups.some(g => g.from === 'key' && g.key === f.key)) options.push([`Property: ${f.key}`, { from: 'key', key: f.key }]);
     for (let depth = 1; depth <= 4; depth++) if (!d.groups.some(g => g.from === 'folder' && g.depth === depth && g.prefix === undefined)) options.push([`Folder depth ${depth}`, { from: 'folder', depth }]);
     options.forEach(([label, g], i) => { const o = select.createEl('option', { value: String(i), text: label }); o.selected = canonical(g) === canonical(this.view.group); });
-    if (this.view.group?.from === 'derived' && !options.some(([, g]) => canonical(g) === canonical(this.view.group))) { options.push([groupLabel(this.view.group), this.view.group]); select.createEl('option', { value: String(options.length - 1), text: options.at(-1)![0] }).selected = true; }
+    if ((this.view.group?.from === 'derived' || this.view.group?.from === 'expr') && !options.some(([, g]) => canonical(g) === canonical(this.view.group))) { options.push([groupLabel(this.view.group), this.view.group]); select.createEl('option', { value: String(options.length - 1), text: options.at(-1)![0] }).selected = true; }
     select.onchange = () => this.update({ group: options[Number(select.value)]![1], hiddenGroups: [], collapsedGroups: [] });
     this.derivedForm(host, r);
+    this.expressionField(host, r, 'Group expression', 'group', expr => this.update({ group: { from: 'expr', expr }, hiddenGroups: [], collapsedGroups: [] }));
+    if (this.view.group && this.view.group.from !== 'expr') { const converted = editAsExpression(this.view.group), edit = host.createEl('button', { text: 'Edit group as expression' }); edit.disabled = !converted.text; edit.title = converted.reason ?? ''; edit.onclick = () => { this.drafts.set('Group expression', converted.text!); this.render(); }; }
     const disabled = this.host.settings().explore.disabledDerived;
     if (disabled.length) {
       const note = host.createDiv({ cls: 'graph-ng-explore-note graph-ng-disabled-derive', attr: { role: 'status' } });

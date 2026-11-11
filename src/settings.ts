@@ -104,12 +104,16 @@ export function decodeText(v: unknown): unknown {
   return v;
 }
 /** The exact object written to data.json: settings only, explore text scanner-safe. */
-export const persistedSettings = (s: Settings) => ({ ...s, explore: encodeText(s.explore) });
+export const persistedSettings = (s: Settings) => ({ ...s, declaration: { ...s.declaration, groups: s.declaration.groups.map(g => g.from === 'expr' ? { ...g, expr: encodeText(g.expr) } : g), colors: s.declaration.colors.map(c => c.predicate.kind === 'expr' ? { ...c, predicate: { ...c.predicate, expr: encodeText(c.predicate.expr) } } : c) }, explore: encodeText(s.explore) });
 /** The only path to data.json: canonicalize, validate, encode. Throws instead of
  * writing anything a later load would reject (and quarantine as invalid). */
 export function settingsForSave(s: Settings) {
-  const settings = { ...s, explore: canonicalExplore(s.explore) };
-  validateSettings(settings); return persistedSettings(settings);
+  const settings = { ...s, declaration: migrateDeclaration(s.declaration), explore: canonicalExplore(s.explore) };
+  validateSettings(settings); const stored = persistedSettings(settings);
+  // Encoding has its own shape bounds. Refuse a payload that our loader rejects.
+  validateSettings({ ...settings, declaration: decodeText(stored.declaration), explore: decodeText(stored.explore) });
+  if (new TextEncoder().encode(JSON.stringify({ settings: stored })).byteLength > defaults('producer@1').maxSettingsBytes) throw new Error('Settings byte limit exceeded');
+  return stored;
 }
 export interface Settings {
   settingsVersion: 2;
@@ -218,6 +222,7 @@ export function disableRegexDerives(declaration: unknown, explore: Record<string
 export function upgradeSettings(input: unknown, producer: string): Settings {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Settings must be an object');
   const old = structuredClone(input) as Partial<Settings>, base = defaults(producer);
+  if (old.declaration) old.declaration = decodeText(old.declaration) as GraphDeclaration;
   if (old.settingsVersion !== undefined && old.settingsVersion !== 2) throw new Error('Unsupported settings version');
   const explore = decodeText(old.explore ?? {}) as Partial<ExploreSettings> & Record<string, unknown>;
   // groupLevel indexes declared groups: removing regex groups before it shifts it down so it

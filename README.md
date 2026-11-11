@@ -1,8 +1,8 @@
 # Graph NG
 
-A standalone, local-first Obsidian graph plugin. Start with a readable graph of declared groups, inspect counted relationships and their carrier notes, then drill into individual notes when hardware WebGL is available. No ontology, framework name, relation vocabulary, or ID format is built into the core.
+A standalone, local-first Obsidian graph plugin. Start with a readable graph of declared groups, inspect counted relationships and their carrier notes, then drill into individual notes when hardware WebGL is available. No ontology, category vocabulary, relation vocabulary, or ID format is built into the core.
 
-**Version 0.3.1 / test-backed alpha.** This is not production, mobile, integrated-GPU, or remote-authorization acceptance. No server, remote repository, hosted service, or telemetry is configured. All fixtures and captured evidence are synthetic.
+**Version 0.4.0 candidate / test-backed alpha.** The expression implementation is not release-accepted: the fixed bundle gate remains over budget and independent review is pending. This is not production, mobile, integrated-GPU, or remote-authorization acceptance. No server, remote repository, hosted service, or telemetry is configured. All fixtures and captured evidence are synthetic.
 
 ## Use
 
@@ -28,11 +28,29 @@ Dark themes draw edges with additive, density-scaled blending (per-edge ceiling 
 
 Software renderers such as SwiftShader/llvmpipe, major performance caveats and missing WebGL2 retain the Canvas2D group screen and can open bounded Canvas detail through **All notes** within both `canvasMaxDetailNodes` and `canvasMaxDetailEdges` (2,000 visible nodes / 10,000 visible edges by default). These are refusal budgets, not truncation. Renderer initialization failures return to groups with a notice; an unrestored context falls back to bounded Canvas detail or groups after `contextRestoreTimeoutMs`. Member/carrier lists remain usable; this is deliberately not a 60,000-node software-rendered graph. Lists are paginated. If Canvas2D itself is absent, the group buttons remain accessible.
 
+## Expression filters, groups and colors
+
+Open **Filter expression**, **Group expression**, or **Rule expression** in Explore. Type a bounded Bases-aligned expression, inspect its positional error or debounced worker count, then apply it. Autocomplete offers materialized property keys and receiver methods. For a property not yet materialized, preview reports the missing column; applying the expression materializes its references and rebuilds. The no-relayout native check covers filters on already materialized columns; newly added columns still participate in the existing declaration/cache identity.
+
+```text
+note.category == "Example"
+file.inFolder("Notes/Example") && !file.hasProperty("archived")
+note.status.lower().startsWith("open")
+if(note.priority > 2, "high", "low")
+note.entity_id.segment(":", 0)
+```
+
+`note.x`, bare `x`, and `note["my-key"]` read frontmatter. File facts are `path`, `name`, `basename`, `folder`, and `ext`; node facts are `identity` and `degree`. Equality preserves exact scalar types. Missing properties differ from explicit null; only segment/prefix normalize null to missing, preserving existing group labels. Results never write back to notes.
+
+The optional `.segment()`, `.prefix()`, `coalesce()`, and `node.*` names are graph-specific extensions, not portable Bases syntax. No regex, evaluation of JavaScript, lambdas, dates, formulas, edge contexts, clocks, random values, body search, or network access is exposed. See the [expression reference](docs/declaration-format.md#expressions-node-context).
+
+Structured builders remain available and retain structured storage. **Edit as expression** is explicit and disabled if the printed entry exceeds text limits; large entries stay editable in the builder. Folder-depth grouping remains a built-in source. Old disabled regex groups remain visible and inactive. Expressions are settings text only, not new note properties or a second projection authority.
+
 ## Meaning is declared
 
 The default declaration has no identity property, no ontology rules, no predefined colors, and no reified-note keys. It uses literal note paths as identities, top-level folders as groups, and the public Obsidian resolved-link producer. Its producer name is pinned to `obsidian-links@<apiVersion>`; this identifies the host link resolver, not a new Markdown parser. A declaration copied from another version must explicitly update that pin.
 
-See [`examples/default-declaration.json`](examples/default-declaration.json), [`examples/default-settings.json`](examples/default-settings.json), and [`examples/concept-mapping-declaration.json`](examples/concept-mapping-declaration.json). The concept/mapping declaration is **only an example**, not a special adapter or a core assumption. One possible use is a generic concept/reference mapping vault. Its synthetic concepts have `id` and `family`; mapping notes have `subject_id`, `object_id`, and `predicate`.
+See [`examples/default-declaration.json`](examples/default-declaration.json), [`examples/default-settings.json`](examples/default-settings.json), and [`examples/concept-mapping-declaration.json`](examples/concept-mapping-declaration.json). The concept/mapping declaration is **only an example**, not a special adapter or a core assumption. One possible use is a generic concept/reference mapping vault. Its synthetic concepts have `id` and `category`; mapping notes have `subject_id`, `object_id`, and `predicate`.
 
 Declaration v2 supports (v1 input migrates automatically):
 
@@ -47,14 +65,14 @@ Declaration v2 supports (v1 input migrates automatically):
 The toolbar accepts one exact predicate, or empty input to clear it:
 
 ```json
-{"kind":"eq","key":"family","value":"Family 1"}
+{"kind":"eq","key":"category","value":"Category 1"}
 ```
 
 ```json
-{"kind":"folder","prefix":"Concepts/Family-1"}
+{"kind":"folder","prefix":"Concepts/Category-1"}
 ```
 
-Equality preserves scalar types: `1`, `"1"`, `true`, null and missing differ. Folder matching includes descendants at path boundaries, not lookalike prefixes. No regex/query-language/body search is implemented.
+Equality preserves scalar types: `1`, `"1"`, `true`, null and missing differ. Folder matching includes descendants at path boundaries, not lookalike prefixes. No regex or body search is implemented; the expression subset above is not an Obsidian search translator.
 
 ## graph-projection v0 (draft)
 
@@ -65,8 +83,8 @@ Set tuning `projectionFile` to a vault-relative JSON path, for example `graph-pr
   "schema": "graph-projection-v0",
   "producer": {"name":"synthetic","projection":"example","asOf":"2026-11-10"},
   "groups": [
-    {"id":"a","label":"Family 1","count":1,"identityPrefix":"concept:alpha:"},
-    {"id":"b","label":"Family 2","count":1,"identityPrefix":"concept:beta:"}
+    {"id":"a","label":"Category 1","count":1,"identityPrefix":"concept:alpha:"},
+    {"id":"b","label":"Category 2","count":1,"identityPrefix":"concept:beta:"}
   ],
   "groupEdges": [{
     "a":"a","b":"b","total":1,
@@ -238,7 +256,7 @@ Native WebDriver requestAnimationFrame sampling produced **zero callbacks**, so 
 
 ## Licensing and boundaries
 
-MIT, copyright 2026 **cybersader**. No third-party plugin implementation was copied. The shipped plugin has **zero runtime packages**. Graphology and graphology-layout-forceatlas2 are pinned development-only oracles, not bundled. `scripts/check-licenses.mjs` refuses runtime dependencies and generates an empty `THIRD_PARTY_NOTICES.txt`; the build rejects bundled `node_modules` inputs. Both main and embedded worker are minified. The enforced bundle ceilings are **180,000 minified / 58,000 gzip bytes**, raised on 2026-11-11 by owner decision to fit the explore panel and visuals (previously 150,000 / 45,000). Version 0.3.1 is **173,448 minified / 54,838 gzip bytes** and passes (0.2.1 was 115,970 / 35,830). See [slice-7 measurements](docs/benchmarks.md). Cosmos remains deliberately excluded; its CC-BY-NC-4.0 license is not permissive.
+MIT, copyright 2026 **cybersader**. No third-party plugin implementation was copied. The shipped plugin has **zero runtime packages**. Graphology and graphology-layout-forceatlas2 are pinned development-only oracles, not bundled. `scripts/check-licenses.mjs` refuses runtime dependencies and generates an empty `THIRD_PARTY_NOTICES.txt`; the build rejects bundled `node_modules` inputs. Both main and embedded worker are minified. The enforced bundle ceilings are **205,000 minified / 66,000 gzip bytes**, raised again on 2026-11-11 by owner decision for the expression language (previously 180,000 / 58,000, and 150,000 / 45,000 before that). Version 0.4.0 is **201,786 minified / 64,139 gzip bytes** and passes (0.3.1 was 173,448 / 54,838) (0.2.1 was 115,970 / 35,830). See [slice-7 measurements](docs/benchmarks.md). Cosmos remains deliberately excluded; its CC-BY-NC-4.0 license is not permissive.
 
 **Separate development/test-toolchain exception:** `wdio-obsidian-service` uses `7z-wasm` (LGPL with the unRAR restriction) to extract downloaded test applications. It is not imported by the plugin, bundled, or shipped in the runtime artifact. This is an explicitly scoped e2e toolchain exception, **not** a claim that every development transitive dependency is permissively licensed. Obsidian itself is downloaded at test runtime into ignored storage and is never committed.
 
@@ -257,9 +275,11 @@ Declaration v2 renames reified property fields and accepts path-segment folder p
 ## Not implemented / not proven
 
 - No server adapter, remote grant enforcement, tiles, streaming/resumable graph transport, REST/MCP routes, hosted deployment, or server privacy review.
-- No Leiden/community inference, tag-prefix grouping, automatic hierarchy discovery, OR/NOT filter language, general regular expressions, or ontology parser. Derived groups are limited to the three bounded transforms above.
+- No Leiden/community inference, tag-prefix grouping, automatic hierarchy discovery, general regular expressions, or ontology parser. Expressions provide boolean OR/NOT; formulas, dates and edge contexts remain deferred.
 - No mobile real-device evidence, integrated-GPU proof, native FPS result, isolated plugin memory, or GPU-memory measurement. Canvas detail is bounded; software support is not unlimited-scale acceptance.
 - Projection, contraction, canonical hashing, topology hints and binary serialization run in a long-lived worker. The CSR-native layout and flat Barnes–Hut tree have no runtime dependency; the final bundle-size targets are enforced. Multilevel coarsening above 250,000 nodes is deferred and that scale is unmeasured. Driver variance, shader compilers without the parallel extension, first-open tasks and dense-label contrast remain measured limitations, not hidden by steady-state FPS.
 - Group Canvas2D uses paged ring/grid layouts, not tens of thousands of simultaneous labels. Collision suppression can omit a count label; the complete values remain in hover/relationship lists. It is not a general all-scale label-layout solution.
 - Incremental rows do not imply incremental CSR mutation. A declaration/layout change rebuilds; cache persistence uses separate, disposable binary generations in chunks of at most 1 MiB; settings JSON contains no derived graph arrays. Exact-key generations reuse positions directly; compatible key misses warm-start by identity. Old cache entries without topology retain existing positions conservatively.
 - The local producer file is reloaded when its existing file is modified. Missing files produce a visible error; there is no background network fetch/retry service.
+
+Expression count/filter evaluation cancels superseded work cooperatively, with a budget derived from the configurable worker timeout. Aborted applied views retain prior worker state. See [format](docs/declaration-format.md) and [benchmarks](docs/benchmarks.md) for exact batching and uncovered synchronous paths.

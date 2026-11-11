@@ -1,5 +1,6 @@
+import { checked, expressionGroup, lowerGroup, print } from './expr/engine';
 import { canonical, canonicalPredicate, folderPath, validateDerivedGroup, validatePredicate, type FolderPath, type GraphDeclaration, type GroupSource, type Predicate } from './declaration';
-import { compileTransform, deriveInput, describeTransform } from './derive';
+import { describeTransform } from './derive';
 import { filterNodes, type DictionaryColumn, type Projection } from './projection';
 /** Runtime view state. Persisted in settings, never in frontmatter; every field is
  * a declared column, path segment, group key, rule name or relation type. */
@@ -27,7 +28,7 @@ const strings = (v: unknown, name: string, max: number) => {
 function validateGroup(g: unknown): asserts g is GroupSource {
   if (!g || typeof g !== 'object' || Array.isArray(g)) throw new Error('Invalid group source');
   const o = g as Record<string, unknown>, keys = Object.keys(o);
-  if (o.from === 'key') { if (keys.some(k => !['from', 'key'].includes(k)) || typeof o.key !== 'string' || !o.key.trim()) throw new Error('Invalid key group'); }
+  if (o.from === 'expr') { if (keys.some(k => !['from', 'expr'].includes(k)) || typeof o.expr !== 'string') throw new Error('Invalid expression group'); checked(o.expr); } else if (o.from === 'key') { if (keys.some(k => !['from', 'key'].includes(k)) || typeof o.key !== 'string' || !o.key.trim()) throw new Error('Invalid key group'); }
   else if (o.from === 'folder') {
     if (keys.some(k => !['from', 'depth', 'prefix'].includes(k)) || !Number.isSafeInteger(o.depth) || (o.depth as number) < 1 || (o.depth as number) > 64) throw new Error('Invalid folder group');
     if (o.prefix !== undefined) validatePredicate({ kind: 'folder', prefix: o.prefix });
@@ -58,10 +59,11 @@ export function validateSaved(v: unknown): asserts v is SavedView[] {
 export function canonicalView(v: ExploreView): ExploreView {
   const copy = structuredClone(v);
   copy.filters.forEach(canonicalPredicate);
+  if (copy.group?.from === 'expr') copy.group.expr = print(checked(copy.group.expr));
   if (copy.group?.from === 'folder' && typeof copy.group.prefix === 'string') copy.group.prefix = folderPath(copy.group.prefix).split('/').filter(Boolean);
   return copy;
 }
-export const groupLabel = (g: GroupSource) => g.from === 'key' ? `Property: ${g.key}` : g.from === 'derived' ? `Derived: ${g.key === '$identity' ? 'identity' : g.key === '$path' ? 'path' : g.key}, ${describeTransform(g.transform)}` : `Folder depth ${g.depth}${g.prefix !== undefined && folderPath(g.prefix) ? ` under ${folderPath(g.prefix)}` : ''}`;
+export const groupLabel = (g: GroupSource) => g.from === 'expr' ? `Expression: ${g.expr}` : g.from === 'key' ? `Property: ${g.key}` : g.from === 'derived' ? `Derived: ${g.key === '$identity' ? 'identity' : g.key === '$path' ? 'path' : g.key}, ${describeTransform(g.transform)}` : `Folder depth ${g.depth}${g.prefix !== undefined && folderPath(g.prefix) ? ` under ${folderPath(g.prefix)}` : ''}`;
 /** Display text for a dictionary value: decoded JSON scalars, explicit missing. */
 export function valueLabel(raw: string): string {
   if (raw === 'undefined') return '(missing)';
@@ -91,14 +93,7 @@ export function groupColumn(p: Projection, d: GraphDeclaration, group: GroupSour
     const c = p.columns[group.key]; if (!c) throw new Error(`Undeclared column: ${group.key}; add it to columns`);
     return { values: c.values, codes: c.codes, encoded: true };
   }
-  if (group.from === 'derived') {
-    const derive = compileTransform(group.transform);
-    if (group.key === '$identity' || group.key === '$path') return { ...dictionary((group.key === '$path' ? p.paths : p.identities).map(s => derive(s.slice(0, 256)))), encoded: false };
-    const c = p.columns[group.key]; if (!c) throw new Error(`Undeclared column: ${group.key}; add it to columns`);
-    // One transform per distinct dictionary value, then a typed remap of node codes.
-    const mapped = c.values.map(raw => derive(deriveInput(raw === 'undefined' ? undefined : JSON.parse(raw)))), d = dictionary(mapped);
-    return { values: d.values, codes: Uint32Array.from(c.codes, code => d.codes[code]!), encoded: false };
-  }
+  if (group.from === 'expr' || group.from === 'derived') return { ...expressionGroup(p, lowerGroup(group)), encoded: group.from === 'expr' && lowerGroup(group).kind === 'ref' && (lowerGroup(group) as { space?: string }).space === 'note' };
   return { ...folderColumn(p.paths, group.depth, group.prefix), encoded: false };
 }
 export interface Facet { key: string; values: { raw: string; label: string; count: number; visible: number }[]; distinct: number }
@@ -129,12 +124,12 @@ function searchText(p: Projection) {
 }
 /** Pure, worker-side compilation of a view to typed masks and bounded summaries.
  * Filters are ANDed columnar predicates; hidden groups/colors/types only hide. */
-export function explore(p: Projection, d: GraphDeclaration, view: ExploreView, colors: Uint32Array, level: number, limits: ExploreLimits): ExploreResult {
-  const n = p.paths.length, base = new Uint8Array(n).fill(1);
-  for (const f of view.filters) { const bits = filterNodes(p, f); for (let i = 0; i < n; i++) base[i]! &= bits[i]!; }
+export function explore(p: Projection, d: GraphDeclaration, view: ExploreView, colors: Uint32Array, level: number, limits: ExploreLimits, prepared?: { base: Uint8Array; group: DictionaryColumn }): ExploreResult {
+  const n = p.paths.length, base = prepared?.base ?? new Uint8Array(n).fill(1);
+  if (!prepared) for (const f of view.filters) { const bits = filterNodes(p, f); for (let i = 0; i < n; i++) base[i]! &= bits[i]!; }
   const query = view.query.trim().toLowerCase();
   if (query) { const text = searchText(p); for (let i = 0; i < n; i++) if (base[i] && !text[i]!.includes(query)) base[i] = 0; }
-  const g = groupColumn(p, d, view.group, level), hiddenGroup = new Uint8Array(g.values.length);
+  const g = prepared?.group ?? groupColumn(p, d, view.group, level), hiddenGroup = new Uint8Array(g.values.length);
   const hidden = new Set(view.hiddenGroups); g.values.forEach((v, i) => { if (hidden.has(v)) hiddenGroup[i] = 1; });
   const hiddenColor = new Uint8Array(d.colors.length + 1), colorNames = new Set(view.hiddenColors);
   d.colors.forEach((c, i) => { if (colorNames.has(c.name)) hiddenColor[i] = 1; }); if (colorNames.has(NO_COLOR)) hiddenColor[d.colors.length] = 1;
@@ -171,8 +166,9 @@ export function withoutTypes<T extends Pick<Projection, 'source' | 'target' | 't
 }
 /** Predicate summary for a legend row; values stay literal text. */
 export function describePredicate(p: Predicate): string {
+  if (p.kind === 'expr') return p.expr;
   if (p.kind === 'folder') return `folder ${folderPath(p.prefix) || '(root)'}`;
   if (p.kind === 'exists') return `${p.key} exists`;
   if (p.kind === 'eq') return `${p.key} = ${String(p.value)}`;
-  return `${p.key} ∈ ${p.values.slice(0, 3).map(String).join(', ')}${p.values.length > 3 ? ` +${p.values.length - 3}` : ''}`;
+  return `${p.key} ∈ ${p.values.slice(0, 3).map(String).join(', ')}${p.values.length > 3 ? ` … ${p.values.length - 3} more` : ''}`;
 }

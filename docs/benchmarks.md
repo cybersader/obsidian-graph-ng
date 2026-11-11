@@ -463,3 +463,49 @@ An independent review returned SHIP-WITH-FIXES: colour only from the note's own 
 ## Retention and honest reporting
 
 Keep raw benchmark receipts by source commit and hardware class in `.workspace/evidence/` until their summary is accepted; do not silently overwrite acceptance evidence with another fixture. Screenshots stay in ignored `test-screenshots/`, synthetic only, with visual review before sharing. Downloads/caches and reproducible synthetic outputs may be age-pruned only within their owned paths after evidence capture; there is no automatic broad cleanup. Keep per-version release checksums indefinitely with the release record. Define any future retention knob explicitly rather than deleting evidence opportunistically.
+
+## Slice 8 expression candidate — 2026-11-11
+
+These receipts describe the uncommitted `feat/slice8-expressions` candidate based on `87ae0b2`, not a released or independently reviewed build. Hardware scope is a Linux desktop workstation, Bun 1.3.14, Node 22.23.1; native scope is Obsidian/installer 1.13.7 and its Chromium 150. This is not mobile/integrated-GPU acceptance.
+
+| Exact command / subset | Observed result |
+| --- | --- |
+| `./scripts/run.sh build` | Strict TypeScript check and plugin/Blob-worker build pass; no bundled runtime package inputs. |
+| `./scripts/run.sh test` | 156 tests across 11 explicitly named files, 6,867 assertions; 25 expression tests cover syntax/canonical corpus, positioned refusals and limits, exact-type/null/missing semantics, legacy filter/group equivalence (including 10,000-member structured lists and 257-character values), dictionary materialization, scanner/save-load symmetry, historical identities, autocomplete, mixed-column kernels, and isolated-worker determinism. |
+| `GRAPH_EXPRESSIONS=1 ./scripts/run.sh e2e` | Real Obsidian synthetic small vault: 3/3 tests. Positioned errors/disabled apply, debounced worker counts, completion, expression filtering without relayout on existing columns, and oversized structured-builder retention. An existing local app cache was selected with `OBSIDIAN_CACHE`; no app download or real vault was used. |
+| `./scripts/run.sh bench:expressions` | Actual minified production layout-worker IIFE in a Bun Blob worker. Literal-display seed-17 fixture: 60,600 notes; three clauses combine folder membership, exact property equality, and degree comparison: 2,594 matches. Two warmups then seven samples, p95/max **9.171 ms**, below 20 ms. Timing includes parse/check, compile, filter and matched-count reduction, excludes ingest/project and transport. Exact program is in the ignored receipt; its historical fixture names are compatibility data, not a built-in category. |
+| Same benchmark, six isolated worst-case samples | A 1,969-character, exactly-256-node program contains 16 property chains and 239 bounded string calls under `coalesce`. Every input is a distinct 4,096-unit string, so dictionary caching cannot collapse the work. Three samples each at 50,000 and 100,000 rows; medians **8,726.014 / 17,393.433 ms**, ratio **1.993**, inside the specified 1.5–2.5 interval. Maximum 100,000-row sample **17,534.674 ms**, below the stated **20,000 ms desktop ceiling**. The harness terminates workers and separately bounds each request at 180 seconds; it does not accept that watchdog as the performance ceiling. |
+| `./scripts/run.sh gates` | Secrets, attribution, privacy, exact inert install policy/frozen-lock, and runtime-license lanes pass. The sixth lane, bundle size, **fails** at **201,786 minified / 64,139 gzip bytes**, above the unchanged 205,000-byte minified / 66,000-byte gzip ceilings. Candidate is not committable/release-accepted on these receipts. |
+
+Ignored local receipts: `.workspace/evidence/expressions-benchmark.json`, `e2e-expressions.json`, `bundle-size.json`; expression screenshots are in `test-screenshots/expressions-positioned-error.png` and `expressions-live-count.png` and were read visually. Screenshots show only synthetic historical fixture data. The production-worker count request rejected an intentionally stale revision; the unit determinism check compares two workers' counts and detailed results.
+
+Uncovered or limited lanes: Electron-worker 60,600-note timing (the performance runtime above is Bun), native expression group/color creation and full-restart expression persistence, light-theme expression screenshots, new-property preview before materialization, and independent review. A preview on an unmaterialized key reports the missing column until Apply triggers ingestion. Adding a new view-filter column retains existing declaration/cache identity behavior; only already materialized-column filters have native no-relayout proof. No server, MCP expression tool, real vault, room install, or production/deployment acceptance is implied. Baseline evidence and other renderer/layout gaps elsewhere in this document remain in force.
+
+### Bounded size-reduction and cancellation pass
+
+The frozen ceilings remain **180,000 minified / 58,000 gzip bytes**. An esbuild-metafile comparison measured baseline `87ae0b2` at **173,448 / 54,838**, the pre-pass candidate at **211,943 / 66,985**, and this tested candidate at **201,786 / 64,139**. The pass removes **10,157 minified / 2,846 gzip bytes**, while adding cancellation. This is the lowest measured complete build retained after the final presence-consistency regression fix in this pass, not a proof that further reduction is impossible. This build would require ceilings of at least **201,786 / 64,139**, increases of **21,786 / 6,139**; no increase is approved and no commit was made.
+
+Packaging builds the common pure core as one self-contained factory and reuses its source for the Blob worker through the standard function `toString()`. It uses no `eval`, `Function`, runtime fetch, external module or new runtime dependency. A discovery build trims unused exports before the final build. Worker-only layout code remains in its IIFE; editor/autocomplete stays outside it. The parser/checker/autocomplete/reference use one callable descriptor inventory. Legacy predicates now lower to the shared dictionary kernel; an independent historical filter oracle remains in tests. Diagnostics share a compact message table.
+
+`esbuild.config.mjs` writes `bundle-metafiles.json` alongside `bundle-inputs.json`. Byte attribution is nested: the main bundle contains the factory and escaped worker source. The shared-core and worker tables below explain those payloads and must **not** be added again to the final bundle total. Individual esbuild input contributions exclude bundle scaffolding.
+
+| Shared-core input | Minified contribution (bytes) |
+| --- | ---: |
+| Expression engine | 11,945 |
+| Expression syntax/check/print/descriptors | 11,013 |
+| Binary-layout/cache | 7,750 |
+| Explore core | 6,729 |
+| Declaration | 5,949 |
+| Projection | 4,173 |
+| Group projection | 3,787 |
+| Columns | 2,866 |
+| Layout options | 1,498 |
+| Legacy transform validation/descriptions | 1,021 |
+| Render projection | 485 |
+| GPU probe | 463 |
+
+The complete shared-core output is **58,747 bytes**. Remaining worker inputs are layout-worker **6,895**, layout **4,195**, Barnes–Hut **2,487**, incremental layout **1,330**, generation **768**, and edge hashes **491**; its complete IIFE is **17,124 bytes**. The host-only autocomplete input is **480 bytes**, and the worker/core metafiles contain no autocomplete or editor input. The complete per-input host/core/worker breakdown, including scaffolding, is retained in the ignored `bundle-module-breakdown.json` receipt.
+
+Three actual minified/factory Blob-worker tests use **5,000 distinct 4,096-unit values and exactly-256-node programs**. A newer count or applied filter interrupts the old evaluation; a **1 ms** explicit budget returns `Expression time budget exceeded`, without committing stale view/config state or restarting/re-ingesting the worker. The superseding cheap request completes within the asserted **2,000 ms** bound; observed latencies are in `expression-cancellation.json`. These are cancellation tests on a smaller fixture with the same maximum program/input shape, not a rerun of all 100,000 rows. The six worst-case throughput samples above use the same synchronous core kernels; normal counts use the cooperative production-worker path.
+
+The existing `workerTimeoutMs` tuning controls the default cooperative evaluation budget at 90% of the watchdog, allowing an explicit error before whole-worker recovery. Individual `expression-count`/`explore` callers may supply positive finite `budgetMs`. Kernels check between batches (64 distinct values or 1,024 simple mask rows) and yield a task after an 8 ms slice. Cancellation does not preempt a single built-in operation, synchronous project/declared-group construction, or the final non-expression summary pass. These limits are not expanded into whole-worker/preemptive cancellation claims. No independent review or release acceptance is implied.
