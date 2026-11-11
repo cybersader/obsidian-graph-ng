@@ -17,6 +17,15 @@ export function declaredKeys(d: GraphDeclaration): string[] {
 }
 export function encodeStrings(strings: readonly string[]): Strings {
   const encoder = new TextEncoder(), offsets = new Uint32Array(strings.length + 1);
+  // One encode call for ASCII columns, rather than one native crossing per cell.
+  // Fall back as a whole for Unicode: joining isolated surrogate halves across
+  // cell boundaries would otherwise change their independently encoded bytes.
+  let ascii = true, length = 0;
+  for (let i = 0; i < strings.length; i++) {
+    if (!/^[\x00-\x7f]*$/.test(strings[i]!)) { ascii = false; break; }
+    length += strings[i]!.length; offsets[i + 1] = length;
+  }
+  if (ascii) return { bytes: encoder.encode(strings.join('')), offsets };
   // UTF-8 needs at most three bytes per UTF-16 unit. One scratch allocation avoids
   // one backing allocation per cell while keeping transferred dictionaries exact.
   const scratch = new Uint8Array(strings.reduce((n, s) => n + s.length * 3, 0));
@@ -27,9 +36,10 @@ export function encodeStrings(strings: readonly string[]): Strings {
 export function decodeStrings(s: Strings): string[] {
   if (!s.offsets.length || s.offsets[0] !== 0 || s.offsets.at(-1) !== s.bytes.length) throw new Error('Invalid dictionary length');
   const decoder = new TextDecoder('utf-8', { fatal: true }), result: string[] = [];
+  const whole = decoder.decode(s.bytes), ascii = whole.length === s.bytes.length;
   for (let i = 0; i < s.offsets.length - 1; i++) {
     if (s.offsets[i + 1]! < s.offsets[i]!) throw new Error('Invalid dictionary offsets');
-    result.push(decoder.decode(s.bytes.subarray(s.offsets[i], s.offsets[i + 1])));
+    result.push(ascii ? whole.slice(s.offsets[i], s.offsets[i + 1]) : decoder.decode(s.bytes.subarray(s.offsets[i], s.offsets[i + 1])));
   }
   return result;
 }

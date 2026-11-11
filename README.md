@@ -2,7 +2,7 @@
 
 A standalone, local-first Obsidian graph plugin. Start with a readable graph of declared groups, inspect counted relationships and their carrier notes, then drill into individual notes when hardware WebGL is available. No ontology, framework name, relation vocabulary, or ID format is built into the core.
 
-**Slice 3 / test-backed alpha.** This is not production, mobile, integrated-GPU, or remote-authorization acceptance. No server, remote repository, hosted service, or telemetry is configured. All fixtures and captured evidence are synthetic.
+**Version 0.2.1 / test-backed alpha.** This is not production, mobile, integrated-GPU, or remote-authorization acceptance. No server, remote repository, hosted service, or telemetry is configured. All fixtures and captured evidence are synthetic.
 
 ## Use
 
@@ -158,6 +158,8 @@ Installations explicitly disable lifecycle scripts. Configure local private term
 
 ## Current renderer evidence
 
+Version 0.2.1 profiles real native startup, accelerates row dictionaries, probes GPU capabilities in a public worker OffscreenCanvas, uses 1×1 CPU-backed palette conversion, waits for shader/GPU completion with nonblocking WebGL2 fences before GPU buffer resizing, cooperatively indexes external carrier notes, and transfers packed render-only columns instead of a second full projection. Native large first groups measure **320.0/350.1 ms** hardware/software, versus the same-profile baseline **535.3/589.5 ms**. Browser retained main JS heap measures **10.97/10.94 MiB** semantic/literal. End-to-end task targets **currently fail** in recorded repetitions: 62–70 ms detail tasks remain, some unattributed; isolated task-free runs are not blanket closure. Cold first paint and later metadata-refresh paint now have separate timings. Browser heap includes the same retained host metadata; ArrayBuffer backing storage is reported separately. See [ADR-0007](docs/decisions/ADR-0007-native-startup-render-columns.md) and [slice-5 evidence and remaining gaps](docs/benchmarks.md#slice-5-native-startup-and-retained-render-columns).
+
 Slice 3 removes Sigma, preserves the existing worker layout, and restores contribution selections after a metadata-generation change instead of silently losing the panel. Loading/refreshing/errors and explicit Retry are visible. Stable raw group keys, not display labels or reused numeric IDs, reconnect a selected pair to a new dictionary. Source/group-definition changes clear that intent. See [ADR-0005](docs/decisions/ADR-0005-direct-renderer.md) and the [slice-3 evidence](docs/benchmarks.md#slice-3-direct-renderer).
 
 ## Historical slice-2 measured startup — 2026-11-10
@@ -218,7 +220,7 @@ Native WebDriver requestAnimationFrame sampling produced **zero callbacks**, so 
 
 ## Licensing and boundaries
 
-MIT, copyright 2026 **cybersader**. No third-party plugin implementation was copied. The shipped plugin has **zero runtime packages**. Graphology and graphology-layout-forceatlas2 are pinned development-only oracles, not bundled. `scripts/check-licenses.mjs` refuses runtime dependencies and generates an empty `THIRD_PARTY_NOTICES.txt`; the build rejects bundled `node_modules` inputs. Both main and embedded worker are minified. The enforced bundle ceilings are **150,000 minified / 45,000 gzip bytes**. See [slice-4 measurements](docs/benchmarks.md#slice-4-csr-native-layout). Cosmos remains deliberately excluded; its CC-BY-NC-4.0 license is not permissive.
+MIT, copyright 2026 **cybersader**. No third-party plugin implementation was copied. The shipped plugin has **zero runtime packages**. Graphology and graphology-layout-forceatlas2 are pinned development-only oracles, not bundled. `scripts/check-licenses.mjs` refuses runtime dependencies and generates an empty `THIRD_PARTY_NOTICES.txt`; the build rejects bundled `node_modules` inputs. Both main and embedded worker are minified. The enforced bundle ceilings are **150,000 minified / 45,000 gzip bytes**. Version 0.2.1 is **115,970 minified / 35,830 gzip bytes**. See [slice-5 measurements](docs/benchmarks.md#slice-5-native-startup-and-retained-render-columns). Cosmos remains deliberately excluded; its CC-BY-NC-4.0 license is not permissive.
 
 **Separate development/test-toolchain exception:** `wdio-obsidian-service` uses `7z-wasm` (LGPL with the unRAR restriction) to extract downloaded test applications. It is not imported by the plugin, bundled, or shipped in the runtime artifact. This is an explicitly scoped e2e toolchain exception, **not** a claim that every development transitive dependency is permissively licensed. Obsidian itself is downloaded at test runtime into ignored storage and is never committed.
 
@@ -232,7 +234,7 @@ A compatible cached group summary paints first with **cached · verifying N of M
 
 Finite defaults are 64 MiB external aggregate JSON, 20,000 groups, 200,000 pairs and 1,000,000 carrier references. Explicit count zero still opts into unlimited counts; byte budgets remain finite. External files always say **unverified external aggregate** and never merge with live rows. In-app export is not implemented. Headless projection output is labelled **your view**, accepts only a caller-scoped fact export and requires an explicit destination.
 
-Declaration v2 renames reified property fields and accepts path-segment folder prefixes. Saves emit v2/segments, with bounded input migration from v1. See [declaration format](docs/declaration-format.md), [ADR-0004](docs/decisions/ADR-0004-worker-generations.md) and [benchmark methodology](docs/benchmarks.md). The [current measurements](docs/benchmarks.md#slice-4-csr-native-layout) distinguish group-open, explicit detail-open and binary warm-open costs; historical slice-1 tables are not current acceptance. GPU probing now waits for explicit detail interaction, so opening the group view does not initialize WebGL.
+Declaration v2 renames reified property fields and accepts path-segment folder prefixes. Saves emit v2/segments, with bounded input migration from v1. See [declaration format](docs/declaration-format.md), [ADR-0004](docs/decisions/ADR-0004-worker-generations.md) and [benchmark methodology](docs/benchmarks.md). The [current measurements](docs/benchmarks.md#slice-5-native-startup-and-retained-render-columns) distinguish group-open, explicit detail-open and binary warm-open costs; historical slice-1 tables are not current acceptance. GPU probing waits for explicit detail interaction and runs in a public worker OffscreenCanvas when available; opening the group view does not initialize WebGL. Platforms without that API retain the existing main-canvas fallback.
 
 ## Not implemented / not proven
 

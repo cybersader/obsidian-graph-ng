@@ -1,6 +1,5 @@
 import { pairKey, type GroupProjection, type GroupContribution } from './core/group-projection';
-import type { Projection } from './core/projection';
-export interface ContributionContext { active: number; groups: number; detail: number; level: number; projection?: Projection; graph?: GroupProjection }
+export interface ContributionContext { active: number; groups: number; detail: number; level: number; projection?: { groups: { values: string[] }[] }; graph?: GroupProjection }
 export interface ContributionResult { total: number; items: GroupContribution[] }
 /** A selected relationship is an intent captured from the clicked summary, never
  * a dictionary index to reinterpret against a different cached/live source. */

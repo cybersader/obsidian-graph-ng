@@ -1,10 +1,10 @@
 import { ItemView, Plugin, PluginSettingTab, Setting, Notice, TFile, apiVersion, type WorkspaceLeaf } from 'obsidian';
 import { LocalAdapter } from './adapter/local';
 import { digest, migrateDeclaration, validatePredicate, type Predicate } from './core/declaration';
-import type { Projection } from './core/projection';
-import { pairKey, indexCarriers, type GroupProjection, type GroupContribution } from './core/group-projection';
+import { renderPath, type RenderProjection } from './render-projection';
+import { pairKey, carrierIndexer, indexCarriers, type GroupProjection, type GroupContribution } from './core/group-projection';
 import { BinaryLayoutStore, type BinaryGeneration } from './core/binary-layout';
-import { yieldTask } from './core/scheduler';
+import { yieldTask, sliced } from './core/scheduler';
 import { WorkerPipeline, LAYOUT_PRODUCER, currentDetailGeneration, type ProjectResult, type DetailResult, type LayoutResult } from './pipeline';
 import { groupPages, page } from './core/group-page';
 import { ContributionPage, type ContributionContext } from './contribution-page';
@@ -112,7 +112,7 @@ export class GraphView extends ItemView {
   private carrierLookup?: ReturnType<typeof indexCarriers>;
   private contributions = new Map<string, GroupContribution[]>();
   private members = new Map<string, number[]>();
-  private projection?: Projection;
+  private projection?: RenderProjection;
   private colors?: Uint32Array;
   private provisional = true;
   private activeRevision = 0;
@@ -127,6 +127,7 @@ export class GraphView extends ItemView {
   private visible?: Uint8Array;
   private predicate?: Predicate;
   private gpu = { available: false, reason: 'Not probed' };
+  readonly startupTrace: { revision: number; start: number; groupsAt: number; drawMs: number; firstGroupMs: number }[] = [];
   readonly cacheTrace: { expected: string; stored?: string; nodes: number; indexed: number; listed: number; valid: boolean }[] = [];
   detailRenderer?: DetailRenderer;
   constructor(leaf: WorkspaceLeaf, readonly plugin: GraphPlugin) {
@@ -171,7 +172,7 @@ export class GraphView extends ItemView {
     const rev = ++this.revision, revision = ++this.plugin.nextRevision; this.activeRevision = revision;
     const current = () => !this.closed && rev === this.revision;
     const settings = this.plugin.settings, start = performance.now();
-    this.carrierLookup = undefined; this.provisional = true; this.contentEl.dataset.verified = 'false';
+    this.carrierLookup = undefined; this.renderRevision++; this.provisional = true; this.contentEl.dataset.verified = 'false';
     this.contentEl.dataset.state = 'building'; this.status.textContent = 'Building projection from the public metadata cache…';
     try {
       if (settings.projectionFile) {
@@ -214,8 +215,13 @@ export class GraphView extends ItemView {
       this.plugin.ingestedHash = hashes.declarationHash;
       this.plugin.pipeline.onGroups = event => {
         if (event.revision !== revision || !current()) return;
+        const groupsAt = performance.now();
         this.groupGraph = event.projection; this.groupGeneration = revision; this.members.clear(); this.contributions.clear(); this.showGroups(true);
-        this.contentEl.dataset.firstGroupMs = String(performance.now() - start);
+        const painted = performance.now(), firstGroupMs = painted - start;
+        this.startupTrace.push({ revision, start, groupsAt, drawMs: painted - groupsAt, firstGroupMs }); if (this.startupTrace.length > 16) this.startupTrace.shift();
+        // A queued metadata refresh must not relabel its later paint as cold startup.
+        this.contentEl.dataset.firstGroupMs ??= String(firstGroupMs);
+        this.contentEl.dataset.refreshGroupMs = String(firstGroupMs);
       };
       const result = await this.plugin.pipeline.request<ProjectResult>(revision, { kind: 'project', complete: this.plugin.adapter.coverage().indexed === this.plugin.adapter.coverage().listed });
       if (!current()) return;
@@ -306,7 +312,7 @@ export class GraphView extends ItemView {
     this.contributionPage.clear();
     const group = this.groupGraph?.groups.find(g => g.id === id); if (!group) return;
     this.panel.empty(); this.panel.createEl('strong', { text: `${group.label}: ${group.count.toLocaleString()} members${this.provisional ? ' · provisional' : ''}` });
-    const revision = this.activeRevision, projection = this.projection, renderRevision = this.renderRevision;
+    const revision = this.activeRevision, projection = this.projection, renderRevision = ++this.renderRevision;
     if (projection && !currentDetailGeneration(revision, this.activeRevision, this.detailGeneration)) { new Notice('Member dictionary is updating; try this group again when verification finishes.'); return; }
     let members: Uint32Array | undefined;
     try { members = projection ? await this.plugin.pipeline.request<Uint32Array>(revision, { kind: 'members', group: id }) : undefined; }
@@ -320,11 +326,13 @@ export class GraphView extends ItemView {
       return;
     }
     const p = projection;
-    if (this.gpu.reason === 'Not probed') this.gpu = gpuStatus();
-    if (this.gpu.available && this.positions) { const bits = new Uint8Array(p.paths.length); for (const i of members) bits[i] = 1; this.showDetails(bits, false); }
-    this.paginate(Array.from(members), (i, host) => { host.createEl('button', { text: p.paths[i]!, cls: 'graph-ng-member' }).onclick = () => this.openPath(p.paths[i]!); });
+    try { if (this.gpu.reason === 'Not probed') this.gpu = await this.plugin.pipeline.request<typeof this.gpu | undefined>(revision, { kind: 'gpu' }) ?? gpuStatus(); }
+    catch (error) { new Notice(`GPU probe failed: ${String(error)}. Use group member lists.`); }
+    if (revision !== this.activeRevision || renderRevision !== this.renderRevision || this.closed) return;
+    if (this.gpu.available && this.positions) { const bits = new Uint8Array(p.nodeCount); for (const i of members) bits[i] = 1; this.showDetails(bits, false); }
+    this.paginate(Array.from(members), (i, host) => { host.createEl('button', { text: renderPath(p, i), cls: 'graph-ng-member' }).onclick = () => this.openPath(renderPath(p, i)); });
   }
-  private edgeList(edge: GroupProjection['groupEdges'][number], clickedGraph = this.groupGraph, clickedGeneration = this.groupGeneration) {
+  private async edgeList(edge: GroupProjection['groupEdges'][number], clickedGraph = this.groupGraph, clickedGeneration = this.groupGeneration) {
     this.contributionPage.clear();
     if (!this.plugin.settings.projectionFile) {
       this.contributionPage.select(edge.a, edge.b, clickedGeneration, clickedGraph);
@@ -336,12 +344,27 @@ export class GraphView extends ItemView {
     if (edge.directional) this.panel.createDiv({ text: `A → B: ${JSON.stringify(edge.directional.aToB)} · B → A: ${JSON.stringify(edge.directional.bToA)}` });
     const rows = this.contributions.get(pairKey(edge.a, edge.b));
     if (rows) this.paginate(rows, (r, host) => { const item = host.createDiv({ cls: 'graph-ng-contribution' }); item.createSpan({ text: `${r.source} → ${r.target} [${r.type}] ` }); if (r.carrier) item.createEl('button', { text: r.carrier }).onclick = () => this.openPath(r.carrier!); });
-    else this.paginate(edge.carriers.ids, (id, host) => {
-      this.carrierLookup ??= indexCarriers(this.plugin.adapter.values(), this.plugin.settings.declaration);
-      const path = this.carrierLookup.get(edge.carriers.kind)?.get(id) ?? null;
-      const button = host.createEl('button', { text: path ?? `${id} (not resolved locally)`, cls: 'graph-ng-carrier' });
-      button.disabled = !path; if (path) button.onclick = () => this.openPath(path);
-    });
+    else {
+      const renderRevision = ++this.renderRevision;
+      if (!this.carrierLookup) {
+        const status = this.panel.createDiv({ text: 'Resolving carrier notes…', attr: { role: 'status' } });
+        const index = carrierIndexer(this.plugin.settings.declaration);
+        try {
+          await sliced(this.plugin.adapter.values(), this.plugin.settings.ingest, row => {
+            if (renderRevision !== this.renderRevision || this.closed) throw new Error('Carrier lookup superseded');
+            index.add(row);
+          });
+        } catch (error) { if (renderRevision === this.renderRevision && !this.closed) status.textContent = `Carrier lookup failed: ${String(error)}`; return; }
+        if (renderRevision !== this.renderRevision || this.closed || clickedGraph !== this.groupGraph) return;
+        this.carrierLookup = index.lookup; status.remove();
+      }
+      const lookup = this.carrierLookup;
+      this.paginate(edge.carriers.ids, (id, host) => {
+        const path = lookup.get(edge.carriers.kind)?.get(id) ?? null;
+        const button = host.createEl('button', { text: path ?? `${id} (not resolved locally)`, cls: 'graph-ng-carrier' });
+        button.disabled = !path; if (path) button.onclick = () => this.openPath(path);
+      });
+    }
   }
   private contributionContext(): ContributionContext {
     return { active: this.activeRevision, groups: this.groupGeneration, detail: this.detailGeneration, level: this.plugin.settings.groupLevel, projection: this.projection, graph: this.groupGraph };
@@ -364,12 +387,13 @@ export class GraphView extends ItemView {
   }
   async showDetails(bits = this.visible, clearPanel = true) {
     if (!this.projection || !this.positions || !bits) { new Notice('Individual nodes are not ready; the group graph remains usable.'); return; }
-    if (this.gpu.reason === 'Not probed') this.gpu = gpuStatus();
-    if (!this.gpu.available && bits.reduce((n, b) => n + (b ? 1 : 0), 0) > this.plugin.settings.canvasMaxDetailNodes) { this.status.textContent += ' · GPU unavailable — use group member lists'; new Notice(`GPU unavailable: ${this.gpu.reason}. Use group member lists.`); return; }
     const renderRevision = ++this.renderRevision; this.contentEl.dataset.mode = 'nodes-building';
-    this.renderer?.dispose(); this.stage.empty(); if (clearPanel) { this.contributionPage.clear(); this.panel.empty(); }
     try {
-      this.detailRenderer = await DetailRenderer.create(this.stage, this.projection, this.positions, bits, this.plugin.settings, i => this.openPath(this.projection!.paths[i]!), () => this.showGroups(), this.colors!, () => renderRevision === this.renderRevision, !this.gpu.available, () => {
+      if (this.gpu.reason === 'Not probed') this.gpu = await this.plugin.pipeline.request<typeof this.gpu | undefined>(this.activeRevision, { kind: 'gpu' }) ?? gpuStatus();
+      if (renderRevision !== this.renderRevision || this.closed) return;
+      if (!this.gpu.available && bits.reduce((n, b) => n + (b ? 1 : 0), 0) > this.plugin.settings.canvasMaxDetailNodes) { this.contentEl.dataset.mode = 'groups'; this.status.textContent += ' · GPU unavailable — use group member lists'; new Notice(`GPU unavailable: ${this.gpu.reason}. Use group member lists.`); return; }
+      this.renderer?.dispose(); this.stage.empty(); if (clearPanel) { this.contributionPage.clear(); this.panel.empty(); }
+      this.detailRenderer = await DetailRenderer.create(this.stage, this.projection, this.positions, bits, this.plugin.settings, i => this.openPath(renderPath(this.projection!, i)), () => this.showGroups(), this.colors!, () => renderRevision === this.renderRevision, !this.gpu.available, () => {
         if (renderRevision !== this.renderRevision || this.closed) return;
         this.gpu = { available: false, reason: 'WebGL context could not be restored' };
         this.showGroups(); void this.showDetails(bits, clearPanel);

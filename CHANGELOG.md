@@ -4,6 +4,24 @@ All notable changes are recorded here. The format follows Keep a Changelog; vers
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-10
+
+### Changed
+
+- Profiled real native startup; accelerated ASCII column encoding/decoding while preserving Unicode cell boundaries and skipping undeclared producer-link extraction.
+- Moved deferred GPU capability probing to a public worker OffscreenCanvas where supported, with revision-checked interaction and visible failure fallback.
+- Kept palette `getImageData` on a one-pixel CPU-backed conversion surface instead of synchronizing GPU readback; external carrier indexing yields under existing ingestion budgets and cancels superseded panels.
+- Deferred GPU drawing-buffer resizing until parallel shader completion and reconciled it again before readiness/restoration; avoided resetting unchanged axes. Added nonblocking public WebGL2 completion fences before resizing to remove a measured 230 ms driver wait, using existing poll/deadline budgets and guaranteed fence cleanup. Invalidated sliced carrier lookups as soon as refresh begins.
+- Transferred render-only numeric columns and packed UTF-8 paths; full identities, property/carrier dictionaries and membership codes remain worker-owned.
+- Distinguished the first actual live group paint from subsequent metadata-refresh paints; added native phase/CPU profile mode and explicit browser backing-storage measurement.
+- Added regression coverage and updated native warm/incremental tests to use packed paths and existing paged contribution APIs rather than retained worker-only data.
+
+
+### Measured
+
+- Native large first groups: 320.0/350.1 ms hardware/software (same-profile baseline 535.3/589.5 ms); browser main JS heap 10.97/10.94 MiB with separate backing-storage accounting.
+- Recorded 62–70 ms native detail tasks and UNATTRIBUTED 51–63 ms software-open tasks remain limitations; this is not all-interaction acceptance. Build, 103 unit tests, four native lanes, browser and six gates pass.
+
 ## [0.2.0] - 2026-11-10
 
 ### Added

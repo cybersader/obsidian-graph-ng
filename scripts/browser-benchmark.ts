@@ -68,7 +68,7 @@ try {
       await page.evaluate(() => (window as any).restoreGraph());
       await page.waitForFunction(() => (window as any).graphRenderer.canvas.dataset.context === 'restored');
       await page.screenshot({ path: `test-screenshots/browser-${literal ? 'literal' : 'semantic'}-restored.png` });
-      results.push({ literal, ...value.result, rendererChecks: { ...rendererChecks, contextRestored: true }, mainHeapMiB: heap.usedSize / 1048576, browser: browser.version(), errors });
+      results.push({ literal, ...value.result, rendererChecks: { ...rendererChecks, contextRestored: true }, mainHeapMiB: heap.usedSize / 1048576, backingStorageMiB: (heap.backingStorageSize ?? 0) / 1048576, browser: browser.version(), errors });
       console.log(JSON.stringify(results.at(-1)));
     } finally { await browser.close(); }
   }

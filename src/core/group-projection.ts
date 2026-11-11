@@ -70,15 +70,20 @@ export function contractGroups(p: Projection, visible: Uint8Array, level = 0): {
   return { projection: { groups: groups.filter(g => g.count), groupEdges: [...pairs.values()] }, contributions, members };
 }
 /** Null means absent or ambiguous; no body reads, naming heuristics or ontology-specific keys. */
-export function indexCarriers(rows: Iterable<FactRow>, d: GraphDeclaration): Map<string, Map<string, string | null>> {
+export function carrierIndexer(d: GraphDeclaration) {
   const lookup = new Map((d.carrierResolvers ?? []).map(r => [r.kind, new Map<string, string | null>()]));
-  for (const row of rows) for (const resolver of d.carrierResolvers ?? []) {
-    const value = resolver.key === '$path' ? row.path : row.properties[resolver.key];
-    if (value === undefined) continue;
-    const index = lookup.get(resolver.kind)!, id = String(value);
-    index.set(id, index.has(id) ? null : row.path);
-  }
-  return lookup;
+  const add = (row: FactRow) => {
+    for (const resolver of d.carrierResolvers ?? []) {
+      const value = resolver.key === '$path' ? row.path : row.properties[resolver.key];
+      if (value === undefined) continue;
+      const index = lookup.get(resolver.kind)!, id = String(value);
+      index.set(id, index.has(id) ? null : row.path);
+    }
+  };
+  return { lookup, add };
+}
+export function indexCarriers(rows: Iterable<FactRow>, d: GraphDeclaration): Map<string, Map<string, string | null>> {
+  const index = carrierIndexer(d); for (const row of rows) index.add(row); return index.lookup;
 }
 export function resolveCarrier(rows: Iterable<FactRow>, d: GraphDeclaration, kind: string, id: string): string | null {
   const resolver = d.carrierResolvers?.find(r => r.kind === kind); if (!resolver) return null;

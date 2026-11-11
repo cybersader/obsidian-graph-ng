@@ -1,7 +1,6 @@
-import type { Projection } from './core/projection';
+import { renderPath, type RenderProjection } from './render-projection';
 import type { Settings } from './settings';
-import { colorGroups } from './core/projection';
-import { PickGrid, positionTexture, incidentEdges, segmentDistance, labelLOD, canvasDetailEdges } from './render-data';
+import { PickGrid, positionTexture, incidentEdges, segmentDistance, labelLOD, canvasDetailEdges, resizeDrawingBuffer } from './render-data';
 import { readTheme, type GraphTheme } from './render-theme';
 import { buildLabels, type LabelAtlas } from './render-labels';
 import { yieldTask } from './core/scheduler';
@@ -118,7 +117,7 @@ export class DetailRenderer {
   private downX = 0;
   private downY = 0;
   private positionWidth = 1;
-  static async create(container: HTMLElement, p: Projection, positions: Float32Array, visible: Uint8Array, settings: Settings, onNode: (i: number) => void, onZoomOut: () => void, colors: Uint32Array, current = () => true, software = false, onUnavailable = onZoomOut) {
+  static async create(container: HTMLElement, p: RenderProjection, positions: Float32Array, visible: Uint8Array, settings: Settings, onNode: (i: number) => void, onZoomOut: () => void, colors: Uint32Array, current = () => true, software = false, onUnavailable = onZoomOut) {
     await yieldTask(); if (!current()) throw new Error('Renderer superseded');
     const renderer = new DetailRenderer(container, p, positions, visible, settings, onNode, onZoomOut, colors, software, onUnavailable);
     try {
@@ -129,7 +128,7 @@ export class DetailRenderer {
       renderer.refresh(); return renderer;
     } catch (error) { renderer.dispose(); throw error; }
   }
-  constructor(private container: HTMLElement, readonly projection: Projection, readonly positions: Float32Array, readonly visible: Uint8Array, private settings: Settings, private onNode: (i: number) => void, private onZoomOut: () => void, colors = colorGroups(projection, settings.declaration), software = false, private onUnavailable = onZoomOut) {
+  constructor(private container: HTMLElement, readonly projection: RenderProjection, readonly positions: Float32Array, readonly visible: Uint8Array, private settings: Settings, private onNode: (i: number) => void, private onZoomOut: () => void, colors: Uint32Array, software = false, private onUnavailable = onZoomOut) {
     let started = performance.now();
     this.grid = new PickGrid(positions, visible); this.edges = incidentEdges(projection);
     this.timings.grid = performance.now() - started; started = performance.now();
@@ -183,6 +182,10 @@ export class DetailRenderer {
     for (const [v, f] of [[edgeVertex, solidFragment], [nodeVertex, nodeFragment], [labelVertex, labelFragment]]) {
       const started = performance.now(); this.programs.push(await this.program(v!, f!)); this.timings[`program${this.programs.length}`] = performance.now() - started; await yieldTask(); if (this.disposed || this.lost) return;
     }
+    // ResizeObserver may fire while parallel shader compilation is pending.
+    // Resizing that drawing buffer synchronously waits on the driver; apply its
+    // latest CSS size only after all program completion polls have finished.
+    await this.waitForResize(); this.resize(true);
     const uploadStart = performance.now();
     const packed = positionTexture(this.positions, Math.min(2048, gl.getParameter(gl.MAX_TEXTURE_SIZE)));
     if (packed.height > gl.getParameter(gl.MAX_TEXTURE_SIZE) || this.theme.palette.length / 1024 > gl.getParameter(gl.MAX_TEXTURE_SIZE)) throw new Error('GL_TEXTURE_LIMIT');
@@ -198,7 +201,7 @@ export class DetailRenderer {
     }
     this.timings.upload = performance.now() - uploadStart;
     gl.bindVertexArray(null); gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-    this.ready = true; if (this.atlas) this.uploadLabels(); this.refresh();
+    await this.waitForResize(); this.resize(true); this.ready = true; if (this.atlas) this.uploadLabels(); this.refresh();
   }
   private uploadPalette() { const gl = this.gl!; gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.textures[1]!); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 256, this.theme.palette.length / 1024, 0, gl.RGBA, gl.UNSIGNED_BYTE, this.theme.palette); this.paletteUploads++; }
   private async prepareLabels(current: () => boolean) {
@@ -227,11 +230,37 @@ export class DetailRenderer {
     if (font !== this.theme.font && this.ready) void this.prepareLabels(() => !this.disposed).catch(() => {});
     this.refresh();
   };
-  private resize() {
+  private async waitForResize() {
+    this.resize();
+    const gl = this.gl;
+    if (!gl || (this.canvas.width === Math.round(this.width * this.dpr) && this.canvas.height === Math.round(this.height * this.dpr))) return;
+    // A buffer reset can implicitly wait for queued driver work. A WebGL2 fence
+    // lets that work finish without synchronously blocking the main thread.
+    const fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+    if (!fence) throw new Error('GL_RESIZE_FENCE');
+    const deadline = performance.now() + this.settings.workerTimeoutMs;
+    try {
+      gl.flush();
+      for (;;) {
+        if (this.disposed || this.lost) throw new Error('Renderer superseded');
+        const status = gl.clientWaitSync(fence, 0, 0);
+        if (status === gl.ALREADY_SIGNALED || status === gl.CONDITION_SATISFIED) return;
+        if (status === gl.WAIT_FAILED) throw new Error('GL_RESIZE_WAIT');
+        if (performance.now() > deadline) throw new Error('GL_RESIZE_TIMEOUT');
+        await new Promise<void>(resolve => setTimeout(resolve, this.settings.shaderPollMs));
+      }
+    } finally { gl.deleteSync(fence); }
+  }
+  private resize(allowGpuResize = false) {
     const changed = this.width !== Math.max(1, this.container.clientWidth) || this.height !== Math.max(1, this.container.clientHeight) || this.dpr !== (window.devicePixelRatio || 1);
     if (!changed && this.canvas.width === Math.round(this.width * this.dpr) && this.canvas.height === Math.round(this.height * this.dpr)) return false;
     this.width = Math.max(1, this.container.clientWidth); this.height = Math.max(1, this.container.clientHeight); this.dpr = window.devicePixelRatio || 1;
-    this.canvas.width = Math.round(this.width * this.dpr); this.canvas.height = Math.round(this.height * this.dpr); this.canvas.style.width = `${this.width}px`; this.canvas.style.height = `${this.height}px`;
+    const started = performance.now(), width = Math.round(this.width * this.dpr), height = Math.round(this.height * this.dpr);
+    // Even assigning the existing size resets the drawing buffer and can wait on
+    // the GPU. A height-only panel change must not reset an unchanged width.
+    if (!this.gl || this.ready || allowGpuResize) resizeDrawingBuffer(this.canvas, width, height);
+    this.canvas.style.width = `${this.width}px`; this.canvas.style.height = `${this.height}px`;
+    this.timings.maxResize = Math.max(this.timings.maxResize || 0, performance.now() - started);
     this.fit = Math.min(this.width / (this.grid.width * 1.1), this.height / (this.grid.height * 1.1)); this.refresh(); return changed;
   }
   private get scale() { return this.fit / this.camera.ratio; }
@@ -242,6 +271,7 @@ export class DetailRenderer {
     this.camera.x = x; this.camera.y = y; this.camera.ratio = Math.max(this.settings.cameraMinRatio, Math.min(this.settings.cameraMaxRatio, ratio)); this.refresh();
   }
   /** Test/host seam; not a second graph or renderer object model. */
+  path(id: number) { return renderPath(this.projection, id); }
   screenPoint(id: number) { return { x: (this.positions[id * 2]! - this.centerX) * this.scale + this.width / 2, y: (this.positions[id * 2 + 1]! - this.centerY) * this.scale + this.height / 2 }; }
   pick(x: number, y: number) { return this.grid.pick((x - this.width / 2) / this.scale + this.centerX, (y - this.height / 2) / this.scale + this.centerY, (this.settings.nodeSize + 4) / this.scale); }
   private pickEdge(x: number, y: number) {
@@ -284,7 +314,7 @@ export class DetailRenderer {
     for (const e of this.canvasEdges) { const a = this.projection.source[e]!, b = this.projection.target[e]!; ctx.moveTo((this.positions[a * 2]! - this.centerX) * this.scale + this.width / 2, (this.positions[a * 2 + 1]! - this.centerY) * this.scale + this.height / 2); ctx.lineTo((this.positions[b * 2]! - this.centerX) * this.scale + this.width / 2, (this.positions[b * 2 + 1]! - this.centerY) * this.scale + this.height / 2); } ctx.stroke();
     for (let n = 0; n < this.visible.length; n++) if (this.visible[n]) { const id = n === this.selected || n === this.hovered ? 4 : this.colorIds[n]!, p = this.theme.palette, k = id * 4; ctx.fillStyle = `rgba(${p[k]},${p[k + 1]},${p[k + 2]},${p[k + 3]! / 255})`; ctx.beginPath(); ctx.arc((this.positions[n * 2]! - this.centerX) * this.scale + this.width / 2, (this.positions[n * 2 + 1]! - this.centerY) * this.scale + this.height / 2, s.nodeSize + (id === 4 ? 2 : 0), 0, Math.PI * 2); ctx.fill(); }
     ctx.font = `${s.labelSize}px ${this.theme.font}`; ctx.fillStyle = this.theme.text;
-    if (this.atlas && s.nodeSize >= s.labelRenderedSizeThreshold * Math.sqrt(this.camera.ratio)) for (const n of this.atlas.nodes[labelLOD(this.camera.ratio)]!) { const path = this.projection.paths[n]!; ctx.fillText(path.slice(path.lastIndexOf('/') + 1).replace(/\.md$/, '').slice(0, 128), (this.positions[n * 2]! - this.centerX) * this.scale + this.width / 2 + s.nodeSize + 4, (this.positions[n * 2 + 1]! - this.centerY) * this.scale + this.height / 2); }
+    if (this.atlas && s.nodeSize >= s.labelRenderedSizeThreshold * Math.sqrt(this.camera.ratio)) for (const n of this.atlas.nodes[labelLOD(this.camera.ratio)]!) { const path = this.path(n); ctx.fillText(path.slice(path.lastIndexOf('/') + 1).replace(/\.md$/, '').slice(0, 128), (this.positions[n * 2]! - this.centerX) * this.scale + this.width / 2 + s.nodeSize + 4, (this.positions[n * 2 + 1]! - this.centerY) * this.scale + this.height / 2); }
   }
   private pointerDown = (e: PointerEvent) => { if (this.disposed || this.lost) return; this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY }); this.canvas.setPointerCapture(e.pointerId); this.downX = e.clientX; this.downY = e.clientY; this.moved = this.pointers.size > 1; };
   private pointerMove = (e: PointerEvent) => {
@@ -300,7 +330,7 @@ export class DetailRenderer {
     const rect = this.canvas.getBoundingClientRect(), x = e.clientX - rect.left, y = e.clientY - rect.top;
     const node = this.pick(x, y), edge = node < 0 ? this.pickEdge(x, y) : -1;
     if (node === this.hovered && edge === this.hoveredEdge) return;
-    this.hovered = node; this.hoveredEdge = edge; this.container.title = node >= 0 ? this.projection.paths[node]! : edge >= 0 ? `${this.projection.paths[this.projection.source[edge]!]!} → ${this.projection.paths[this.projection.target[edge]!]!} [${this.projection.types[this.projection.type[edge]!]!}]` : ''; this.canvas.style.cursor = node >= 0 ? 'pointer' : 'grab'; this.refresh();
+    this.hovered = node; this.hoveredEdge = edge; this.container.title = node >= 0 ? this.path(node) : edge >= 0 ? `${this.path(this.projection.source[edge]!)} → ${this.path(this.projection.target[edge]!)} [${this.projection.types[this.projection.type[edge]!]!}]` : ''; this.canvas.style.cursor = node >= 0 ? 'pointer' : 'grab'; this.refresh();
   };
   private pointerUp = (e: PointerEvent) => {
     if (this.disposed || this.lost) return;

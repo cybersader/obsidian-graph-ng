@@ -1,5 +1,5 @@
 import { test, expect } from 'bun:test';
-import { WorkerPipeline, LAYOUT_PRODUCER, currentDetailGeneration, type Transport, type ProjectResult, type LayoutResult } from '../src/pipeline';
+import { WorkerPipeline, LAYOUT_PRODUCER, currentDetailGeneration, type Transport, type ProjectResult, type LayoutResult, type DetailResult } from '../src/pipeline';
 import { defaultDeclaration, digest } from '../src/core/declaration';
 import { DEFAULT_LAYOUT } from '../src/core/layout';
 import { packRows, unpackRows, transferables, encodeStrings, decodeStrings } from '../src/core/columns';
@@ -243,4 +243,45 @@ test('member indices cannot use an old detail dictionary during the group-before
     expect(currentDetailGeneration(requested, active, detail)).toBe(false);
     detail = 2; expect(currentDetailGeneration(2, active, detail)).toBe(true);
   } finally { p.dispose(); }
+});
+
+test('ASCII and Unicode dictionaries preserve cell boundaries, controls and isolated surrogate replacement', () => {
+  for (const strings of [['', 'a\0b', '\r\n', 'x'], ['\ud83d', '\udcda', 'é', '中文', '📚']]) {
+    const expected = strings.map(s => new TextDecoder().decode(new TextEncoder().encode(s)));
+    expect(decodeStrings(encodeStrings(strings))).toEqual(expected);
+  }
+  expect(() => decodeStrings({ bytes: new Uint8Array([0xc3, 0xa9]), offsets: new Uint32Array([0, 1, 2]) })).toThrow();
+  expect(() => decodeStrings({ bytes: new Uint8Array([0xff]), offsets: new Uint32Array([0, 1]) })).toThrow();
+});
+test('render-only detail transfers packed paths without facts, identities or membership codes', async () => {
+  const { renderPath } = await import('../src/render-projection');
+  const p = pipeline();
+  try {
+    await p.request(1, { kind: 'configure', config });
+    const rows = [{ path: 'A/é📚.md', properties: {} }, { path: 'B/中文.md', properties: {} }];
+    await p.request(1, { kind: 'rows', reset: true, columns: packRows(rows, declaration) });
+    await p.request(1, { kind: 'project' });
+    const detail = await p.request<DetailResult>(1, { kind: 'detail' });
+    expect(detail.projection.nodeCount).toBe(2);
+    expect([renderPath(detail.projection, 0), renderPath(detail.projection, 1)]).toEqual(rows.map(r => r.path));
+    expect(Object.keys(detail.projection).sort()).toEqual(['groups', 'nodeCount', 'offsets', 'paths', 'quarantined', 'source', 'target', 'type', 'types']);
+    expect(detail.projection.groups.every(g => Object.keys(g).join() === 'values')).toBe(true);
+    for (const index of [-1, 2, .5, NaN]) expect(() => renderPath(detail.projection, index)).toThrow('RENDER_PATH_INDEX');
+    // Detail transfer never detaches the worker authority or its membership data.
+    expect((await p.request<DetailResult>(1, { kind: 'detail' })).projection.nodeCount).toBe(2);
+    expect((await p.request<LayoutResult>(1, { kind: 'layout' })).positions.length).toBe(4);
+  } finally { p.dispose(); }
+});
+test('worker GPU probe exposes unsupported OffscreenCanvas without fabricating availability', async () => {
+  const p = pipeline(); try { expect(await p.request(1, { kind: 'gpu' })).toBeUndefined(); } finally { p.dispose(); }
+});
+
+test('cooperatively built carrier lookup keeps the synchronous duplicate-quarantine result', async () => {
+  const { carrierIndexer, indexCarriers } = await import('../src/core/group-projection');
+  const d = { ...declaration, carrierResolvers: [{ kind: 'opaque', key: 'id' }, { kind: 'path', key: '$path' }] };
+  const rows = Array.from({ length: 100 }, (_, i) => ({ path: `${i}.md`, properties: { id: `opaque:${i % 90}` } }));
+  const index = carrierIndexer(d); let yields = 0;
+  await sliced(rows, { chunkRows: 7, budgetMs: 8 }, index.add, async () => { yields++; });
+  expect(index.lookup).toEqual(indexCarriers(rows, d)); expect(yields).toBe(15);
+  expect(index.lookup.get('opaque')!.get('opaque:0')).toBeNull();
 });

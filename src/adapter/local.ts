@@ -109,6 +109,9 @@ export class LocalAdapter {
     if (cache !== null) this.indexed.add(path); else this.indexed.delete(path);
     const fm = cache?.frontmatter ?? {}, properties = Object.create(null) as Record<string, unknown>;
     for (const key of this.keys ?? Object.keys(fm)) if (key !== 'position' && Object.hasOwn(fm, key)) properties[key] = fm[key];
-    return { path, properties, links: { [this.producer]: Object.keys(this.app.metadataCache.resolvedLinks[path] ?? {}).filter(p => p.endsWith('.md')).sort() } };
+    // Producer links are not part of declarations made entirely from properties.
+    const links = !this.declaration || this.declaration.edges.some(e => e.kind === 'producer' && e.producer === this.producer)
+      ? { [this.producer]: Object.keys(this.app.metadataCache.resolvedLinks[path] ?? {}).filter(p => p.endsWith('.md')).sort() } : undefined;
+    return { path, properties, links };
   }
 }

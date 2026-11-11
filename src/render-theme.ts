@@ -2,7 +2,11 @@ import type { Settings } from './settings';
 export interface GraphTheme { background: string; node: string; edge: string; group: string; text: string; accent: string; font: string; palette: Uint8Array }
 const validColor = /^(?:#[0-9a-f]{6}(?:[0-9a-f]{2})?|var\(--[a-z0-9-]+\))$/i;
 export function readTheme(container: HTMLElement, settings: Settings): GraphTheme {
-  const style = getComputedStyle(container), canvas = document.createElement('canvas'), ctx = canvas.getContext('2d')!;
+  const style = getComputedStyle(container), canvas = document.createElement('canvas');
+  // Palette conversion is CPU readback, not a drawing surface. Avoid a GPU
+  // synchronization for each color when opening or switching the group view.
+  canvas.width = canvas.height = 1;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
   const resolve = (color: string, fallback: string) => {
     if (!validColor.test(color)) return fallback;
     if (color.startsWith('var(')) color = style.getPropertyValue(color.slice(4, -1)).trim();

@@ -1,3 +1,5 @@
+import { probeGpu } from './gpu-probe';
+import { renderProjection } from './render-projection';
 import { runLayout, runLayoutStream, type LayoutInput } from './core/layout';
 import { yieldTask } from './core/scheduler';
 import { digest, canonical } from './core/declaration';
@@ -25,6 +27,7 @@ function groupSummary(p: GroupProjection): GroupProjection {
 }
 async function handle(r: PipelineRequest, revision: number): Promise<unknown> {
   switch (r.kind) {
+    case 'gpu': return typeof OffscreenCanvas === 'undefined' ? undefined : probeGpu(new OffscreenCanvas(1, 1));
     case 'external': {
       if (r.bytes.byteLength > r.maxBytes) throw new Error('Projection byte limit exceeded');
       const value: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(r.bytes)); validateGroupProjection(value, r.limits); return value;
@@ -76,7 +79,7 @@ async function handle(r: PipelineRequest, revision: number): Promise<unknown> {
     case 'detail': {
       // Copies are made in the worker only: the renderer borrows transferred buffers;
       // the authoritative worker buffers remain live for incremental edits and cache encoding.
-      return structuredClone({ projection, visible, colors: colorGroups(projection, config.declaration) });
+      return structuredClone({ projection: renderProjection(projection), visible, colors: colorGroups(projection, config.declaration) });
     }
     case 'layout': {
       const start = performance.now(), seed = Number.parseInt(meta.key.slice(0, 8), 16);

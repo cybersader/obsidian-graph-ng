@@ -35,7 +35,7 @@ The pure-core fixture uses seed 17, one full ForceAtlas2 layout per mode, 100 it
 
 Current browser sampling uses the actual core/worker/direct WebGL2 renderer at 1280×800, DPR 1, configured label density/size threshold, three seconds of scripted pan/zoom and five discarded warmup frames, **one repetition per mode**. Camera draws retain typed arrays and GPU buffers; palette changes have separate assertions. Heap is retained main-realm JavaScript after forced GC, not GPU/native/worker memory. Historical slice-1/2 measurements below used Sigma's public partial refresh, not the invalidated every-frame-rebuild baseline. Dense literal overview readability is not captured by FPS.
 
-Native cold-open begins after metadata readiness; full invocation includes metadata indexing/startup. Cached view reopen differs from full app restart + cache restore. Incremental settle includes the configured 5,000 ms debounce. Native rAF sampling returned no callbacks: native FPS is unavailable, not zero and not accepted. Report p95 frame/load long task separately from steady-state FPS; load tasks target at most 50 ms and currently fail.
+Native cold-open begins after metadata readiness; full invocation includes metadata indexing/startup. Cached view reopen differs from full app restart + cache restore. Incremental settle includes the configured 5,000 ms debounce. Native rAF sampling returned no callbacks: native FPS is unavailable, not zero and not accepted. Report p95 frame/load long task separately from steady-state FPS; load tasks target at most 50 ms; see the latest slice-specific evidence rather than inferring acceptance from historical misses.
 
 ## Recorded slice-1 numbers
 
@@ -314,6 +314,68 @@ Large native first groups still miss 500 ms and the marked tasks still miss 50 m
 The complete plugin is **112,624 minified / 34,809 gzip / 30,237 Brotli bytes**, SHA-256 `9a3cb6267086ce3a6100777b96d9baf44fa94f5176f2164721549045a074f2d9`. Slice 3 was 184,338 / 49,240 gzip bytes: reductions **38.90% / 29.31%**. Both **150,000 / 45,000** limits are enforced and pass. Runtime package count is **zero**, runtime notices are empty, and the build-input receipt excludes all node_modules inputs. Exact oracle pins remain development-only; this does not certify the licenses of every development transitive tool.
 
 Multilevel coarsening above **250,000 nodes is deferred**. No >60,600-node layout timing, 1M-node acceptance, all-scale readability, mobile/iGPU/N-2 app matrix, native FPS or physical-disk large warm-start claim is added. Own-tree/FA2 floating-point operations can differ between JavaScript engines. Bounded iteration tasks are not a measured per-task millisecond cap. The existing worker deadline remains a backstop; layout similarity does not prove remote authorization or release safety. Independent review and its test-hardening follow-up are recorded above; publication remains separate from these deterministic and synthetic observations.
+
+## Slice 5: native startup and retained render columns
+
+### Method, attribution and timing correction
+
+Version 0.2.1 uses the same single-host class and synthetic fixtures as slice 4: Obsidian app/installer 1.13.7, native Chrome 150.0.7871.212, browser Chrome 151.0.7922.34, discrete NVIDIA ANGLE and forced SwiftShader lanes. Native large literal has 60,600 notes/nodes and 89,200 edges; native small has 2,000 notes, 600 nodes and 1,400 edges. Browser semantic/literal retain the same 60,600-row host metadata throughout both before/after runs. Timings below are single repetitions, not capacity guarantees.
+
+All local Bun invocations use `flock --exclusive --wait 2400 /tmp/openclast-local-verification.lock build-contained --`. `OBSIDIAN_CACHE` selects the existing local app cache and `CHROME_BIN` the cached browser executable; expanded personal paths remain private. Exact commands/subsets:
+
+- `bun run gates:fast`, `bun run build`, `bun run test` (the nine explicit files in the package script), then `bun run fixture --small`.
+- `GRAPH_MEASURE_NATIVE=1 bun run e2e` and `GRAPH_SOFTWARE=1 bun run e2e`, small hardware/software.
+- `bun run fixture --literal`, then `GRAPH_LARGE=1 GRAPH_LITERAL=1 GRAPH_MEASURE_NATIVE=1 bun run e2e` and `GRAPH_LARGE=1 GRAPH_LITERAL=1 GRAPH_SOFTWARE=1 bun run e2e`.
+- `GRAPH_LARGE=1 GRAPH_LITERAL=1 GRAPH_PROFILE=1 bun run e2e`, repeated with `GRAPH_SOFTWARE=1`: a separate one-test profile using public long-task entries, own-plugin phase wrappers and CDP CPU sampling. `startupTrace` separates worker group delivery, synchronous group drawing and queued refreshes.
+- `GRAPH_LARGE=1 GRAPH_LITERAL=1 GRAPH_TRACE=1 bun run e2e`, repeated with `GRAPH_SOFTWARE=1`: full native interaction tracing. Earlier diagnostic runs precede the final palette/carrier/resize corrections and are distinct from final acceptance receipts.
+- `GRAPH_LARGE=1 GRAPH_LITERAL=1 GRAPH_PROFILE=1 GRAPH_PROFILE_DRILL=1 bun run e2e`: additional member → note → full-detail profile. After cold paint is recorded, drain only the plugin-owned queued metadata notification and wait for its refresh to settle so it cannot intentionally replace the member panel mid-click.
+- Final large hardware and software also set `GRAPH_CPU=1`, collecting full-path CPU samples and CDP NavigationStart metrics without timeline tracing, so recorded long-task windows can be correlated exactly.
+- `bun run bench:browser`, `bun run gates`; no pure-layout rerun is implied because the solver is unchanged.
+
+An untouched slice-4 bundle (`a1693724`) reprofiled through the same probe showed **535.3 ms hardware / 589.5 ms software** actual cold groups. The original DOM measurement was overwritten by a queued metadata refresh: the same hardware run reported 539.8 ms later. Slice 5 preserves the first actual live paint and separately records subsequent verification paints; this is a measurement correction, not a claim that all older reported timings were cold paints.
+
+The baseline first pass spent 203.7/221.7 ms in main-realm column generation and 160.2/186.7 ms awaiting serial worker row processing; worker projection until group delivery contributed 157.3/147.6 ms. Group drawing itself was 9.5/29.5 ms (hardware/software). Main-realm CPU samples are dominated by per-cell `TextEncoder.encodeInto`; the seven visible group controls are not a large DOM construction bottleneck. Column generation includes calls to public Obsidian metadata APIs, but it is Graph NG's requested ingestion work, not autonomous host UI work.
+
+A hardware explicit-detail run caught a **214 ms** main task with samples in Graph NG's `gpuStatus` first `getContext`; another baseline profile caught 159 ms there. Full-path tracing then caught **81.4 ms** on a Groups click, 79.6 ms sampled inside palette `getImageData` GPU readback, and **51.8–52.6 ms** external-carrier lookup scans. An additional member → note → full-detail profile caught **94 ms**, with **91.1 ms** sampled in our GPU drawing-buffer resize while parallel shader compilation was pending. Skipping unchanged axes alone did not resolve that wait; applying the latest GPU buffer size after shader completion did. These are Graph NG-owned/requested costs. The same trace caught **143.5 ms** of **Obsidian file-explorer sorting/update** after note navigation; no plugin samples dominate that span, and no host internals were changed. A separate roughly 160 ms `CpuProfiler::StartProfiling` span is diagnostic overhead, not product startup cost.
+
+Fixes: contiguous ASCII column encoding/decoding with Unicode cell-preserving fallback; no unused producer-link extraction; worker OffscreenCanvas GPU probe; one-pixel CPU-backed palette conversion; cooperatively sliced external-carrier indexing; shader-completion-gated drawing-buffer resize without redundant axis resets; minimal main-realm render columns and packed UTF-8 paths. Existing budgets, deterministic semantics, sole worker projection authority, cache format and runtime dependency count remain unchanged. See [ADR-0007](decisions/ADR-0007-native-startup-render-columns.md).
+
+### Final-source results and remaining misses
+
+The independent review returned **SHIP-WITH-FIXES**, not unconditional acceptance. Follow-up tests reproduce a resize in the post-compile upload-yield window and refresh beginning before a sliced carrier index can be cached. The final initialization/restore path reconciles the latest dimensions immediately before readiness; refresh invalidates unfinished lookups before replacing the graph. The warm-start wait requires the exact added path and public identity, not only a node count. This does not add incremental group-row mutation or a second identity authority. The correctness reconciliation exposed a further **230 ms Graph NG-owned detail task**, with **205.5 ms** sampled in drawing-buffer resize (kept in `.workspace/evidence/runs/native-large-literal-hardware-1794365095142-3825367/`). `waitForResize()` now flushes a public WebGL2 fence and polls `clientWaitSync(fence, 0, 0)` before both buffer reconciliations. Polling is asynchronous under the existing shader-poll/deadline knobs; lost/disposed/failed/timeout paths release the fence and retain the existing group fallback. The targeted actual-native rerun removed that 230 ms task: no ≥50 ms open/detail tasks, first groups **309.1 ms**. Buffer allocation or another driver can still block; this is measured improvement, not a universal driver guarantee.
+
+| Native lane | Cold ready/open | First actual groups | Offline reopen | Open ≥50 ms tasks | Detail/refusal ≥50 ms tasks |
+| --- | --- | --- | --- | --- | --- |
+| small hardware | 120 ms | **24.0 ms** | 24 ms | None observed | None observed |
+| small software | 114 ms | **19.1 ms** | 43 ms | None observed | None observed |
+| large literal hardware | 8,819 ms | **320.0 ms** | 325 ms | None observed | None observed |
+| large literal software | 9,418 ms | **350.1 ms** | 423 ms | None observed | None observed |
+
+The ≤500 ms first-group target is met in every final native lane. Cold ready/open still includes full verified layout and is not the first-group measure. Small hardware/software are **11 passing each**; large literal hardware/software are **7 passing, 4 skipped each**. The large skips are complete-app restart, persisted key miss, incremental edit and duplicate quarantine; their small-fixture equivalents run. Software large detail is explicit refusal/group fallback, not 60,600-node Canvas rendering.
+
+| Browser mode | First groups | Full verified memory-disk warm detail | First full detail | Retained main JS after GC | Backing storage | FPS | p95 frame |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| semantic | 196.4 ms | 437.2 ms | 2,132.3 ms | 10.972 MiB | 2.031 MiB | 60.0 | 16.7 ms |
+| literal | 250.4 ms | 644.7 ms | 7,969.8 ms | 10.940 MiB | 5.291 MiB | 60.0 | 16.7 ms |
+
+The browser before/after heap is **13.586 → 10.972 MiB semantic / 16.753 → 10.940 MiB literal**, with the same host metadata retained. Both meet the ≤12 MiB **main JavaScript heap** target. Backing storage is separate: this does **not** meet or establish a 12 MiB total-process, combined-buffer, worker or GPU-memory target. No ≥50 ms task was observed in the browser open/cache-write/detail/warm windows. A task-free repetition is not a zero-millisecond p95 distribution or universal nonblocking guarantee.
+
+**The end-to-end ≤50 ms task target still has recorded misses. Software open tasks of 51–63 ms exceed 50 ms and are UNATTRIBUTED; program-only CPU samples do not establish Obsidian ownership.** Earlier repetitions observed **62–70 ms detail tasks**, including the software lane; those individual unprofiled entries remain **unattributed**. Kept pre-review-fix hardware drill evidence (`.workspace/evidence/pre-review-fixes/profile-large-hardware.json` and matching `.cpuprofile`) correlates a **73 ms** task to Obsidian `alphabetical`/backlink updates after note navigation, not Graph NG. The same archive's software native receipt records **63 ms during open** with only CPU `(program)` samples, so that event is **unattributed**, not claimed host-owned. Final-run exact CPU attribution is recorded below. Do not transfer ownership from one repetition to another or infer closure from a separate task-free profile. No Obsidian internals were changed.
+
+The final separate hardware drill profile (`.workspace/evidence/runs/profile-large-hardware-1794365801923-3857405/profile.json` and `profile.cpuprofile`) records a **63 ms** task after note navigation. Exact-window CPU samples include Obsidian `alphabetical` (22.04 ms), other `app.js` work (19.27 ms) and `updateBacklinks` (7.53 ms), without a Graph NG-dominant span: this particular task is host-owned. The final separate software direct profile (`.workspace/evidence/runs/profile-large-software-1794365764873-3856179/profile.json` and `profile.cpuprofile`) records a **60 ms** task with 60.02 ms of `(program)` samples and no attributable JavaScript stack. That task is **UNATTRIBUTED** and remains a >50 ms miss, distinct from the task-free functional repetition above.
+
+Native FPS remains unavailable; large complete-app restart, mobile/iGPU/N-2, >60,600-node timing, dense-overview readability and worker/GPU/native memory remain unaccepted. Platforms lacking worker OffscreenCanvas or parallel shader completion may still block on public driver calls. One unusually large property or host call is not preemptible by cooperative budgets.
+
+Final commands are the matrix above, with `GRAPH_CPU=1` on **both** large native lanes. `bun run test` passes **103 tests across nine explicit files**, including the original 94. Build/typecheck, both browser modes, and full **six-lane gates** pass. Screenshot contact sheets and representative full-resolution images are visually read locally; raw synthetic images remain ignored. Independent review and follow-up evidence are local, not publication or production acceptance.
+
+The complete 0.2.1 plugin is **115,970 minified / 35,830 gzip / 31,057 Brotli bytes**, SHA-256 `28d42609a61a7f8d3d5fb11b8a3ceaae83db76e861886def43b6fec77f366ad3`. Both **150,000 / 45,000** ceilings pass; runtime package count remains **zero**.
+
+Native/profile runs preserve immutable, exclusively created records under `.workspace/evidence/runs/`; top-level files are latest-run aliases, not the archival authority. Earlier before/after files are retained in named evidence directories. Final native runs:
+
+- `.workspace/evidence/runs/native-small-hardware-1794365547267-3847027`: small-hardware functional receipt.
+- `.workspace/evidence/runs/native-small-software-1794365593041-3848932`: small-software functional receipt.
+- `.workspace/evidence/runs/native-large-literal-hardware-1794365640737-3850633`: large-literal-hardware functional receipt and exact clock-correlated CPU samples.
+- `.workspace/evidence/runs/native-large-literal-software-1794365687163-3853135`: large-literal-software functional receipt and exact clock-correlated CPU samples.
 
 ## Retention and honest reporting
 

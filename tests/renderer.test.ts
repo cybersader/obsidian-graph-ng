@@ -1,5 +1,5 @@
 import { test, expect } from 'bun:test';
-import { PickGrid, positionTexture, incidentEdges, segmentDistance, placeLabels, labelLOD, LABEL_RATIOS, canvasDetailEdges } from '../src/render-data';
+import { PickGrid, positionTexture, incidentEdges, segmentDistance, placeLabels, labelLOD, LABEL_RATIOS, canvasDetailEdges, resizeDrawingBuffer } from '../src/render-data';
 import { buildProjection } from '../src/core/projection';
 import { defaultDeclaration, validateDeclaration } from '../src/core/declaration';
 import { defaults, upgradeSettings, validateSettings } from '../src/settings';
@@ -63,4 +63,15 @@ test('software edge and node budgets reject excess work, never silently truncate
   expect([...canvasDetailEdges(p, visible, 2, 3)]).toEqual([0, 1, 2]);
   expect(() => canvasDetailEdges(p, visible, 1, 3)).toThrow('CANVAS_DETAIL_NODE_LIMIT');
   expect(() => canvasDetailEdges(p, visible, 2, 2)).toThrow('CANVAS_DETAIL_EDGE_LIMIT');
+});
+
+test('drawing-buffer resize never resets an unchanged axis', () => {
+  let width = 800, height = 600; const writes: string[] = [];
+  const canvas = { get width() { return width; }, set width(v: number) { writes.push('width'); width = v; },
+    get height() { return height; }, set height(v: number) { writes.push('height'); height = v; } };
+  resizeDrawingBuffer(canvas, 800, 600); expect(writes).toEqual([]);
+  resizeDrawingBuffer(canvas, 800, 500); expect(writes).toEqual(['height']);
+  resizeDrawingBuffer(canvas, 900, 500); expect(writes).toEqual(['height', 'width']);
+  resizeDrawingBuffer(canvas, 1800, 1000); expect(writes).toEqual(['height', 'width', 'width', 'height']);
+  expect([canvas.width, canvas.height]).toEqual([1800, 1000]);
 });

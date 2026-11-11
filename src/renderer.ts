@@ -1,18 +1,13 @@
+import { probeGpu } from './gpu-probe';
 import type { GroupProjection } from './core/group-projection';
 import type { Settings } from './settings';
 import { readTheme } from './render-theme';
 export { DetailRenderer } from './webgl-renderer';
 export interface Renderer { dispose(): void; refreshTheme?(): void }
 export function gpuStatus(): { available: boolean; reason: string } {
-  const canvas = document.createElement('canvas');
-  const gl = canvas.getContext('webgl2', { failIfMajorPerformanceCaveat: true });
-  if (!gl) return { available: false, reason: 'WebGL2 unavailable or major performance caveat' };
-  const ext = gl.getExtension('WEBGL_debug_renderer_info');
-  const name = String(ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER));
-  const software = /swiftshader|llvmpipe|softpipe|software|swrast/i.test(name);
-  gl.getExtension('WEBGL_lose_context')?.loseContext();
-  return { available: !software, reason: software ? `Software renderer (${name})` : name };
+  return probeGpu(document.createElement('canvas'));
 }
+
 type Point = { x: number; y: number };
 interface Hit { edge: GroupProjection['groupEdges'][number]; points: Point[] }
 /** Small, first-class group graph. No WebGL, ontology or body parsing needed. */

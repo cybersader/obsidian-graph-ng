@@ -1,18 +1,31 @@
 import { browser, $ } from '@wdio/globals';
 import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
+import { chromium, type Browser, type CDPSession } from 'playwright';
 const literal = Boolean(process.env.GRAPH_LITERAL);
 const large = Boolean(process.env.GRAPH_LARGE), software = Boolean(process.env.GRAPH_SOFTWARE);
 const tag = `${large ? 'large' : 'small'}${literal ? '-literal' : ''}-${software ? 'software' : 'hardware'}`;
-const evidence: Record<string, unknown> = { tag, app: '1.13.7', installer: '1.13.7', notes: large ? 60600 : 2000 };
+const runDirectory = `.workspace/evidence/runs/native-${tag}-${Date.now()}-${process.pid}`;
+const evidence: Record<string, unknown> = { runDirectory, tag, app: '1.13.7', installer: '1.13.7', notes: large ? 60600 : 2000 };
 async function ready() { await browser.waitUntil(async () => (await $('.graph-ng-view').getAttribute('data-state')) === 'ready', { timeout: 180000, timeoutMsg: 'Graph did not become ready' }); }
 async function open() { await browser.executeObsidianCommand('graph-ng:open'); await ready(); }
 async function screenshot(name: string) { await browser.saveScreenshot(`test-screenshots/${tag}-${name}.png`); }
+let profileConnection: Browser | undefined, profileCdp: CDPSession | undefined;
 describe('Graph NG synthetic Obsidian path', () => {
   before(async () => {
-    await mkdir('test-screenshots', { recursive: true }); await mkdir('.workspace/evidence', { recursive: true });
+    await mkdir('test-screenshots', { recursive: true }); await mkdir(runDirectory, { recursive: true });
     await browser.waitUntil(async () => browser.executeObsidian(({ app }) => { const files = app.vault.getMarkdownFiles(); return files.length >= 2000 && files.every(f => app.metadataCache.getFileCache(f) !== null); }), { timeout: 180000, timeoutMsg: 'Synthetic cache indexing not complete' });
+    if (process.env.GRAPH_TRACE || process.env.GRAPH_CPU) {
+      const address = (browser.capabilities as any)['goog:chromeOptions']?.debuggerAddress;
+      assert.ok(address, 'Native trace requires CDP');
+      profileConnection = await chromium.connectOverCDP(`http://${address}`);
+      profileCdp = await profileConnection.contexts()[0]!.newCDPSession(profileConnection.contexts()[0]!.pages()[0]!);
+      if (process.env.GRAPH_TRACE) await profileCdp.send('Tracing.start', { categories: 'devtools.timeline,toplevel,v8,v8.execute,blink.user_timing,disabled-by-default-v8.cpu_profiler', transferMode: 'ReturnAsStream' });
+      await profileCdp.send('Performance.enable');
+      await profileCdp.send('Profiler.enable'); await profileCdp.send('Profiler.setSamplingInterval', { interval: 500 }); await profileCdp.send('Profiler.start');
+    }
     await browser.executeObsidian(() => {
+      performance.mark('graph-ng-native-origin');
       const state = window as any; state.graphOpenTasks = [];
       state.graphOpenObserver = new PerformanceObserver(list => state.graphOpenTasks.push(...list.getEntries()));
       state.graphOpenObserver.observe({ type: 'longtask', buffered: false });
@@ -22,11 +35,25 @@ describe('Graph NG synthetic Obsidian path', () => {
     evidence.openTasks = await browser.executeObsidian(() => {
       const state = window as any; state.graphOpenTasks.push(...state.graphOpenObserver.takeRecords()); state.graphOpenObserver.disconnect();
       const values = state.graphOpenTasks.map((t: PerformanceEntry) => t.duration).sort((a: number, b: number) => a - b);
-      return { count: values.length, p95Ms: values[Math.floor(values.length * .95)] ?? 0, maxMs: values.at(-1) ?? 0, durations: values };
+      return { count: values.length, p95Ms: values[Math.floor(values.length * .95)] ?? 0, maxMs: values.at(-1) ?? 0, durations: values, entries: state.graphOpenTasks.map((t: PerformanceEntry) => ({ start: t.startTime, duration: t.duration })) };
     });
     evidence.status = await $('.graph-ng-status').getText();
   });
-  after(async () => { await writeFile(`.workspace/evidence/e2e-${tag}.json`, JSON.stringify(evidence, null, 2)); });
+  after(async () => {
+    if (profileCdp) evidence.cpuClock = await profileCdp.send('Performance.getMetrics');
+    await writeFile(`${runDirectory}/receipt.json`, JSON.stringify(evidence, null, 2), { flag: 'wx' });
+    await writeFile(`.workspace/evidence/e2e-${tag}.json`, JSON.stringify(evidence, null, 2));
+    if (profileCdp) {
+      const { profile } = await profileCdp.send('Profiler.stop'); await writeFile(`${runDirectory}/profile.cpuprofile`, JSON.stringify(profile), { flag: 'wx' }); await writeFile(`.workspace/evidence/native-${tag}.cpuprofile`, JSON.stringify(profile));
+      if (process.env.GRAPH_TRACE) {
+        const done = new Promise<any>(resolve => profileCdp!.once('Tracing.tracingComplete', resolve)); await profileCdp.send('Tracing.end');
+        const { stream } = await done; let data = '';
+        for (;;) { const chunk = await profileCdp.send('IO.read', { handle: stream }); data += chunk.data; if (chunk.eof) break; }
+        await profileCdp.send('IO.close', { handle: stream }); await writeFile(`${runDirectory}/timeline.json`, data, { flag: 'wx' }); await writeFile(`.workspace/evidence/native-${tag}.trace.json`, data);
+      }
+      await profileCdp.detach(); await profileConnection!.close();
+    }
+  });
   it('renders declared groups with counts and opens a contributing carrier', async () => {
     assert.equal(await $('.graph-ng-view').getAttribute('data-nodes'), literal ? '60600' : large ? '16000' : '600');
     assert.equal(await $('.graph-ng-view').getAttribute('data-edges'), literal ? '89200' : large ? '44600' : '1400');
@@ -72,7 +99,7 @@ describe('Graph NG synthetic Obsidian path', () => {
     await browser.executeObsidian(() => { const state = window as any; state.graphDetailTasks = []; state.graphDetailObserver = new PerformanceObserver(list => state.graphDetailTasks.push(...list.getEntries())); state.graphDetailObserver.observe({ type: 'longtask', buffered: false }); });
     await $('.graph-ng-toolbar button:nth-child(2)').click();
     await browser.waitUntil(async () => (await $('.graph-ng-view').getAttribute('data-mode')) !== 'nodes-building');
-    evidence.detailTasks = await browser.executeObsidian(() => { const state = window as any; state.graphDetailTasks.push(...state.graphDetailObserver.takeRecords()); state.graphDetailObserver.disconnect(); const durations = state.graphDetailTasks.map((t: PerformanceEntry) => t.duration).sort((a: number, b: number) => a - b); return { count: durations.length, durations, p95Ms: durations.length ? durations[Math.floor(durations.length * .95)] : null, maxMs: durations.at(-1) ?? null }; });
+    evidence.detailTasks = await browser.executeObsidian(() => { const state = window as any; state.graphDetailTasks.push(...state.graphDetailObserver.takeRecords()); state.graphDetailObserver.disconnect(); const durations = state.graphDetailTasks.map((t: PerformanceEntry) => t.duration).sort((a: number, b: number) => a - b); return { count: durations.length, durations, entries: state.graphDetailTasks.map((t: PerformanceEntry) => ({ start: t.startTime, duration: t.duration })), p95Ms: durations.length ? durations[Math.floor(durations.length * .95)] : null, maxMs: durations.at(-1) ?? null }; });
     const mode = await $('.graph-ng-view').getAttribute('data-mode'); evidence.mode = mode;
     if (mode !== 'nodes') { assert.ok(software || (await $('.graph-ng-status').getText()).includes('GPU unavailable')); await screenshot('fallback'); return; }
     assert.equal(await browser.executeObsidian(({ app }) => (app.workspace.getLeavesOfType('graph-ng')[0]!.view as any).detailRenderer.gpu), !software);
@@ -82,7 +109,7 @@ describe('Graph NG synthetic Obsidian path', () => {
       const rect = view.contentEl.querySelector('.graph-ng-stage').getBoundingClientRect();
       for (let node = 0; node < renderer.visible.length; node++) if (renderer.visible[node]) {
         const p = renderer.screenPoint(node);
-        if (p.x > 30 && p.x < rect.width - 30 && p.y > 30 && p.y < rect.height - 30 && renderer.pick(Math.round(rect.left + p.x) - rect.left, Math.round(rect.top + p.y) - rect.top) === node) return { x: Math.round(rect.left + p.x), y: Math.round(rect.top + p.y), label: renderer.projection.paths[node].split('/').pop().replace(/\.md$/, '') };
+        if (p.x > 30 && p.x < rect.width - 30 && p.y > 30 && p.y < rect.height - 30 && renderer.pick(Math.round(rect.left + p.x) - rect.left, Math.round(rect.top + p.y) - rect.top) === node) return { x: Math.round(rect.left + p.x), y: Math.round(rect.top + p.y), label: renderer.path(node).split('/').pop().replace(/\.md$/, '') };
       }
       return null;
     });
@@ -212,17 +239,27 @@ describe('Graph NG synthetic Obsidian path', () => {
     if (large) { this.skip(); return; }
     const before = await browser.executeObsidian(async ({ app }) => {
       const view = app.workspace.getLeavesOfType('graph-ng')[0]!.view as any;
-      const result = { identities: [...view.projection.identities], positions: [...view.positions] };
+      const p = view.projection, decoder = new TextDecoder();
+      const paths = Array.from({ length: p.nodeCount }, (_, i) => decoder.decode(p.paths.bytes.subarray(p.paths.offsets[i], p.paths.offsets[i + 1])));
+      const result = { paths, positions: [...view.positions] };
       await app.vault.create('Warm-Start-Added.md', '---\nid: "concept:warm-added"\nfamily: "Family 1"\n---\nSynthetic isolated node.\n');
       return result;
     });
     await browser.reloadObsidian(); await open();
-    await browser.waitUntil(async () => browser.executeObsidian(({ app }) => { const view = app.workspace.getLeavesOfType('graph-ng')[0]!.view as any; return view.projection?.identities.includes('concept:warm-added') && view.contentEl.dataset.state === 'ready'; }));
+    await browser.waitUntil(async () => browser.executeObsidian(({ app }) => {
+      const view = app.workspace.getLeavesOfType('graph-ng')[0]!.view as any, p = view.projection;
+      if (!p || p.nodeCount !== 601 || view.contentEl.dataset.state !== 'ready') return false;
+      const decoder = new TextDecoder(), expectedPath = 'Warm-Start-Added.md';
+      const present = Array.from({ length: p.nodeCount }, (_, i) => decoder.decode(p.paths.bytes.subarray(p.paths.offsets[i], p.paths.offsets[i + 1]))).includes(expectedPath);
+      const file = app.vault.getAbstractFileByPath(expectedPath);
+      return present && !!file && app.metadataCache.getFileCache(file as any)?.frontmatter?.id === 'concept:warm-added';
+    }));
     evidence.persistedMiss = await browser.executeObsidian(({ app }, before) => {
-      const view = app.workspace.getLeavesOfType('graph-ng')[0]!.view as any, index = new Map(view.projection.identities.map((id: string, i: number) => [id, i]));
+      const view = app.workspace.getLeavesOfType('graph-ng')[0]!.view as any, p = view.projection, decoder = new TextDecoder();
+      const paths = Array.from({ length: p.nodeCount }, (_, i) => decoder.decode(p.paths.bytes.subarray(p.paths.offsets[i], p.paths.offsets[i + 1]))), index = new Map(paths.map((path, i) => [path, i]));
       let unchanged = 0;
-      before.identities.forEach((id: string, i: number) => { const next = index.get(id) as number; if (before.positions[i * 2] === view.positions[next * 2] && before.positions[i * 2 + 1] === view.positions[next * 2 + 1]) unchanged++; });
-      return { unchanged, expected: before.identities.length, nodes: view.projection.paths.length, finite: [...view.positions].every(Number.isFinite), trace: view.cacheTrace };
+      before.paths.forEach((id: string, i: number) => { const next = index.get(id) as number; if (before.positions[i * 2] === view.positions[next * 2] && before.positions[i * 2 + 1] === view.positions[next * 2 + 1]) unchanged++; });
+      return { unchanged, expected: before.paths.length, nodes: view.projection.nodeCount, finite: [...view.positions].every(Number.isFinite), trace: view.cacheTrace };
     }, before);
     const result = evidence.persistedMiss as { unchanged: number; expected: number; finite: boolean; nodes: number; trace: { expected: string; stored?: string; valid: boolean; nodes: number }[] };
     assert.equal(result.unchanged, result.expected); assert.equal(result.finite, true); assert.equal(result.nodes, result.expected + 1);
@@ -235,13 +272,22 @@ describe('Graph NG synthetic Obsidian path', () => {
       const p = view.projection, old = Array.from(view.positions as Float32Array), file = app.vault.getAbstractFileByPath('Mappings/Mapping-000000.md');
       if (!(file instanceof obsidian.TFile)) throw new Error('Synthetic carrier not found');
       await app.fileManager.processFrontMatter(file, fm => { fm.object_id = 'concept:7'; });
-      return { positions: old, identities: p.identities };
+      return { positions: old };
     });
     const start = Date.now();
-    await browser.waitUntil(async () => browser.executeObsidian(({ app }) => {
-      const v = app.workspace.getLeavesOfType('graph-ng')[0]!.view as any, p = v.projection;
-      const carrier = p.carrierPaths.indexOf('Mappings/Mapping-000000.md'), edge = Array.from(p.carrier).indexOf(carrier);
-      return edge >= 0 && p.identities[p.target[edge]] === 'concept:7' && v.contentEl.dataset.state === 'ready';
+    await browser.waitUntil(async () => browser.executeObsidian(async ({ app }) => {
+      const v = app.workspace.getLeavesOfType('graph-ng')[0]!.view as any;
+      if (v.contentEl.dataset.state !== 'ready' || v.activeRevision !== v.detailGeneration) return false;
+      // Verify the exact carrier via the same paged worker API as the UI, not a
+      // second main-realm identity/carrier dictionary kept only for the harness.
+      for (const edge of v.groupGraph.groupEdges) {
+        const key = JSON.stringify([edge.a, edge.b].sort());
+        for (let offset = 0; offset < edge.total; offset += 100) {
+          const result = await v.plugin.pipeline.request(v.activeRevision, { kind: 'contributions', pair: key, offset, count: 100 });
+          if (result.items.some((row: any) => row.carrier === 'Mappings/Mapping-000000.md' && row.target === 'Concepts/Family-2/Concept-000007.md')) return true;
+        }
+      }
+      return false;
     }), { timeout: 15000 });
     const unchanged = await browser.executeObsidian(({ app }, before) => {
       const v = app.workspace.getLeavesOfType('graph-ng')[0]!.view as any;

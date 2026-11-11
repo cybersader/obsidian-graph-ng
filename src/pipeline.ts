@@ -3,7 +3,7 @@ import type { RowColumns } from './core/columns';
 import { transferables } from './core/columns';
 import type { LayoutOptions } from './core/layout';
 import type { BinaryGeneration, GenerationMeta } from './core/binary-layout';
-import type { Projection } from './core/projection';
+import type { RenderProjection } from './render-projection';
 import type { GroupProjection } from './core/group-projection';
 export const LAYOUT_PRODUCER = 'graph-ng-fa2@1';
 export interface PipelineConfig { declaration: GraphDeclaration; layout: LayoutOptions; source: string; groupLevel: number; predicate?: Predicate; streamEveryIterations: number }
@@ -14,10 +14,11 @@ export type PipelineRequest =
   | { kind: 'load'; generation: BinaryGeneration }
   | { kind: 'migrate'; generation: { key: string; identities: string[]; positions: number[]; producer: string; layoutHash?: string; edgeKeys?: string[] }; declarationHash: string }
   | { kind: 'project'; complete?: boolean } | { kind: 'detail' } | { kind: 'layout' } | { kind: 'encode' }
+  | { kind: 'gpu' }
   | { kind: 'members'; group: string }
   | { kind: 'contributions'; pair: string; offset: number; count: number };
 export interface ProjectResult { invalidSaved?: GenerationMeta; meta: GenerationMeta; nodes: number; edges: number; unresolved: number; quarantined: { path: string; id: string }[] }
-export interface DetailResult { projection: Projection; visible: Uint8Array; colors: Uint32Array }
+export interface DetailResult { projection: RenderProjection; visible: Uint8Array; colors: Uint32Array }
 export interface LayoutResult { positions: Float32Array; milliseconds: number; cached: boolean; stored?: string }
 export interface GroupEvent { kind: 'groups'; revision: number; projection: GroupProjection }
 export interface Transport { postMessage(message: unknown, transfer: Transferable[]): void; terminate(): void; onmessage: ((event: MessageEvent) => void) | null; onerror: ((event: ErrorEvent) => void) | null }

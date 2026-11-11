@@ -46,8 +46,8 @@ export function positionTexture(positions: Float32Array, maxWidth = 2048) {
   if (data !== positions) data.set(positions);
   return { width, height, data };
 }
-export function incidentEdges(p: Projection) {
-  const offsets = new Uint32Array(p.paths.length + 1);
+export function incidentEdges(p: Pick<Projection, 'paths' | 'source' | 'target'> | { nodeCount: number; source: Uint32Array; target: Uint32Array }) {
+  const offsets = new Uint32Array(('nodeCount' in p ? p.nodeCount : p.paths.length) + 1);
   for (let e = 0; e < p.source.length; e++) { offsets[p.source[e]! + 1]!++; offsets[p.target[e]! + 1]!++; }
   for (let i = 1; i < offsets.length; i++) offsets[i]! += offsets[i - 1]!;
   const edges = new Uint32Array(p.source.length * 2), cursor = offsets.slice();
@@ -85,3 +85,9 @@ export function placeLabels(candidates: readonly LabelBox[], cellSize: number, b
 }
 export const LABEL_RATIOS = [.125, .25, .5, 1, 2, 4, 8] as const;
 export function labelLOD(ratio: number) { const i = LABEL_RATIOS.findIndex(r => r >= ratio); return i < 0 ? LABEL_RATIOS.length - 1 : i; }
+
+/** Same-size canvas assignments still clear/reset a GPU drawing buffer. */
+export function resizeDrawingBuffer(canvas: Pick<HTMLCanvasElement, 'width' | 'height'>, width: number, height: number) {
+  if (canvas.width !== width) canvas.width = width;
+  if (canvas.height !== height) canvas.height = height;
+}

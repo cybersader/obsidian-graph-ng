@@ -1,9 +1,8 @@
-import { test, expect, mock } from 'bun:test';
+import { test, expect } from 'bun:test';
+import { FixtureFile } from './support/obsidian-fixture';
 import type { App, Plugin } from 'obsidian';
 import { IncrementalIndex } from '../src/adapter/index';
 import type { FactRow } from '../src/core/projection';
-class FixtureFile { extension = 'md'; constructor(public path: string) {} }
-mock.module('obsidian', () => ({ TFile: FixtureFile }));
 test('debounced file changes, rename and delete patch only changed rows', () => {
   const rows = new Map<string, FactRow>([['a.md', { path: 'a.md', properties: { id: 'a' } }]]), events: Set<string>[] = [];
   let reads = 0; const index = new IncrementalIndex(path => { reads++; return rows.get(path); }, paths => events.push(paths), 5000);
@@ -97,4 +96,16 @@ test('cancelled streaming batches remain pending, invalidate coverage, and force
   while (!(await active.next()).done) {}
   const next: FactRow[] = []; for await (const b of adapter.columns(false, { chunkRows: 1, budgetMs: 8 })) next.push(...unpackRows(b.columns));
   expect(next.map(r => r.properties.id)).toEqual(['second']); adapter.index.dispose();
+});
+
+test('property-only streaming declarations never extract unused producer targets', async () => {
+  const { LocalAdapter } = await import('../src/adapter/local');
+  const { defaultDeclaration } = await import('../src/core/declaration');
+  const files = [new FixtureFile('a.md')], resolved = Object.create(null);
+  Object.defineProperty(resolved, 'a.md', { enumerable: true, get() { throw new Error('unused link extraction'); } });
+  const app = { vault: { getMarkdownFiles: () => files, getAbstractFileByPath: () => files[0], on() {} }, metadataCache: { resolvedLinks: resolved, getFileCache: () => ({ frontmatter: { id: 'a' } }), on() {} } } as unknown as App;
+  const plugin = { registerEvent() {}, register() {} } as unknown as Plugin;
+  const adapter = new LocalAdapter(app, plugin, 'fixture@1', 1, () => {}, true, { ...defaultDeclaration('fixture@1'), edges: [] });
+  try { let count = 0; for await (const batch of adapter.columns(true, { chunkRows: 1, budgetMs: 1 })) { count++; expect(batch.columns.producers).toEqual([]); } expect(count).toBe(1); }
+  finally { adapter.index.dispose(); }
 });
