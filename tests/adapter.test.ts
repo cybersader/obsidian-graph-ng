@@ -3,6 +3,80 @@ import { FixtureFile } from './support/obsidian-fixture';
 import type { App, Plugin } from 'obsidian';
 import { IncrementalIndex } from '../src/adapter/index';
 import type { FactRow } from '../src/core/projection';
+import type { PropertySource } from '../src/adapter/local';
+import { defaultDeclaration } from '../src/core/declaration';
+import { unpackRows } from '../src/core/columns';
+import { buildProjection } from '../src/core/projection';
+import { contractGroups } from '../src/core/group-projection';
+import { explore, emptyView } from '../src/core/explore';
+
+async function propertyFixture(source?: PropertySource, edges = false) {
+  const { LocalAdapter } = await import('../src/adapter/local');
+  const files = ['a.md', 'b.md'].map(p => new FixtureFile(p));
+  const caches = new Map<string, any>(), links: Record<string, Record<string, number>> = {};
+  const events = new Map<string, (...args: any[]) => void>();
+  const declaration = { ...defaultDeclaration('native@1'), columns: ['id', 'category'], identity: [{ key: 'id' }], groups: [{ from: 'key' as const, key: 'category' }], ...(edges ? {} : { edges: [] }) };
+  const app = { vault: { getMarkdownFiles: () => files, getAbstractFileByPath: (p: string) => files.find(f => f.path === p), on() {}, read() { throw new Error('body read forbidden'); } },
+    metadataCache: { getFileCache: (f: FixtureFile) => caches.get(f.path) ?? null, resolvedLinks: links, on: (name: string, fn: (...args: any[]) => void) => events.set(name, fn) } } as unknown as App;
+  const adapter = new LocalAdapter(app, { register() {}, registerEvent() {} } as unknown as Plugin, 'native@1', 1, () => {}, true, declaration, source);
+  const rows = async (reset = true) => { const all: FactRow[] = []; for await (const b of adapter.columns(reset, { chunkRows: 1, budgetMs: 8 })) all.push(...unpackRows(b.columns)); return all; };
+  return { adapter, rows, files, caches, links, events, declaration };
+}
+const fact = (id: string, extra = {}) => ({ source: 'derived', state: 'current', verified: false, frontmatter: { id, category: 'Category A' }, ...extra });
+
+test('current property facts form declared groups with empty native metadata and no body reads', async () => {
+  const f = await propertyFixture({ get: p => fact(p) }, true), original = JSON.stringify(f.declaration);
+  try {
+    const rows = await f.rows(), projection = buildProjection(rows, f.declaration);
+    const groups = contractGroups(projection, new Uint8Array(projection.paths.length).fill(1), 0).projection;
+    expect(groups.groups.map(g => [g.label, g.count])).toEqual([['Category A', 2]]);
+    expect(projection.source.length).toBe(0); expect(f.adapter.coverage()).toEqual({ indexed: 2, listed: 2 });
+    expect(f.adapter.factsComplete()).toBe(false); expect(f.adapter.linksPending()).toBe(true);
+    f.events.get('resolved')!(); expect(f.adapter.linksResolved).toBe(false);
+    expect(JSON.stringify(f.declaration)).toBe(original);
+    const filtered = explore(projection, f.declaration, { ...emptyView(), filters: [{ kind: 'eq', key: 'id', value: 'a.md' }], group: { from: 'key', key: 'id' } }, new Uint32Array(projection.paths.length), 0, { facetValues: 10 });
+    expect(filtered.visible.reduce((n, b) => n + b, 0)).toBe(1); expect(filtered.groupKeys).toContain(JSON.stringify('a.md'));
+  } finally { f.adapter.index.dispose(); }
+});
+
+test('empty/absent YAML is valid; parse errors, truncation and absent facts use available native fallback only', async () => {
+  for (const value of [fact('a', { frontmatter: {} }), fact('a', { frontmatter: undefined }), fact('a', { parseError: 'yaml_syntax' }), fact('a', { truncated: { droppedKeys: 1 } }), undefined]) {
+    const usable = value !== undefined && !(value as any).parseError && !(value as any).truncated;
+    const f = await propertyFixture({ get: () => value });
+    try {
+      expect((await f.rows())[0]!.properties).toEqual({});
+      expect(f.adapter.coverage().indexed).toBe(usable ? 2 : 0); expect(f.adapter.factsComplete()).toBe(false);
+      f.caches.set('a.md', { frontmatter: { id: 'native-a' } }); f.caches.set('b.md', { frontmatter: { id: 'native-b' } });
+      const rows = await f.rows();
+      expect(rows[0]!.properties).toEqual(usable ? {} : { id: 'native-a' });
+      expect(f.adapter.factsComplete()).toBe(!usable);
+    } finally { f.adapter.index.dispose(); }
+  }
+});
+
+test('property verification cannot complete a declared native-edge graph; native readiness later upgrades it', async () => {
+  const f = await propertyFixture({ get: p => fact(p, { verified: true }) }, true);
+  try {
+    await f.rows(); expect(f.adapter.factsComplete()).toBe(false);
+    f.links['a.md'] = { 'b.md': 1 }; f.links['b.md'] = {};
+    f.events.get('resolve')!(f.files[0]); f.events.get('resolve')!(f.files[1]); f.adapter.index.flush();
+    const p = buildProjection(await f.rows(false), f.declaration);
+    expect(p.source.length).toBe(1); expect(f.adapter.linksPending()).toBe(false); expect(f.adapter.factsComplete()).toBe(true);
+  } finally { f.adapter.index.dispose(); }
+});
+
+test('source replacement/drop rejects suspended batches and reacquires rows without keeping a fact cache', async () => {
+  const f = await propertyFixture({ get: p => fact(p) });
+  try {
+    const old = f.adapter.columns(true, { chunkRows: 1, budgetMs: 8 }); await old.next();
+    f.adapter.setPropertySource({ get: () => undefined });
+    await expect(old.next()).rejects.toThrow('Property source changed');
+    expect(f.adapter.coverage().indexed).toBe(0); expect(f.adapter.factsComplete()).toBe(false);
+    await f.rows(false); expect(f.adapter.coverage().indexed).toBe(0);
+    f.adapter.setPropertySource({ get: p => fact(p, { verified: true }) });
+    await f.rows(false); expect(f.adapter.factsComplete()).toBe(true);
+  } finally { f.adapter.index.dispose(); }
+});
 test('debounced file changes, rename and delete patch only changed rows', () => {
   const rows = new Map<string, FactRow>([['a.md', { path: 'a.md', properties: { id: 'a' } }]]), events: Set<string>[] = [];
   let reads = 0; const index = new IncrementalIndex(path => { reads++; return rows.get(path); }, paths => events.push(paths), 5000);

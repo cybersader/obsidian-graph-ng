@@ -4,7 +4,23 @@ All notable changes are recorded here. The format follows Keep a Changelog; vers
 
 ## [Unreleased]
 
-- Raised the enforced bundle ceilings to 180,000 minified / 58,000 gzip bytes by owner decision (2026-11-11), from 150,000 / 45,000, to fit the explore panel and visuals.
+## [0.5.0] - Unreleased
+
+### Added
+
+- Optional public property-facts input for provisional first groups, preserving the existing engine, declarations, native producer edges and separate Graph NG entrypoints. Missing capability retains standalone native input; this does not force whole-vault body hydration.
+- Explicit provisional properties and pending native links; verified completeness and exact-cache eligibility remain separate from transport completeness.
+
+### Fixed
+
+- Matching property verification uses a bounded, non-destructive coverage audit instead of repeatedly canceling ingestion and clearing an interactive view.
+- Layout persistence rechecks source/view ownership after asynchronous encoding and when a queued write actually executes.
+
+### Compatibility and verification status
+
+- Host-first rollout is required: install the aggregate load/change-notification seam before this plugin. The older host's partial property API is not a supported lifecycle pairing; capability absence is the supported native fallback.
+- Local deterministic evidence and independent R1/R2 reliability review cover the behavior changes. Version metadata and documentation still require staged cross-document review; no native/browser/mobile, connected-workspace, packaging or deployment acceptance is claimed.
+- Existing ceilings remain 205,000 minified / 66,000 gzip bytes; Brotli is reported, not separately capped.
 
 ## [0.4.0] - Unreleased
 

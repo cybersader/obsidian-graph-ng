@@ -1,7 +1,7 @@
 import { expressionPrelude } from './core/expr/expression-prelude';
 import { predicateColumn, groupColumn as sourceColumn } from './core/declaration';
 import { ItemView, Plugin, PluginSettingTab, Setting, Notice, TFile, apiVersion, type WorkspaceLeaf } from 'obsidian';
-import { LocalAdapter } from './adapter/local';
+import { LocalAdapter, type PropertySource } from './adapter/local';
 import { canonical, digest, layoutDeclaration, migrateDeclaration, validateDeclaration, type GraphDeclaration, type Predicate } from './core/declaration';
 import { canonicalView, type ExploreResult, type ExploreView, type ViewCamera } from './core/explore';
 import { ExplorePanel } from './explore-panel';
@@ -60,7 +60,7 @@ export default class GraphPlugin extends Plugin {
       onRestart: () => {
         this.ingestedHash = ''; this.adapter?.invalidate();
         for (const leaf of this.app.workspace.getLeavesOfType(VIEW)) (leaf.view as GraphView).invalidateSource();
-        new Notice('Graph NG worker restarted; rebuilding from the public metadata cache.');
+        new Notice('Graph NG worker restarted; rebuilding from available properties.');
         this.notify();
       },
     });
@@ -69,11 +69,39 @@ export default class GraphPlugin extends Plugin {
     this.addCommand({ id: 'open', name: 'Open graph', callback: () => { void this.open(); } });
     this.addRibbonIcon('git-fork', 'Graph NG', () => { void this.open(); });
     this.addSettingTab(new GraphSettings(this));
-    this.resetAdapter();
+    this.resetAdapter(); this.watchProperties();
     if (loaded.persist) await this.save();
     this.registerEvent(this.app.vault.on('modify', file => { if (file.path === this.settings.projectionFile) this.notify(); }));
   }
-  resetAdapter() { this.adapter?.index.dispose(); this.adapter = new LocalAdapter(this.app, this, this.linkProducer, this.settings.debounceMs, () => this.notify(), true, this.settings.declaration); this.ingestedHash = ''; }
+  propertySource?: PropertySource;
+  propertyRevision = 0;
+  /** Public optional host capability; listener ownership never transfers the provider. */
+  watchProperties(host = globalThis) {
+    let active = true, verifying = false, pending = false, timer: ReturnType<typeof setTimeout> | undefined;
+    const verify = () => {
+      if (!active || timer !== undefined || verifying) return;
+      timer = setTimeout(async () => {
+        timer = undefined; verifying = true; pending = false;
+        try { if (await this.adapter.verifyProperties(this.settings.ingest) && active) for (const leaf of this.app.workspace.getLeavesOfType(VIEW)) (leaf.view as GraphView).promoteProperties(); }
+        finally { verifying = false; if (pending) verify(); }
+      }, this.settings.debounceMs);
+    };
+    const changed = (event?: Event) => {
+      const candidate = (host as typeof globalThis & { openclast?: { propertyFacts?: PropertySource } }).openclast?.propertyFacts;
+      const source = typeof candidate?.get === 'function' ? candidate : undefined, previous = this.propertySource;
+      if (source === previous && (event as CustomEvent | undefined)?.detail?.invalidated === false) { pending = true; verify(); return; }
+      clearTimeout(timer); timer = undefined; pending = false;
+      this.propertySource = source; this.propertyRevision++;
+      this.adapter.setPropertySource(source); this.ingestedHash = '';
+      for (const leaf of this.app.workspace.getLeavesOfType(VIEW)) (leaf.view as GraphView).invalidateSource();
+      this.notify();
+      if (source && source !== previous) void Promise.resolve().then(() => active && source === this.propertySource && source.load?.()).catch(() => {});
+    };
+    host.addEventListener?.('oc:property-facts-changed', changed);
+    this.register(() => { active = false; clearTimeout(timer); host.removeEventListener?.('oc:property-facts-changed', changed); });
+    changed();
+  }
+  resetAdapter() { this.adapter?.index.dispose(); this.adapter = new LocalAdapter(this.app, this, this.linkProducer, this.settings.debounceMs, () => this.notify(), true, this.settings.declaration, this.propertySource); this.ingestedHash = ''; }
   subscribe(listener: () => void) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   notify() { for (const fn of this.listeners) fn(); }
   async open() {
@@ -102,9 +130,10 @@ export default class GraphPlugin extends Plugin {
       await this.save();
     }); this.notify();
   }
-  async cache(generation: BinaryGeneration) {
+  async cache(generation: BinaryGeneration, current = () => true) {
     if (!this.settings.persistLayout) return;
-    this.writes = this.writes.catch(() => {}).then(() => this.store.write(generation));
+    const store = this.store;
+    this.writes = this.writes.catch(() => {}).then(() => { if (current() && this.settings.persistLayout && store === this.store) return store.write(generation); });
     await this.writes;
   }
   async migrate(revision: number, declarationHash: string) {
@@ -185,9 +214,16 @@ export class GraphView extends ItemView {
     // Creating even a probe GL context can block; the initial group view needs no GPU.
     this.registerEvent(this.app.workspace.on('css-change', () => this.renderer?.refreshTheme?.()));
     this.unsubscribe = this.plugin.subscribe(() => { void this.refresh(); });
+    const source = this.plugin.propertySource;
+    void Promise.resolve().then(() => !this.closed && source === this.plugin.propertySource && source?.load?.()).catch(() => {});
     await this.refresh();
   }
   invalidateSource() { this.explored = undefined; this.explorePanel?.render(); this.contributionPage.clear(); this.groupGeneration = -1; this.revision++; this.renderRevision++; this.provisional = true; if (this.contentEl) this.contentEl.dataset.verified = 'false'; this.renderer?.dispose(); this.renderer = undefined; this.projection = undefined; this.detailGeneration = -1; this.positions = undefined; this.groupGraph = undefined; this.stage?.empty(); this.panel?.empty(); }
+  promoteProperties() {
+    if (this.closed || this.plugin.settings.projectionFile || !this.groupGraph || this.detailGeneration !== this.activeRevision || !this.plugin.adapter.factsComplete()) return;
+    this.provisional = false; this.contentEl.dataset.verified = 'true';
+    this.status.textContent = this.status.textContent?.replace(' (partial · filters and members provisional)', ' · verified') ?? '';
+  }
   async onClose() { this.explorePanel?.dispose(); this.contributionPage.clear(); this.closed = true; this.renderRevision++; this.revision++; this.renderer?.dispose(); this.unsubscribe?.(); }
   async refresh() {
     if (this.closed) return;
@@ -201,10 +237,11 @@ export class GraphView extends ItemView {
     if (scope !== this.contributionScope) this.contributionPage.clear();
     this.contributionScope = scope; this.contributionPage.size = this.plugin.settings.listPageSize; this.contributionPage.suspend();
     const rev = ++this.revision, revision = ++this.plugin.nextRevision; this.activeRevision = revision;
-    const current = () => !this.closed && rev === this.revision;
+    const source = this.plugin.propertySource, propertyRevision = this.plugin.propertyRevision;
+    const current = () => !this.closed && rev === this.revision && source === this.plugin.propertySource && propertyRevision === this.plugin.propertyRevision;
     const settings = this.plugin.settings, start = performance.now();
     this.carrierLookup = undefined; this.renderRevision++; this.provisional = true; this.contentEl.dataset.verified = 'false';
-    this.contentEl.dataset.state = 'building'; this.status.textContent = 'Building projection from the public metadata cache…';
+    this.contentEl.dataset.state = 'building'; this.status.textContent = 'Building projection from available properties…';
     try {
       if (settings.projectionFile) {
         const file = this.app.vault.getAbstractFileByPath(settings.projectionFile);
@@ -254,12 +291,13 @@ export class GraphView extends ItemView {
         this.contentEl.dataset.firstGroupMs ??= String(firstGroupMs);
         this.contentEl.dataset.refreshGroupMs = String(firstGroupMs);
       };
-      const result = await this.plugin.pipeline.request<ProjectResult>(revision, { kind: 'project', complete: this.plugin.adapter.coverage().indexed === this.plugin.adapter.coverage().listed });
+      const complete = this.plugin.adapter.factsComplete(); this.provisional = !complete;
+      const result = await this.plugin.pipeline.request<ProjectResult>(revision, { kind: 'project', complete: !this.provisional });
       if (!current()) return;
       if (result.invalidSaved) await this.plugin.store.quarantine(result.invalidSaved);
-      const coverage = this.plugin.adapter.coverage(); this.provisional = coverage.indexed !== coverage.listed;
+      const coverage = this.plugin.adapter.coverage(); this.provisional = !this.plugin.adapter.factsComplete();
       this.contentEl.dataset.verified = String(!this.provisional);
-      const base = `${result.nodes.toLocaleString()} nodes · ${result.edges.toLocaleString()} edges · ${coverage.indexed}/${coverage.listed} listed notes indexed${this.provisional ? ' (partial · filters and members provisional)' : ' · verified'} · ${result.unresolved} unresolved${result.quarantined.length ? ` · ${result.quarantined.length} notes share an ID (excluded)` : ''}`;
+      const base = `${result.nodes.toLocaleString()} nodes · ${result.edges.toLocaleString()} edges · ${coverage.indexed}/${coverage.listed} properties available${this.plugin.adapter.linksPending() ? '; links pending' : ''}${this.provisional ? ' (partial · filters and members provisional)' : ' · verified'} · ${result.unresolved} unresolved${result.quarantined.length ? ` · ${result.quarantined.length} notes share an ID (excluded)` : ''}`;
       this.status.textContent = `${base} · building layout in worker`;
       this.contentEl.dataset.nodes = String(result.nodes); this.contentEl.dataset.edges = String(result.edges);
       await yieldTask();
@@ -277,9 +315,10 @@ export class GraphView extends ItemView {
       this.cacheTrace.push({ expected: result.meta.key, stored: layout.stored, nodes: result.nodes, ...coverage, valid: layout.cached }); if (this.cacheTrace.length > 16) this.cacheTrace.shift();
       this.status.textContent = `${base} · ${layout.cached ? 'cached layout' : `worker ${layout.milliseconds.toFixed(0)} ms`} · total ${(performance.now() - start).toFixed(0)} ms${this.gpu.available || this.gpu.reason === 'Not probed' ? '' : ' · GPU unavailable — group view and member lists remain available'}`;
       this.contentEl.dataset.state = 'ready'; this.contentEl.dataset.layoutMs = String(layout.milliseconds); this.contentEl.dataset.cached = String(layout.cached);
-      if (settings.persistLayout && !layout.cached && !this.provisional && (!settings.declaration.edges.some(e => e.kind === 'producer') || this.plugin.adapter.linksResolved)) {
+      if (settings.persistLayout && !layout.cached && complete && !this.provisional && (!settings.declaration.edges.some(e => e.kind === 'producer') || this.plugin.adapter.linksResolved)) {
         const generation = await this.plugin.pipeline.request<BinaryGeneration>(revision, { kind: 'encode' });
-        await this.plugin.cache(generation);
+        if (!current()) return;
+        await this.plugin.cache(generation, current);
       }
     } catch (e) {
       this.plugin.adapter.invalidate(); this.plugin.ingestedHash = ''; this.provisional = true; this.contentEl.dataset.verified = 'false';
