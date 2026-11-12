@@ -1,0 +1,18 @@
+{
+  "esbuild@0.28.2": {
+    "hooksSha256": "23bddf6d3adf9f611110e313125c7c8a2cf2f88c5301dcd43a2eede75b206456",
+    "reason": "Build-only platform-binary installer. Optional platform package supplies binary without lifecycle execution."
+  },
+  "geckodriver@6.1.1": {
+    "hooksSha256": "1d74181459f3bcb43119c0f087b7bb2802a00855d2bd70a205afe85e58645efb",
+    "reason": "Unused Firefox driver installer in the WebdriverIO toolchain; Obsidian uses Chromium."
+  },
+  "edgedriver@6.3.1": {
+    "hooksSha256": "4a241f472ac1b4a5e3ad3c779bc8a6dc9df4fd712856e403b7bcf6f85159df8e",
+    "reason": "Unused Edge driver installer in the WebdriverIO toolchain; Obsidian uses Chromium."
+  },
+  "classic-level@3.0.0": {
+    "hooksSha256": "6bdd7a7a78cce0a03d1bf2fd2334420c2daee2421690f1c666c24dec5a2de003",
+    "reason": "Native test-toolchain storage build; packaged prebuilds are used without invoking node-gyp."
+  }
+}

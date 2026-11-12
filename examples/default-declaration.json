@@ -1,0 +1,29 @@
+{
+  "version": 2,
+  "identity": [],
+  "edges": [
+    {
+      "name": "links",
+      "kind": "producer",
+      "producer": "obsidian-links@1.13.7",
+      "type": "link"
+    }
+  ],
+  "groups": [
+    {
+      "from": "folder",
+      "depth": 1
+    }
+  ],
+  "display": {
+    "reifiedAsNodes": false
+  },
+  "columns": [],
+  "colors": [],
+  "carrierResolvers": [
+    {
+      "kind": "note-path",
+      "key": "$path"
+    }
+  ]
+}

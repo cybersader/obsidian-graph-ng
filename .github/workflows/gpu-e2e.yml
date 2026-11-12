@@ -1,0 +1,35 @@
+name: Manual synthetic GPU smoke (disabled by default)
+on:
+  workflow_dispatch:
+    inputs:
+      enable:
+        description: 'Run on an approved isolated synthetic homelab GPU runner'
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: synthetic-homelab-gpu
+  cancel-in-progress: false
+jobs:
+  synthetic-smoke:
+    if: ${{ inputs.enable == true }}
+    runs-on: [self-hosted, linux, homelab-gpu]
+    timeout-minutes: 15
+    strategy:
+      max-parallel: 1
+      fail-fast: true
+      matrix:
+        software: ['', '1']
+    env:
+      GRAPH_SOFTWARE: ${{ matrix.software }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Synthetic-only native smoke
+        # Runner preprovisioned with pinned Bun/Node, build-contained, GPU and an X display.
+        # Never run unreviewed fork code on this persistent runner. No live Create/update/login/trust automation.
+        run: ./scripts/run-native-smoke.sh
+# No triggers on PR/push, secrets, hosted GPU, or raw screenshot uploads.
+# Receipts remain local. Scrub JSON before sharing; screenshots require synthetic provenance and visual review.

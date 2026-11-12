@@ -1,0 +1,10 @@
+.workspace/
+node_modules/
+test-vault/
+test-screenshots/
+main.js
+layout-worker.js
+.obsidian-cache/
+*.log
+release/
+private-terms

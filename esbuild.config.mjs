@@ -1,0 +1,21 @@
+/** SPDX-License-Identifier: MIT */
+import { build } from 'esbuild';
+import { mkdir, copyFile, writeFile } from 'node:fs/promises';
+import { glsl } from './scripts/glsl.mjs';
+import { mangleProps } from './scripts/mangle-props.mjs';
+import { expressionBuild } from './scripts/expression-build.mjs';
+const shared = await expressionBuild();
+const workerOptions = { plugins: [shared.plugin(true)], metafile: true, entryPoints: ['src/layout-worker.ts'], bundle: true, minify: true, format: 'iife', platform: 'browser', write: false, target: 'es2022', charset: 'utf8' };
+const mainOptions = worker => ({ metafile: true, plugins: [glsl, shared.plugin(false)], entryPoints: ['src/main.ts'], outfile: 'main.js', bundle: true, minify: true, format: 'cjs', platform: 'browser', external: ['obsidian'], target: 'es2022', charset: 'utf8', mangleProps, define: { __LAYOUT_WORKER_SOURCE__: JSON.stringify(worker.outputFiles[0].text) }, legalComments: 'eof' });
+const discoveryWorker = await build(workerOptions);
+const discoveryMain = await build({ ...mainOptions(discoveryWorker), write: false });
+await shared.trim([discoveryWorker.outputFiles[0].text, discoveryMain.outputFiles[0].text]);
+const worker = await build(workerOptions);
+const main = await build(mainOptions(worker));
+const dest = 'test-vault/.obsidian/plugins/graph-ng';
+await mkdir(dest, { recursive: true });
+for (const f of ['main.js', 'styles.css', 'manifest.json', 'NOTICE', 'THIRD_PARTY_NOTICES.txt']) await copyFile(f, `${dest}/${f}`);
+for (const result of [shared.core, worker, main]) if (Object.keys(result.metafile.inputs).some(p => p.includes('node_modules/'))) throw new Error('RUNTIME_DEPENDENCY_BUNDLED');
+await mkdir('.workspace/evidence', { recursive: true });
+await writeFile('.workspace/evidence/bundle-inputs.json', JSON.stringify({ core: Object.keys(shared.core.metafile.inputs), worker: Object.keys(worker.metafile.inputs), main: Object.keys(main.metafile.inputs), external: ['obsidian'], runtimePackages: 0 }, null, 2) + '\n');
+await writeFile('.workspace/evidence/bundle-metafiles.json', JSON.stringify({ core: shared.core.metafile, worker: worker.metafile, main: main.metafile }, null, 2) + '\n');

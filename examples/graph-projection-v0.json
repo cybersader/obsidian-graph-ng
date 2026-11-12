@@ -1,0 +1,47 @@
+{
+  "schema": "graph-projection-v0",
+  "producer": {
+    "name": "synthetic",
+    "projection": "example",
+    "asOf": "2026-11-10"
+  },
+  "groups": [
+    {
+      "id": "a",
+      "label": "Category 1",
+      "count": 1,
+      "identityPrefix": "concept:alpha:"
+    },
+    {
+      "id": "b",
+      "label": "Category 2",
+      "count": 1,
+      "identityPrefix": "concept:beta:"
+    }
+  ],
+  "groupEdges": [
+    {
+      "a": "a",
+      "b": "b",
+      "total": 1,
+      "typeCounts": {
+        "aligns": 1
+      },
+      "directional": {
+        "aToB": {
+          "aligns": 1
+        },
+        "bToA": {}
+      },
+      "carriers": {
+        "kind": "mapping-id",
+        "ids": [
+          "mapping:1"
+        ]
+      }
+    }
+  ],
+  "coverage": {
+    "source": "synthetic example"
+  }
+}

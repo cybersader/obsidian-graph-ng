@@ -1,0 +1,99 @@
+{
+  "carrierResolvers": [
+    {
+      "kind": "note-path",
+      "key": "$path"
+    },
+    {
+      "kind": "mapping-id",
+      "key": "id"
+    }
+  ],
+  "version": 2,
+  "identity": [
+    {
+      "key": "id"
+    }
+  ],
+  "edges": [
+    {
+      "name": "mapping",
+      "kind": "reified",
+      "sourceProperty": "subject_id",
+      "targetProperty": "object_id",
+      "typeProperty": "predicate"
+    }
+  ],
+  "groups": [
+    {
+      "from": "key",
+      "key": "category"
+    },
+    {
+      "from": "folder",
+      "depth": 1
+    }
+  ],
+  "display": {
+    "reifiedAsNodes": false
+  },
+  "columns": [
+    "category"
+  ],
+  "colors": [
+    {
+      "name": "Category 1",
+      "color": "#56b4e9",
+      "predicate": {
+        "kind": "eq",
+        "key": "category",
+        "value": "Category 1"
+      }
+    },
+    {
+      "name": "Category 2",
+      "color": "#e69f00",
+      "predicate": {
+        "kind": "eq",
+        "key": "category",
+        "value": "Category 2"
+      }
+    },
+    {
+      "name": "Category 3",
+      "color": "#009e73",
+      "predicate": {
+        "kind": "eq",
+        "key": "category",
+        "value": "Category 3"
+      }
+    },
+    {
+      "name": "Category 4",
+      "color": "#cc79a7",
+      "predicate": {
+        "kind": "eq",
+        "key": "category",
+        "value": "Category 4"
+      }
+    },
+    {
+      "name": "Category 5",
+      "color": "#d5c85d",
+      "predicate": {
+        "kind": "eq",
+        "key": "category",
+        "value": "Category 5"
+      }
+    },
+    {
+      "name": "Category 6",
+      "color": "#9caac2",
+      "predicate": {
+        "kind": "eq",
+        "key": "category",
+        "value": "Category 6"
+      }
+    }
+  ]
+}

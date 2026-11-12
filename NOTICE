@@ -1,0 +1,6 @@
+Graph NG — copyright 2026 cybersader, MIT.
+Original implementation; no third-party plugin source is copied.
+No third-party runtime dependencies are bundled.
+THIRD_PARTY_NOTICES.txt is intentionally empty (enforced by the runtime gate).
+Renderer and CSR ForceAtlas2/Barnes-Hut layout are original implementations.
+Graphology/FA2 are development-only differential oracles, not shipped code.

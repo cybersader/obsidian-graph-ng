@@ -1,0 +1,60 @@
+.graph-ng-view { display:flex; flex-direction:column; gap:8px; height:100%; overflow:hidden; }
+.graph-ng-toolbar { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+.graph-ng-toolbar input { flex:1; min-width:180px; }
+.graph-ng-body { position:relative; flex:1 1 300px; min-height:220px; display:flex; gap:8px; container-type:inline-size; }
+.graph-ng-stage { position:relative; flex:1 1 auto; min-height:220px; background:var(--graph-ng-bg, var(--background-primary)); border:1px solid var(--background-modifier-border); border-radius:var(--radius-m, 8px); overflow:hidden; }
+.graph-ng-status { font-size:var(--font-ui-small); color:var(--text-muted); }
+.graph-ng-panel { max-height:30%; overflow:auto; flex:0 1 auto; }
+.graph-ng-group-controls { display:flex; flex-wrap:wrap; gap:6px; padding:4px 0; }
+.graph-ng-edge,.graph-ng-member,.graph-ng-carrier { display:block; margin:4px 0; max-width:100%; white-space:normal; height:auto; text-align:left; }
+.graph-ng-contribution { padding:4px; border-bottom:1px solid var(--background-modifier-border); overflow-wrap:anywhere; }
+.graph-ng-json { width:100%; min-height:260px; font-family:var(--font-monospace); font-size:12px; }
+.graph-ng-tooltip { position:absolute; pointer-events:none; color:var(--text-normal); background:var(--background-secondary); border:1px solid var(--background-modifier-border); padding:4px 6px; border-radius:var(--radius-s, 4px); max-width:80%; z-index:2; font-size:var(--font-ui-small); }
+.graph-ng-tooltip:empty { display:none; }
+.graph-ng-canvas-pager,.graph-ng-page-controls { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:4px 0; }
+.graph-ng-canvas-pager[hidden],.graph-ng-page-controls[hidden] { display:none; }
+.graph-ng-quarantine { margin:6px 0; border-left:3px solid var(--text-warning); padding-left:8px; }
+
+/* In-view controls: host variables only, so light/dark and community themes apply. */
+.graph-ng-explore { position:relative; z-index:3; flex:0 0 288px; box-sizing:border-box; max-height:100%; display:flex; flex-direction:column; gap:6px; padding:8px; background:var(--background-secondary); border:1px solid var(--background-modifier-border); border-radius:var(--radius-m, 8px); box-shadow:var(--shadow-s); font-size:var(--font-ui-small); color:var(--text-normal); }
+.graph-ng-explore.is-collapsed { position:absolute; top:8px; right:8px; flex:none; width:auto; }
+/* Narrow panes overlay the open panel instead of squeezing the graph. */
+@container (max-width: 640px) { .graph-ng-explore:not(.is-collapsed) { position:absolute; top:8px; right:8px; width:min(288px, calc(100% - 16px)); max-height:calc(100% - 16px); } }
+.graph-ng-explore-head { display:flex; align-items:center; gap:8px; justify-content:space-between; }
+.graph-ng-explore-toggle { font-weight:var(--font-semibold, 600); padding:2px 6px; height:auto; }
+.graph-ng-explore-counts { color:var(--text-muted); font-size:var(--font-ui-smaller); text-align:right; font-variant-numeric:tabular-nums; }
+.graph-ng-explore-search { width:100%; }
+.graph-ng-explore-body { overflow:auto; min-height:0; display:flex; flex-direction:column; gap:2px; }
+.graph-ng-explore-body[hidden], .graph-ng-explore-search[hidden] { display:none; }
+.graph-ng-explore-section { border-top:1px solid var(--background-modifier-border); padding:4px 0; }
+.graph-ng-explore-section > summary { cursor:pointer; color:var(--text-muted); font-weight:var(--font-semibold, 600); padding:2px 0; list-style-position:inside; }
+.graph-ng-explore-section[open] > summary { color:var(--text-normal); }
+.graph-ng-explore-section > div { display:flex; flex-direction:column; gap:6px; padding:4px 0 2px; }
+.graph-ng-explore-note { color:var(--text-faint); font-size:var(--font-ui-smaller); }
+.graph-ng-explore-error { color:var(--text-error); font-size:var(--font-ui-smaller); }
+.graph-ng-explore-error:empty { display:none; }
+.graph-ng-row, .graph-ng-form { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+.graph-ng-form > * { flex:1 1 90px; min-width:0; }
+.graph-ng-form select[multiple] { flex-basis:100%; }
+.graph-ng-form > button { flex:0 0 auto; }
+.graph-ng-chips { display:flex; flex-wrap:wrap; gap:4px; }
+.graph-ng-chip { font-size:var(--font-ui-smaller); padding:1px 8px; height:auto; border-radius:var(--radius-l, 12px); background:var(--interactive-normal); }
+.graph-ng-legend { display:flex; flex-direction:column; gap:1px; max-height:240px; overflow:auto; }
+.graph-ng-legend-row { display:flex; align-items:center; gap:6px; min-height:24px; }
+.graph-ng-legend-row > input[type=checkbox] { margin:0; }
+.graph-ng-legend-row > .graph-ng-legend-name, .graph-ng-legend-row > button.graph-ng-legend-name { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:left; background:none; box-shadow:none; padding:0 2px; height:auto; color:var(--text-normal); justify-content:flex-start; border:none; font-size:inherit; }
+.graph-ng-legend-row > button.graph-ng-legend-name:hover { background:var(--background-modifier-hover); }
+.graph-ng-legend-count { color:var(--text-muted); font-variant-numeric:tabular-nums; font-size:var(--font-ui-smaller); }
+.graph-ng-swatch { flex:0 0 auto; width:12px; height:12px; border-radius:50%; box-shadow:0 0 0 1px var(--background-modifier-border); }
+.graph-ng-color { flex:0 0 auto; width:22px; height:22px; padding:0; border:none; background:none; cursor:pointer; }
+.graph-ng-fold { padding:0 4px; height:auto; }
+.graph-ng-slider { display:grid; grid-template-columns:7.5em 1fr 2.5em; align-items:center; gap:6px; }
+.graph-ng-slider input { width:100%; }
+.graph-ng-overlay { position:absolute; inset:0; pointer-events:none; overflow:hidden; }
+.graph-ng-hover-label, .graph-ng-hub-label { position:absolute; left:0; top:0; white-space:nowrap; font-size:var(--font-ui-small); color:var(--text-normal); background:color-mix(in srgb, var(--background-primary) 82%, transparent); padding:1px 6px; border-radius:var(--radius-s, 4px); }
+.graph-ng-hover-label:empty { display:none; }
+.graph-ng-hub-label { font-weight:var(--font-semibold, 600); font-size:var(--font-ui-smaller); }
+@media (prefers-reduced-motion: reduce) { .graph-ng-explore * { transition:none !important; } }
+
+.graph-ng-expression input[type="text"] { width: 100%; min-width: 0; }
+.graph-ng-expression-status { white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--font-ui-small); margin: 8px 0; }

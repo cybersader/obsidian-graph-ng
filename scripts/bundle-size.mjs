@@ -1,0 +1,12 @@
+import fs from 'node:fs';
+import { gzipSync, brotliCompressSync } from 'node:zlib';
+import { createHash } from 'node:crypto';
+import { root, git } from './gate-lib.mjs';
+import path from 'node:path';
+const bytes = fs.readFileSync(path.join(root, 'main.js'));
+const sourceStatus = git(['status', '--porcelain=v1', '--untracked-files=all']).trim();
+const report = { commit: git(['rev-parse', 'HEAD']).trim(), dirty: sourceStatus.length > 0, sourceStatus, stagedTree: git(['write-tree']).trim(), bytes: bytes.length, gzipBytes: gzipSync(bytes, { level: 9 }).length, brotliBytes: brotliCompressSync(bytes).length, sha256: createHash('sha256').update(bytes).digest('hex'), limits: { slice3Bytes: 250000, slice3GzipBytes: 70000, zeroDependencyTargetBytes: 205000, zeroDependencyTargetGzipBytes: 66000 }, policy: 'Enforce zero-dependency minified/gzip ceilings (raised 2026-11-11 by owner decision for the explore panel and visuals). Run build first.' };
+fs.mkdirSync(path.join(root, '.workspace/evidence'), { recursive: true });
+fs.writeFileSync(path.join(root, '.workspace/evidence/bundle-size.json'), JSON.stringify(report, null, 2) + '\n');
+console.log(JSON.stringify(report, null, 2));
+if (report.bytes > report.limits.zeroDependencyTargetBytes || report.gzipBytes > report.limits.zeroDependencyTargetGzipBytes) throw new Error('BUNDLE_SIZE_LIMIT: slice-4 ceiling exceeded');

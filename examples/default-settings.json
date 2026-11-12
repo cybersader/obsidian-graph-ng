@@ -1,0 +1,158 @@
+{
+  "settingsVersion": 2,
+  "canvasMaxDetailNodes": 2000,
+  "canvasMaxDetailEdges": 10000,
+  "labelsMaxPerViewport": 400,
+  "labelCandidateMultiplier": 32,
+  "frameBackstopMs": 32,
+  "shaderPollMs": 8,
+  "contextRestoreTimeoutMs": 5000,
+  "cameraMinRatio": 0.02,
+  "cameraMaxRatio": 8,
+  "ingest": {
+    "chunkRows": 2000,
+    "budgetMs": 8
+  },
+  "cache": {
+    "directory": "",
+    "chunkBytes": 1048576,
+    "maxGenerationBytes": 268435456,
+    "retainedArtifacts": 8,
+    "maxRetainedBytes": 268435456
+  },
+  "maxProjectionBytes": 67108864,
+  "maxSettingsBytes": 16777216,
+  "declaration": {
+    "version": 2,
+    "identity": [],
+    "edges": [
+      {
+        "name": "links",
+        "kind": "producer",
+        "producer": "obsidian-links@1.13.7",
+        "type": "link"
+      }
+    ],
+    "groups": [
+      {
+        "from": "folder",
+        "depth": 1
+      }
+    ],
+    "display": {
+      "reifiedAsNodes": false
+    },
+    "columns": [],
+    "colors": [],
+    "carrierResolvers": [
+      {
+        "kind": "note-path",
+        "key": "$path"
+      }
+    ]
+  },
+  "layout": {
+    "iterations": 100,
+    "relaxIterations": 30,
+    "initialRadius": 100,
+    "seed": 1,
+    "batchIterations": 5,
+    "convergenceThreshold": 0,
+    "convergenceIterations": 3,
+    "maxTreeDepth": 32,
+    "nodeRadius": 1,
+    "maxForce": 10,
+    "force": {
+      "linLogMode": false,
+      "outboundAttractionDistribution": false,
+      "adjustSizes": false,
+      "edgeWeightInfluence": 1,
+      "scalingRatio": 2,
+      "strongGravityMode": false,
+      "gravity": 1,
+      "slowDown": 1,
+      "barnesHutOptimize": true,
+      "barnesHutTheta": 1.2
+    }
+  },
+  "debounceMs": 5000,
+  "workerTimeoutMs": 120000,
+  "workerRestarts": 2,
+  "streamEveryIterations": 5,
+  "lodZoomRatio": 1.8,
+  "groupLevel": 0,
+  "nodeSize": 3,
+  "edgeSize": 0.5,
+  "labelSize": 13,
+  "groupRadius": 26,
+  "groupCurveDivisor": 5,
+  "groupEdgeHitRadius": 6,
+  "groupCurveSamples": 32,
+  "groupLoopScale": 1.5,
+  "groupRingPadding": 56,
+  "labelDensity": 1,
+  "labelGridCellSize": 100,
+  "labelRenderedSizeThreshold": 6,
+  "edgeWidthScale": 0.8,
+  "listPageSize": 100,
+  "backgroundColor": "#141b26",
+  "nodeColor": "#7fc8e7",
+  "edgeColor": "#43566e",
+  "groupColor": "#7fc8e7",
+  "textColor": "#edf4ff",
+  "persistLayout": true,
+  "cachedDeclarations": 1,
+  "projectionFile": "",
+  "groupCanvasPageSize": 6,
+  "maxProjectionGroups": 20000,
+  "maxProjectionPairs": 200000,
+  "maxProjectionCarriers": 1000000,
+  "visuals": {
+    "degreeSizing": 1.6,
+    "edgeOpacity": 0.4,
+    "edgeDensityReference": 3000,
+    "edgeColorMix": 0.65,
+    "edgeDirection": false,
+    "glow": 0.3,
+    "curvedEdges": true,
+    "curvature": 0.12,
+    "curveSegments": 8,
+    "hoverHighlight": true,
+    "dimOpacity": 0.12,
+    "groupHalos": true,
+    "haloOpacity": 0.08,
+    "autoPalette": true,
+    "labelFade": true,
+    "cameraAnimationMs": 450,
+    "glowMaxNodes": 250000,
+    "curvesMaxEdges": 60000,
+    "halosMaxGroups": 48,
+    "hubsMaxGroups": 256,
+    "softwareEffects": false,
+    "carrierTint": true,
+    "carrierBridge": "blend",
+    "carrierBridgeAccent": 0.35,
+    "carrierOpacity": 0.7,
+    "carrierSize": 0.6,
+    "carrierDensityReference": 8000,
+    "carrierLod": true,
+    "carrierLodNear": 0.3,
+    "carrierLodFar": 0.6
+  },
+  "explore": {
+    "panelOpen": true,
+    "facetValues": 50,
+    "legendPageSize": 40,
+    "view": {
+      "query": "",
+      "filters": [],
+      "group": null,
+      "hiddenGroups": [],
+      "collapsedGroups": [],
+      "hiddenColors": [],
+      "hiddenTypes": []
+    },
+    "savedViews": [],
+    "disabledDerived": []
+  }
+}

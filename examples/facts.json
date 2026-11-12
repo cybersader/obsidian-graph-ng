@@ -1,0 +1,25 @@
+[
+  {
+    "path": "Concepts/Alpha.md",
+    "properties": {
+      "id": "concept:alpha:1",
+      "category": "Category 1"
+    }
+  },
+  {
+    "path": "Concepts/Beta.md",
+    "properties": {
+      "id": "concept:beta:1",
+      "category": "Category 2"
+    }
+  },
+  {
+    "path": "Mappings/Example.md",
+    "properties": {
+      "id": "mapping:1",
+      "subject_id": "concept:alpha:1",
+      "object_id": "concept:beta:1",
+      "predicate": "aligns"
+    }
+  }
+]
