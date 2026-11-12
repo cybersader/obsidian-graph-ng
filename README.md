@@ -2,7 +2,7 @@
 
 A standalone, local-first Obsidian graph plugin. Start with a readable graph of declared groups, inspect counted relationships and their carrier notes, then drill into individual notes when hardware WebGL is available. No ontology, category vocabulary, relation vocabulary, or ID format is built into the core.
 
-**Version 0.4.0 candidate / test-backed alpha.** The expression implementation is not release-accepted: the fixed bundle gate remains over budget and independent review is pending. This is not production, mobile, integrated-GPU, or remote-authorization acceptance. No server, remote repository, hosted service, or telemetry is configured. All fixtures and captured evidence are synthetic.
+**Version 0.5.1 candidate / test-backed alpha.** This update improves graph controls, status disclosure and filter removal; it does not change host loading/indexing, layout physics or node-label policy. The controls have independent code-review acceptance; release preparation and runtime visual acceptance are separate. Runtime visuals remain **UNOBSERVED**. This is not production, mobile, integrated-GPU or remote-authorization acceptance. No server, hosted service or telemetry is configured. All fixtures and captured evidence are synthetic.
 
 ## Use
 
@@ -14,9 +14,11 @@ A standalone, local-first Obsidian graph plugin. Start with a readable graph of 
 
 ## Explore: filters, groups and visuals
 
-An **Explore** panel sits beside the graph (it overlays narrow panes and collapses to a header). It uses only host CSS variables, so light, dark and community themes apply. Every control is presentation: it never edits notes, never changes layout identity and never relayouts.
+An **Explore** panel sits beside the graph and overlays narrow panes. **Hide controls** collapses it to a compact **Show controls** button, hiding counts and controls while preserving the saved panel state. It uses only host CSS variables, so light, dark and community themes apply. Every control is presentation: it never edits notes, never changes layout identity and never relayouts.
 
-- **Search and filters.** Search matches note names and identities. Property filters (`is`, `is any of`, `exists`) are built only from declared `columns`, with live per-value counts of visible/total notes; filters combine with AND and show as removable chips. The header shows live visible node/edge counts.
+The graph status keeps partial/provisional/pending warnings visible; expand **Details** for full counts and worker timings. Status compaction currently retains long numeric prefixes in some locales, including German, French and Arabic; this does not hide pending/provisional warnings.
+
+- **Search and filters.** Search matches note names and identities. Property filters (`is`, `is any of`, `exists`) are built only from declared `columns`, with live per-value counts of visible/total notes; filters combine with AND. Descriptions are non-destructive; separate **Remove** buttons have filter-specific accessible names and keyboard-focus styling. **Edit as expression** remains available. The expanded panel header shows live visible node/edge counts. Code-only updates must omit `data.json` and preserve existing settings and enabled state.
 - **Group by.** Switch between declared group sources, any declared property, folder depth 1–4, or a **derived** source: a bounded, safe transform (segment N or first N segments; linear-time, no regular expressions) of an existing property, identity or path. No note needs a new property. See [derived group sources](docs/declaration-format.md#derived-group-sources).
 - **Legend.** Per-group visibility, member counts, click to frame a group and, in the detail graph, collapse/expand a group into a single hub. Color rules are editable in place (color, order, add, delete, hide); notes matching no rule take a calm categorical group color. Color edits re-evaluate in the worker on existing columns.
 - **Relationships.** Per-type visibility with visible/total counts and an optional source→target direction fade.

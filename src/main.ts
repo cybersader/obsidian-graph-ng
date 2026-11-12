@@ -149,6 +149,12 @@ export class GraphView extends ItemView {
   private revision = 0;
   private renderRevision = 0;
   private status!: HTMLElement;
+  private statusSummary!: HTMLElement;
+  private get statusText() { return this.status.textContent ?? ''; }
+  private set statusText(text: string) {
+    this.status.textContent = text;
+    this.statusSummary.textContent = text.replace(/^[\d,]+ (nodes .*?properties available|groups · \d+ counted group pairs)/, 'Graph NG').replace(/ · (worker \d+ ms|total \d+ ms|cached layout)/g, '');
+  }
   private stage!: HTMLElement;
   private panel!: HTMLElement;
   private toolbar!: HTMLElement;
@@ -200,7 +206,10 @@ export class GraphView extends ItemView {
     this.toolbar = this.contentEl.createDiv({ cls: 'graph-ng-toolbar' });
     this.toolbar.createEl('button', { text: 'Groups' }).onclick = () => this.showGroups();
     this.toolbar.createEl('button', { text: 'All notes' }).onclick = () => { this.detailScope = undefined; void this.showDetails(); };
-    this.status = this.contentEl.createDiv({ cls: 'graph-ng-status', attr: { role: 'status' } });
+    const status = this.contentEl.createDiv({ cls: 'graph-ng-status' });
+    this.statusSummary = status.createDiv({ attr: { role: 'status' } });
+    const details = status.createEl('details'); details.createEl('summary', { text: 'Details' });
+    this.status = details.createDiv();
     this.body = this.contentEl.createDiv({ cls: 'graph-ng-body' });
     this.stage = this.body.createDiv({ cls: 'graph-ng-stage' });
     this.explorePanel = new ExplorePanel(this.body, {
@@ -222,7 +231,7 @@ export class GraphView extends ItemView {
   promoteProperties() {
     if (this.closed || this.plugin.settings.projectionFile || !this.groupGraph || this.detailGeneration !== this.activeRevision || !this.plugin.adapter.factsComplete()) return;
     this.provisional = false; this.contentEl.dataset.verified = 'true';
-    this.status.textContent = this.status.textContent?.replace(' (partial · filters and members provisional)', ' · verified') ?? '';
+    this.statusText = this.statusText?.replace(' (partial · filters and members provisional)', ' · verified') ?? '';
   }
   async onClose() { this.explorePanel?.dispose(); this.contributionPage.clear(); this.closed = true; this.renderRevision++; this.revision++; this.renderer?.dispose(); this.unsubscribe?.(); }
   async refresh() {
@@ -241,7 +250,7 @@ export class GraphView extends ItemView {
     const current = () => !this.closed && rev === this.revision && source === this.plugin.propertySource && propertyRevision === this.plugin.propertyRevision;
     const settings = this.plugin.settings, start = performance.now();
     this.carrierLookup = undefined; this.renderRevision++; this.provisional = true; this.contentEl.dataset.verified = 'false';
-    this.contentEl.dataset.state = 'building'; this.status.textContent = 'Building projection from available properties…';
+    this.contentEl.dataset.state = 'building'; this.statusText = 'Building projection from available properties…';
     try {
       if (settings.projectionFile) {
         const file = this.app.vault.getAbstractFileByPath(settings.projectionFile);
@@ -253,7 +262,7 @@ export class GraphView extends ItemView {
         const p = await this.plugin.pipeline.request<GroupProjection>(revision, { kind: 'external', bytes, maxBytes: settings.maxProjectionBytes, limits: { groups: settings.maxProjectionGroups, pairs: settings.maxProjectionPairs, carriers: settings.maxProjectionCarriers } });
         if (!current()) return;
         this.projection = undefined; this.positions = undefined; this.explored = undefined; this.groupGraph = p; this.groupGeneration = revision; this.viewGeneration = -1; this.viewSource = 'external'; this.members.clear(); this.contributions.clear();
-        this.status.textContent = `${p.groups.length} groups · ${p.groupEdges.length} counted group pairs · unverified external aggregate (not merged with live rows)`;
+        this.statusText = `${p.groups.length} groups · ${p.groupEdges.length} counted group pairs · unverified external aggregate (not merged with live rows)`;
         this.contentEl.dataset.state = 'ready'; this.showGroups(); return;
       }
       const configuredSource = this.sourceKey(this.view), config = { declaration: settings.declaration, layout: settings.layout, source: `${this.plugin.linkProducer}/${this.plugin.sourceIdentity}`, groupLevel: settings.groupLevel, predicate: this.predicate, view: this.view, facetValues: settings.explore?.facetValues, streamEveryIterations: settings.streamEveryIterations };
@@ -267,7 +276,7 @@ export class GraphView extends ItemView {
             const cache = await this.plugin.pipeline.request<{ groups?: GroupProjection } | undefined>(revision, { kind: 'load', generation: saved });
             if (cache?.groups && current() && !this.predicate && !(this.view && viewNarrows(this.view))) {
               this.projection = undefined; this.positions = undefined; this.groupGraph = cache.groups; this.groupGeneration = -revision; this.viewGeneration = -1; this.viewSource = this.sourceKey(null); this.members.clear(); this.contributions.clear(); this.showGroups(true);
-              this.status.textContent = `cached · verifying ${this.plugin.adapter.coverage().indexed} of ${this.plugin.adapter.coverage().listed} · filters and members provisional`;
+              this.statusText = `cached · verifying ${this.plugin.adapter.coverage().indexed} of ${this.plugin.adapter.coverage().listed} · filters and members provisional`;
               this.contentEl.dataset.cachedPaintMs = String(performance.now() - start); await yieldTask();
             }
           } catch { await this.plugin.store.quarantine(saved.meta); }
@@ -278,7 +287,7 @@ export class GraphView extends ItemView {
         if (!current()) return;
         await this.plugin.pipeline.request(revision, { kind: 'rows', ...batch });
         const c = this.plugin.adapter.coverage();
-        this.status.textContent = `${this.groupGraph ? 'cached · ' : ''}verifying ${c.indexed} of ${c.listed} · filters and members provisional`;
+        this.statusText = `${this.groupGraph ? 'cached · ' : ''}verifying ${c.indexed} of ${c.listed} · filters and members provisional`;
       }
       this.plugin.ingestedHash = hashes.ingestHash;
       this.plugin.pipeline.onGroups = event => {
@@ -298,7 +307,7 @@ export class GraphView extends ItemView {
       const coverage = this.plugin.adapter.coverage(); this.provisional = !this.plugin.adapter.factsComplete();
       this.contentEl.dataset.verified = String(!this.provisional);
       const base = `${result.nodes.toLocaleString()} nodes · ${result.edges.toLocaleString()} edges · ${coverage.indexed}/${coverage.listed} properties available${this.plugin.adapter.linksPending() ? '; links pending' : ''}${this.provisional ? ' (partial · filters and members provisional)' : ' · verified'} · ${result.unresolved} unresolved${result.quarantined.length ? ` · ${result.quarantined.length} notes share an ID (excluded)` : ''}`;
-      this.status.textContent = `${base} · building layout in worker`;
+      this.statusText = `${base} · building layout in worker`;
       this.contentEl.dataset.nodes = String(result.nodes); this.contentEl.dataset.edges = String(result.edges);
       await yieldTask();
       const detail = await this.plugin.pipeline.request<DetailResult>(revision, { kind: 'detail' });
@@ -313,7 +322,7 @@ export class GraphView extends ItemView {
       if (!current()) return;
       this.positions = layout.positions;
       this.cacheTrace.push({ expected: result.meta.key, stored: layout.stored, nodes: result.nodes, ...coverage, valid: layout.cached }); if (this.cacheTrace.length > 16) this.cacheTrace.shift();
-      this.status.textContent = `${base} · ${layout.cached ? 'cached layout' : `worker ${layout.milliseconds.toFixed(0)} ms`} · total ${(performance.now() - start).toFixed(0)} ms${this.gpu.available || this.gpu.reason === 'Not probed' ? '' : ' · GPU unavailable — group view and member lists remain available'}`;
+      this.statusText = `${base} · ${layout.cached ? 'cached layout' : `worker ${layout.milliseconds.toFixed(0)} ms`} · total ${(performance.now() - start).toFixed(0)} ms${this.gpu.available || this.gpu.reason === 'Not probed' ? '' : ' · GPU unavailable — group view and member lists remain available'}`;
       this.contentEl.dataset.state = 'ready'; this.contentEl.dataset.layoutMs = String(layout.milliseconds); this.contentEl.dataset.cached = String(layout.cached);
       if (settings.persistLayout && !layout.cached && complete && !this.provisional && (!settings.declaration.edges.some(e => e.kind === 'producer') || this.plugin.adapter.linksResolved)) {
         const generation = await this.plugin.pipeline.request<BinaryGeneration>(revision, { kind: 'encode' });
@@ -322,7 +331,7 @@ export class GraphView extends ItemView {
       }
     } catch (e) {
       this.plugin.adapter.invalidate(); this.plugin.ingestedHash = ''; this.provisional = true; this.contentEl.dataset.verified = 'false';
-      if (current()) { this.status.textContent = `Graph NG: ${String(e)}`; this.contentEl.dataset.state = 'error'; this.contributionPage.fail(`Projection refresh failed: ${String(e)}`); }
+      if (current()) { this.statusText = `Graph NG: ${String(e)}`; this.contentEl.dataset.state = 'error'; this.contributionPage.fail(`Projection refresh failed: ${String(e)}`); }
     } finally {
       if (!current()) { this.plugin.adapter.invalidate(); this.plugin.ingestedHash = ''; this.contentEl.dataset.verified = 'false'; }
     }
@@ -495,7 +504,7 @@ export class GraphView extends ItemView {
         } else if (this.contentEl.dataset.mode === 'groups') this.showGroups(true);
         this.explorePanel?.setState(this.view); after?.();
       } catch (error) {
-        if (!this.closed && !String(error).includes('generation changed') && !String(error).includes('Expression superseded')) { new Notice(`Graph NG view: ${String(error)}`); this.status.textContent = `View not applied: ${String(error)}`; }
+        if (!this.closed && !String(error).includes('generation changed') && !String(error).includes('Expression superseded')) { new Notice(`Graph NG view: ${String(error)}`); this.statusText = `View not applied: ${String(error)}`; }
       } finally {
         this.exploring = false; const next = this.exploreQueued; this.exploreQueued = undefined; if (next) void next();
       }
@@ -552,7 +561,7 @@ export class GraphView extends ItemView {
     try {
       if (this.gpu.reason === 'Not probed') this.gpu = await this.plugin.pipeline.request<typeof this.gpu | undefined>(this.activeRevision, { kind: 'gpu' }) ?? gpuStatus();
       if (renderRevision !== this.renderRevision || this.closed) return;
-      if (!this.gpu.available && bits.reduce((n, b) => n + (b ? 1 : 0), 0) > this.plugin.settings.canvasMaxDetailNodes) { this.contentEl.dataset.mode = 'groups'; this.status.textContent += ' · GPU unavailable — use group member lists'; new Notice(`GPU unavailable: ${this.gpu.reason}. Use group member lists.`); return; }
+      if (!this.gpu.available && bits.reduce((n, b) => n + (b ? 1 : 0), 0) > this.plugin.settings.canvasMaxDetailNodes) { this.contentEl.dataset.mode = 'groups'; this.statusText += ' · GPU unavailable — use group member lists'; new Notice(`GPU unavailable: ${this.gpu.reason}. Use group member lists.`); return; }
       this.renderer?.dispose(); this.stage.empty(); if (clearPanel) { this.contributionPage.clear(); this.panel.empty(); }
       this.detailRenderer = await DetailRenderer.create(this.stage, this.projection, this.positions, bits, this.plugin.settings, i => this.openPath(renderPath(this.projection!, i)), () => this.showGroups(), this.colors!, () => renderRevision === this.renderRevision, !this.gpu.available, () => {
         if (renderRevision !== this.renderRevision || this.closed) return;
@@ -563,7 +572,7 @@ export class GraphView extends ItemView {
       this.detailRenderer.onHub = group => { const key = this.explored?.groupKeys[group]; if (key !== undefined) this.setView({ ...this.view, collapsedGroups: this.view.collapsedGroups.filter(k => k !== key) }, () => this.focusGroup(group)); };
       if (this.pendingCamera) { const c = this.pendingCamera; this.pendingCamera = undefined; this.detailRenderer.flyTo(c.x, c.y, c.ratio); }
       this.explorePanel?.render();
-    } catch (e) { if (renderRevision !== this.renderRevision) return; this.gpu = { available: false, reason: String(e) }; this.showGroups(); this.status.textContent += ' · GPU unavailable; group fallback active'; }
+    } catch (e) { if (renderRevision !== this.renderRevision) return; this.gpu = { available: false, reason: String(e) }; this.showGroups(); this.statusText += ' · GPU unavailable; group fallback active'; }
   }
 }
 /** Whether a view hides anything relative to the unfiltered declared grouping. */

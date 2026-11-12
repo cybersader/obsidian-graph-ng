@@ -4,6 +4,20 @@ All notable changes are recorded here. The format follows Keep a Changelog; vers
 
 ## [Unreleased]
 
+## [0.5.1] - Unreleased
+
+### Fixed
+
+- Explicit **Hide controls** / **Show controls** buttons retain the saved panel state; the collapsed panel hides counts and controls while keeping its toggle reachable.
+- A concise graph status keeps partial/provisional/pending warnings visible. Native **Details** disclosure retains full counts and worker timings.
+- Filter descriptions no longer remove filters. Separate, filter-specific **Remove** buttons have keyboard-focus styling and focus handoff; expression editing remains available.
+
+### Scope and known limits
+
+- This release changes graph controls only, not host loading/indexing, layout physics or node-label policy. Runtime visual acceptance remains **UNOBSERVED**; deterministic and independent code evidence are not runtime acceptance.
+- Status compactness is locale-sensitive: German, French and Arabic numeric prefixes can retain detailed counts in the summary. Pending/provisional warnings remain intact; locale compaction is a nonblocking follow-up.
+- Existing bundle ceilings remain 205,000 minified / 66,000 gzip bytes. Updating code must omit `data.json` and preserve existing settings and enabled state.
+
 ## [0.5.0] - Unreleased
 
 ### Added

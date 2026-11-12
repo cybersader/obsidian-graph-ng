@@ -1,5 +1,90 @@
 import { test, expect } from 'bun:test';
 import { FixtureFile } from './support/obsidian-fixture';
+import { ControlElement, control } from './support/controls-dom';
+import { ExplorePanel } from '../src/explore-panel';
+import { emptyView } from '../src/core/explore';
+
+function controlsFixture(panelOpen = true) {
+  const settings: any = { explore: { panelOpen, legendPageSize: 20 } }, root = new ControlElement();
+  let persisted = 0, view: any = { ...emptyView(), filters: [] };
+  const render = ExplorePanel.prototype.render;
+  // Isolate the disclosure from unrelated sections; filter behavior below uses the real filter editor.
+  ExplorePanel.prototype.render = function () {};
+  let panel: any;
+  try { panel = new ExplorePanel(root as any, { settings: () => settings, persist() { persisted++; }, setView(next: any) { view = next; } } as any, view); }
+  finally { ExplorePanel.prototype.render = render; }
+  panel.render = () => {};
+  return { root, panel, settings, persisted: () => persisted, view: () => view };
+}
+
+test('whole-panel native toggle hides counts and body, associates its target, persists and reopens', () => {
+  for (const open of [true, false]) {
+    const f = controlsFixture(open), toggle = control(f.root, open ? 'Hide controls' : 'Show controls');
+    expect(toggle.tagName).toBe('BUTTON');
+    expect(toggle.getAttribute('aria-controls')).toBe(f.panel.body.id);
+    const check = (expanded: boolean) => {
+      expect(toggle.getAttribute('aria-expanded')).toBe(String(expanded));
+      for (const part of ['counts', 'search', 'alert', 'body']) expect(f.panel[part].hidden).toBe(!expanded);
+      expect(toggle.hidden).toBe(false);
+    };
+    check(open); toggle.focus(); toggle.click(); check(!open);
+    expect(f.settings.explore.panelOpen).toBe(!open); expect(f.persisted()).toBe(1);
+    expect(ControlElement.active).toBe(toggle);
+    toggle.click(); check(open); expect(f.persisted()).toBe(2); f.panel.dispose();
+  }
+});
+
+test('filter text is non-destructive, removal is distinct and focused, expression editing is retained', () => {
+  const f = controlsFixture(), filters: any[] = [{ kind: 'eq', key: 'category', value: '<synthetic>' }, { kind: 'exists', key: 'rank' }];
+  let expression = '';
+  f.panel.view = { ...emptyView(), filters }; f.panel.predicateForm = () => {};
+  f.panel.expressionField = (_host: any, _result: any, _label: any, _context: any, submit: any) => { expression = f.panel.drafts.get('Edit filter 1'); submit('note.category == "changed"'); };
+  f.panel.render = () => { f.panel.body.empty(); f.panel.filters(f.panel.body, {}); };
+  f.panel.render();
+  const label = f.panel.body.querySelector('span');
+  expect(label.textContent).toContain('<synthetic>'); expect(label.onclick).toBeUndefined();
+  expect(f.panel.view.filters).toEqual(filters);
+  const remove = control(f.panel.body, 'Remove'); expect(remove.getAttribute('aria-label')).toContain('Remove filter 1:');
+  remove.focus(); remove.click(); expect(f.view().filters).toEqual([filters[1]]);
+  expect(ControlElement.active).toBe(control(f.panel.body, 'Remove'));
+  control(f.panel.body, 'Remove').click(); expect(f.view().filters).toEqual([]); expect(ControlElement.active).toBe(f.panel.search);
+  f.panel.view = { ...emptyView(), filters: [filters[0]] }; f.panel.render();
+  // Stop the synthetic editor after applying once, as a real submit closes its draft.
+  const expressionField = f.panel.expressionField;
+  f.panel.expressionField = (...args: any[]) => { f.panel.expressionField = () => {}; expressionField(...args); };
+  control(f.panel.body, 'Edit as expression').click();
+  expect(expression).toContain('note.category'); expect(f.view().filters[0]).toEqual({ kind: 'expr', expr: 'note.category == "changed"' });
+  f.panel.dispose();
+});
+
+test('status Details retains diagnostics and native disclosure; concise status keeps partial and pending warnings', async () => {
+  const { GraphView } = await import('../src/main');
+  const view: any = Object.create(GraphView.prototype), root = new ControlElement(), render = ExplorePanel.prototype.render;
+  Object.assign(view, { contentEl: root, view: { query: '' }, closed: false,
+    plugin: { settings: { explore: { panelOpen: false, legendPageSize: 20 } }, subscribe: () => () => {} },
+    app: { workspace: { on() {} } }, registerEvent() {}, async refresh() {} });
+  ExplorePanel.prototype.render = function () {};
+  try { await view.onOpen(); } finally { ExplorePanel.prototype.render = render; }
+  const details = root.querySelector('details')!;
+  expect(details.querySelector('summary')!.textContent).toBe('Details');
+  const text = '63,384 nodes · 9,265 edges · 5829/63384 properties available; links pending (partial · filters and members provisional) · 0 unresolved · worker 6968 ms · total 7707 ms';
+  view.statusText = text;
+  expect(view.status.textContent).toBe(text);
+  expect(view.statusSummary.getAttribute('role')).toBe('status');
+  expect(view.statusSummary.textContent).toContain('links pending (partial · filters and members provisional)');
+  expect(view.statusSummary.textContent).not.toMatch(/63,384|5829|worker|7707/);
+  expect(details.children).toContain(view.status);
+  // Updates must not replace the native disclosure or its open state.
+  (details as any).open = true;
+  view.statusText += ' · GPU unavailable; group fallback active';
+  expect((details as any).open).toBe(true); expect(view.statusSummary.textContent).toContain('GPU unavailable');
+  view.statusText = 'Graph NG: synthetic failure'; expect(view.statusSummary.textContent).toBe(view.status.textContent);
+  view.statusText = text; Object.assign(view, { groupGraph: {}, detailGeneration: 1, activeRevision: 1 });
+  view.plugin.adapter = { factsComplete: () => false }; view.promoteProperties(); expect(view.statusSummary.textContent).toContain('partial');
+  view.plugin.adapter.factsComplete = () => true; view.promoteProperties();
+  expect(view.status.textContent).toContain('verified'); expect(view.statusSummary.textContent).not.toContain('partial');
+  expect(view.statusSummary.textContent).toContain('links pending'); view.explorePanel.dispose();
+});
 
 test('public property source changes refresh deferred facts, reject old epochs, and unregister without disposing provider', async () => {
   const { default: GraphPlugin } = await import('../src/main');
@@ -87,7 +172,7 @@ test('fact groups paint before layout, pending links prevent exact caching, and 
     async migrate() {}, store: { async latest() {} }, async cache() { caches++; } };
   const view: any = Object.create(GraphView.prototype);
   Object.assign(view, { plugin, app, revision: 0, renderRevision: 0, closed: false, members: new Map(), contributions: new Map(), startupTrace: [], cacheTrace: [],
-    contributionPage: { clear() {}, suspend() {}, update() {} }, contentEl: { dataset: {} }, status: {}, gpu: { available: false, reason: 'Not probed' },
+    contributionPage: { clear() {}, suspend() {}, update() {} }, contentEl: { dataset: {} }, status: {}, statusSummary: {}, gpu: { available: false, reason: 'Not probed' },
     showGroups() { painted++; expect(encoded).toBe(0); } });
   try {
     await view.refreshOnce(); expect(painted).toBe(1); expect(complete).toBe(false); expect(caches).toBe(0); expect(encoded).toBe(0);
@@ -123,7 +208,7 @@ test('refresh invalidates an in-flight carrier index before a replacement graph 
   Object.assign(view, {
     revision: 0, renderRevision: 0, closed: false, contributions: new Map(), members: new Map(), groupGraph: graph,
     contributionScope: JSON.stringify(['local', settings.projectionFile, settings.groupLevel, declaration.groups]),
-    contributionPage: { clear() {}, suspend() {} }, status: {}, contentEl: { dataset: {} },
+    contributionPage: { clear() {}, suspend() {} }, status: {}, statusSummary: {}, contentEl: { dataset: {} },
     panel: { empty() {}, createEl() {}, createDiv() { return status; } },
     plugin: { settings, sourceIdentity: 'local', nextRevision: 0, adapter: { *values() { yield row; } }, pipeline: { async request() { return { groups: [], groupEdges: [] }; } } },
     app: { vault: { getAbstractFileByPath() { return new FixtureFile('aggregate.json'); }, read() { return read; } } },
