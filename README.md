@@ -1,16 +1,55 @@
+<div align="center">
+
+<img src="docs/assets/graph-ng.svg" alt="Graph NG" width="280" />
+
 # Graph NG
+
+**Explore the shape of your notes.**
+
+A local-first graph plugin for Obsidian. Start with groups, follow relationships, and drill into the notes behind them.
+
+[Install](#install-locally) · [Use](#use) · [Explore](#explore-filters-groups-and-visuals) · [Declare your data](#meaning-is-declared) · [Known limits](#not-implemented--not-proven) · [Develop](#development-and-exact-commands)
+
+</div>
+
+---
 
 A standalone, local-first Obsidian graph plugin. Start with a readable graph of declared groups, inspect counted relationships and their carrier notes, then drill into individual notes when hardware WebGL is available. No ontology, category vocabulary, relation vocabulary, or ID format is built into the core.
 
 **Version 0.4.0 candidate / test-backed alpha.** The expression implementation is not release-accepted: the fixed bundle gate remains over budget and independent review is pending. This is not production, mobile, integrated-GPU, or remote-authorization acceptance. No server, remote repository, hosted service, or telemetry is configured. All fixtures and captured evidence are synthetic.
 
+## At a glance
+
+| Start with… | Then explore… |
+| --- | --- |
+| **Groups, not a wall of dots** | Paged groups, member counts and counted relationships. |
+| **The notes behind a connection** | Direction/type counts, contributing edges and carrier notes. |
+| **Your own vocabulary** | Explicit declarations; no built-in ontology or identity format. |
+| **A view that fits the question** | Search, filters, grouping, color rules and saved views. |
+
+## Install locally
+
+This alpha uses a local build, not a community-plugin install flow. Use a **synthetic vault** and enable the plugin yourself.
+
+1. Set up Bun, Node.js, `flock` and `build-contained` as described in [Contributing](CONTRIBUTING.md#setup-and-verification).
+2. Install dependencies and build from the repository root:
+
+   ```sh
+   ./scripts/run.sh install --frozen-lockfile
+   ./scripts/run.sh build
+   ```
+
+3. Copy `main.js`, `manifest.json`, `styles.css`, `NOTICE`, and `THIRD_PARTY_NOTICES.txt` into the synthetic vault’s `.obsidian/plugins/graph-ng/` directory.
+4. Enable **Graph NG** in Obsidian yourself.
+
+**Compatibility is not yet release-accepted.** Native evidence covers Obsidian 1.13.7 desktop; mobile and the wider version matrix remain unverified. See [supported-version caveats](SECURITY.md#supported-versions) and [known limits](#not-implemented--not-proven).
+
 ## Use
 
-1. Build locally using `./scripts/run.sh build`. Copy `main.js`, `manifest.json`, `styles.css`, `NOTICE`, and `THIRD_PARTY_NOTICES.txt` into a synthetic vault’s `.obsidian/plugins/graph-ng/` directory. Enable the plugin yourself.
-2. Run **Graph NG: Open graph** or use the fork ribbon icon.
-3. The initial **Groups** screen shows a page of nonempty declared groups with readable labels/member counts and counted edges between groups on that Canvas page (six groups by default). Independent previous/next controls page the Canvas, group list, and complete relationship list. Cross-page relationships remain accessible in the relationship list. Pairs use ↔ because they aggregate both directions; hover/click for type/directional counts and contributing edges/carrier notes. Self-pairs are retained.
-4. Click a group to see its members. Hardware WebGL also opens that group’s node graph. Clicking a graph node or member opens its existing note. **All notes** opens the full detailed graph. Zooming out returns to groups.
-5. Settings → Graph NG contains separate declaration and tuning JSON editors. **Validate and save** rejects invalid input and rebuilds. Changing `debounceMs` requires a plugin reload.
+1. Run **Graph NG: Open graph** or use the fork ribbon icon.
+2. The initial **Groups** screen shows a page of nonempty declared groups with readable labels/member counts and counted edges between groups on that Canvas page (six groups by default). Independent previous/next controls page the Canvas, group list, and complete relationship list. Cross-page relationships remain accessible in the relationship list. Pairs use ↔ because they aggregate both directions; hover/click for type/directional counts and contributing edges/carrier notes. Self-pairs are retained.
+3. Click a group to see its members. Hardware WebGL also opens that group’s node graph. Clicking a graph node or member opens its existing note. **All notes** opens the full detailed graph. Zooming out returns to groups.
+4. Settings → Graph NG contains separate declaration and tuning JSON editors. **Validate and save** rejects invalid input and rebuilds. Changing `debounceMs` requires a plugin reload.
 
 ## Explore: filters, groups and visuals
 
@@ -122,6 +161,9 @@ Group view builds its label map once, then renders bounded replacement pages ins
 
 ## Defaults and tuning
 
+<details>
+<summary>Read the detailed reference</summary>
+
 The generated [`examples/default-settings.json`](examples/default-settings.json) is the full editable settings shape. No hidden graph-size cutoff silently discards nodes.
 
 | Setting | Default |
@@ -164,6 +206,8 @@ Theme variables are `--graph-ng-bg`, `--graph-ng-node`, `--graph-ng-edge`, `--gr
 
 All listed values are validated settings. The slice uses 100 full iterations, not the design sketch’s proposed 300. The worker deadline is an explicit configurable limit; it is not a file-count limit. No fixed file/node cap is enforced. Large graphs still consume memory and can exceed the deadline.
 
+</details>
+
 ## Development and exact commands
 
 Bun, Node.js, `flock`, and the host’s `build-contained` wrapper are prerequisites for these commands. `scripts/run.sh` changes to this repository and serializes each Bun command inside that containment wrapper. In an environment without the wrapper, provide an equivalent build-contained setup rather than silently bypassing it. The test launcher uses synthetic copies only; it downloads Obsidian binaries into ignored cache storage.
@@ -190,9 +234,12 @@ Bun, Node.js, `flock`, and the host’s `build-contained` wrapper are prerequisi
 
 `CHROME_BIN` optionally selects an existing Chrome executable for the browser benchmark. Fixtures, generated bundles, screenshots, cached app binaries, raw receipts, and `.workspace/` worklogs are ignored. Fixture generation writes only the named synthetic small/large destinations; regenerate a matching mode before its native invocation. Never aim this generator at personal vaults.
 
-Installations explicitly disable lifecycle scripts. Configure local private terms before full gates; the fast hook is opt-in. See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), [AGENTS.md](AGENTS.md), [changelog](CHANGELOG.md), [declaration v2](docs/declaration-format.md), [projection v0 draft](docs/projection-format.md), [benchmark methodology](docs/benchmarks.md), [decisions](docs/decisions/README.md), [local releasing](docs/releasing.md), and the [pre-publish checklist](docs/publish-checklist.md). This remains a local repository; no release URL or public install path is configured.
+Installations explicitly disable lifecycle scripts. Configure local private terms before full gates; the fast hook is opt-in. See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), [AGENTS.md](AGENTS.md), [changelog](CHANGELOG.md), [declaration v2](docs/declaration-format.md), [projection v0 draft](docs/projection-format.md), [benchmark methodology](docs/benchmarks.md), [decisions](docs/decisions/README.md), [local releasing](docs/releasing.md), and the [pre-publish checklist](docs/publish-checklist.md). The source repository is public; no release URL or public install path is configured.
 
 ## Current renderer evidence
+
+<details>
+<summary>Read the detailed reference</summary>
 
 Version 0.3.1 colors literal-display edge notes by their endpoints, draws them beneath the other notes and folds them into their edges when zoomed out, so the clustered 60,600-node literal web shows its group colors instead of a grey mass. Native small and large lanes and the browser bench (3/3, both modes, 60.0 fps) pass; after review fixes the large hardware lane passed 7/7 twice with no ≥50 ms open or detail tasks. See [slice-7 evidence](docs/benchmarks.md#slice-7-literal-edge-note-visuals).
 
@@ -202,11 +249,21 @@ Version 0.2.1 profiles real native startup, accelerates row dictionaries, probes
 
 Slice 3 removes Sigma, preserves the existing worker layout, and restores contribution selections after a metadata-generation change instead of silently losing the panel. Loading/refreshing/errors and explicit Retry are visible. Stable raw group keys, not display labels or reused numeric IDs, reconnect a selected pair to a new dictionary. Source/group-definition changes clear that intent. See [ADR-0005](docs/decisions/ADR-0005-direct-renderer.md) and the [slice-3 evidence](docs/benchmarks.md#slice-3-direct-renderer).
 
+</details>
+
 ## Historical slice-2 measured startup — 2026-11-10
+
+<details>
+<summary>Read historical evidence</summary>
 
 At 60,600 synthetic notes (semantic/literal), final browser cold groups took **415/458 ms** and full verified binary warm + first Sigma frame **799/970 ms**: the ≤500 ms / ≤1 s targets were met in one repetition per mode. No ≥50 ms task was observed in the default group-open window. **Explicit detail and warm Sigma initialization still produced 244–360 ms long tasks: this remains a miss pending the slice-3 renderer**, not all-interaction acceptance. Retained main heaps were 33.16/72.41 MiB; the retained host fixture and changed timing origin prevent a like-for-like baseline memory/load comparison. Warm uses a new worker and memory-backed binary disk, not physical storage or an app restart. A post-review rerun confirmed **391/460 ms** cold groups / **807/961 ms** full warm, with 247–318 ms detail/warm tasks and 33.17/75.37 MiB retained main heaps. The final narrow member/detail-generation guard then passed build and **65 tests / 401 assertions**; native 9/9 hardware + 9/9 software and browser metrics were captured immediately before that guard, not rerun after it. Exact methods, native results and remaining lanes are in [the benchmark record](docs/benchmarks.md#slice-2-worker-pipeline--2026-11-10).
 
+</details>
+
 ## Historical slice-1 evidence — 2026-11-10
+
+<details>
+<summary>Read historical evidence</summary>
 
 These unchanged historical tables do not describe current renderer acceptance. Current worker-pipeline results and uncovered targets are in [the benchmark record](docs/benchmarks.md#slice-2-worker-pipeline--2026-11-10).
 
@@ -258,6 +315,8 @@ These steady-state discrete-GPU results exceed 45 FPS, but the load long-task ta
 
 Native WebDriver requestAnimationFrame sampling produced **zero callbacks**, so native FPS is **unavailable**, not zero FPS and not accepted. The full literal native lane remains uncovered. In the historical slice-1 implementation, main-thread projection/JSON/render-buffer load tasks exceeded the design’s ≤50 ms target and only layout was off-thread. Slice 2 moves projection/hash/serialization off-thread; Sigma detail setup remains synchronous. Desktop midrange-GPU browser smoothness does not establish startup responsiveness, mobile support, integrated-GPU acceptance, 1M-node rendering, or server grant-safety.
 
+</details>
+
 ## Licensing and boundaries
 
 MIT, copyright 2026 **cybersader**. No third-party plugin implementation was copied. The shipped plugin has **zero runtime packages**. Graphology and graphology-layout-forceatlas2 are pinned development-only oracles, not bundled. `scripts/check-licenses.mjs` refuses runtime dependencies and generates an empty `THIRD_PARTY_NOTICES.txt`; the build rejects bundled `node_modules` inputs. Both main and embedded worker are minified. The enforced bundle ceilings are **205,000 minified / 66,000 gzip bytes**, raised again on 2026-11-11 by owner decision for the expression language (previously 180,000 / 58,000, and 150,000 / 45,000 before that). Version 0.4.0 is **202,475 minified / 64,312 gzip bytes** and passes (0.3.1 was 173,448 / 54,838) (0.2.1 was 115,970 / 35,830). See [slice-7 measurements](docs/benchmarks.md). Cosmos remains deliberately excluded; its CC-BY-NC-4.0 license is not permissive.
@@ -265,6 +324,9 @@ MIT, copyright 2026 **cybersader**. No third-party plugin implementation was cop
 **Separate development/test-toolchain exception:** `wdio-obsidian-service` uses `7z-wasm` (LGPL with the unRAR restriction) to extract downloaded test applications. It is not imported by the plugin, bundled, or shipped in the runtime artifact. This is an explicitly scoped e2e toolchain exception, **not** a claim that every development transitive dependency is permissively licensed. Obsidian itself is downloaded at test runtime into ignored storage and is never committed.
 
 ## Slice 2 pipeline and cache contract
+
+<details>
+<summary>Read the detailed reference</summary>
 
 The group view streams before detail/layout. Declared columns and producer-link CSR are transferred as ArrayBuffers; contributions are requested a page at a time. The main realm yields at configurable 2,000-row / 8 ms budgets. Detail consumes transferred typed columns directly. Shader completion uses `KHR_parallel_shader_compile` when available, polling with bounded timer yields; drivers without that extension may still block on link status. On-demand painting uses rAF with a single 32 ms timer backstop for embedded windows that withhold rAF, not a perpetual animation loop.
 
@@ -275,6 +337,8 @@ A compatible cached group summary paints first with **cached · verifying N of M
 Finite defaults are 64 MiB external aggregate JSON, 20,000 groups, 200,000 pairs and 1,000,000 carrier references. Explicit count zero still opts into unlimited counts; byte budgets remain finite. External files always say **unverified external aggregate** and never merge with live rows. In-app export is not implemented. Headless projection output is labelled **your view**, accepts only a caller-scoped fact export and requires an explicit destination.
 
 Declaration v2 renames reified property fields and accepts path-segment folder prefixes. Saves emit v2/segments, with bounded input migration from v1. See [declaration format](docs/declaration-format.md), [ADR-0004](docs/decisions/ADR-0004-worker-generations.md) and [benchmark methodology](docs/benchmarks.md). The [current measurements](docs/benchmarks.md#slice-5-native-startup-and-retained-render-columns) distinguish group-open, explicit detail-open and binary warm-open costs; historical slice-1 tables are not current acceptance. GPU probing waits for explicit detail interaction and runs in a public worker OffscreenCanvas when available; opening the group view does not initialize WebGL. Platforms without that API retain the existing main-canvas fallback.
+
+</details>
 
 ## Not implemented / not proven
 
