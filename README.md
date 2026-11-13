@@ -6,7 +6,7 @@
 
 **Explore the shape of your notes.**
 
-A local-first graph plugin for Obsidian. Start with groups, follow relationships, and drill into the notes behind them.
+A performance-first graph for Obsidian, combining rich exploration tools with fluid, responsive interaction.
 
 [Install](#install-locally) · [Use](#use) · [Explore](#explore-filters-groups-and-visuals) · [Declare your data](#meaning-is-declared) · [Known limits](#not-implemented--not-proven) · [Develop](#development-and-exact-commands)
 
