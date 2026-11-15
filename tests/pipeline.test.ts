@@ -328,3 +328,17 @@ test('cross-kind preview and members preserve active explore, same-kind requests
     fake.emit({ id: 5, revision: 1, result: 'paint latest' }); expect(await latest).toBe('paint latest');
   } finally { p.dispose(); }
 });
+test('relationship details: rule names and relationship-note paths per edge row, revision-bound and bounded', async () => {
+  const p = pipeline();
+  try {
+    const d = { ...declaration, edges: [...declaration.edges, { name: 'crosswalk', kind: 'reified' as const, sourceProperty: 'from', targetProperty: 'to', typeProperty: 'relation' }, { name: 'reverse-map', kind: 'reified' as const, sourceProperty: 'src', targetProperty: 'dst' }] };
+    const rows = [{ path: 'a.md', properties: {} }, { path: 'b.md', properties: {} }, { path: 'X/1.md', properties: { from: 'a.md', to: 'b.md', relation: 'maps' } }, { path: 'X/2.md', properties: { src: 'b.md', dst: 'a.md' } }];
+    await p.request(1, { kind: 'configure', config: { ...config, declaration: d } }); await p.request(1, { kind: 'rows', reset: true, columns: packRows(rows, d) }); await p.request(1, { kind: 'project' });
+    const detail = await p.request<DetailResult>(1, { kind: 'detail' }), m = detail.projection.source.length; expect(m).toBe(2);
+    const info = await p.request<{ rule?: string; carrier?: string }[]>(1, { kind: 'relationships', edges: [0, 1] });
+    const byType = Object.fromEntries(info.map((x, e) => [detail.projection.types[detail.projection.type[e]!], x]));
+    expect(byType).toEqual({ maps: { rule: 'crosswalk', carrier: 'X/1.md' }, 'reverse-map': { rule: 'reverse-map', carrier: 'X/2.md' } });
+    expect(await p.request(1, { kind: 'relationships', edges: [m] }).catch(String)).toContain('RELATIONSHIP_INDEX');
+    expect(await p.request(0, { kind: 'relationships', edges: [0] }).catch(String)).toContain('generation changed');
+  } finally { p.dispose(); }
+});

@@ -16,6 +16,8 @@ export interface Projection {
   target: Uint32Array;
   type: Uint32Array;
   carrier: Uint32Array;
+  /** Per edge: index of the declaring `edges[]` rule (worker-side, for relationship details). */
+  rule?: Uint32Array;
   /** Per node: 1 + its `carrier` row when the node is a reified edge declaration drawn as a
    * node (literal display), else 0. An edge belongs to that note when `carrier[e] + 1` matches. */
   carrierNodes: Uint32Array;
@@ -76,13 +78,15 @@ export function buildProjection(input: readonly FactRow[], d: GraphDeclaration):
   });
   // Path fallback is always available, but it must never silently shadow a declared identity.
   paths.forEach((path, i) => { if (references.has(path) && references.get(path) !== i) throw new Error(`Identity conflicts with path: ${path}`); references.set(path, i); });
-  const src: number[] = [], dst: number[] = [], typ: string[] = [], carrier: number[] = [], tint: number[] = [];
+  const src: number[] = [], dst: number[] = [], typ: string[] = [], carrier: number[] = [], tint: number[] = [], rule: number[] = [];
+  let ri = 0;
   let unresolved = 0;
   const edge = (a: number | undefined, b: number | undefined, t: string, c: number, h = 0) => {
     if (a === undefined || b === undefined) { unresolved++; return; }
-    src.push(a); dst.push(b); typ.push(t); carrier.push(c); tint.push(h);
+    src.push(a); dst.push(b); typ.push(t); carrier.push(c); tint.push(h); rule.push(ri);
   };
-  for (const r of rows) for (const e of d.edges) {
+  for (const r of rows) for (const [i, e] of d.edges.entries()) {
+    ri = i;
     if (e.kind === 'reified' && has(r, e.sourceProperty) && has(r, e.targetProperty)) {
       const types = e.typeProperty ? values(r.properties[e.typeProperty]) : [];
       const t = types[0] ?? e.type ?? e.name;
@@ -130,7 +134,7 @@ export function buildProjection(input: readonly FactRow[], d: GraphDeclaration):
     up = { offsets, targets: Uint32Array.from(lists.flat()) };
   }
   return { up, tint: tint.some(Boolean) ? Uint8Array.from(tint) : undefined, paths, identities, carrierPaths: rows.map(r => r.path), offsets, targets,
-    source: Uint32Array.from(src), target: Uint32Array.from(dst), type: tc.codes, carrier: Uint32Array.from(carrier), carrierNodes: Uint32Array.from(nodes, r => carriers.has(r.path) ? rowIndex.get(r.path)! + 1 : 0), types: tc.values,
+    source: Uint32Array.from(src), target: Uint32Array.from(dst), type: tc.codes, carrier: Uint32Array.from(carrier), rule: Uint32Array.from(rule), carrierNodes: Uint32Array.from(nodes, r => carriers.has(r.path) ? rowIndex.get(r.path)! + 1 : 0), types: tc.values,
     columns, groups, folders, unresolved, quarantined, dropped };
 }
 export function filterNodes(p: Projection, predicate?: Predicate): Uint8Array {

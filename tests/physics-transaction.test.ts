@@ -195,7 +195,7 @@ test('production sizing preview/cancel keeps renderer camera selection scope set
   await f.renderer[compiled('prepareLabels')](() => true);
   expect(f.renderer.atlas.levels.every((level: Float32Array) => level.length % 11 === 0)).toBe(true);
   const populated = f.renderer.atlas.levels.find((level: Float32Array) => level.length > 0); expect(populated).toBeDefined(); expect(populated[10]).toBe(1);
-  f.renderer.previewSizing(null); expect(f.renderer.pick(point.x + original.nodeSize * (1 + original.visuals.degreeSizing) + 5, point.y)).not.toBe(2); expect(f.plugin.settings).toEqual(original); expect(f.renderer.camera).toEqual(camera);
+  f.renderer.previewSizing(null); expect(f.renderer.pick(point.x + original.nodeSize * (1 + original.visuals.degreeSizing) * (1 + .6 * level) + 5, point.y)).not.toBe(2); expect(f.plugin.settings).toEqual(original); expect(f.renderer.camera).toEqual(camera);
 });
 
 test('production sizing apply acknowledgement and rejected save preserve last-saved policy', async () => {
@@ -406,4 +406,59 @@ test('graduated production keyboard path: focusable canvas, arrows select, Enter
   const button = r[k('noteCard')].children[0]; expect(key('Enter', button)).toBe(false); expect(f.opened).toEqual([first]);
   button.focus(); expect(key('Escape', button)).toBe(true); expect(r.selected).toBe(-1); expect(r[k('noteCard')].textContent).toBe(''); expect(f.actual()).toEqual([[0, 0, 0, 0, 0], [0, 0, 0]]); expect((ControlElement as any).active).toBe(r.canvas);
   expect(key('Escape')).toBe(false); expect(key('a')).toBe(false);
+});
+// Relationship picking through the compiled renderer (Canvas fixture). Clicks and taps on lines select only.
+async function relationships() {
+  const f = await graduated([[0, 1], [1, 0], [1, 2]], 3), { r, k } = f, card = () => r[k('noteCard')], box = () => card().children[0];
+  const mid = (a: number, b: number) => { const p = r.screenPoint(a), q = r.screenPoint(b); return { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 }; };
+  const key = (name: string, shiftKey = false) => { let prevented = false; r[k('keyDown')]({ key: name, shiftKey, target: r.canvas, preventDefault: () => { prevented = true; } }); return prevented; };
+  return { ...f, card, box, mid, key, edges: () => r[k('selectedEdges')] };
+}
+test('relationship pick: notes outrank lines; a line click lists parallel rows, lights both endpoints and never opens', async () => {
+  const f = await relationships(), { r } = f;
+  f.tap(0); expect(r.selected).toBe(0); expect(f.edges()).toEqual([]); expect(f.opened).toEqual([0]);
+  for (const pointer of ['mouse', 'touch', 'pen']) {
+    f.tap(f.mid(0, 1), pointer); expect(f.opened).toEqual([0]); expect(r.selected).toBe(-1); expect(f.edges()).toEqual([0, 1]);
+    expect(f.actual()).toEqual([[255, 255, 0], [255, 255, 0]]);
+    const rows = f.box().children; expect(rows[0].textContent).toBe('0 → 1'); expect(rows[1].textContent).toBe('link'); expect(rows[2].textContent).toBe('link (reverse)');
+    expect(f.card().textContent).not.toContain(' · ');
+  }
+  f.tap(f.mid(1, 2)); expect(f.edges()).toEqual([2]); expect(f.actual()).toEqual([[0, 255, 255], [0, 0, 255]]);
+  // A filter that hides an endpoint clears the relationship and its card.
+  r.setView(new Uint8Array([1, 1, 0]), {}); expect(f.edges()).toEqual([]); expect(f.card().textContent).toBe(''); expect(f.actual()).toEqual([[0, 0, 0], [0, 0, 0]]);
+  r.setView(new Uint8Array(3).fill(1), {}); f.tap(f.mid(0, 1)); f.tap(EMPTY); expect(f.edges()).toEqual([]); expect(f.card().textContent).toBe(''); expect(f.actual()).toEqual([[0, 0, 0], [0, 0, 0]]);
+});
+test('relationship card resolves rule names and relationship notes per parallel row; open buttons are explicit', async () => {
+  const f = await relationships(), { r, k } = f, paths: string[] = [], asked: number[][] = [];
+  r[k('describeEdges')] = async (edges: number[]) => { asked.push([...edges]); return edges.map(e => e === 1 ? { rule: 'crosswalk', carrier: 'Crosswalks/edge-1.md' } : { rule: 'links' }); };
+  r.openPath = (path: string) => paths.push(path);
+  f.tap(f.mid(0, 1), 'touch'); await Promise.resolve(); await Promise.resolve();
+  expect(asked).toEqual([[0, 1]]);
+  const [, first, second, ends] = f.box().children;
+  expect(first.textContent).toBe('linkRule: links'); expect(first.children.some((c: any) => c.tagName === 'BUTTON')).toBe(false);
+  const open = second.children.find((c: any) => c.tagName === 'BUTTON'); expect(open.textContent).toBe('Open relationship note'); expect(open.attributes['aria-label']).toBe('Open relationship note Crosswalks/edge-1.md');
+  open.click(); expect(paths).toEqual(['Crosswalks/edge-1.md']); expect(f.opened).toEqual([]);
+  ends.children[0].click(); ends.children[1].click(); expect(f.opened).toEqual([0, 1]);
+  // A stale answer after a newer selection never decorates the new card; a failed lookup says so.
+  let release!: () => void; r[k('describeEdges')] = (edges: number[]) => new Promise(done => { release = () => done(edges.map(() => ({ carrier: 'stale.md' }))); });
+  f.tap(f.mid(1, 2)); const stale = release; r[k('describeEdges')] = async () => { throw new Error('Projection generation changed'); };
+  f.tap(f.mid(0, 1)); stale(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+  expect(f.card().textContent).not.toContain('Open relationship note'); expect(f.card().textContent).toContain('Details unavailable');
+});
+test('relationship keyboard: R cycles the selected note relationships one stop per neighbour; Escape clears; nothing opens', async () => {
+  const f = await relationships(), { r } = f;
+  expect(r.canvas.getAttribute('aria-label')).toContain('R cycles relationships');
+  expect(f.key('r')).toBe(false); expect(f.edges()).toEqual([]);
+  f.tap(1, 'touch'); expect(f.key('r')).toBe(true); expect(f.edges()).toEqual([0, 1]);
+  expect(f.key('r')).toBe(true); expect(f.edges()).toEqual([2]);
+  expect(f.key('r')).toBe(true); expect(f.edges()).toEqual([0, 1]);
+  expect(f.key('R', true)).toBe(true); expect(f.edges()).toEqual([2]);
+  expect(f.key('Enter')).toBe(false); expect(f.opened).toEqual([]);
+  expect(f.key('Escape')).toBe(true); expect(f.edges()).toEqual([]); expect(f.card().textContent).toBe(''); expect(f.actual()).toEqual([[0, 0, 0], [0, 0, 0]]);
+});
+test('graduated focus pick radius follows the 60% enlarged focus node', async () => {
+  const f = await relationships(), { r, k } = f, s = f.settings;
+  f.tap(2, 'touch'); const p = r.screenPoint(2), at = { x: p.x + s.nodeSize * (1 + s.visuals.degreeSizing) * 1.3 + 4, y: p.y };
+  r[k('focusLevel')] = 0; expect(r.pick(at.x, at.y)).toBe(-1);
+  r[k('focusLevel')] = 1; expect(r.pick(at.x, at.y)).toBe(2);
 });

@@ -833,6 +833,9 @@ export class GraphView extends ItemView {
         this.showGroups(); void this.showDetails(bits, clearPanel);
       }, this.renderView());
       this.renderer = this.detailRenderer; this.contentEl.dataset.mode = 'nodes';
+      const detailGeneration = this.detailGeneration;
+      this.detailRenderer.describeEdges = edges => this.plugin.pipeline.request(detailGeneration, { kind: 'relationships', edges });
+      this.detailRenderer.openPath = path => this.openPath(path);
       this.detailRenderer.onSizingChange = () => this.explorePanel?.updateSizingReadout();
       this.detailRenderer.onHub = group => { const key = this.explored?.groupKeys[group]; if (key !== undefined) this.setView({ ...this.view, collapsedGroups: this.view.collapsedGroups.filter(k => k !== key) }, () => this.focusGroup(group)); };
       if (this.pendingCamera) { const c = this.pendingCamera; this.pendingCamera = undefined; this.detailRenderer.flyTo(c.x, c.y, c.ratio); }

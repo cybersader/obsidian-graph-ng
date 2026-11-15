@@ -31,6 +31,7 @@ All top-level fields except `carrierResolvers` are required. Unknown declaration
 | `hierarchy` | Optional `{parentProperty}`: a frontmatter property whose scalar value(s) name the parent's identity (declared identity or exact path). Presentation only; see [Focus emphasis](#focus-emphasis-optional). |
 | `groupContext` | Optional boolean. `true` shows other members of the focus's current group as a faint highlight tier. |
 | `carrierResolvers` | Optional unique `{kind,key}` bindings. `$path` means an exact local note path; other keys are declared frontmatter lookups. Absent/ambiguous matches cannot navigate. Carrier strings have no guessed meaning. |
+| `carrierResolvers` | Optional unique `{kind,key}` bindings. `$path` means an exact local note path; other keys are declared frontmatter lookups. Absent/ambiguous matches cannot navigate. Carrier strings have no guessed meaning. In the Notes view of a vault projection, a selected line's carrier is the reified rule's own note path (the `note-path` meaning), offered as **Open relationship note** and opened only when that file exists locally. |
 
 ## Focus emphasis (optional)
 

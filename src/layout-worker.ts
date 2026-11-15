@@ -6,7 +6,7 @@ import { yieldTask } from './core/scheduler';
 import { checked, cooperative, filterSteps, groupSteps, lowerPredicate, lowerGroup, type EvaluationControl } from './core/expr/engine';
 import { identityDeclaration, digest, canonical, layoutDeclaration } from './core/declaration';
 import { declaredKeys } from './core/columns';
-import { buildProjection, colorGroups, type FactRow, type Projection, type DictionaryColumn } from './core/projection';
+import { buildProjection, colorGroups, NONE, type FactRow, type Projection, type DictionaryColumn } from './core/projection';
 import { contractGroups, validateGroupProjection, type GroupProjection } from './core/group-projection';
 import { unpackRows, transferables } from './core/columns';
 import { generationKey } from './core/generation';
@@ -169,6 +169,14 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       if (revision !== projectionRevision) throw new Error('Projection generation changed');
       if (r.view !== viewGeneration) throw new Error('View generation changed');
       return Uint32Array.from(contracted.members.get(r.group) ?? []);
+    case 'relationships': {
+      // Bounded detail for selected rows: the declaring rule's name and the relationship note's path.
+      if (revision !== projectionRevision) throw new Error('Projection generation changed');
+      return r.edges.slice(0, 64).map(e => {
+        if (!Number.isSafeInteger(e) || e < 0 || e >= projection.source.length) throw new Error('RELATIONSHIP_INDEX');
+        const c = projection.carrier[e]!; return { rule: config.declaration.edges[projection.rule?.[e] ?? -1]?.name, carrier: c === NONE ? undefined : projection.carrierPaths[c] };
+      });
+    }
     case 'contributions': {
       if (revision !== projectionRevision) throw new Error('Projection generation changed');
       if (r.view !== viewGeneration) throw new Error('View generation changed');

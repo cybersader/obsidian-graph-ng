@@ -176,6 +176,13 @@ export class DetailRenderer {
   hovered = -1;
   selected = -1;
   hoveredEdge = -1;
+  /** Selected relationship rows: the picked edge first, then parallels between the same pair. */
+  selectedEdges: number[] = [];
+  /** Host seams: worker-side rule names and relationship-note paths, and opening a path. */
+  describeEdges?: (edges: number[]) => Promise<{ rule?: string; carrier?: string }[]>;
+  openPath?: (path: string) => void;
+  private edgeAnchor = -1;
+  private edgeToken = 0;
   paletteUploads = 0;
   /** Render-visible nodes: filter-visible and not folded into a collapsed group. */
   visible: Uint8Array;
@@ -238,6 +245,7 @@ export class DetailRenderer {
   private visibleCarriers = 0;
   private near: number[] = [];
   private focusNode = -1;
+  private tierSource: number | number[] = -1;
   private focusLevel = 0;
   private focusTarget = 0;
   private focusAt = 0;
@@ -282,7 +290,7 @@ export class DetailRenderer {
     this.timings.grid = performance.now() - started; started = performance.now();
     this.theme = readTheme(container, settings);
     this.timings.theme = performance.now() - started; started = performance.now();
-    this.canvas = document.createElement('canvas'); this.canvas.className = 'graph-ng-detail'; this.canvas.setAttribute('aria-label', 'Graph notes. Arrows select, Enter opens, Escape clears.'); this.canvas.tabIndex = 0; this.canvas.style.touchAction = 'none'; container.append(this.canvas);
+    this.canvas = document.createElement('canvas'); this.canvas.className = 'graph-ng-detail'; this.canvas.setAttribute('aria-label', 'Graph notes. Arrows select, Enter opens, R cycles relationships, Escape clears.'); this.canvas.tabIndex = 0; this.canvas.style.touchAction = 'none'; container.append(this.canvas);
     this.overlay = container.createDiv ? container.createDiv({ cls: 'graph-ng-overlay' }) : container.appendChild(Object.assign(document.createElement('div'), { className: 'graph-ng-overlay' }));
     this.hoverLabel = this.overlay.appendChild(Object.assign(document.createElement('div'), { className: 'graph-ng-hover-label' }));
     this.noteCard = this.overlay.appendChild(Object.assign(document.createElement('div'), { className: 'graph-ng-card', onkeydown: this.keyDown, ariaLive: 'polite' }));
@@ -318,7 +326,7 @@ export class DetailRenderer {
     this.visibleNodes = this.visibleCarriers = 0; const notes = p.carrierNodes;
     for (let i = 0; i < n; i++) { const o = i * 4; this.stateBytes[o] = filterVisible[i] ? 255 : 0; this.stateBytes[o + 2] = filterVisible[i] && !render[i] ? 255 : 0; this.stateBytes[o + 3] = notes[i] ? 255 : 0; if (render[i]) { this.visibleNodes++; if (notes[i]) this.visibleCarriers++; } }
     if (canvasEdges) this.canvasEdges = canvasEdges;
-    if (!filterVisible[this.selected]) this.noteCard.textContent = '';
+    if (this.selectedEdges?.length ? !this.selectedEdges.every(this.edgeDrawn) : !filterVisible[this.selected]) { this.selectedEdges = []; this.edgeToken++; this.noteCard.textContent = ''; }
     if (this.near.length || this.selected >= 0 && this.ready) this.emphasize(true);
     this.recolor(); this.choosePolicy();
     this.updateSizingRange();
@@ -668,12 +676,15 @@ export class DetailRenderer {
   /** Edge notes folded away by the level of detail are not pickable. */
   pick(x: number, y: number) {
     const w = this.worldPoint(x, y), s = this.sizingSettings();
-    const base = this.baseNodeRadius(), max = (base * (1 + s.visuals.degreeSizing) * Math.max(1, s.visuals.carrierSize) + 6) / this.scale;
+    // The graduated focus grows 60% (direct notes 25%): hit targets follow the drawn size.
+    const f = s.visuals.hoverHighlight ? this.focusLevel : 0, grow = (n: number) => tierNode(this.stateBytes[n * 4 + 1]! / 255, true, n === this.focusNode, f, 0)[1];
+    if (s.nodeSizing.policy === 'legacy') return this.picker.pick(w.x, w.y, (s.nodeSize * (1 + s.visuals.degreeSizing) * (1 + .6 * f) + 4) / this.scale, this.carrierCount && this.carrierLevel().visibility < .25 ? this.projection.carrierNodes : undefined);
+    const base = this.baseNodeRadius(), max = (base * (1 + s.visuals.degreeSizing) * Math.max(1, s.visuals.carrierSize) * (1 + .6 * f) + 6) / this.scale;
     let picked = -1, distance = Infinity;
     this.picker.visit(w.x, w.y, max, node => {
       if (!this.visible[node] || (this.projection.carrierNodes[node] && this.carrierLevel().visibility < .25)) return;
       const p = this.screenPoint(node), d = (p.x - x) ** 2 + (p.y - y) ** 2;
-      if (d <= (this.nodeRadius(node, node === this.selected || node === this.hovered) + 4) ** 2 && d < distance) { picked = node; distance = d; }
+      if (d <= (this.nodeRadius(node, node === this.selected || node === this.hovered) * grow(node) + 4) ** 2 && d < distance) { picked = node; distance = d; }
     }); return picked;
   }
   pickHub(x: number, y: number) {
@@ -682,23 +693,32 @@ export class DetailRenderer {
   }
   private pickEdge(x: number, y: number) {
     const w = this.worldPoint(x, y), radius = this.grid.cell, p = this.projection;
-    let best = -1, distance = this.settings.groupEdgeHitRadius / this.scale;
-    // Deliberately incident-edge hover, not an O(m) all-segment scan or GPU readback.
+    let best = -1, distance = this.settings.groupEdgeHitRadius / this.scale, budget = 32768;
+    // Deliberately budgeted incident-edge picking, not an O(m) all-segment scan or GPU readback.
     this.picker.visit(w.x, w.y, radius, node => {
-      for (let j = this.edges.offsets[node]!; j < this.edges.offsets[node + 1]!; j++) { const e = this.edges.edges[j]!, a = p.source[e]!, b = p.target[e]!; if (!this.edgeOn[e] || !this.filterVisible[a] || !this.filterVisible[b]) continue;
+      for (let j = this.edges.offsets[node]!; j < this.edges.offsets[node + 1]! && budget-- > 0; j++) { const e = this.edges.edges[j]!, a = p.source[e]!, b = p.target[e]!; if (!this.edgeDrawn(e)) continue;
         const d = segmentDistance(w.x, w.y, this.display[a * 2]!, this.display[a * 2 + 1]!, this.display[b * 2]!, this.display[b * 2 + 1]!); if (d < distance) { best = e; distance = d; }
       }
     }); return best;
   }
+  private edgeDrawn = (e: number) => !!this.edgeOn[e] && !!this.filterVisible[this.projection.source[e]!] && !!this.filterVisible[this.projection.target[e]!];
+  /** Drawn rows between the picked edge's endpoints, either direction, picked edge first (bounded). */
+  private edgeParallels(e: number) {
+    const p = this.projection, a = p.source[e]!, b = p.target[e]!, out = [e];
+    for (let j = this.edges.offsets[a]!; j < this.edges.offsets[a + 1]! && out.length < 32; j++) { const f = this.edges.edges[j]!; if ((p.source[f] === a ? p.target[f] : p.source[f]) === b && this.edgeDrawn(f) && !out.includes(f)) out.push(f); }
+    return out;
+  }
   /** Graduated tiers from one CPU authority for WebGL and Canvas, recomputed only when the focus
    * source changes, never per frame. Old bytes are cleared by touched lists, not rescanned. */
-  private setFocus(node: number, immediate = false) {
-    const s = this.stateBytes, t = this.edgeTier;
-    if (node !== this.focusNode || immediate) {
+  private setFocus(node: number, immediate = false, edges?: number[]) {
+    const s = this.stateBytes, t = this.edgeTier, key = edges ?? node;
+    if (key !== this.tierSource || immediate) {
       for (const i of this.near) s[i * 4 + 1] = 0;
       for (const e of this.tierEdges) t[e] = 0;
-      this.near = []; this.tierEdges = []; this.focusNode = node; this.rankedLod = -1;
-      this.tierPartial = focusTiers(node, this.edges, this.projection, this.edgeOn, this.filterVisible, s, t, this.near, this.tierEdges, 65536, this.settings.declaration.groupContext ? this.view.groupCodes : undefined);
+      this.near = []; this.tierEdges = []; this.tierSource = key; this.focusNode = edges ? -1 : node; this.rankedLod = -1; this.tierPartial = 0;
+      // A selected relationship lights its rows and both endpoints as direct tiers, without a focus ring.
+      if (edges) for (const e of edges) { t[e] = 255; this.tierEdges.push(e); for (const n of [this.projection.source[e]!, this.projection.target[e]!]) if (!s[n * 4 + 1]) { s[n * 4 + 1] = 255; this.near.push(n); } }
+      else this.tierPartial = focusTiers(node, this.edges, this.projection, this.edgeOn, this.filterVisible, s, t, this.near, this.tierEdges, 65536, this.settings.declaration.groupContext ? this.view.groupCodes : undefined);
       if (this.gl && this.ready && !this.lost) this.uploadTiers();
     }
     this.focusTarget = this.near.length ? 1 : 0; this.focusAt = performance.now();
@@ -708,11 +728,36 @@ export class DetailRenderer {
   /** Selection drives the persistent focus. Touch and keyboard selections show the card; only its
    * explicit Open button (or Enter on the canvas) opens the note. */
   private selectNote(node: number, card?: boolean) {
-    const c = this.noteCard; this.selected = node; if (card) this.hovered = -1; this.emphasize(); this.refresh(); c.textContent = '';
+    const c = this.noteCard; this.selected = node; this.selectedEdges = []; this.edgeAnchor = -1; this.edgeToken++; if (card) this.hovered = -1; this.emphasize(); this.refresh(); c.textContent = '';
     if (card && node >= 0) { const b = document.createElement('button'), name = this.noteCaption(node); c.textContent = name; b.textContent = 'Open'; b.setAttribute('aria-label', 'Open ' + name); b.onclick = () => this.onNode(node); c.append(b); }
   }
   /** Hover outranks the persistent selection; the hover-highlight switch turns both off. */
-  private emphasize(immediate?: boolean) { const v = this.hovered < 0 ? this.selected : this.hovered; this.setFocus(this.settings.visuals.hoverHighlight ? v : -1, immediate); }
+  private emphasize(immediate?: boolean) { const v = this.hovered < 0 ? this.selected : this.hovered, on = this.settings.visuals.hoverHighlight; this.setFocus(on ? v : -1, immediate, on && v < 0 && this.selectedEdges?.length ? this.selectedEdges : undefined); }
+  /** Select a relationship (never opens). The card lists every drawn parallel row between the pair;
+   * rule names and relationship-note paths arrive from the worker and fill in when resolved. */
+  private selectEdge(edge: number, anchor = -1) {
+    const p = this.projection, c = this.noteCard, token = ++this.edgeToken;
+    this.selected = this.hovered = -1; this.edgeAnchor = anchor; this.selectedEdges = this.edgeParallels(edge); this.emphasize(); this.refresh(); c.textContent = '';
+    const el = (tag: string, text = '', cls = '') => Object.assign(document.createElement(tag), { textContent: text, className: cls });
+    const button = (text: string, label: string, run: () => void) => { const b = el('button', text); b.setAttribute('aria-label', label); b.onclick = run; return b; };
+    const a = p.source[edge]!, b = p.target[edge]!, box = el('div', '', 'graph-ng-relationships'), na = this.name(a), nb = this.name(b);
+    box.append(el('strong', `${na} → ${nb}`));
+    const rows = this.selectedEdges.map(e => { const row = el('div', '', 'graph-ng-relationship'); row.append(el('span', p.types[p.type[e]!]! + (p.source[e] !== a ? ' (reverse)' : ''))); box.append(row); return row; });
+    const ends = el('div', '', 'graph-ng-relationship'); ends.append(button('Open source', 'Open source ' + na, () => this.onNode(a)), button('Open target', 'Open target ' + nb, () => this.onNode(b))); box.append(ends); c.append(box);
+    this.describeEdges?.(this.selectedEdges).then(info => {
+      if (token !== this.edgeToken || this.disposed) return;
+      info.forEach((d, i) => { const row = rows[i]; if (!row) return; if (d.rule) row.append(el('small', 'Rule: ' + d.rule)); if (d.carrier) { const path = d.carrier; row.append(button('Open relationship note', 'Open relationship note ' + path, () => this.openPath?.(path))); } });
+    }, () => { if (token === this.edgeToken && !this.disposed) box.append(el('small', 'Details unavailable')); });
+  }
+  /** Keyboard: step through the anchor note's drawn relationships, one stop per neighbour. O(degree). */
+  private cycleEdge(step: number) {
+    const anchor = this.selected >= 0 ? this.selected : this.edgeAnchor, p = this.projection; if (anchor < 0) return false;
+    const stops = new Map<number, number>(), other = (e: number) => p.source[e] === anchor ? p.target[e]! : p.source[e]!;
+    for (let j = this.edges.offsets[anchor]!; j < this.edges.offsets[anchor + 1]!; j++) { const e = this.edges.edges[j]!; if (this.edgeDrawn(e) && !stops.has(other(e))) stops.set(other(e), e); }
+    const list = [...stops.values()]; if (!list.length) return false;
+    const at = this.edgeAnchor === anchor && this.selectedEdges.length ? [...stops.keys()].indexOf(other(this.selectedEdges[0]!)) : -1;
+    this.selectEdge(list[at < 0 ? (step > 0 ? 0 : list.length - 1) : (at + step + list.length) % list.length]!, anchor); return true;
+  }
   get usable() { return this.ready && !this.disposed && !this.lost && !this.gl?.isContextLost(); }
   /** A prepared renderer allocates under existing limits but schedules no drawing. */
   refresh() {
@@ -786,7 +831,7 @@ export class DetailRenderer {
     else this.hoverLabel.textContent = '';
     // Graduated labels: placed once per focus or LOD change, translated per frame (bounded DOM).
     const lod = labelLOD(this.camera.ratio);
-    if (ego < 0) this.ranked = [];
+    if (!this.near.length) this.ranked = [];
     else if (lod !== this.rankedLod) {
       const s = this.settings, k = this.scale * this.camera.ratio / LABEL_RATIOS[lod]!, budget = Math.max(1, Math.min(s.labelsMaxPerViewport, FOCUS_LABELS, Math.floor(this.width * this.height / s.labelGridCellSize ** 2 * s.labelDensity)));
       this.ranked = focusLabels(ego, this.near, this.stateBytes, this.visible, this.projection.offsets, (n, rank) => { const z = s.labelSize * (rank ? 1 : 1.25); return { node: n, x: this.display[n * 2]! * k + this.nodeRadius(n) + 4, y: this.display[n * 2 + 1]! * k - z / 2, w: this.name(n).length * z * .6 + 4, h: z * 1.5 + 4 }; }, s.labelGridCellSize, budget, budget * s.labelCandidateMultiplier).filter(([n]) => n !== ego);
@@ -853,7 +898,7 @@ export class DetailRenderer {
     if (node === this.hovered && edge === this.hoveredEdge) return;
     this.hovered = node; this.hoveredEdge = edge; this.emphasize();
     this.container.title = hub >= 0 ? `${this.view.groupLabels?.[hub] ?? ''} (collapsed) — click to expand` : node >= 0 ? this.path(node) : edge >= 0 ? `${this.path(this.projection.source[edge]!)} → ${this.path(this.projection.target[edge]!)} [${this.projection.types[this.projection.type[edge]!]!}]` : '';
-    this.canvas.style.cursor = node >= 0 || hub >= 0 ? 'pointer' : 'grab'; this.refresh();
+    this.canvas.style.cursor = node >= 0 || hub >= 0 || edge >= 0 ? 'pointer' : 'grab'; this.refresh();
   };
   private pointerUp = (e: PointerEvent) => {
     if (this.disposed || this.lost) return;
@@ -863,13 +908,17 @@ export class DetailRenderer {
       if (hub >= 0) { this.onHub?.(hub); return; }
       // A touch tap only selects (precise taps on dense graphs misfire); mouse/pen clicks still open.
       // A tap or click on empty canvas clears the selection.
-      const node = this.pick(x, y), touch = e.pointerType === 'touch'; this.selectNote(node, touch); if (node >= 0 && !touch) this.onNode(node);
+      // Notes outrank lines. A line click or tap selects its relationship and never opens anything.
+      const node = this.pick(x, y), touch = e.pointerType === 'touch', edge = node < 0 ? this.pickEdge(x, y) : -1;
+      if (edge >= 0) { this.selectEdge(edge); return; }
+      this.selectNote(node, touch); if (node >= 0 && !touch) this.onNode(node);
     }
   };
   /** Keyboard path: arrows select the nearest note in that screen direction, Enter opens, Escape clears. */
   private keyDown = (e: KeyboardEvent) => {
     const d = ['Right', 'Down', 'Left', 'Up'].indexOf(e.key.slice(5));
-    if (e.key === 'Escape' && this.selected >= 0) { this.selectNote(-1); this.canvas.focus(); }
+    if (e.key === 'Escape' && (this.selected >= 0 || this.selectedEdges.length)) { this.selectNote(-1); this.canvas.focus(); }
+    else if ((e.key === 'r' || e.key === 'R') && this.cycleEdge(e.shiftKey ? -1 : 1)) { /* handled */ }
     else if (e.target !== this.canvas) return;
     else if (e.key === 'Enter' && this.filterVisible[this.selected]) this.onNode(this.selected);
     else if (d >= 0 && e.key.startsWith('Arrow')) {
