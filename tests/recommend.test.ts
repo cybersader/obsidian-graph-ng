@@ -23,7 +23,9 @@ test('large dense graph: faint edges, fewer labels, glow and curves off', () => 
 });
 test('hub-heavy graph: softer degree sizing; many groups and edge notes dimmed', () => {
   const s = hub(); expect(s.maxDegree).toBe(999); expect(s.hubRatio).toBeGreaterThan(25);
-  expect(values(s)).toEqual({ degreeSizing: 1, groupHalos: false, carrierOpacity: .45 });
+  expect(values(s)).toEqual({ degreeSizing: 1, carrierOpacity: .45 });
+  const haloed = defaults('links'); haloed.visuals.groupHalos = true;
+  expect(values(s, haloed).groupHalos).toBe(false);
   const moderate = graphStats(offsets([20, ...new Array(99).fill(2)]), 109);
   expect(values(moderate).degreeSizing).toBe(2.2);
 });
@@ -80,4 +82,10 @@ test('renderer preview swaps a candidate and restores the live settings object',
   DetailRenderer.prototype.previewSettings.call(r, candidate); DetailRenderer.prototype.previewSettings.call(r, null);
   expect(r.settings).toBe(live); expect(refreshed).toBe(3);
   DetailRenderer.prototype.previewSettings.call(r, null); expect(r.settings).toBe(live);
+});
+test('group halos default off; an explicitly saved choice survives upgrade', () => {
+  expect(defaults('links').visuals.groupHalos).toBe(false);
+  const saved: any = settingsForSave(defaults('links')); saved.visuals.groupHalos = true;
+  expect(upgradeSettings(saved, 'links').visuals.groupHalos).toBe(true);
+  delete saved.visuals.groupHalos; expect(upgradeSettings(saved, 'links').visuals.groupHalos).toBe(false);
 });

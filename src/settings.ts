@@ -51,7 +51,7 @@ export interface DisabledDerive { location: string; key: string; pattern: string
 export interface ExploreSettings { panelOpen: boolean; facetValues: number; legendPageSize: number; view: ExploreView; savedViews: SavedView[]; disabledDerived: DisabledDerive[] }
 export const defaultVisuals = (): Visuals => ({
   degreeSizing: 4, degreeCurve: 'sqrt', edgeOpacity: .4, edgeDensityReference: 3000, edgeColorMix: .65, edgeDirection: false, glow: .3,
-  curvedEdges: true, curvature: .12, curveSegments: 8, hoverHighlight: true, dimOpacity: .12, groupHalos: true, haloOpacity: .08,
+  curvedEdges: true, curvature: .12, curveSegments: 8, hoverHighlight: true, dimOpacity: .12, groupHalos: false, haloOpacity: .05,
   autoPalette: true, labelFade: true, cameraAnimationMs: 450, glowMaxNodes: 250000, curvesMaxEdges: 60000, halosMaxGroups: 48, hubsMaxGroups: 256, softwareEffects: false,
   carrierTint: true, carrierBridge: 'blend', carrierBridgeAccent: .35, carrierOpacity: .7, carrierSize: .6, carrierDensityReference: 8000, carrierLod: true, carrierLodNear: .3, carrierLodFar: .6,
 });

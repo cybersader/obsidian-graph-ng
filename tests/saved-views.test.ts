@@ -283,11 +283,11 @@ test('Open rejects a hidden key absent from the saved grouping before adopting t
 test('Open failure/cap refusal leaves displayed result intact but requested settings honest', async () => {
   const f = await fixture(), saved = folderView('Notes', 'Focus'), displayed = f.view.explored;
   f.plugin.settings.explore.savedViews = [saved, { name: 'Previous', view: emptyView(), camera: null }]; f.panel.render();
-  expect(f.panel.buttons.get('views').title).toBe('Saved views · requested: Previous');
+  expect(f.panel.buttons.get('views').title).toBe('Saved views (requested: Previous)');
   f.plugin.pipeline.request = async () => { throw Error('synthetic worker failure'); };
   await (control(f.panel.body, 'Open') as any).onclick(); expect(f.panel.body.textContent).toContain('Displayed graph may still show the previous result');
   expect(f.view.explored).toBe(displayed); expect(f.plugin.settings.explore.view).toEqual(saved.view); expect(f.renderer.calls).toEqual([]);
-  expect(f.panel.buttons.get('views').title).toBe('Saved views · requested: Focus');
+  expect(f.panel.buttons.get('views').title).toBe('Saved views (requested: Focus)');
   f.plugin.pipeline.request = async () => ({ explore: f.result(saved.view), colors: new Uint32Array(4), groups: {}, view: 2 });
   let admissions = 0; f.view.admitDetail = () => { admissions++; return false; };
   await expect(f.view.openSavedView(saved)).rejects.toThrow('Detail limit'); expect(admissions).toBe(1); expect(f.view.explored).toBe(displayed); expect(f.renderer.calls).toEqual([]); f.panel.dispose();

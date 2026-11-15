@@ -1,0 +1,3 @@
+[test]
+# Register the synthetic obsidian module mock before any test file imports src/ modules.
+preload = ["./tests/support/obsidian-fixture.ts"]

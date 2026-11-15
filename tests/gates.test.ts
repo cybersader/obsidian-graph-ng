@@ -121,3 +121,9 @@ test('UI pass download ceilings remain exactly bounded and active documentation 
     expect(doc).toContain('265,000'); expect(doc).toContain('85,000');
   }
 });
+
+test('UI strings never join fragments with a middle dot (owner rule)', () => {
+  const walk = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap(e => e.isDirectory() ? walk(path.join(dir, e.name)) : /\.ts$/.test(e.name) ? [path.join(dir, e.name)] : []);
+  const offenders = walk(path.join(import.meta.dir, '..', 'src')).filter(file => /·/.test(fs.readFileSync(file, 'utf8')));
+  expect(offenders).toEqual([]);
+});

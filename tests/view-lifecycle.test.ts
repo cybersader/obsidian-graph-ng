@@ -94,7 +94,7 @@ test('graph information retains full diagnostics while healthy summary stays qui
   ExplorePanel.prototype.render = function () {};
   try { await view.onOpen(); } finally { ExplorePanel.prototype.render = render; }
   view.explorePanel.render = () => {};
-  const text = '10 nodes · links pending (partial · filters and members provisional) · 0 unresolved';
+  const text = 'Reading properties: 4 of 10 notes. Filters and member lists are provisional.';
   view.statusText = text; expect(view.status.textContent).toBe(text); expect(view.statusSummary.hidden).toBe(false);
   expect(view.statusSummary.title).toBe(text); expect(view.status.parent).toBe(view.explorePanel.root);
   expect(persistedPanelStates).toEqual([]);
@@ -102,7 +102,7 @@ test('graph information retains full diagnostics while healthy summary stays qui
   expect(persistedPanelStates).toEqual([true]);
   view.explorePanel.close(); expect(persistedPanelStates).toEqual([true, false]);
   expect(ControlElement.active).toBe(view.statusSummary);
-  view.provisional = false; view.contentEl.dataset.state = 'ready'; view.statusText = '10 nodes · verified · 0 unresolved'; expect(view.statusSummary.hidden).toBe(true); expect(view.status).toBe(status);
+  view.provisional = false; view.contentEl.dataset.state = 'ready'; view.statusText = '10 nodes verified.'; expect(view.statusSummary.hidden).toBe(true); expect(view.status).toBe(status);
   view.contentEl.dataset.state = 'error'; view.statusText = 'Graph NG: synthetic failure'; expect(view.statusSummary.hidden).toBe(false); expect(view.status.textContent).toContain('failure');
   view.explorePanel.dispose();
 });

@@ -420,7 +420,7 @@ export class DetailRenderer {
     this.discData = this.discs(this.halos, this.hubs);
     while (this.hubLabels.length > Math.min(64, this.hubs.length)) this.hubLabels.pop()!.remove();
     while (this.hubLabels.length < Math.min(64, this.hubs.length)) this.hubLabels.push(this.overlay.appendChild(Object.assign(document.createElement('div'), { className: 'graph-ng-hub-label' })));
-    this.hubLabels.forEach((el, i) => { const h = this.hubs[i]!; el.textContent = `${this.view.groupLabels?.[h.group] ?? ''} · ${h.count.toLocaleString()}`; });
+    this.hubLabels.forEach((el, i) => { const h = this.hubs[i]!; el.textContent = `${this.view.groupLabels?.[h.group] ?? ''} (${h.count.toLocaleString()})`; });
   }
   private async program(vertex: string, fragment: string): Promise<Program> {
     const gl = this.gl!, shaders: WebGLShader[] = [], parallel = gl.getExtension('KHR_parallel_shader_compile');
@@ -554,7 +554,7 @@ export class DetailRenderer {
   }
   sizingReadout() {
     const [lo, hi] = this.sizingRange, b = this.baseNodeRadius();
-    return hi ? `Ordinary unhighlighted radius: ${(b * lo).toFixed(2)}–${(b * hi).toFixed(2)} CSS px at this zoom${this.nodePreview ? ' · preview, unsaved' : ''}` : 'No ordinary nodes shown';
+    return hi ? `Ordinary unhighlighted radius: ${(b * lo).toFixed(2)}–${(b * hi).toFixed(2)} CSS px at this zoom${this.nodePreview ? ' (preview, unsaved)' : ''}` : 'No ordinary nodes shown';
   }
   private savedSettings?: Settings;
   /** Unsaved whole-settings candidate (suggestions); null restores the live settings object and
@@ -693,7 +693,7 @@ export class DetailRenderer {
     this.focusTarget = this.near.length ? 1 : 0; this.focusAt = performance.now();
     if (immediate) this.focusLevel = this.focusTarget;
   }
-  private noteCaption(n: number) { return this.path(n).split('/').pop()!.replace(/\.md$/, '') + (this.tierPartial && n === this.focusNode ? ' · 2-hop context truncated' : ''); }
+  private noteCaption(n: number) { return this.path(n).split('/').pop()!.replace(/\.md$/, '') + (this.tierPartial && n === this.focusNode ? ' (2-hop context truncated)' : ''); }
   /** Selection drives the persistent focus. Touch and keyboard selections show the card; only its
    * explicit Open button (or Enter on the canvas) opens the note. */
   private selectNote(node: number, card?: boolean) {

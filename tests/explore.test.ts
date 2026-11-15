@@ -152,7 +152,9 @@ test('palette and contrast helpers keep categorical node colors legible in both 
 test('effect policy, degree sizing, edge alpha, halos and label fade are bounded', () => {
   const v = defaults('t@1').visuals;
   const ok = effectPolicy(v, 16000, 44600, 6, false, true); expect(ok.curves).toBe(true); expect(ok.glow).toBe(v.glow); expect(ok.reasons).toEqual([]);
-  const big = effectPolicy(v, 300000, 89200, 100, false, false); expect(big.curves).toBe(false); expect(big.segments).toBe(1); expect(big.glow).toBe(0); expect(big.dark).toBe(false); expect(big.reasons.length).toBe(3);
+  expect(effectPolicy(v, 10, 100, 1, false, true).halos).toBe(false);
+  expect(effectPolicy(v, 300000, 89200, 100, false, false).reasons.some(r => r.includes('halos'))).toBe(false);
+  const big = effectPolicy({ ...v, groupHalos: true }, 300000, 89200, 100, false, false); expect(big.curves).toBe(false); expect(big.segments).toBe(1); expect(big.glow).toBe(0); expect(big.dark).toBe(false); expect(big.reasons.length).toBe(3);
   const soft = effectPolicy(v, 10, 10, 1, true, true); expect([soft.glow, soft.curves, soft.halos]).toEqual([0, false, false]);
   expect(effectPolicy({ ...v, softwareEffects: true }, 10, 10, 1, true, true).curves).toBe(true);
   const sizes = degreeSizes(Uint32Array.from([0, 0, 1, 9]), 2); expect(sizes[0]).toBe(1); expect(sizes[2]).toBeCloseTo(3); expect(Math.max(...sizes)).toBeLessThanOrEqual(3);
