@@ -2,6 +2,42 @@
 
 Results belong to an exact invocation, fixture, source revision and hardware class. They do not establish all-scale acceptance. Original slice-1 source is `041e1382` (2026-11-10); release-readiness baseline is `9b8cc07`. Historical tables below remain dated evidence. The slice-2 section records the new worker/browser/native invocations and unmet targets separately. Raw receipts remain ignored and local; publish only scrubbed summaries without hostnames, usernames, real-vault paths or private projections.
 
+## Layout cache reuse pass — 2026-11-15
+
+Reopening, reloading and small edits now reuse the saved layout in the cases that previously recomputed it. Against `ff6d44f`, an Obsidian reload while links are still resolving drops from a full cold layout (**1.74 s / 5.99 s** to the stable layout at 16,309 / 61,000 notes) to **0.43 s / 0.58 s**; a grouping change from **1.68 s / 6.57 s** to **0.32 s / 0.50 s**; a one-link edit from **0.75 s / 2.20 s** to **0.46 s / 0.85 s**. Cold layout itself is unchanged.
+
+### Why hits were missed
+
+1. **Unverified builds ignored the saved layout.** Until every note has public metadata and the link resolver has finished (normal right after an app reload), the build is provisional. The worker only used saved positions for verified builds, so it ran a full cold layout, blocking the worker queue, and the verified build that followed found the exact generation. Unverified builds now start from saved positions; they still never persist, quarantine or overwrite the complete generation.
+2. **Grouping changes discarded positions.** Declared groups, display columns and the group level are part of the declaration digest and generation key, so the held layout was dropped and the next build was cold although the drawn topology was unchanged. The worker now keeps a held layout as a warm-start hint whenever source, producer, layout settings, stream cadence and format still match. Exact hits still require the same declaration digest, group level and key, and a verified build drops a hint that names a note no longer in the view.
+3. **Warm starts paid nearly a third of a cold layout.** Relaxation walked the Barnes-Hut tree for every note on each of the 30 relax iterations, although fixed notes never read their force. It now walks it only for movable notes; forces for those notes are bit-identical (unit test).
+4. **Exact hits were never re-persisted.** A write is skipped when the view is superseded during the 1.5–6 s layout or fails. The next build was then an in-memory exact hit, which never wrote, so the next reload was cold. Writes now happen whenever the store has not committed or loaded the current key. A failed write no longer turns a drawn graph into a "Projection refresh failed" error; it is recorded in `data-cache-error`.
+5. **Smaller costs.** Each refresh re-read and re-hashed the whole generation even when the worker held it; each exact hit re-contracted the group summary; each write hashed every chunk twice; and a layout-settings change renamed the old generation to a retained `.corrupt-` artifact in the plugin folder. All four are removed.
+
+Not misses: appearance settings, colours, `hierarchy`, `interest`, `groupContext` and edge `highlight` were already excluded from layout identity and stay exact hits. Volatile data does not enter the key: paths and producer links are sorted, object keys are canonicalized, and no timestamps are hashed. At these sizes a generation is about 1–4 MB, far below the 256 MiB `maxGenerationBytes`, so byte limits do not evict it. `cachedDeclarations` (default 1) keeps one generation for the current declaration; switching back to an older declaration recomputes.
+
+**Known miss, unchanged:** deleting or renaming a note recomputes from scratch, because ADR-0004 refuses a generation that names an identity absent from the live view. Relaxing that rule is a boundary change that needs independent review; a test pins the current behaviour. After a physics **Apply**, the next open recomputes with the new settings; the applied preview is not persisted (ADR-0004 0.5.2).
+
+### Method
+
+`tests/cache-benchmark.test.ts` (`flock -w 3000 -E 75 /tmp/openclast-bun.lock timeout --kill-after=5s 1800s ./scripts/run.sh bench:cache`) drives the real layout worker and `BinaryLayoutStore` over an in-memory adapter in the same request order as the view refresh: configure, read the saved generation unless the worker holds it, ingest 2,000-row batches, project, detail, layout, then encode and write after a computed verified layout. **Stable** is the time from configure to the final layout result, the positions the first settled frame draws. It excludes Obsidian metadata IO, physical disk, renderer upload (about 60 ms, startup table below) and paint. One run per scenario on the startup fixture (16,309 / 46,400 and 61,000 / 100,000), default layout (100 iterations, 30 relax), same i9-12900K / Bun 1.3.14 host. Baseline numbers use the same harness on `ff6d44f` runtime source. The receipt is `.workspace/evidence/performance-cache.json`. Behaviour is covered by `tests/layout-cache.test.ts`, which runs the real view refresh, worker and store across a simulated reload.
+
+| Scenario | 16k before | 16k after | 61k before | 61k after | After: layout result |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Cold start, empty cache | 1,787 ms | 1,688 ms | 6,114 ms | 5,593 ms | Computed, 100 iterations |
+| Reopen in the same session (exact) | 394 ms | 318 ms | 579 ms | 400 ms | Reused, no disk read |
+| Reload, metadata complete (exact) | 479 ms | 406 ms | 710 ms | 586 ms | Reused from disk |
+| Reload, links still resolving | 1,739 ms | 431 ms | 5,985 ms | 575 ms | Reused, not persisted |
+| …then the verified build (exact) | 510 ms | 358 ms | 713 ms | 530 ms | Reused, no disk read |
+| One note gains one link (warm) | 750 ms | 455 ms | 2,203 ms | 850 ms | Adjusted, 30 relax iterations |
+| Group-level change | 1,678 ms | 324 ms | 6,566 ms | 495 ms | Reused, persisted |
+
+Worker layout time inside those totals: warm edit **399 → 119 ms** (16k) and **1,678 → 387 ms** (61k); exact hits ≤1 ms. The rest of an exact hit is projection, the generation key (about 115 ms SHA-256 over the canonical declared facts at either size), detail transfer and, after a reload, the 24–41 ms chunk read and checksum. Generation writes take 10–28 ms here. Single runs vary with JIT and GC; cold-start differences are noise, not a claimed gain.
+
+**Visible result.** Graph information's **Layout** row reads **Reused saved layout**, **Reused saved layout, adjusted in N s** (warm start) or **Computed layout in N s**. A duration under 0.1 s is shown as 0.1 s, never 0.0 s.
+
+Bundle: **350,786 raw / 117,596 gzip bytes** versus **350,170 / 117,369** at `ff6d44f` (+616 / +227), leaving **4,214 / 404** bytes under the 355,000 / 118,000 caps.
+
 ## Bounded CPU performance pass — 2026-11-15
 
 The main win is less work on hub selection, not a faster layout algorithm. Against `001e8ff00f50480194166e680c60cd1fa7c053f4`, full-scene compiled-renderer hub selection drops **14.13 → 5.34 ms** at 16k nodes and **12.16 → 7.17 ms** at 61k. These are synthetic JavaScript CPU measurements, not native interaction latency or GPU frame rates. No layout default, traversal budget, visibility rule or Canvas limit changes.
@@ -96,7 +132,7 @@ Three repetitions of `bench:startup` use the actual `runLayoutStream` scheduler 
 
 Startup receipt predates the final dense-hub cutoff; it uses the same solver and does not select a hub. Component medians need not sum to the median total. Cache rows isolate operations after existing validity checks, not end-to-end warm-open timing.
 
-**Safest proposal: verify and improve use of the existing validated cached-layout path first**, including evidence about cache-miss reasons. Exact compatible caches already return saved positions without solving; compatible non-exact caches use the existing identity-based warm start and changed-neighbour relaxation. Do not weaken source/declaration/layout/generation or ordered-identity checks. This is a proposal, not an implemented startup-default change.
+**Safest proposal (followed up in the layout cache reuse pass above): verify and improve use of the existing validated cached-layout path first**, including evidence about cache-miss reasons. Exact compatible caches already return saved positions without solving; compatible non-exact caches use the existing identity-based warm start and changed-neighbour relaxation. Do not weaken source/declaration/layout/generation or ordered-identity checks. This is a proposal, not an implemented startup-default change.
 
 Worker streaming already emits the initial positions and every five iterations (20 intermediate snapshots). The main view stores these snapshots but awaits completion before its normal ready/detail path; enabling worker streaming again would not fix perceived delay. Progressive detail display needs a separately reviewed renderer lifecycle/upload design. Turning convergence on by default requires threshold and layout-quality evidence first, since it changes numerical behaviour and these runs still move substantially at termination.
 

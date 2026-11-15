@@ -44,6 +44,8 @@ const hash = async (b: Uint8Array) => Array.from(new Uint8Array(await crypto.sub
 const id = (s: unknown): s is string => typeof s === 'string' && /^[a-f0-9]{64}$/.test(s);
 export class BinaryLayoutStore {
   readonly trace: { action: string; declarationHash: string; key: string }[] = [];
+  /** Key of the generation this store last committed or loaded; a held layout with another key still needs a write. */
+  committed?: string;
   constructor(private adapter: BinaryAdapter, readonly options: StoreOptions, private yieldNow: () => Promise<void> = async () => {}) {
     if (!Number.isSafeInteger(options.chunkBytes) || options.chunkBytes < 4 || options.chunkBytes > MAX_CHUNK_BYTES || !Number.isSafeInteger(options.maxGenerationBytes) || options.maxGenerationBytes < options.chunkBytes) throw new Error('Invalid binary store budget');
   }
@@ -57,7 +59,7 @@ export class BinaryLayoutStore {
     } catch { await this.adapter.rename(path, `${path}.corrupt-${Date.now()}`); return []; }
   }
   async write(g: BinaryGeneration) {
-    try { await this.writeGeneration(g); } finally { await this.pruneArtifacts(); }
+    try { await this.writeGeneration(g); this.committed = g.meta.key; } finally { await this.pruneArtifacts(); }
   }
   private async writeGeneration(g: BinaryGeneration) {
     const directory = this.path(g.meta); await this.mkdir(directory);
@@ -71,7 +73,7 @@ export class BinaryLayoutStore {
         const chunkPath = `${directory}/${name}.${i}.bin`, checksum = await hash(chunk);
         const reusable = (await this.adapter.stat(chunkPath))?.size === chunk.byteLength && await hash(new Uint8Array(await this.adapter.readBinary(chunkPath))) === checksum;
         if (!reusable) await this.adapter.writeBinary(chunkPath, chunk.buffer);
-        part.chunks.push({ bytes: chunk.byteLength, hash: await hash(chunk) }); await this.yieldNow();
+        part.chunks.push({ bytes: chunk.byteLength, hash: checksum }); await this.yieldNow();
       }
       parts.push(part);
     }
@@ -101,7 +103,9 @@ export class BinaryLayoutStore {
       if ((await this.adapter.stat(manifestPath))!.size > MAX_CHUNK_BYTES) throw new Error('Oversized manifest');
       const m: Manifest = JSON.parse(await this.adapter.read(manifestPath));
       if (!m.meta || m.meta.format !== CACHE_FORMAT || m.meta.key !== e.key || m.meta.declarationHash !== e.declarationHash || !Array.isArray(m.parts) || m.parts.length !== 5 || new Set(m.parts.map(p => p.name)).size !== 5) throw new Error('Invalid manifest');
-      if (expected && (m.meta.source !== expected.source || m.meta.layoutHash !== expected.layoutHash || m.meta.producer !== expected.producer)) throw new Error('Source/view or producer mismatch');
+      if (expected && (m.meta.source !== expected.source || m.meta.producer !== expected.producer)) throw new Error('Source/view or producer mismatch');
+      // Changed layout settings are not damage: refuse without leaving a retained quarantine artifact.
+      if (expected && m.meta.layoutHash !== expected.layoutHash) return;
       let total = 0; const files: Record<string, Uint8Array> = Object.create(null);
       for (const part of m.parts) {
         if (!['positions', 'identities', 'offsets', 'edgekeys', 'groups'].includes(part.name) || !Number.isSafeInteger(part.bytes) || part.bytes < 0 || !Array.isArray(part.chunks)) throw new Error('Invalid manifest part');
@@ -116,7 +120,7 @@ export class BinaryLayoutStore {
         }
         if (offset !== part.bytes) throw new Error('Truncated generation'); files[part.name] = out;
       }
-      this.record('loaded', e); return { meta: m.meta, files };
+      this.record('loaded', e); this.committed = e.key; return { meta: m.meta, files };
     } catch { await this.quarantine(e); return; }
   }
   async quarantine(e: Entry) {

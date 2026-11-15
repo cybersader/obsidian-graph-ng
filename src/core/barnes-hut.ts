@@ -67,9 +67,11 @@ export class BarnesHut {
     }
     for (let c = 0; c < this.used; c++) if (this.mass[c]) { this.mx[c]! /= this.mass[c]!; this.my[c]! /= this.mass[c]!; }
   }
-  repulse(p: Float32Array, weights: Float32Array, forces: Float32Array, scaling: number, theta: number): void {
+  /** Fixed nodes never read their own force, so a warm start only walks the tree for movable ones. */
+  repulse(p: Float32Array, weights: Float32Array, forces: Float32Array, scaling: number, theta: number, movable?: Uint8Array): void {
     const theta2 = theta * theta;
     for (let i = 0; i < weights.length; i++) {
+      if (movable && !movable[i]) continue;
       const x = p[2 * i]!, y = p[2 * i + 1]!, m = weights[i]!;
       let c = 0, fx = 0, fy = 0;
       while (c >= 0) {

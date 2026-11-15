@@ -6,7 +6,7 @@ import { filterSummary, hiddenClause } from './filter-summary';
 export interface InformationReport {
   nodes: number; edges: number; listed: number;
   linksPending: boolean; provisional: boolean; unresolved: number; duplicates: number;
-  layout?: { cached: boolean; ms: number; totalMs: number };
+  layout?: { cached: boolean; reused?: 'all' | 'some'; ms: number; totalMs: number };
   dropped?: Record<string, EdgeRuleCounts>;
   /** Markdown notes in the vault, and per declared excluded folder the notes under it. */
   vault?: number; excluded?: [string, number][];
@@ -107,9 +107,14 @@ export function renderInformation(host: HTMLElement, message: string, state: str
     if (c?.missing) statRow(lines, 'unlink', `${rule}: target note missing`, n(c.missing), 'graph-ng-stat-sub');
     if (c?.excluded) statRow(lines, 'copy', `${rule}: endpoint has a duplicate ID`, n(c.excluded), 'graph-ng-stat-sub');
   });
-  statRow(lines, 'timer', 'Layout', r.layout ? (r.layout.cached ? 'Cached' : `${n(Math.round(r.layout.ms))} ms`) : 'Building…');
+  statRow(lines, 'timer', 'Layout', r.layout ? layoutText(r.layout) : 'Building…');
   const issues = informationIssues(r);
   host.createEl('h4', { text: 'Issues' });
   if (!issues.length) host.createDiv({ cls: 'graph-ng-explore-note', text: 'No issues found.' });
   else { const list = host.createEl('ul', { cls: 'graph-ng-issues' }); for (const [title, why] of issues) { const item = list.createEl('li'); item.createEl('strong', { text: title }); item.createDiv({ text: why }); } }
+}
+/** Whether the drawn positions came from the saved layout, and how long any computation took. */
+export function layoutText(l: NonNullable<InformationReport['layout']>) {
+  const s = `${(Math.max(l.ms, 50) / 1000).toFixed(1)} s`;
+  return l.cached || l.reused === 'all' ? 'Reused saved layout' : l.reused ? `Reused saved layout, adjusted in ${s}` : `Computed layout in ${s}`;
 }

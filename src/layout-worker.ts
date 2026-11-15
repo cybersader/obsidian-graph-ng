@@ -13,7 +13,7 @@ import { generationKey } from './core/generation';
 import { warmLayout, validSavedLayout } from './core/incremental';
 import { CACHE_FORMAT, decodeLayout, encodeLayout, type BinaryLayout, type GenerationMeta } from './core/binary-layout';
 import { edgeHashes, hashEdge, edgeHashSet } from './core/edge-hash';
-import { LAYOUT_PRODUCER, evaluation, type PipelineRequest, type PipelineConfig } from './pipeline';
+import { LAYOUT_PRODUCER, evaluation, type PipelineRequest, type PipelineConfig, type LayoutResult } from './pipeline';
 import { carrierHiddenBy, emptyView, explore, groupColumn, hide, relationshipNotes, searchSteps, withoutTypes, type ExploreResult, type ExploreView } from './core/explore';
 const rows = new Map<string, FactRow>();
 let config: PipelineConfig, meta: GenerationMeta, projection: Projection, visible: Uint8Array;
@@ -57,9 +57,13 @@ function* viewSteps(view: ExploreView, rules: PipelineConfig['declaration']['col
   return { base, group, colors: nextColors, hidden };
 }
 let declarationHash = '', layoutHash = '', hashes: Uint32Array = new Uint32Array();
-function matches(g: GenerationMeta) {
-  return g.format === CACHE_FORMAT && g.declarationHash === declarationHash && g.layoutHash === layoutHash && g.producer === LAYOUT_PRODUCER && g.source === config.source && g.groupLevel === config.groupLevel && g.streamEveryIterations === config.streamEveryIterations && canonical(g.layout) === canonical(config.layout);
+/** Same source, producer and layout parameters: positions are valid warm-start hints even when only
+ * grouping, display columns or other non-topology declaration fields changed. */
+function compatible(g: GenerationMeta) {
+  return g.format === CACHE_FORMAT && g.layoutHash === layoutHash && g.producer === LAYOUT_PRODUCER && g.source === config.source && g.streamEveryIterations === config.streamEveryIterations && canonical(g.layout) === canonical(config.layout);
 }
+/** Exact identity of a persisted generation: compatible, same declaration and group level. */
+const matches = (g: GenerationMeta) => compatible(g) && g.declarationHash === declarationHash && g.groupLevel === config.groupLevel;
 /** Cached paints are the unfiltered declared grouping; a persisted view is reapplied live. */
 function cacheSummary() { return groupSummary(contractGroups(projection, new Uint8Array(projection.paths.length).fill(1), config.groupLevel).projection); }
 function groupSummary(p: GroupProjection): GroupProjection {
@@ -76,8 +80,9 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
     case 'configure': {
       config = r.config;
       declarationHash = await digest(identityDeclaration(layoutDeclaration(config.declaration))); layoutHash = await digest({ layout: config.layout, streamEveryIterations: config.streamEveryIterations });
-      if (saved && !matches(saved.meta)) saved = undefined;
-      return { declarationHash, layoutHash, ingestHash: await digest({ declarationHash, keys: declaredKeys(config.declaration) }) };
+      if (saved && !compatible(saved.meta)) saved = undefined;
+      // held: this worker already has the exact generation, so the view can skip the disk read.
+      return { declarationHash, layoutHash, held: Boolean(saved && matches(saved.meta)), ingestHash: await digest({ declarationHash, keys: declaredKeys(config.declaration) }) };
     }
     case 'rows':
       if (r.reset) rows.clear();
@@ -114,7 +119,7 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       meta = { format: CACHE_FORMAT, key, declarationHash, layoutHash, layout: config.layout, producer: LAYOUT_PRODUCER, source: config.source, groupLevel: config.groupLevel, streamEveryIterations: config.streamEveryIterations };
       hashes = edgeHashes(projection);
       let invalidSaved;
-      if (saved && complete) { const current = new Set(projection.identities); if (saved.identities.some(id => !current.has(id))) { invalidSaved = saved.meta; saved = undefined; } }
+      if (saved && complete) { const current = new Set(projection.identities); if (saved.identities.some(id => !current.has(id))) { if (matches(saved.meta)) invalidSaved = saved.meta; saved = undefined; } }
       return { invalidSaved, meta, nodes: projection.paths.length, edges: projection.source.length, unresolved: projection.unresolved, quarantined: projection.quarantined, dropped: projection.dropped, rows: projection.carrierPaths.length + projection.quarantined.length, ruleNotes: projection.ruleNotes };
     }
     case 'detail': {
@@ -133,25 +138,35 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       const start = performance.now(), seed = Number.parseInt(meta.key.slice(0, 8), 16);
       const stored = saved?.meta.key;
       const exact = complete && saved && matches(saved.meta) && stored === meta.key && saved.identities.length === projection.identities.length && saved.identities.every((id, i) => id === projection.identities[i]);
+      let reused: LayoutResult['reused'] = exact ? 'all' : undefined;
       if (exact) positions = saved!.positions;
       else {
-        let input: LayoutInput;
-        if (complete && saved && matches(saved.meta)) {
+        let input: LayoutInput | undefined;
+        // An unverified build (metadata or links still resolving, e.g. right after an app reload) also
+        // starts from saved positions; it is never persisted and the verified build re-checks identities.
+        if (saved) {
           input = warmLayout({ identities: saved.identities, positions: saved.positions }, projection, seed, config.layout);
-          const old = edgeHashSet(saved.edgeKeys);
-          for (let i = 0; i < hashes.length; i += 2) if (!old.has(`${hashes[i]}:${hashes[i + 1]}`)) { input.movable![projection.source[i / 2]!] = 1; input.movable![projection.target[i / 2]!] = 1; }
+          const old = edgeHashSet(saved.edgeKeys); let added = 0;
+          for (let i = 0; i < hashes.length; i += 2) if (!old.has(`${hashes[i]}:${hashes[i + 1]}`)) { added++; input.movable![projection.source[i / 2]!] = 1; input.movable![projection.target[i / 2]!] = 1; }
           const affected = input.movable!.slice();
           for (let i = 0; i < affected.length; i++) if (affected[i]) for (let j = projection.offsets[i]!; j < projection.offsets[i + 1]!; j++) input.movable![projection.targets[j]!] = 1;
-        } else input = { count: projection.paths.length, source: projection.source, target: projection.target, offsets: projection.offsets, targets: projection.targets, seed };
-        positions = input.movable && !input.movable.some(Boolean) ? input.initial! : await runLayoutStream(input, config.layout, config.streamEveryIterations, p => self.postMessage({ kind: 'positions', revision, positions: p }, { transfer: [p.buffer] }), yieldTask, takeBuffer);
+          // Relaxing a mostly new graph from hints would be worse than a full cold layout. An
+          // unverified build may lack most links, so only verified builds count edge churn (added + removed).
+          const edges = hashes.length / 2, before = saved.edgeKeys.length / 2;
+          if (input.movable!.reduce((n, m) => n + m, 0) * 2 > input.count || (complete && (added * 2 + before - edges) * 2 > Math.max(edges, before))) input = undefined;
+        }
+        if (!input) input = { count: projection.paths.length, source: projection.source, target: projection.target, offsets: projection.offsets, targets: projection.targets, seed };
+        if (input.movable && !input.movable.some(Boolean)) { positions = input.initial!; reused = 'all'; }
+        else { if (input.initial) reused = 'some'; positions = await runLayoutStream(input, config.layout, config.streamEveryIterations, p => self.postMessage({ kind: 'positions', revision, positions: p }, { transfer: [p.buffer] }), yieldTask, takeBuffer); }
       }
       const milliseconds = performance.now() - start;
-      if (complete) saved = { meta, identities: projection.identities, positions, edgeKeys: hashes, groups: cacheSummary() };
-      return { positions: positions.slice(), milliseconds, cached: Boolean(exact), stored };
+      // An exact hit already holds this generation; skip re-contracting its group summary.
+      if (complete && !exact) saved = { meta, identities: projection.identities, positions, edgeKeys: hashes, groups: cacheSummary() };
+      return { positions: positions.slice(), milliseconds, cached: Boolean(exact), reused, stored };
     }
     case 'encode':
       if (!positions) throw new Error('No completed layout');
-      return encodeLayout({ meta, identities: projection.identities, positions, edgeKeys: hashes, groups: cacheSummary() });
+      return encodeLayout({ meta, identities: projection.identities, positions, edgeKeys: hashes, groups: saved?.meta.key === meta.key && saved.groups ? saved.groups : cacheSummary() });
     case 'explore': {
       if (revision !== projectionRevision) throw new Error('Projection generation changed');
       // Colors are presentation-only: a legend edit re-evaluates rules on existing

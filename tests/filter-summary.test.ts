@@ -50,7 +50,12 @@ test('graph information renders icon stat rows, a plain-English issues list and 
   expect(host.querySelector('table')).toBeUndefined();
   renderInformation(host, '', 'ready', { ...report, provisional: false, linksPending: false, unresolved: 0, duplicates: 0, rows: 100, dropped: undefined, layout: { cached: false, ms: 412.4, totalMs: 900 } });
   expect(host.textContent).toContain('No issues found.'); expect(host.querySelector('p')).toBeUndefined();
-  expect(host.querySelectorAll('.graph-ng-stat').at(-1).textContent).toBe('Layout412 ms');
+  expect(host.querySelectorAll('.graph-ng-stat').at(-1).textContent).toBe('LayoutComputed layout in 0.4 s');
+  // The Layout row says whether positions came from the saved layout.
+  for (const [layout, text] of [[{ cached: true, ms: 0 }, 'Reused saved layout'], [{ cached: false, reused: 'all', ms: 3 }, 'Reused saved layout'], [{ cached: false, reused: 'some', ms: 1840 }, 'Reused saved layout, adjusted in 1.8 s'], [{ cached: false, ms: 5800 }, 'Computed layout in 5.8 s']] as const) {
+    renderInformation(host, '', 'ready', { ...report, provisional: false, linksPending: false, unresolved: 0, duplicates: 0, rows: 100, dropped: undefined, layout: { ...layout, totalMs: 900 } });
+    expect(host.querySelectorAll('.graph-ng-stat').at(-1).textContent).toBe(`Layout${text}`);
+  }
   renderInformation(host, 'Projection refresh failed: synthetic', 'error');
   expect(host.querySelector('p').classes.has('graph-ng-explore-error')).toBe(true); expect(host.querySelector('.graph-ng-stat')).toBeUndefined();
 });

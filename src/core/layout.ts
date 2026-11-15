@@ -64,7 +64,7 @@ export class LayoutSolver {
     const old = this.oldForces; this.oldForces = this.forces; this.forces = old;
     const forces = this.forces, history = this.oldForces;
     forces.fill(0);
-    if (this.tree) { this.tree.build(p, mass, o.maxTreeDepth); this.tree.repulse(p, mass, forces, f.scalingRatio, f.barnesHutTheta); }
+    if (this.tree) { this.tree.build(p, mass, o.maxTreeDepth); this.tree.repulse(p, mass, forces, f.scalingRatio, f.barnesHutTheta, movable); }
     else {
       for (let i = 0; i < n; i++) for (let j = 0; j < i; j++) {
         const dx = p[2 * i]! - p[2 * j]!, dy = p[2 * i + 1]! - p[2 * j + 1]!;

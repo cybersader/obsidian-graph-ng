@@ -426,9 +426,10 @@ export class GraphView extends ItemView {
       const configuredSource = this.sourceKey(this.view), config = { declaration: settings.declaration, layout: settings.layout, source: `${this.plugin.linkProducer}/${this.plugin.sourceIdentity}`, groupLevel: settings.groupLevel, predicate: this.predicate, view: this.view, facetValues: settings.explore?.facetValues, streamEveryIterations: settings.streamEveryIterations };
       // A rebuild from the still-requested view retires an earlier "not applied" message.
       const settled = () => { if (this.viewFeedbackText && config.view === this.view) this.viewFeedback(); };
-      const hashes = await this.plugin.pipeline.request<{ declarationHash: string; layoutHash: string; ingestHash: string }>(revision, { kind: 'configure', config });
+      const hashes = await this.plugin.pipeline.request<{ declarationHash: string; layoutHash: string; ingestHash: string; held?: boolean }>(revision, { kind: 'configure', config });
       if (!current()) return;
-      if (settings.persistLayout) {
+      // A worker already holding this exact generation needs no disk read, decode or cached paint.
+      if (settings.persistLayout && !hashes.held) {
         await this.plugin.migrate(revision, hashes.declarationHash);
         const saved = await this.plugin.store.latest(hashes.declarationHash, { source: config.source, layoutHash: hashes.layoutHash, producer: LAYOUT_PRODUCER });
         if (saved) {
@@ -482,13 +483,14 @@ export class GraphView extends ItemView {
       if (!current()) return;
       this.positions = layout.positions;
       this.cacheTrace.push({ expected: result.meta.key, stored: layout.stored, nodes: result.nodes, ...coverage, valid: layout.cached }); if (this.cacheTrace.length > 16) this.cacheTrace.shift();
-      report.layout = { cached: layout.cached, ms: layout.milliseconds, totalMs: performance.now() - start };
+      report.layout = { cached: layout.cached, reused: layout.reused, ms: layout.milliseconds, totalMs: performance.now() - start };
       this.contentEl.dataset.state = 'ready'; this.statusText = this.gpu.available || this.gpu.reason === 'Not probed' ? '' : 'GPU unavailable. Group overview and member lists remain available.';
       this.contentEl.dataset.layoutMs = String(layout.milliseconds); this.contentEl.dataset.cached = String(layout.cached);
-      if (settings.persistLayout && !layout.cached && complete && !this.provisional && (!settings.declaration.edges.some(e => e.kind === 'producer') || this.plugin.adapter.linksResolved)) {
+      if (settings.persistLayout && this.plugin.store.committed !== result.meta.key && complete && !this.provisional && (!settings.declaration.edges.some(e => e.kind === 'producer') || this.plugin.adapter.linksResolved)) {
         const generation = await this.plugin.pipeline.request<BinaryGeneration>(revision, { kind: 'encode' });
         if (!current()) return;
-        await this.plugin.cache(generation, current);
+        // A failed cache write costs the next open a recompute; it must not fail the drawn graph.
+        this.contentEl.dataset.cacheError = await this.plugin.cache(generation, current).then(() => '', String);
       }
     } catch (e) {
       this.plugin.adapter.invalidate(); this.plugin.ingestedHash = ''; this.provisional = true; this.contentEl.dataset.verified = 'false';
