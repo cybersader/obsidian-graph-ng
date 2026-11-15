@@ -167,3 +167,4 @@
 .graph-ng-tier-1 { font-weight:var(--font-semibold, 600); }
 .graph-ng-tier-2 { font-size:var(--font-ui-smaller); color:var(--text-muted); }
 @media (pointer: coarse) { .graph-ng-toolbar button, .graph-ng-explore button, .graph-ng-explore input:not([type=checkbox]):not([type=range]), .graph-ng-explore select { min-height:44px; } .graph-ng-explore .graph-ng-chip-action, .graph-ng-chip-json > summary { min-height:44px; min-width:44px; } }
+.graph-ng-suggestion { flex: 1; min-width: 0; }

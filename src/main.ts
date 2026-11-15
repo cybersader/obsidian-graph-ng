@@ -8,6 +8,7 @@ import { LocalAdapter, type PropertySource } from './adapter/local';
 import { canonical, digest, layoutDeclaration, migrateDeclaration, validateDeclaration, type GraphDeclaration, type Predicate } from './core/declaration';
 import { canonicalView, validateSaved, NO_COLOR, type SavedView, type ExploreResult, type ExploreView, type ViewCamera } from './core/explore';
 import { ExplorePanel } from './explore-panel';
+import { graphStats, recommend, suggestionSettings, type GraphStats, type Suggestion } from './recommend';
 import { categorical, NEUTRAL_GROUPS } from './render-effects';
 import { readTheme } from './render-theme';
 import { renderPath, type RenderProjection } from './render-projection';
@@ -145,19 +146,27 @@ export default class GraphPlugin extends Plugin {
     });
     return this.writes;
   }
-  commitSizing(values: NodeSizingValues, current: () => boolean) {
+  /** Acknowledged candidate write: live settings change only after save and a current check. */
+  private commitCandidate(label: string, build: () => Settings, assign: (next: Settings) => void, current: () => boolean) {
     this.writes = this.writes.catch(() => {}).then(async () => {
-      if (!current()) throw new Error('Sizing view changed');
-      const next = sizingSettings(this.settings, values);
+      if (!current()) throw new Error(`${label} view changed`);
       try {
-        await this.saveData({ settings: settingsForSave(next) });
-        if (!current()) throw new Error('Sizing view changed during save');
-        this.settings.nodeSize = next.nodeSize; this.settings.visuals.degreeSizing = next.visuals.degreeSizing; this.settings.visuals.degreeCurve = next.visuals.degreeCurve; this.settings.nodeSizing = next.nodeSizing;
+        await this.saveData({ settings: settingsForSave(build()) });
+        if (!current()) throw new Error(`${label} view changed during save`);
+        assign(build());
       } catch (error) {
-        try { await this.saveData({ settings: settingsForSave(this.settings) }); } catch { throw new Error('Sizing save failed; restoring saved settings also failed; storage recovery uncertain'); }
+        try { await this.saveData({ settings: settingsForSave(this.settings) }); } catch { throw new Error(`${label} save failed; restoring saved settings also failed; storage recovery uncertain`); }
         throw error;
       }
     }); return this.writes;
+  }
+  commitSizing(values: NodeSizingValues, current: () => boolean) {
+    return this.commitCandidate('Sizing', () => sizingSettings(this.settings, values), next => { this.settings.nodeSize = next.nodeSize; this.settings.visuals.degreeSizing = next.visuals.degreeSizing; this.settings.visuals.degreeCurve = next.visuals.degreeCurve; this.settings.nodeSizing = next.nodeSizing; }, current);
+  }
+  /** Suggested presentation values; mutates in place because live renderers hold this object. */
+  commitSuggestions(list: Suggestion[], current: () => boolean) {
+    list = structuredClone(list);
+    return this.commitCandidate('Graph', () => suggestionSettings(this.settings, list), next => { this.settings.labelDensity = next.labelDensity; Object.assign(this.settings.visuals, next.visuals); }, current);
   }
   /** Narrow bookmark transaction on the single settings queue; never applies graph settings. */
   commitSavedView(saved: SavedView | null, expected: SavedView | null) {
@@ -322,6 +331,13 @@ export class GraphView extends ItemView {
         const renderer = this.detailRenderer, projection = this.projection, scope = this.detailScope, view = this.view, revision = this.activeRevision;
         const current = () => !this.closed && this.detailRenderer === renderer && this.projection === projection && this.detailScope === scope && this.view === view && this.activeRevision === revision;
         try { await this.plugin.commitSizing(values, current); } finally { renderer?.previewSizing(null, true); }
+      },
+      suggestions: () => this.suggestions(),
+      previewSuggestions: list => this.detailRenderer?.previewSettings(list && suggestionSettings(this.plugin.settings, list)),
+      applySuggestions: async list => {
+        const renderer = this.detailRenderer, projection = this.projection, revision = this.activeRevision;
+        try { await this.plugin.commitSuggestions(list, () => !this.closed && this.detailRenderer === renderer && this.projection === projection && this.activeRevision === revision); }
+        finally { renderer?.previewSettings(null); if (this.contentEl.dataset.mode === 'groups') this.showGroups(true); }
       },
       commitSavedView: (saved, expected) => this.plugin.commitSavedView(saved, expected),
       savedViewIssue: saved => this.savedViewIssue(saved), openSavedView: saved => this.openSavedView(saved),
@@ -736,6 +752,13 @@ export class GraphView extends ItemView {
       }
     };
     if (this.exploring) { this.exploreQueued = run; this.plugin.pipeline.cancelEvaluation('explore'); } else void run();
+  }
+  private statsCache?: [RenderProjection, GraphStats];
+  /** Suggestions for the loaded note graph; null until one is open. Stats cached per projection. */
+  private suggestions(): Suggestion[] | null {
+    const r = this.detailRenderer; if (!r) return null;
+    const p = r.projection, c = this.statsCache?.[0] === p ? this.statsCache : this.statsCache = [p, graphStats(p.offsets, p.source.length, r.carrierCount)];
+    return recommend({ ...c[1], groups: this.explored?.groupKeys.length ?? 0 }, this.plugin.settings);
   }
   private async previewExpression(expr: string, context: 'filter' | 'group') {
     const revision = this.activeRevision;

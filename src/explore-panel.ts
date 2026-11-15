@@ -13,6 +13,7 @@ import type { DegreeCurve, Settings, Visuals } from './settings';
 import { progressiveSlider, type Curve } from './progressive-slider';
 /** Slider travel per numeric layout control; typed values outside the span stay unclamped. */
 const PHYSICS_CURVES: Partial<Record<PhysicsKey, Curve>> = { scalingRatio: { min: .1, max: 100, log: true }, gravity: { min: 0, max: 20, k: 3 }, slowDown: { min: .1, max: 100, log: true }, iterations: { min: 1, max: 1000, log: true }, barnesHutTheta: { min: .1, max: 3, k: 2 } };
+import type { Suggestion } from './recommend';
 /** The view owns the worker, renderer and persistence; the panel only edits state. */
 export interface PanelHost {
   settings(): Settings;
@@ -43,6 +44,9 @@ export interface PanelHost {
   previewSizing?(values: NodeSizingValues | null): void;
   applySizing?(values: NodeSizingValues): Promise<void>;
   sizingReadout?(): string;
+  suggestions?(): Suggestion[] | null;
+  previewSuggestions?(list: Suggestion[] | null): void;
+  applySuggestions?(list: Suggestion[]): Promise<void>;
 }
 type Section = 'filters' | 'groups' | 'colors' | 'edges' | 'display' | 'views' | 'physics';
 type Tool = 'views' | 'filters' | 'appearance' | 'layout' | 'information' | 'members';
@@ -92,6 +96,9 @@ export class ExplorePanel {
   private representations = new Map<string, HTMLButtonElement>();
   private workspaceButton: HTMLButtonElement;
   private sizingPreview = false;
+  private suggestPreview = false;
+  private suggestBusy = false;
+  private suggestMessage = '';
   private guards: (() => void)[] = [];
   private groupLimit: number;
   private searchTimer: ReturnType<typeof setTimeout> | undefined;
@@ -148,6 +155,7 @@ export class ExplorePanel {
   private endPreview() {
     // Submitted sizing transactions retain their existing generation/acknowledgement contract.
     if (this.sizingPreview && !this.sizingBusy) { this.host.previewSizing?.(null); this.sizingPreview = false; this.sizingMessage = 'Preview ended · draft not saved'; }
+    if (this.suggestPreview && !this.suggestBusy) { this.host.previewSuggestions?.(null); this.suggestPreview = false; this.suggestMessage = ''; }
   }
   dispose() { this.host.previewSizing?.(null); this.disposed = true; this.expressionTimers.forEach(clearTimeout); clearTimeout(this.searchTimer); this.root.remove(); }
   setState(view: ExploreView) { this.view = view; if (document.activeElement !== this.search) this.search.value = view.query; this.render(); }
@@ -525,11 +533,38 @@ export class ExplorePanel {
     const cancel = actions.createEl('button', { text: 'Restore saved sizing' }); cancel.disabled = this.sizingBusy;
     cancel.onclick = () => { this.host.previewSizing?.(null); this.sizingDraft = undefined; this.sizingPreview = false; this.sizingMessage = 'Saved sizing restored'; this.render(); };
   }
+  /** Opinionated defaults for the loaded graph's shape. Preview is unsaved; only Apply writes. */
+  private suggested(host: HTMLElement) {
+    const list = this.host.suggestions?.(); if (list === undefined) return;
+    const box = host.createDiv({ cls: 'graph-ng-nodes' }); box.createEl('h4', { text: 'Suggested for this graph' });
+    const message = box.createDiv({ cls: 'graph-ng-explore-note', attr: { role: 'status', 'aria-live': 'polite' } }); message.textContent = this.suggestMessage;
+    if (!list) return void this.note(box, 'Open a node graph first.');
+    if (!list.length) return void this.note(box, 'Settings already match.');
+    const apply = async (items: Suggestion[]) => {
+      if (this.suggestBusy || this.disposed) return;
+      try { this.suggestBusy = true; this.render(); await this.host.applySuggestions!(items); this.suggestMessage = 'Saved'; }
+      catch (e) { this.suggestMessage = `Not saved: ${e}`; }
+      finally { this.suggestPreview = false; this.suggestBusy = false; if (!this.disposed) this.render(); }
+    };
+    for (const item of list) {
+      const row = box.createDiv({ cls: 'graph-ng-legend-row' });
+      const text = row.createDiv({ cls: 'graph-ng-suggestion' }); text.createDiv({ text: `${item.label}: ${item.current} → ${item.value}` }); text.createDiv({ cls: 'graph-ng-explore-note', text: item.reason });
+      const one = row.createEl('button', { text: 'Apply', attr: { 'aria-label': `Apply ${item.label}` } }); one.disabled = this.suggestBusy || !this.host.applySuggestions; one.onclick = () => apply([item]);
+    }
+    const actions = box.createDiv({ cls: 'graph-ng-form' });
+    const preview = actions.createEl('button', { text: this.suggestPreview ? 'End preview' : 'Preview suggestions' }); preview.disabled = this.suggestBusy || !this.host.previewSuggestions;
+    preview.onclick = () => {
+      this.suggestPreview = !this.suggestPreview; this.host.previewSuggestions!(this.suggestPreview ? list : null);
+      this.suggestMessage = this.suggestPreview ? 'Preview · unsaved' : ''; this.render();
+    };
+    const all = actions.createEl('button', { text: this.suggestBusy ? 'Saving…' : 'Apply all and save', cls: 'mod-cta' }); all.disabled = this.suggestBusy || !this.host.applySuggestions; all.onclick = () => apply(list);
+  }
   private display(host: HTMLElement) {
     const s = this.settings, v = s.visuals;
     type NumericVisual = { [K in keyof Visuals]: Visuals[K] extends number ? K : never }[keyof Visuals];
     const slider = (key: NumericVisual, label: string, curve: Curve) =>
       this.slider(host, label, curve, () => v[key], value => { v[key] = value; });
+    this.suggested(host);
     this.nodes(host);
     this.note(host, 'Closing ends a preview; drafts stay here. Live controls below save automatically in plugin settings, not named views.');
     host.createEl('h4', { text: 'Live appearance defaults' });

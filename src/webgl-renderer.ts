@@ -556,6 +556,14 @@ export class DetailRenderer {
     const [lo, hi] = this.sizingRange, b = this.baseNodeRadius();
     return hi ? `Ordinary unhighlighted radius: ${(b * lo).toFixed(2)}–${(b * hi).toFixed(2)} CSS px at this zoom${this.nodePreview ? ' · preview, unsaved' : ''}` : 'No ordinary nodes shown';
   }
+  private savedSettings?: Settings;
+  /** Unsaved whole-settings candidate (suggestions); null restores the live settings object and
+   * redraws from it. */
+  previewSettings(next: Settings | null) {
+    this.savedSettings ??= this.settings; this.settings = next ?? this.savedSettings;
+    if (!next) this.savedSettings = undefined;
+    this.refreshVisuals(true);
+  }
   refreshVisuals(labels = false) {
     if (this.disposed) return;
     const carrierChanged = this.labelCarrierSize !== this.settings.visuals.carrierSize;
