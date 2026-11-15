@@ -368,7 +368,7 @@ export class ConnectionCard {
   }
 }
 /** Persistent anchor, exact mask count, explicit reach and a single exit. */
-export function isolationBar(bar: HTMLElement, name: string, hops: number, count: number, expanded: number, partial: boolean, setHops: (hops: number) => void, clear: () => void) {
+export function isolationBar(bar: HTMLElement, name: string, hops: number, count: number, expanded: number, partial: boolean, badges: number, setHops: (hops: number) => void, clear: () => void) {
   bar.textContent = ''; if (!name) return;
   const title = bar.appendChild(el('span', `Only connections of ${name}, reach ${hops}, ${count.toLocaleString()} ${count === 1 ? 'note' : 'notes'}`, 'graph-ng-count'));
   title.setAttribute('role', 'status');
@@ -376,5 +376,6 @@ export function isolationBar(bar: HTMLElement, name: string, hops: number, count
   controls.append(el('span', 'Reach'));
   for (let h = 0; h <= 3; h++) { const b = controls.appendChild(button(String(h), `Reach ${h} hops`, () => setHops(h), 'graph-ng-count')); b.setAttribute('aria-pressed', String(h === hops)); }
   controls.append(closeButton(clear));
-  bar.append(el('small', partial ? 'Partial: scan limit reached' : expanded ? 'Expanded beyond reach. Change reach to reset.' : 'Expand a + badge to reveal hidden neighbours.'));
+  const hint = partial ? 'Partial: scan limit reached' : expanded ? 'Expanded beyond reach. Change reach to reset.' : badges ? 'Expand a + badge to reveal hidden neighbours.' : '';
+  if (hint) bar.append(el('small', hint));
 }

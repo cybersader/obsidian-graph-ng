@@ -1127,7 +1127,7 @@ export class DetailRenderer {
     if (!this.baseVisible[n]) return;
     // Travelling reveals only a hidden target that touches the region (never the traveller's other neighbours) and never moves the anchor.
     const s = this.isolation;
-    if (s && !this.filterVisible[n]) this.isolate(s.node, s.hops, false, s.expanded, [...s.shown, n]);
+    if (s && !this.filterVisible[n]) this.isolate(s.node, s.hops, false, s.expanded, s.shown.includes(n) ? s.shown : [...s.shown, n]);
     if (!this.filterVisible[n]) this.isolate(-1, 1, false); // A history jump outside this region exits it.
     if (!this.filterVisible[n]) return;
     const lensed = this.lensWanted >= 0;
@@ -1163,14 +1163,14 @@ export class DetailRenderer {
   private showIsolation() {
     if (!this.isolationBar) return;
     const s = this.isolation;
-    isolationBar(this.isolationBar, s ? this.name(s.node) : '', s?.hops ?? 1, this.filterVisible.reduce((a, b) => a + b, 0), s ? s.expanded.size + s.shown.length : 0, this.neighbourhoodPartial, h => { this.isolate(s!.node, h); this.isolationBar.querySelectorAll('button')[h]?.focus(); }, () => { this.isolate(-1); this.canvas.focus(); });
+    isolationBar(this.isolationBar, s ? this.name(s.node) : '', s?.hops ?? 1, this.filterVisible.reduce((a, b) => a + b, 0), s ? s.expanded.size + s.shown.length : 0, this.neighbourhoodPartial, this.frontier.size, h => { this.isolate(s!.node, h); this.isolationBar.querySelectorAll('button')[h]?.focus(); }, () => { this.isolate(-1); this.canvas.focus(); });
     for (const b of this.frontierBadges) b.el.remove(); this.frontierBadges = [];
-    for (const [node, count] of this.frontier) {
-      if (this.frontierBadges.length === 24) break;
-      const b = button(`+${count}`, `Expand ${this.name(node)}: ${count} hidden neighbours`, () => this.expandNeighbourhood(node), 'graph-ng-frontier graph-ng-count');
+    // Highest interest first (ties to the lower id); badges precede the minimap and card in Tab order.
+    for (const node of s ? [...this.frontier.keys()].sort(byInterest(this.interestOf(s.node))).slice(0, 24) : []) {
+      const count = this.frontier.get(node)!, b = button(`+${count}`, `Expand ${this.name(node)}: ${count} hidden neighbours`, () => this.expandNeighbourhood(node), 'graph-ng-frontier graph-ng-count');
       b.title = b.getAttribute('aria-label')!;
       const width = Math.max(32, 16 + String(count).length * 7); b.style.width = `${width}px`;
-      this.frontierBadges.push({ node, el: this.overlay.appendChild(b), width });
+      this.miniMap.root.before(b); this.frontierBadges.push({ node, el: b, width });
     }
     if (this.frontier.size > 24) this.isolationBar.append(el('small', 'Up to 24 badges. Select any note to expand.'));
   }

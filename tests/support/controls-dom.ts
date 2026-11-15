@@ -39,6 +39,7 @@ export class ControlElement {
   addClass(cls: string) { this.classes.add(cls); }
   toggleClass(cls: string, on: boolean) { if (on) this.classes.add(cls); else this.classes.delete(cls); }
   empty() { this.text = ''; this.children.forEach(child => { child.parent = undefined; }); this.children = []; }
+  before(node: ControlElement) { node.remove(); const p = this.parent!; node.parent = p; p.children.splice(p.children.indexOf(this), 0, node); }
   remove() { if (this.parent) this.parent.children = this.parent.children.filter(child => child !== this); }
   onblur?: () => void;
   focus() { if (this.disabled) return; if (ControlElement.active !== this) ControlElement.active?.onblur?.(); ControlElement.active = this; }

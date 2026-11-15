@@ -570,6 +570,28 @@ test('neighbourhood frontier badges are bounded, clickable, text-only and indepe
   const base = new Uint8Array(61).fill(1); base[0] = 0; r.setView(base, {});
   expect(r[k('isolation')]).toBeUndefined(); expect(r[k('filterVisible')]).toBe(base);
 });
+test('frontier badges rank by interest (rarer first, ties to the lower id) and precede the minimap and card in Tab order', async () => {
+  // Degrees: 1 → 4, 2 → 3, 3 → 2 and 10 → 2 (a tie with 3).
+  const pairs: [number, number][] = [[0, 1], [1, 4], [1, 5], [1, 6], [0, 2], [2, 7], [2, 8], [0, 10], [10, 11], [0, 3], [3, 9]];
+  const f = await graduated(pairs, 12), { r, k } = f, degree = new Array(12).fill(0);
+  for (const [a, b] of pairs) { degree[a]++; degree[b]++; }
+  r.projection.offsets = Uint32Array.from({ length: 13 }, (_, i) => degree.slice(0, i).reduce((a, b) => a + b, 0));
+  r.isolate(0, 1, false);
+  const badges = r[k('frontierBadges')]; expect(badges.map((b: any) => b.node)).toEqual([3, 10, 2, 1]);
+  const kids = r[k('overlay')].children, at = (e: any) => kids.indexOf(e);
+  expect(badges.map((b: any) => at(b.el))).toEqual([...badges.map((b: any) => at(b.el))].sort((a: number, b: number) => a - b));
+  expect(at(badges[3].el)).toBeLessThan(at(r[k('miniMap')].root)); expect(at(r[k('miniMap')].root)).toBeLessThan(at(r[k('noteCard')]));
+});
+test('Only connections bar offers "Expand a + badge" only when badges are present', async () => {
+  const f = await graduated([[0, 1], [1, 2]], 3), { r, k } = f, bar = () => r[k('isolationBar')].textContent;
+  r.isolate(0, 1, false); expect(r[k('frontierBadges')]).toHaveLength(1); expect(bar()).toContain('Expand a + badge');
+  r.isolate(0, 2, false); expect(r[k('frontierBadges')]).toHaveLength(0); expect(bar()).not.toContain('Expand a + badge');
+});
+test('travelling to a note already in the travel-reveal list does not add it twice', async () => {
+  const f = await graduated([[0, 1], [1, 2]], 3), { r, k } = f;
+  r.isolate(0, 1, false); const s = r[k('isolation')]; s.shown = [2];
+  r[k('travel')](2); expect(r[k('isolation')].shown).toEqual([2]); expect(r.selected).toBe(2);
+});
 test('neighbourhood expansion refuses Canvas overflow before changing mask, anchor or frontier', async () => {
   const f = await graduated([[0, 1], [1, 2], [2, 3]]), { r, k } = f;
   r.isolate(0, 1, false); f.settings.canvasMaxDetailNodes = 2;
