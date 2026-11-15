@@ -376,3 +376,19 @@ test('settings rows: Edges and layout Presets use the name, description and cont
   expect(buttons.children.map((b: any) => b.textContent)).toEqual(['Reset to recommended', 'Groups apart', 'Fill the screen', 'Faster', 'Undo last preset']);
   f.panel.show('views'); expect(headings().filter(t => t === 'Saved views')).toHaveLength(1);
 });
+test('count lists: group legend rows keep the name and the count in separate elements; the count class is tabular and right-aligned', () => {
+  const f = fixture(), long = 'A very long synthetic folder name that must truncate before the number column';
+  const notes = [...Array.from({ length: 1200 }, (_, i) => ({ path: `${long}/N${i}.md`, properties: {} })), { path: 'Short/One.md', properties: {} }];
+  const p = buildProjection(notes, f.settings.declaration);
+  f.state.view.group = { from: 'folder', depth: 1 };
+  f.host.result = () => explore(p, f.settings.declaration, f.state.view, colorGroups(p, f.settings.declaration), 0, { facetValues: 10 });
+  f.host.groupColor = () => '#808080'; f.host.focusGroup = () => {};
+  f.panel.show('filters');
+  const rows = f.panel.body.querySelectorAll('.graph-ng-legend-row').filter((r: ControlElement) => r.querySelector('.graph-ng-legend-name'));
+  const cells = rows.map((r: ControlElement) => [r.querySelector('.graph-ng-legend-name')!.textContent, r.children.find(c => c.classes.has('graph-ng-count'))?.textContent]);
+  expect(cells).toContainEqual([long, (1200).toLocaleString()]); expect(cells).toContainEqual(['Short', '1']);
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8'), rule = css.match(/^\.graph-ng-count \{([^}]*)\}/m)?.[1] ?? '';
+  expect(rule).toContain('font-variant-numeric:tabular-nums'); expect(rule).toContain('text-align:right'); expect(rule).toContain('white-space:nowrap');
+  expect(css).toMatch(/\.graph-ng-count-row \{[^}]*grid-template-columns:minmax\(0,1fr\) auto/);
+  expect(css).not.toContain('graph-ng-legend-count'); f.panel.dispose();
+});

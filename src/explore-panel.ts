@@ -383,7 +383,7 @@ export class ExplorePanel {
       item.createSpan({ cls: 'graph-ng-swatch' }).style.background = this.host.groupColor(i);
       const name = item.createEl('button', { cls: 'graph-ng-legend-name', text: label, attr: { title: `${label} — ${nodes ? 'frame this group' : 'open members'}` } });
       name.onclick = () => this.host.focusGroup(i);
-      item.createSpan({ cls: 'graph-ng-legend-count', text: r.groupVisible[i] === r.groupTotals[i] ? r.groupTotals[i]!.toLocaleString() : `${r.groupVisible[i]!.toLocaleString()}/${r.groupTotals[i]!.toLocaleString()}` });
+      item.createSpan({ cls: 'graph-ng-count', text: r.groupVisible[i] === r.groupTotals[i] ? r.groupTotals[i]!.toLocaleString() : `${r.groupVisible[i]!.toLocaleString()}/${r.groupTotals[i]!.toLocaleString()}` });
       if (nodes) {
         const fold = item.createEl('button', { cls: 'graph-ng-fold clickable-icon', text: collapsed.has(key) ? '⊕' : '⊖', attr: { 'data-focus-key': `group-fold:${key}`, 'aria-label': `${collapsed.has(key) ? 'Expand' : 'Collapse'} ${label}`, 'aria-pressed': String(collapsed.has(key)) } }); fold.disabled = !storable && !collapsed.has(key);
         fold.onclick = () => this.update({ collapsedGroups: collapsed.has(key) ? this.view.collapsedGroups.filter(k => k !== key) : [...this.view.collapsedGroups, key] }, collapsed.has(key) ? () => this.host.focusGroup(i) : undefined);
@@ -425,7 +425,7 @@ export class ExplorePanel {
         swatch.onchange = () => void this.host.setColors(d.colors.map((c, j) => j === i ? { ...c, color: swatch.value } : c));
       } else item.createSpan({ cls: 'graph-ng-swatch', attr: { title: rule.color } }).style.background = rule.color;
       item.createSpan({ cls: 'graph-ng-legend-name', text: rule.name, attr: { title: describePredicate(rule.predicate) } });
-      item.createSpan({ cls: 'graph-ng-legend-count', text: r.colorCounts[i]!.toLocaleString() });
+      item.createSpan({ cls: 'graph-ng-count', text: r.colorCounts[i]!.toLocaleString() });
       const up = item.createEl('button', { cls: 'clickable-icon', text: '↑', attr: { 'aria-label': `Move ${rule.name} earlier (first match wins)` } }); up.disabled = i === 0;
       up.onclick = () => { const next = d.colors.slice(); [next[i - 1], next[i]] = [next[i]!, next[i - 1]!]; void this.host.setColors(next); };
       item.createEl('button', { cls: 'clickable-icon', text: '×', attr: { 'aria-label': `Delete rule ${rule.name}` } }).onclick = () => void this.host.setColors(d.colors.filter((_, j) => j !== i));
@@ -433,7 +433,7 @@ export class ExplorePanel {
     const rest = list.createDiv({ cls: 'graph-ng-legend-row' }), eye = rest.createEl('input', { attr: { type: 'checkbox', 'aria-label': 'Show notes matching no rule' } });
     eye.checked = !hidden.has(NO_COLOR); eye.onchange = () => toggle(NO_COLOR, eye.checked);
     rest.createSpan({ cls: 'graph-ng-legend-name', text: this.settings.visuals.autoPalette ? 'No rule (group colors)' : 'No rule' });
-    rest.createSpan({ cls: 'graph-ng-legend-count', text: r.colorCounts[d.colors.length]!.toLocaleString() });
+    rest.createSpan({ cls: 'graph-ng-count', text: r.colorCounts[d.colors.length]!.toLocaleString() });
     this.note(host, 'First matching rule colors a note; no relayout.');
     let name: HTMLInputElement, color: HTMLInputElement;
     this.predicateForm(host, r, 'Add rule', p => {
@@ -450,7 +450,7 @@ export class ExplorePanel {
       const item = list.createDiv({ cls: 'graph-ng-legend-row' }), eye = item.createEl('input', { attr: { type: 'checkbox', 'aria-label': `Show ${type} relationships` } });
       eye.checked = !hidden.has(type); eye.onchange = () => this.update({ hiddenTypes: eye.checked ? this.view.hiddenTypes.filter(t => t !== type) : [...this.view.hiddenTypes, type] });
       item.createSpan({ cls: 'graph-ng-legend-name', text: type });
-      item.createSpan({ cls: 'graph-ng-legend-count', text: `${r.typeVisible[i]!.toLocaleString()}/${r.typeTotals[i]!.toLocaleString()}` });
+      item.createSpan({ cls: 'graph-ng-count', text: `${r.typeVisible[i]!.toLocaleString()}/${r.typeTotals[i]!.toLocaleString()}` });
     });
     if (!r.types.length) this.note(list, 'No relationships.');
     this.flag(host, 'edgeDirection', 'Show direction (fade from source to target)');

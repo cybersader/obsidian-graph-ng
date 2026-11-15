@@ -147,7 +147,9 @@ export class ConnectionCard {
       for (let i = Math.max(0, at - 3); i < at; i++) trail.append(button(h.name(items[i]!), 'Back to ' + h.name(items[i]!), () => this.step(i - this.history.at)));
     }
     const chips = c.appendChild(el('div', '', 'graph-ng-card-chips'));
-    chips.append(el('span', `${direct.toLocaleString()} direct connection${direct === 1 ? '' : 's'}`, 'graph-ng-summary-chip'), el('span', `${two.second.toLocaleString()}${two.truncated ? '+' : ''} neighbours of neighbours`, 'graph-ng-summary-chip'));
+    // Each chip's number is its own tabular-figure element.
+    const chip = (count: string, text: string) => chips.appendChild(el('span', '', 'graph-ng-summary-chip')).append(el('span', count, 'graph-ng-count'), el('span', text));
+    chip(direct.toLocaleString(), ` direct connection${direct === 1 ? '' : 's'}`); chip(two.second.toLocaleString() + (two.truncated ? '+' : ''), ' neighbours of neighbours');
     // One segmented "Open" control, then an icon+label grid that wraps instead of clipping.
     const act = (a: CardAction) => () => h.act(a, n), open = c.appendChild(el('div', '', 'graph-ng-card-open'));
     open.setAttribute('role', 'group'); open.setAttribute('aria-label', 'Open ' + name);
@@ -163,7 +165,7 @@ export class ConnectionCard {
     for (const g of groups) {
       if (left <= 0) break;
       const header = list.appendChild(el('div', '', 'graph-ng-connection-group')), dir = g.out ? 'outgoing' : 'incoming';
-      header.append(el('span', g.type || 'relationship'), el('span', `${g.out ? '→' : '←'} ${g.nodes.length.toLocaleString()}`));
+      header.append(el('span', g.type || 'relationship'), el('span', `${g.out ? '→' : '←'} ${g.nodes.length.toLocaleString()}`, 'graph-ng-count'));
       header.setAttribute('aria-label', `${g.type || 'relationship'}, ${dir}, ${g.nodes.length}`);
       for (const m of g.nodes.slice(0, left)) {
         const label = h.name(m), row = list.appendChild(button('', `Go to ${label} (${dir})`, () => this.go(m), 'graph-ng-connection')), swatch = row.appendChild(el('span', '', 'graph-ng-swatch'));

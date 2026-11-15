@@ -358,3 +358,8 @@ test('saved settings from before the click-to-focus model drop the removed hover
   expect(() => validateVisuals({ ...upgraded.visuals, hoverDwellMs: 350 })).toThrow('Unknown');
   expect(saved.visuals.hoverDwellMs).toBe(350); // the caller's object is untouched
 });
+test('saved settings with the removed Group overview zoom threshold drop it and still validate', () => {
+  const saved = { ...JSON.parse(JSON.stringify(defaults('t@1'))), lodZoomRatio: 2.5 }, upgraded = upgradeSettings(saved, 't@1');
+  expect('lodZoomRatio' in upgraded).toBe(false); expect(saved.lodZoomRatio).toBe(2.5);
+  expect(() => validateSettings({ ...upgraded, lodZoomRatio: 2.5 } as any)).toThrow('Unknown setting');
+});

@@ -468,6 +468,10 @@ test('graduated production touch tap selects with a text-only connection card an
   const f = await graduated([[0, 1], [1, 2], [2, 3]]), { r, k } = f, card = () => r[k('noteCard')];
   f.tap(1, 'touch'); expect(f.opened).toEqual([]); expect(r.selected).toBe(1); expect(f.actual()).toEqual(f.expected(1));
   const open = control(card(), 'Open'); expect(card().textContent).toContain('2 direct connections'); expect(open.attributes['aria-label']).toBe('Open 1');
+  // Count chips: each number is its own tabular count element; the tier legend counts share the class.
+  const chips = card().children.find((c: any) => c.className === 'graph-ng-card-chips').children;
+  expect(chips.map((c: any) => [c.children[0].className, c.children[0].textContent])).toEqual([['graph-ng-count', '2'], ['graph-ng-count', '1']]);
+  expect(r[k('legendCounts')].every((c: any) => c.className === 'graph-ng-count')).toBe(true);
   open.click(); expect(f.opened).toEqual([1]);
   f.tap(2, 'touch'); expect(f.opened).toEqual([1]); expect(control(card(), 'Open').attributes['aria-label']).toBe('Open 2'); expect(f.actual()).toEqual(f.expected(2));
   r.setView(new Uint8Array([1, 1, 0, 1, 1]), {}); expect(card().textContent).toBe(''); expect(f.tiers()).toEqual([0, 0, 0, 0, 0]);
@@ -972,14 +976,19 @@ test('context menu: right-click on a note, a line and empty canvas shows the reg
   await Bun.sleep(850); await right(EMPTY); expect(menus[2]!.ids).toEqual(['menu-fit', 'menu-clear']);
   menus[2]!.run('menu-clear'); expect(r.selected).toBe(-1);
 });
-test('orientation: a held focus clamps wheel and pinch zoom-out with a Group overview chip; breadcrumb and minimap travel', async () => {
-  const f = await graduated([[0, 1], [1, 2], [2, 3]], 4), { r, k } = f, chip = r[k('limitChip')], crumbs = r[k('crumbTrail')].root, mini = r[k('miniMap')].root, limit = f.settings.lodZoomRatio;
+test('orientation: wheel and pinch zoom-out clamp with a brief Group overview chip, never a switch; breadcrumb and minimap travel', async () => {
+  const f = await graduated([[0, 1], [1, 2], [2, 3]], 4), { r, k } = f, chip = r[k('limitChip')].chip, crumbs = r[k('crumbTrail')].root, mini = r[k('miniMap')].root;
+  const home = r[k('homeRatio')], limit = Math.max(1, home) * 1.8; expect(home).toBeLessThan(limit); // Fit all is inside the limit
   let overviews = 0; r[k('onZoomOut')] = () => { overviews++; };
   const wheel = () => r.input.wheel({ preventDefault() {}, deltaY: 1000, clientX: 400, clientY: 300 });
-  f.tap(0); for (let i = 0; i < 6; i++) wheel();
-  expect(overviews).toBe(0); expect(r.camera.ratio).toBeCloseTo(limit); r[k('placeOverlay')](); expect(chip.hidden).toBe(false);
-  control(chip, 'Group overview').click(); expect(overviews).toBe(1);
-  // Pinch out with a focus also stops at the threshold.
+  // Nothing selected: the wheel clamps too; the chip shows once for the gesture.
+  for (let i = 0; i < 6; i++) wheel();
+  expect(overviews).toBe(0); expect(r.camera.ratio).toBeCloseTo(limit); expect(chip.hidden).toBe(false);
+  chip.hidden = true; wheel(); expect(chip.hidden).toBe(true); // same gesture: not again
+  await Bun.sleep(450); wheel(); expect(chip.hidden).toBe(false); expect(overviews).toBe(0); // a new gesture shows it again
+  control(chip, 'Group overview').click(); expect(overviews).toBe(1); expect(chip.hidden).toBe(true);
+  // With a selection, the wheel and a pinch stop at the same limit.
+  f.tap(0); r.setCamera(r.camera.x, r.camera.y, 1); for (let i = 0; i < 6; i++) wheel(); expect(r.camera.ratio).toBeCloseTo(limit);
   r.setCamera(r.camera.x, r.camera.y, 1); r[k('pointerDown')]({ pointerId: 1, button: 0, clientX: 300, clientY: 300 }); r[k('pointerDown')]({ pointerId: 2, button: 0, clientX: 500, clientY: 300 });
   r[k('pointerMove')]({ pointerId: 2, clientX: 310, clientY: 300 }); expect(r.camera.ratio).toBeCloseTo(limit); expect(overviews).toBe(1);
   r[k('pointerUp')]({ pointerId: 2, clientX: 310, clientY: 300 }); r[k('pointerUp')]({ pointerId: 1, clientX: 300, clientY: 300 });
@@ -1006,9 +1015,6 @@ test('orientation: a held focus clamps wheel and pinch zoom-out with a Group ove
   mini.listeners.get('keydown')({ key: 'ArrowRight', preventDefault() {}, stopPropagation() {} }); expect(r.camera.x).toBeGreaterThan(x);
   r[k('width')] = 400; r[k('placeOverlay')](); expect(mini.hidden).toBe(true);
   r[k('width')] = 800; f.settings.visuals.minimap = false; r[k('placeOverlay')](); expect(mini.hidden).toBe(true);
-  // Nothing selected: the wheel hands over to Group overview as before.
-  r[k('keyDown')]({ key: 'Escape', target: r.canvas, preventDefault() {} }); expect(r.selected).toBe(-1); r[k('placeOverlay')](); expect(chip.hidden).toBe(true);
-  r.setCamera(.5, .5, 1); wheel(); expect(overviews).toBe(2);
 });
 // Wave-4 wiring through the compiled renderer: menu path start, Escape layers, breadcrumb lifetime, hover intent vs. lens and path.
 test('wave-4 wiring: Find path to… in the menu; Escape clears path, card, lens, isolation in order; the trail outlives the card and prunes on filter', async () => {

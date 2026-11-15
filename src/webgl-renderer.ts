@@ -18,7 +18,7 @@ import { highlightOverlay, paintLegend } from './overlays';
 import { findPath, alternatePath, hopRows, pathNotes, OUTCOME, MAX_ALTERNATES, MAX_HOPS, type Hop } from './path-finder';
 import { Minimap, MINIMAP_H, MINIMAP_W, MINIMAP_MIN_CANVAS } from './minimap';
 import { Breadcrumb } from './breadcrumb';
-import { zoomStep, atZoomLimit, zoomChip } from './zoom-limit';
+import { zoomStep, zoomChip, ZOOM_OUT_LIMIT } from './zoom-limit';
 /** Narrowest view left of the graph tools panel that still docks the card beside it (CSS px). */
 const TOOLS_MIN_ROOM = 240;
 /** Hard DOM bound for graduated focus labels, under `labelsMaxPerViewport`. */
@@ -389,7 +389,7 @@ export class DetailRenderer {
   /** Orientation overlays: corner minimap, visited-notes trail and the zoom-out clamp chip. */
   private miniMap: Minimap;
   private crumbTrail: Breadcrumb;
-  private limitChip: HTMLElement;
+  private limitChip: ReturnType<typeof zoomChip>;
   static async create(container: HTMLElement, p: RenderProjection, positions: Float32Array, visible: Uint8Array, settings: Settings, onNode: (i: number) => void, onZoomOut: () => void, colors: Uint32Array, current = () => true, software = false, onUnavailable = onZoomOut, view: RenderView = {}) {
     await yieldTask(); if (!current()) throw new Error('Renderer superseded');
     let renderer: DetailRenderer | undefined;
@@ -1309,7 +1309,6 @@ export class DetailRenderer {
       if (show) { this.moreButton.style.opacity = String(focus); this.moreButton.style.transform = `translate(${Math.round(p.x + at.dx)}px, ${Math.round(p.y + at.dy)}px) translateY(-50%)`; }
     }
     this.placePath(radius, focus);
-    this.limitChip.hidden = !(this.holdsFocus() && atZoomLimit(this.camera.ratio, s.lodZoomRatio));
     this.crumbTrail.update(v.breadcrumb, this.card.history);
     this.miniMap.update({ on: v.minimap && this.width >= MINIMAP_MIN_CANVAS, positions: this.display, visible: this.visible, cx: this.camera.x, cy: this.camera.y, worldW: this.width / this.scale, worldH: this.height / this.scale, focus: this.visible[this.focusNode] ? this.focusNode : -1, directs: this.directs, ink: this.theme.text, accent: this.theme.accent });
     // Greedy vertical nudge keeps coincident hub labels legible (hubs are bounded).
@@ -1321,7 +1320,6 @@ export class DetailRenderer {
       placed.push([x, y, half]); el.style.transform = `translate(-50%, 0) translate(${Math.round(x)}px, ${Math.round(y)}px)`;
     });
   }
-  private holdsFocus() { return this.selected >= 0 || this.lensWanted >= 0; }
   /** Where Group overview leads back to: the selection (or lens), its group and the camera. */
   returnPoint() {
     const n = this.lensWanted >= 0 ? this.lensWanted : this.selected;
@@ -1481,11 +1479,11 @@ export class DetailRenderer {
       setCamera: (x, y, ratio) => this.setCamera(x, y, ratio),
       flyTo: (x, y, ratio, ms) => this.flyTo(x, y, ratio, ms),
       panBy: (dx, dy) => this.setCamera(this.camera.x - dx / this.scale / this.cameraFrame.width, this.camera.y - dy / this.scale / this.cameraFrame.height, this.camera.ratio),
-      zoomAt: (factor, x, y, pinch) => {
-        // A held focus (selection or lens) clamps at the overview threshold instead of leaving the notes.
-        this.flight = undefined; const before = this.scale, s = this.settings, step = zoomStep(this.camera.ratio, factor, s.cameraMinRatio, s.cameraMaxRatio, s.lodZoomRatio, this.holdsFocus());
-        this.camera.ratio = step.ratio;
-        this.camera.x += (x / before - x / this.scale) / this.cameraFrame.width; this.camera.y += (y / before - y / this.scale) / this.cameraFrame.height; this.refresh(); if (step.overview && !pinch) this.onZoomOut();
+      zoomAt: (factor, x, y) => {
+        // Zooming out clamps a little past the whole graph (and Fit all); it never switches views.
+        this.flight = undefined; const before = this.scale, step = zoomStep(this.camera.ratio, factor, this.settings.cameraMinRatio, this.clampRatio(Math.max(1, this.homeRatio) * ZOOM_OUT_LIMIT));
+        this.camera.ratio = step.ratio; if (step.clamped) this.limitChip.hit(performance.now());
+        this.camera.x += (x / before - x / this.scale) / this.cameraFrame.width; this.camera.y += (y / before - y / this.scale) / this.cameraFrame.height; this.refresh();
       },
       setLens: n => this.setLens(n),
       toggleLens: () => this.toggleLens(),
@@ -1514,7 +1512,7 @@ export class DetailRenderer {
   };
   dispose() { clearTimeout(this.sizingTimer);
     if (this.disposed) return; this.disposed = true; this.labelsRevision++; clearTimeout(this.restoreTimer); this.restoreTimer = undefined; cancelAnimationFrame(this.frameId); clearTimeout(this.frameTimer); this.frameTimer = undefined; this.observer.disconnect(); this.media.removeEventListener('change', this.refreshTheme);
-    this.input.detach(this.container); disposeSearch(this.canvas); this.miniMap.dispose();
+    this.input.detach(this.container); this.limitChip.stop(); disposeSearch(this.canvas); this.miniMap.dispose();
     this.canvas.removeEventListener('webglcontextlost', this.contextLost); this.canvas.removeEventListener('webglcontextrestored', this.contextRestored);
     const gl = this.gl; if (gl && !this.lost) { for (const p of this.programs) gl.deleteProgram(p.handle); for (const b of [...this.buffers, ...this.labelBuffers, ...this.discBuffers]) if (b) gl.deleteBuffer(b); for (const v of [...this.vaos, ...this.labelVaos]) gl.deleteVertexArray(v); for (const t of this.textures) gl.deleteTexture(t); }
     gl?.getExtension('WEBGL_lose_context')?.loseContext();

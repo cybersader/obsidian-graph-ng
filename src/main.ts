@@ -520,7 +520,7 @@ export class GraphView extends ItemView {
       this.contentEl.dataset.canvasGroups = String(selected.groups.length);
     };
     previous.onclick = () => { canvasPage--; draw(); }; next.onclick = () => { canvasPage++; draw(); }; draw();
-    this.paginate(projection.groups, (g, host) => { host.createEl('button', { text: `${g.label} (${g.count.toLocaleString()})`, attr: { 'data-group': g.id } }).onclick = () => this.drill(g.id); }, this.panel, 'graph-ng-group-controls');
+    this.paginate(projection.groups, (g, host) => { const b = host.createEl('button', { cls: 'graph-ng-count-row', attr: { 'data-group': g.id, title: g.label } }); b.createSpan({ text: g.label }); b.createSpan({ cls: 'graph-ng-count', text: g.count.toLocaleString() }); b.onclick = () => this.drill(g.id); }, this.panel, 'graph-ng-group-controls');
     const edges = this.section('relationships'); edges.createEl('summary', { text: `Relationships (${projection.groupEdges.length} group pairs)` });
     this.paginate(projection.groupEdges, (edge, host) => {
       host.createEl('button', { text: `${pages.labels.get(edge.a)} ↔ ${pages.labels.get(edge.b)} (${edge.total})`, cls: 'graph-ng-edge' }).onclick = () => this.edgeList(edge, projection, generation, source);

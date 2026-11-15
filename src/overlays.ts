@@ -23,7 +23,7 @@ export function highlightOverlay(overlay: HTMLElement, toggleTier: (row: number)
   const counts: HTMLElement[] = [], pips: HTMLElement[] = [], parts: [HTMLElement, HTMLElement][] = [];
   const rows = TIERS.map(([name], i) => {
     const row = make('button', 'graph-ng-tier-row', legend); row.hidden = true;
-    make('span', 'graph-ng-tier-key graph-ng-tier-key-' + i, row); make('span', 'graph-ng-tier-name', row).textContent = name; counts.push(make('span', 'graph-ng-legend-count', row));
+    make('span', 'graph-ng-tier-key graph-ng-tier-key-' + i, row); make('span', 'graph-ng-tier-name', row).textContent = name; counts.push(make('span', 'graph-ng-count', row));
     row.onclick = () => toggleTier(i);
     return row;
   });

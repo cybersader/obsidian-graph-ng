@@ -190,7 +190,6 @@ export interface Settings {
   workerTimeoutMs: number;
   workerRestarts: number;
   streamEveryIterations: number;
-  lodZoomRatio: number;
   groupLevel: number;
   nodeSize: number;
   nodeSizing: NodeSizingPolicy;
@@ -228,7 +227,7 @@ export function defaults(producer: string): Settings {
     labelCandidateMultiplier: 32, frameBackstopMs: 32, shaderPollMs: 8, contextRestoreTimeoutMs: 5000, cameraMinRatio: .02, cameraMaxRatio: 8,
     ingest: { chunkRows: 2000, budgetMs: 8 }, cache: { directory: '', chunkBytes: 1048576, maxGenerationBytes: 268435456, retainedArtifacts: 8, maxRetainedBytes: 268435456 }, maxProjectionBytes: 67108864, maxSettingsBytes: 16777216,
     declaration: defaultDeclaration(producer), layout: structuredClone(DEFAULT_LAYOUT), debounceMs: 5000,
-    workerTimeoutMs: 120000, workerRestarts: 2, streamEveryIterations: 5, lodZoomRatio: 1.8, groupLevel: 0, nodeSize: 3, nodeSizing: legacySizing(), edgeSize: 0.5, labelSize: 13,
+    workerTimeoutMs: 120000, workerRestarts: 2, streamEveryIterations: 5, groupLevel: 0, nodeSize: 3, nodeSizing: legacySizing(), edgeSize: 0.5, labelSize: 13,
     groupRadius: 26, groupCurveDivisor: 5, groupEdgeHitRadius: 6, groupCurveSamples: 32, groupLoopScale: 1.5, groupRingPadding: 56, labelDensity: 1, labelGridCellSize: 100, labelRenderedSizeThreshold: 6, edgeWidthScale: 0.8, listPageSize: 100,
     backgroundColor: '#141b26', nodeColor: '#7fc8e7', edgeColor: '#43566e', groupColor: '#7fc8e7', textColor: '#edf4ff',
     persistLayout: true, cachedDeclarations: 1, projectionFile: '', groupCanvasPageSize: 6,
@@ -251,7 +250,7 @@ export function validateSettings(v: unknown): asserts v is Settings {
   if (!Number.isSafeInteger(s.cache.chunkBytes) || s.cache.chunkBytes < 4 || s.cache.chunkBytes > 1048576 || !Number.isSafeInteger(s.cache.maxGenerationBytes) || s.cache.maxGenerationBytes < s.cache.chunkBytes) throw new Error('Invalid cache byte budget');
   if (!Number.isSafeInteger(s.maxSettingsBytes) || s.maxSettingsBytes < 1) throw new Error('Invalid settings byte budget');
   if (!Number.isSafeInteger(s.maxProjectionBytes) || s.maxProjectionBytes < 1) throw new Error('Invalid projection byte budget');
-  for (const key of ['frameBackstopMs', 'shaderPollMs', 'contextRestoreTimeoutMs', 'cameraMinRatio', 'cameraMaxRatio', 'debounceMs', 'workerTimeoutMs', 'lodZoomRatio', 'nodeSize', 'edgeSize', 'labelSize', 'groupRadius', 'groupCurveDivisor', 'groupEdgeHitRadius', 'groupCurveSamples', 'groupLoopScale', 'groupRingPadding', 'labelDensity', 'labelGridCellSize', 'labelRenderedSizeThreshold', 'edgeWidthScale'] as const) if (!Number.isFinite(s[key]) || s[key] <= 0) throw new Error(`${key} must be positive`);
+  for (const key of ['frameBackstopMs', 'shaderPollMs', 'contextRestoreTimeoutMs', 'cameraMinRatio', 'cameraMaxRatio', 'debounceMs', 'workerTimeoutMs', 'nodeSize', 'edgeSize', 'labelSize', 'groupRadius', 'groupCurveDivisor', 'groupEdgeHitRadius', 'groupCurveSamples', 'groupLoopScale', 'groupRingPadding', 'labelDensity', 'labelGridCellSize', 'labelRenderedSizeThreshold', 'edgeWidthScale'] as const) if (!Number.isFinite(s[key]) || s[key] <= 0) throw new Error(`${key} must be positive`);
   for (const key of ['canvasMaxDetailNodes', 'canvasMaxDetailEdges', 'labelCandidateMultiplier', 'labelsMaxPerViewport', 'streamEveryIterations', 'groupLevel', 'groupCurveSamples', 'listPageSize', 'groupCanvasPageSize', 'cachedDeclarations'] as const) if (!Number.isSafeInteger(s[key]) || s[key] < (key === 'groupLevel' ? 0 : 1)) throw new Error(`Invalid ${key}`);
   if (s.cameraMinRatio >= s.cameraMaxRatio) throw new Error('cameraMinRatio must be less than cameraMaxRatio');
   for (const key of ['maxProjectionGroups', 'maxProjectionPairs', 'maxProjectionCarriers'] as const) if (!Number.isSafeInteger(s[key]) || s[key] < 0) throw new Error(`${key} must be a nonnegative integer (0 means unlimited)`);
@@ -294,6 +293,8 @@ export function upgradeSettings(input: unknown, producer: string): Settings {
   if (disabled.length) explore.disabledDerived = [...(explore.disabledDerived ?? []), ...disabled].slice(-64);
   // Hover no longer moves the highlight (wave 5): the old hover delay has no meaning and is dropped.
   if (old.visuals && typeof old.visuals === 'object') delete (old.visuals as unknown as Record<string, unknown>).hoverDwellMs;
+  // Zooming out no longer switches to Group overview (wave 6): its threshold is dropped.
+  delete (old as Record<string, unknown>).lodZoomRatio;
   // Saved settings predating degree curves (with or without a visuals block) keep the earlier log-radius appearance until explicit adoption;
   // fresh installs never reach this migration and use defaults().
   const settings = { ...base, ...old, layout: { ...base.layout, ...old.layout, force: { ...base.layout.force, ...old.layout?.force } }, ingest: { ...base.ingest, ...old.ingest }, cache: { ...base.cache, ...old.cache }, declaration: migrateDeclaration(old.declaration ?? base.declaration),

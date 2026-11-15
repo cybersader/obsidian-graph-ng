@@ -1,24 +1,21 @@
 import { test, expect } from 'bun:test';
-import { zoomStep, atZoomLimit } from '../src/zoom-limit';
+import { zoomStep, ZOOM_OUT_LIMIT } from '../src/zoom-limit';
 import { miniFit, toMini, toCamera, viewRect, densityGrid, miniBounds, viewMarker, MINI_MARKER } from '../src/minimap';
 import { crumbs, trail, crumbFade } from '../src/breadcrumb';
 import { NavHistory } from '../src/connection-card';
 
-test('zoom out with a held focus clamps at the overview threshold and never hands over', () => {
-  // min .02, max 8, Group overview threshold 1.8.
-  const step = (ratio: number, factor: number, hold: boolean) => zoomStep(ratio, factor, .02, 8, 1.8, hold);
-  expect(step(1, 1.5, true)).toEqual({ ratio: 1.5, overview: false });
-  expect(step(1.5, 2, true)).toEqual({ ratio: 1.8, overview: false });
-  expect(step(1.8, 2.7, true)).toEqual({ ratio: 1.8, overview: false });
-  // Already past the threshold (a pinch or a framing): zooming out holds, zooming in still works.
-  expect(step(3, 2, true)).toEqual({ ratio: 3, overview: false });
-  expect(step(3, .5, true)).toEqual({ ratio: 1.5, overview: false });
-  // Nothing held: today's handover at the threshold, camera limits still apply.
-  expect(step(1.5, 2, false)).toEqual({ ratio: 3, overview: true });
-  expect(step(1, 1.5, false)).toEqual({ ratio: 1.5, overview: false });
-  expect(step(6, 2, false)).toEqual({ ratio: 8, overview: true });
-  expect(step(.03, .1, true).ratio).toBe(.02);
-  expect(atZoomLimit(1.8, 1.8)).toBe(true); expect(atZoomLimit(1.79, 1.8)).toBe(false); expect(atZoomLimit(4, 1.8)).toBe(true);
+test('zoom out clamps at the limit and never hands over to Group overview', () => {
+  // min .02, limit 1.8.
+  const step = (ratio: number, factor: number) => zoomStep(ratio, factor, .02, 1.8);
+  expect(step(1, 1.5)).toEqual({ ratio: 1.5, clamped: false });
+  expect(step(1.5, 2)).toEqual({ ratio: 1.8, clamped: true });
+  expect(step(1.8, 2.7)).toEqual({ ratio: 1.8, clamped: true });
+  // Already past the limit (a framing): zooming out holds, zooming in still works.
+  expect(step(3, 2)).toEqual({ ratio: 3, clamped: true });
+  expect(step(3, .5)).toEqual({ ratio: 1.5, clamped: false });
+  expect(step(.03, .1)).toEqual({ ratio: .02, clamped: false });
+  // The renderer's limit is the larger of the whole layout and Fit all, times the margin: Fit all is always inside.
+  for (const home of [.4, 1, 1.3, 3]) expect(Math.max(1, home) * ZOOM_OUT_LIMIT).toBeGreaterThan(home);
 });
 
 test('minimap coordinate mapping keeps aspect, centres the frame and round-trips camera coordinates', () => {

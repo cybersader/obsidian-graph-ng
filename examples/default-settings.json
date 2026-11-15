@@ -79,7 +79,6 @@
   "workerTimeoutMs": 120000,
   "workerRestarts": 2,
   "streamEveryIterations": 5,
-  "lodZoomRatio": 1.8,
   "groupLevel": 0,
   "nodeSize": 3,
   "edgeSize": 0.5,
