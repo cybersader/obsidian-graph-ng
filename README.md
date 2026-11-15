@@ -355,6 +355,12 @@ Deterministic tests evaluate actual pre/post shader scalar expressions and produ
 
 **Adapt to zoom** (`visuals.zoomAdapt`, Appearance, on by default) targets the dense-haze case. Edge pixel coverage grows with visible edges, with zoom-out (camera ratio over home ratio: the drawn footprint shrinks faster than edge length) and with a smaller pane (reference 1280×800). Once that exceeds `edgeDensityReference`, edge opacity and width are multiplied by 1/√crowding, never below 0.35, so clusters and hubs show through instead of a uniform wash. Zooming in restores them. The factor is one per-frame scalar passed as a uniform, with no per-edge CPU work. Blending stays coverage-preserving, so edges cannot add up to white. When the view is zoomed out past home and node marks would touch, degree prominence is scaled by zoom^-½ in half-steps of log₂ zoom (at least ¼), so hubs stop covering their neighbours. Cached sizes are recomputed (O(n)) only when that step changes; there is no solver restart. Drawing, picking and label offsets read the same sizes on WebGL and Canvas, and legacy sizing now picks at the drawn radius. Every note and edge stays drawn and pickable; turn the option off for the previous appearance. Native visual acceptance is pending.
 
+### Connection lens (unreleased)
+
+Select or hover a note and press **L**, or select a note and use **Appearance → Connection lens**. Its **direct connections** move into rings around the fixed focus, ordered by relationship type and then name. **L** or **Escape** closes the lens and returns them; **neighbours of neighbours** and **context** stay in place. The lens pins its focus, so hovering a pulled note does not scatter the ring.
+
+The rings keep screen-space spacing as you zoom and use more rings for large degrees. Edges and picking follow the moving notes on WebGL and Canvas2D; reduced motion swaps positions immediately. This is temporary view state: it never changes physics, saved layout positions or named views. The existing graduated-highlight switch still controls dimming. Labels retain their existing viewport budget, and very large rings may need panning; this is not a guarantee that hundreds of names fit on one screen. Native visual/performance acceptance remains pending.
+
 ### Graduated connection highlighting (unreleased)
 
 Also called *graduated relationship highlighting*. Terms used in this section and the code:

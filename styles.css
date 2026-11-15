@@ -222,3 +222,6 @@
 .graph-ng-pip-count { position:relative; font-weight:var(--font-semibold, 600); }
 .graph-ng-ripple { position:absolute; left:0; top:0; pointer-events:none; border-radius:50%; border:2px solid var(--interactive-accent); box-sizing:border-box; }
 @media (prefers-reduced-motion: reduce) { .graph-ng-ripple { display:none; } }
+
+.graph-ng-lens-toggle { min-height: 32px; min-width: 32px; }
+.graph-ng-lens-toggle[aria-pressed="true"] { background: var(--interactive-accent); color: var(--text-on-accent); }

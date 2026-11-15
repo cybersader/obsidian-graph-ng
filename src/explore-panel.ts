@@ -38,6 +38,8 @@ export interface PanelHost {
   openSavedView?(saved: SavedView): Promise<void>;
   setColors(colors: GraphDeclaration['colors']): Promise<void>;
   visualsChanged(labels: boolean): void;
+  lens?(): { active: boolean; available: boolean };
+  toggleLens?(): void;
   groupColor(code: number): string;
   focusGroup(code: number): void;
   fit(): void;
@@ -87,6 +89,7 @@ export class ExplorePanel {
   private sizingMessage = '';
   private sizingBusy = false;
   private sizingOutput?: HTMLElement;
+  private lensButton?: HTMLButtonElement;
   private physicsError = '';
   private physicsBusy = false;
   private disposed = false;
@@ -499,6 +502,12 @@ export class ExplorePanel {
       finally { this.physicsBusy = false; if (!this.disposed) this.render(); }
     };
   }
+  updateLensControl() {
+    if (!this.lensButton) return;
+    const state = this.host.lens?.();
+    this.lensButton.disabled = !state?.available; this.lensButton.setAttribute('aria-pressed', String(!!state?.active));
+    this.lensButton.textContent = state?.active ? 'Connection lens: on' : 'Connection lens: off';
+  }
   updateSizingReadout() { if (this.sizingOutput) this.sizingOutput.textContent = this.host.sizingReadout?.() ?? 'Open a node graph to inspect actual radii.'; }
   private nodes(host: HTMLElement) {
     const group = host.createDiv({ cls: 'graph-ng-nodes' }); group.createEl('h4', { text: 'Nodes' });
@@ -592,6 +601,11 @@ export class ExplorePanel {
     this.flag(host, 'autoPalette', 'Color by group when no rule matches');
     this.flag(host, 'hoverHighlight', 'Graduated connections on hover or selection');
     this.note(host, 'Direct connections brightest, then neighbours of neighbours; the rest fades. Ancestor or framework levels need declared structural relationships; none are inferred.');
+    if (this.host.toggleLens) {
+      this.lensButton = host.createEl('button', { cls: 'graph-ng-lens-toggle', attr: { 'aria-label': 'Connection lens', 'aria-pressed': 'false' } });
+      this.lensButton.onclick = () => { this.host.toggleLens?.(); this.updateLensControl(); };
+      this.updateLensControl(); this.note(host, 'Select a note, then bring its direct connections into rings. Temporary; L toggles, Escape closes.');
+    }
     this.flag(host, 'clickOpens', 'Click opens notes directly (skip the connection card)');
     const find = host.createEl('details', { cls: 'graph-ng-highlight-options' }); find.createEl('summary', { text: 'Finding connections' });
     this.slider(find, 'Minimum highlighted size (px)', { min: 0, max: 16, k: 1.5 }, () => v.tierMinSize, x => { v.tierMinSize = x; });

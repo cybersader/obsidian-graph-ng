@@ -9,6 +9,7 @@ import { carrierAlpha, carrierColors, carrierVisibility, categorical, degreeSize
 import { yieldTask } from './core/scheduler';
 import { generationCurrent } from './physics-controls';
 import { ConnectionCard, connectionGroups, isolationBar, placeCard, reach, button, type CardAction, type CardHost } from './connection-card';
+import { lensConnections, lensLayout, lensAmount, lensCoordinate, pickLens, type LensConnection, type LensPoint } from './lens-layout';
 /** Hard DOM bound for graduated focus labels, under `labelsMaxPerViewport`. */
 const FOCUS_LABELS = 64;
 /** Selection ripple length (ms), and the inset of off-screen pips from the view border (CSS px). */
@@ -27,6 +28,9 @@ uniform sampler2D positions;
 uniform sampler2D palette;
 uniform sampler2D nodeColors;
 uniform sampler2D nodeState;
+uniform sampler2D lensPositions;
+uniform float lensBlend;
+uniform int lensAnchor;
 uniform int positionWidth;
 uniform vec2 center;
 uniform vec2 viewport;
@@ -46,7 +50,14 @@ uniform float minSize;
 uniform float rings;
 uniform float strong;
 ivec2 cell(int id) { return ivec2(id % positionWidth, id / positionWidth); }
-vec2 point(int id) { return (texelFetch(positions, cell(id), 0).xy - center) * scale; }
+vec2 point(int id) {
+ vec2 base = texelFetch(positions, cell(id), 0).xy;
+ if (lensAnchor >= 0) {
+  vec4 lens = texelFetch(lensPositions, cell(id), 0);
+  if (lens.z > .5) base += (texelFetch(positions, cell(lensAnchor), 0).xy + lens.xy / scale - base) * lensBlend;
+ }
+ return (base - center) * scale;
+}
 vec4 color(int id) { return texelFetch(palette, ivec2(id % 256, id / 256), 0); }
 vec4 nodeColor(int id) { return texelFetch(nodeColors, cell(id), 0); }
 vec4 state(int id) { return texelFetch(nodeState, cell(id), 0); }
@@ -181,7 +192,7 @@ void main() {
  float core = 1. - smoothstep(.92, 1., d), ring = smoothstep(.74, .8, d);
  float a = core * tint.a * mix(.62, 1., ring); outputColor = vec4(tint.rgb * mix(.7, 1.08, ring) * a, a);
 }`;
-const UNIFORMS = ['positions', 'palette', 'nodeColors', 'nodeState', 'positionWidth', 'center', 'viewport', 'scale', 'nodeSize', 'hovered', 'selected', 'focusNode', 'focus', 'dim', 'glow', 'edgeSize', 'edgeHovered', 'segments', 'curvature', 'edgeAlpha', 'direction', 'colorMix', 'labelAlpha', 'labelCut', 'atlas', 'outline', 'texel', 'discAlpha', 'hub', 'carrierAlpha', 'carrierFold', 'carrierSize', 'layer', 'tierMask', 'minSize', 'rings', 'strong'];
+const UNIFORMS = ['lensPositions', 'lensBlend', 'lensAnchor', 'positions', 'palette', 'nodeColors', 'nodeState', 'positionWidth', 'center', 'viewport', 'scale', 'nodeSize', 'hovered', 'selected', 'focusNode', 'focus', 'dim', 'glow', 'edgeSize', 'edgeHovered', 'segments', 'curvature', 'edgeAlpha', 'direction', 'colorMix', 'labelAlpha', 'labelCut', 'atlas', 'outline', 'texel', 'discAlpha', 'hub', 'carrierAlpha', 'carrierFold', 'carrierSize', 'layer', 'tierMask', 'minSize', 'rings', 'strong'];
 interface Program { handle: WebGLProgram; uniforms: Record<string, WebGLUniformLocation | null> }
 interface Camera { x: number; y: number; ratio: number }
 /** Runtime view masks from the worker's explore result; colors stay worker-computed. */
@@ -274,6 +285,17 @@ export class DetailRenderer {
   private visibleCarriers = 0;
   private near: number[] = [];
   private focusNode = -1;
+  private lensAnchor = -1;
+  private lensWanted = -1;
+  private lensBlend = 0;
+  private lensMotion?: { from: number; to: number; start: number };
+  private lensPoints = new Map<number, LensPoint>();
+  private lensRows: LensConnection[] = [];
+  private lensBytes = new Float32Array();
+  private lensRadius = 0;
+  private lensLabelWidth = 0;
+  private lensRevision = 0;
+  onLensChange?: () => void;
   private tierSource: number | number[] = -1;
   private focusLevel = 0;
   private focusTarget = 0;
@@ -351,7 +373,7 @@ export class DetailRenderer {
     this.timings.grid = performance.now() - started; started = performance.now();
     this.theme = readTheme(container, settings);
     this.timings.theme = performance.now() - started; started = performance.now();
-    this.canvas = document.createElement('canvas'); this.canvas.className = 'graph-ng-detail'; this.canvas.setAttribute('aria-label', 'Graph notes. Arrows select, Enter opens, R cycles relationships, Alt+Left goes back, Escape clears.'); this.canvas.tabIndex = 0; this.canvas.style.touchAction = 'none'; container.append(this.canvas);
+    this.canvas = document.createElement('canvas'); this.canvas.className = 'graph-ng-detail'; this.canvas.setAttribute('aria-label', 'Graph notes. Arrows select, Enter opens, R cycles relationships, L toggles connection lens, Alt+Left goes back, Escape clears.'); this.canvas.tabIndex = 0; this.canvas.style.touchAction = 'none'; container.append(this.canvas);
     this.overlay = container.createDiv ? container.createDiv({ cls: 'graph-ng-overlay' }) : container.appendChild(Object.assign(document.createElement('div'), { className: 'graph-ng-overlay' }));
     this.hoverLabel = this.overlay.appendChild(Object.assign(document.createElement('div'), { className: 'graph-ng-hover-label' }));
     const div = (className: string) => this.overlay.appendChild(Object.assign(document.createElement('div'), { className }));
@@ -376,7 +398,7 @@ export class DetailRenderer {
   }
   private packState() {
     const packed = positionTexture(this.positions); this.positionWidth = packed.width; this.positionHeight = packed.height;
-    const cells = packed.width * packed.height * 4; this.stateBytes = new Uint8Array(cells); this.colorBytes = new Uint8Array(cells);
+    const cells = packed.width * packed.height * 4; this.stateBytes = new Uint8Array(cells); this.colorBytes = new Uint8Array(cells); this.lensBytes = new Float32Array(cells);
   }
   /** Apply worker view masks without rebuilding the renderer. O(n + m), no worker calls. An active
    * "Show only connections" mask is re-applied over the new host filter. */
@@ -401,6 +423,7 @@ export class DetailRenderer {
     else if (card && card.node >= 0 && card.node === this.selected) card.render();
     if (this.near.length || this.selected >= 0 && this.ready) this.emphasize(true);
     this.recolor(); this.choosePolicy();
+    if (this.lensAnchor >= 0) { if (!render[this.lensAnchor]) this.setLens(-1); this.rebuildLens(); }
     this.updateSizingRange();
     this.timings.view = performance.now() - started;
     if (!upload) return;
@@ -543,8 +566,8 @@ export class DetailRenderer {
     await this.waitForResize(); this.resize(true);
     const uploadStart = performance.now(), max = gl.getParameter(gl.MAX_TEXTURE_SIZE);
     if (this.positionWidth > max || this.positionHeight > max || this.theme.palette.length / 1024 > max) throw new Error('GL_TEXTURE_LIMIT');
-    for (let unit = 0; unit < 5; unit++) this.texture(unit);
-    this.uploadPalette();
+    for (let unit = 0; unit < 6; unit++) this.texture(unit);
+    this.uploadPalette(); this.uploadLens();
     for (let i = 0; i < 2; i++) { const vao = gl.createVertexArray()!; this.vaos.push(vao); gl.bindVertexArray(vao);
       if (i === 0) { this.integer(0, this.projection.source); this.integer(1, this.projection.target); this.integer(2, this.edgeOn); this.integer(3, this.edgeTier); }
       else { this.buffer(this.sizes); gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 1, gl.FLOAT, false, 0, 0); gl.vertexAttribDivisor(0, 1); }
@@ -603,6 +626,7 @@ export class DetailRenderer {
     this.recolor(); this.choosePolicy(); this.updateSizingRange();
     if (this.gl && this.ready && !this.lost) { this.uploadPalette(); this.bytes(3, this.colorBytes); this.uploadDiscs(); }
     if (font !== this.theme.font && this.ready) void this.prepareLabels(() => !this.disposed).catch(() => {});
+    if (this.lensAnchor >= 0) this.rebuildLens();
     this.refresh();
   };
   /** Live display knobs: degree sizes may change; everything else is a uniform. */
@@ -652,6 +676,7 @@ export class DetailRenderer {
     const rebuildCarrier = carrierChanged && this.sizingSettings().nodeSizing?.policy === 'predictable';
     if (rebuildCarrier) this.queueSizingLabels();
     this.uploadSizes(); this.recolor(); this.choosePolicy(); if (this.ready) this.emphasize(true);
+    if (this.lensAnchor >= 0) this.rebuildLens();
     if (this.gl && this.ready && !this.lost) this.uploadView();
     if (labels && !rebuildCarrier && this.ready) void this.prepareLabels(() => !this.disposed).catch(() => {});
     this.refresh();
@@ -741,7 +766,77 @@ export class DetailRenderer {
   /** Test/host seam; not a second graph or renderer object model. */
   path(id: number) { return renderPath(this.projection, id); }
   private name(n: number) { const path = this.path(n); return path.slice(path.lastIndexOf('/') + 1).replace(/\.md$/, '').slice(0, 128); }
-  screenPoint(id: number) { return { x: (this.display[id * 2]! - this.centerX) * this.scale + this.width / 2, y: (this.display[id * 2 + 1]! - this.centerY) * this.scale + this.height / 2 }; }
+  /** Temporary view state, deliberately not saved to named views or physics/layout state. */
+  get lensNode() { return this.lensWanted; }
+  toggleLens() { this.setLens(this.lensWanted >= 0 ? -1 : this.hovered >= 0 ? this.hovered : this.selected); }
+  setLens(node: number) {
+    if (this.disposed) return;
+    if (!Number.isInteger(node) || node < -1 || node >= this.visible.length) throw new Error('LENS_NODE_INDEX');
+    if (!this.visible[node]) node = -1;
+    if (node === this.lensWanted) return;
+    const now = performance.now();
+    if (this.lensMotion) this.lensBlend = lensAmount(this.lensMotion.from, this.lensMotion.to, now - this.lensMotion.start, 220, reducedMotion());
+    this.lensWanted = node;
+    // A different target first returns the old ring, then opens the new one. Rapid toggles
+    // reverse from the current amount rather than snapping or leaking old overrides.
+    if (node !== this.lensAnchor && this.lensBlend > 0) this.lensMotion = { from: this.lensBlend, to: 0, start: now };
+    else {
+      if (node !== this.lensAnchor) { this.lensAnchor = node; this.rebuildLens(); }
+      this.lensMotion = { from: this.lensBlend, to: node >= 0 ? 1 : 0, start: now };
+    }
+    this.animateLens(now); this.emphasize(); this.onLensChange?.(); this.refresh();
+  }
+  private animateLens(now: number): boolean {
+    const motion = this.lensMotion; if (!motion) return false;
+    this.lensBlend = lensAmount(motion.from, motion.to, now - motion.start, 220, reducedMotion());
+    if (this.lensBlend !== motion.to) return true;
+    this.lensMotion = undefined;
+    if (!motion.to) {
+      this.lensAnchor = this.visible[this.lensWanted] ? this.lensWanted : -1;
+      this.lensWanted = this.lensAnchor; this.rebuildLens(); this.emphasize(); this.onLensChange?.();
+      if (this.lensAnchor >= 0) {
+        this.lensMotion = { from: 0, to: 1, start: now };
+        return reducedMotion() ? this.animateLens(now) : true;
+      }
+    }
+    return false;
+  }
+  /** Collect/sort once per explicit target or view change. Neither hover nor frames traverse edges. */
+  private rebuildLens() {
+    this.lensRows = lensConnections(this.lensAnchor, this.projection, this.edges, this.edgeOn, this.filterVisible, this.visible, n => this.name(n));
+    this.lensLabelWidth = 0;
+    if (this.lensRows.length) {
+      const m = this.measure ??= document.createElement('canvas').getContext('2d')!;
+      m.font = tierFont(1, this.settings.labelSize, this.settings.visuals.labelTierScale, this.theme.font);
+      for (const row of this.lensRows) this.lensLabelWidth = Math.max(this.lensLabelWidth, m.measureText(row.name).width);
+    }
+    this.layoutLens(true);
+  }
+  /** CSS-pixel rings survive zoom. Reflow only at a conservative radius bucket change,
+   * not every zoom frame; sorting and text measurement remain cached. */
+  private layoutLens(force = false) {
+    if (!(this.lensAnchor >= 0) && !force) return;
+    const s = this.sizingSettings(), r = this.lensAnchor >= 0 ? 2 ** Math.ceil(Math.log2(Math.max(1, (this.baseNodeRadius() * (1 + s.visuals.degreeSizing) * Math.max(1, s.visuals.carrierSize) + 2) * 1.6))) : 0;
+    if (!force && r === this.lensRadius) return;
+    this.lensRadius = r;
+    const previous = this.lensPoints;
+    this.lensPoints = lensLayout(this.lensRows, Math.max(40, Math.hypot(this.lensLabelWidth + 2 * r + 12, Math.max(2 * r, s.labelSize * 1.5 + 4))), Math.max(80, 2 * r + 20));
+    const changed = new Set([...previous.keys(), ...this.lensPoints.keys()]);
+    for (const n of changed) { const point = this.lensPoints.get(n), k = n * 4; this.lensBytes[k] = point?.x ?? 0; this.lensBytes[k + 1] = point?.y ?? 0; this.lensBytes[k + 2] = point ? 1 : 0; }
+    this.lensRevision++;
+    if (this.gl && this.ready && !this.lost) this.uploadLens(changed);
+  }
+  private uploadLens(changed?: Iterable<number>) {
+    const gl = this.gl!; gl.activeTexture(gl.TEXTURE0 + 5); gl.bindTexture(gl.TEXTURE_2D, this.textures[5]!);
+    if (!changed) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, this.positionWidth, this.positionHeight, 0, gl.RGBA, gl.FLOAT, this.lensBytes);
+    else for (const n of changed) gl.texSubImage2D(gl.TEXTURE_2D, 0, n % this.positionWidth, Math.floor(n / this.positionWidth), 1, 1, gl.RGBA, gl.FLOAT, this.lensBytes.subarray(n * 4, n * 4 + 4));
+  }
+  /** Effective render coordinate; never writes worker/layout or collapsed-view positions. */
+  private renderCoordinate(id: number, axis: 0 | 1, amount = this.lensBlend) {
+    const base = this.display[id * 2 + axis]!, point = this.lensPoints?.get(id);
+    return point && this.lensAnchor >= 0 ? lensCoordinate(base, this.display[this.lensAnchor * 2 + axis]!, axis ? point.y : point.x, this.scale, amount) : base;
+  }
+  screenPoint(id: number) { return { x: (this.renderCoordinate(id, 0) - this.centerX) * this.scale + this.width / 2, y: (this.renderCoordinate(id, 1) - this.centerY) * this.scale + this.height / 2 }; }
   private worldPoint(x: number, y: number) { return { x: (x - this.width / 2) / this.scale + this.centerX, y: (y - this.height / 2) / this.scale + this.centerY }; }
   /** Edge-note level of detail at this zoom: LOD visibility and the drawn alpha. */
   carrierLevel(zoom = this.camera.ratio / this.homeRatio) { const v = this.settings.visuals; return { visibility: carrierVisibility(zoom, v.carrierLodNear, v.carrierLodFar, v.carrierLod), alpha: carrierAlpha(v, this.visibleCarriers, zoom) }; }
@@ -751,6 +846,11 @@ export class DetailRenderer {
     // The graduated focus grows 60% (direct notes 25%): hit targets follow the drawn size.
     const f = s.visuals.hoverHighlight ? this.focusLevel : 0, grow = (n: number) => tierNode(this.stateBytes[n * 4 + 1]! / 255, true, n === this.focusNode, f, 0)[1];
     const lifted = this.pickTiered(x, y, w, f); if (lifted >= 0) return lifted;
+    if (this.lensPoints?.size) {
+      const legacy = s.nodeSizing.policy === 'legacy', radius = (legacy ? s.nodeSize * (1 + s.visuals.degreeSizing) * (1 + .6 * f) + 4 : this.baseNodeRadius() * (1 + s.visuals.degreeSizing) * Math.max(1, s.visuals.carrierSize) * (1 + .6 * f) + 6) / this.scale;
+      const carriers = this.carrierLevel().visibility >= .25;
+      return pickLens(this.picker, this.lensPoints, w.x, w.y, radius, n => ({ x: this.renderCoordinate(n, 0), y: this.renderCoordinate(n, 1) }), n => legacy ? radius : (this.drawnRadius(n, n === this.selected || n === this.hovered, f) + 4) / this.scale, n => !!this.visible[n] && (carriers || !this.projection.carrierNodes[n]));
+    }
     if (s.nodeSizing.policy === 'legacy') return this.picker.pick(w.x, w.y, (s.nodeSize * (1 + s.visuals.degreeSizing) * (1 + .6 * f) + 4) / this.scale, this.carrierCount && this.carrierLevel().visibility < .25 ? this.projection.carrierNodes : undefined);
     const base = this.baseNodeRadius(), max = (base * (1 + s.visuals.degreeSizing) * Math.max(1, s.visuals.carrierSize) * (1 + .6 * f) + 6) / this.scale;
     let picked = -1, distance = Infinity;
@@ -784,11 +884,15 @@ export class DetailRenderer {
     const w = this.worldPoint(x, y), radius = this.grid.cell, p = this.projection;
     let best = -1, distance = this.settings.groupEdgeHitRadius / this.scale, budget = 32768;
     // Deliberately budgeted incident-edge picking, not an O(m) all-segment scan or GPU readback.
-    this.picker.visit(w.x, w.y, radius, node => {
+    const visit = (node: number) => {
       for (let j = this.edges.offsets[node]!; j < this.edges.offsets[node + 1]! && budget-- > 0; j++) { const e = this.edges.edges[j]!, a = p.source[e]!, b = p.target[e]!; if (!this.edgeDrawn(e)) continue;
-        const d = segmentDistance(w.x, w.y, this.display[a * 2]!, this.display[a * 2 + 1]!, this.display[b * 2]!, this.display[b * 2 + 1]!); if (d < distance) { best = e; distance = d; }
+        const d = segmentDistance(w.x, w.y, this.renderCoordinate(a, 0), this.renderCoordinate(a, 1), this.renderCoordinate(b, 0), this.renderCoordinate(b, 1)); if (d < distance) { best = e; distance = d; }
       }
-    }); return best;
+    };
+    // Include moved endpoints outside the original grid; retain the existing incident budget.
+    if (this.lensAnchor >= 0) visit(this.lensAnchor);
+    for (const node of this.lensPoints?.keys() ?? []) { if (budget <= 0) break; visit(node); }
+    this.picker.visit(w.x, w.y, radius, node => { if (node !== this.lensAnchor && !this.lensPoints?.has(node)) visit(node); }); return best;
   }
   private edgeDrawn = (e: number) => !!this.edgeOn[e] && !!this.filterVisible[this.projection.source[e]!] && !!this.filterVisible[this.projection.target[e]!];
   /** Drawn rows between the picked edge's endpoints, either direction, picked edge first (bounded). */
@@ -819,7 +923,8 @@ export class DetailRenderer {
   private noteCaption(n: number) { return this.path(n).split('/').pop()!.replace(/\.md$/, '') + (n === this.focusNode ? (this.tierPartial & 1 ? ' (2-hop context truncated)' : '') + (this.tierPartial & 2 ? ' (group context truncated)' : '') : ''); }
   /** Selection drives the persistent focus. Touch and keyboard selections show the card; only its
    * explicit Open button (or Enter on the canvas) opens the note. */
-  private selectNote(node: number, card?: boolean) {
+  private selectNote(node: number, card?: boolean, keepLens = false) {
+    if (node < 0 && this.lensAnchor >= 0 && !keepLens) this.setLens(-1);
     this.selected = node; this.selectedEdges = []; this.edgeAnchor = -1; this.edgeToken++; this.cue = -1; if (card) this.hovered = -1; this.emphasize(); this.startRipple(node); this.refresh();
     if (card && node >= 0) this.card.show(node); else this.card.hide();
   }
@@ -836,7 +941,7 @@ export class DetailRenderer {
       act: (a, n) => this.cardAction(a, n),
       travel: n => this.travel(n),
       cue: n => { this.cue = n; this.refresh(); },
-      close: () => { this.selectNote(-1); this.canvas.focus(); },
+      close: () => { this.selectNote(-1, false, true); this.canvas.focus(); },
     };
   }
   private cardAction(action: CardAction, n: number) {
@@ -877,7 +982,7 @@ export class DetailRenderer {
   }
   private showIsolation() { const s = this.isolation; if (this.isolationBar) isolationBar(this.isolationBar, s ? this.name(s.node) : '', s?.hops ?? 1, h => this.isolate(s!.node, h), () => this.isolate(-1)); }
   /** Hover outranks the persistent selection; the hover-highlight switch turns both off. */
-  private emphasize(immediate?: boolean) { const v = this.hovered < 0 ? this.selected : this.hovered, on = this.settings.visuals.hoverHighlight; this.setFocus(on ? v : -1, immediate, on && v < 0 && this.selectedEdges?.length ? this.selectedEdges : undefined); }
+  private emphasize(immediate?: boolean) { const v = this.lensAnchor >= 0 ? this.lensAnchor : this.hovered < 0 ? this.selected : this.hovered, on = this.settings.visuals.hoverHighlight; this.setFocus(on ? v : -1, immediate, on && v < 0 && this.selectedEdges?.length ? this.selectedEdges : undefined); }
   /** Select a relationship (never opens). The card lists every drawn parallel row between the pair;
    * rule names and relationship-note paths arrive from the worker and fill in when resolved. */
   private selectEdge(edge: number, anchor = -1) {
@@ -914,7 +1019,7 @@ export class DetailRenderer {
   }
   /** Advance bounded animations; returns true while another frame is needed. */
   private animate(now: number) {
-    let more = false;
+    let more = this.animateLens(now);
     if (this.flight) {
       const f = this.flight, t = Math.min(1, (now - f.start) / f.ms), e = easeInOut(t);
       this.camera.x = f.from.x + (f.to.x - f.from.x) * e; this.camera.y = f.from.y + (f.to.y - f.from.y) * e;
@@ -936,7 +1041,7 @@ export class DetailRenderer {
     if (this.dpr !== (window.devicePixelRatio || 1)) this.resize();
     const drawStart = performance.now(), more = this.animate(drawStart);
     const gl = this.gl, p = this.theme.palette, zoom = this.camera.ratio / this.homeRatio, v = this.settings.visuals;
-    this.adaptSizes(zoom);
+    this.adaptSizes(zoom); this.layoutLens();
     if (!gl) { this.drawCanvas(); this.placeOverlay(); if (more) this.refresh(); return; }
     gl.viewport(0, 0, this.canvas.width, this.canvas.height); gl.clearColor(p[8]! / 255, p[9]! / 255, p[10]! / 255, 1); gl.clear(gl.COLOR_BUFFER_BIT);
     const lod = this.lodLevel(), policy = this.policy, fade = labelFade(this.settings.nodeSize, this.settings.labelRenderedSizeThreshold, this.camera.ratio, LABEL_RATIOS, v.labelFade, lod);
@@ -953,7 +1058,7 @@ export class DetailRenderer {
     if (this.atlas && fade.alpha > .004) passes.push([2, -1, 0]);
     for (const [i, vaoIndex, hub, layer = 1] of passes) {
       const program = this.programs[i]!, u = program.uniforms;
-      gl.useProgram(program.handle); gl.uniform1i(u.positions!, 0); gl.uniform1i(u.palette!, 1); gl.uniform1i(u.atlas!, 2); gl.uniform1i(u.nodeColors!, 3); gl.uniform1i(u.nodeState!, 4); gl.uniform1i(u.positionWidth!, this.positionWidth);
+      gl.useProgram(program.handle); gl.uniform1i(u.lensPositions!, 5); gl.uniform1f(u.lensBlend!, this.lensBlend); gl.uniform1i(u.lensAnchor!, this.lensAnchor); gl.uniform1i(u.positions!, 0); gl.uniform1i(u.palette!, 1); gl.uniform1i(u.atlas!, 2); gl.uniform1i(u.nodeColors!, 3); gl.uniform1i(u.nodeState!, 4); gl.uniform1i(u.positionWidth!, this.positionWidth);
       gl.uniform2f(u.center!, this.centerX, this.centerY); gl.uniform2f(u.viewport!, this.width, this.height); gl.uniform1f(u.scale!, this.scale); gl.uniform1f(u.nodeSize!, nodeSize); gl.uniform1f(u.edgeSize!, edgeWidth); gl.uniform1i(u.hovered!, this.hovered); gl.uniform1i(u.selected!, this.selected); gl.uniform1i(u.focusNode!, this.focusNode); gl.uniform1i(u.edgeHovered!, this.hoveredEdge);
       gl.uniform1f(u.focus!, focus); gl.uniform1f(u.dim!, v.dimOpacity); gl.uniform1f(u.glow!, layer ? policy.glow : 0);
       gl.uniform1f(u.carrierAlpha!, notes.alpha); gl.uniform1f(u.carrierFold!, notes.visibility); gl.uniform1f(u.carrierSize!, v.carrierSize); gl.uniform1i(u.layer!, layer);
@@ -983,16 +1088,16 @@ export class DetailRenderer {
     const lod = this.lodLevel(), s = this.settings, tier = v.labelTierScale;
     if (node >= 0) this.hoverLabel.style.font = node === ego && focus ? tierFont(0, s.labelSize, tier, this.theme.font) : '';
     if (!this.near.length) { this.ranked = []; this.moreAt = undefined; }
-    else if ([lod, this.display, this.fit, this.width, this.height].some((x, i) => x !== this.rankedKey[i])) {
+    else if ([lod, this.display, this.fit, this.width, this.height, this.lensRevision].some((x, i) => x !== this.rankedKey[i])) {
       // Placement measures each bounded candidate once with the font and text the DOM label then uses, at the radius offset it is shown with.
       const k = this.scale * this.camera.ratio / LABEL_RATIOS[lod]!, budget = Math.max(1, Math.min(s.labelsMaxPerViewport, FOCUS_LABELS, Math.floor(this.width * this.height / s.labelGridCellSize ** 2 * s.labelDensity))), m = this.measure ??= document.createElement('canvas').getContext('2d')!;
       const pad = v.labelPlates ? 16 : 4, text = (n: number, rank: number) => n === ego ? this.noteCaption(n) : middleTruncate(this.name(n), LABEL_CHARS[rank]!);
       const { list, direct } = rankFocus(ego, this.near, this.stateBytes, this.visible, this.projection.offsets, budget * s.labelCandidateMultiplier);
-      const items = list.map(([n, rank]) => { m.font = tierFont(rank, s.labelSize, tier, this.theme.font); const h = tierType(rank, s.labelSize, tier).size * 1.5 + 4; return { node: n, rank, x: this.display[n * 2]! * k, y: this.display[n * 2 + 1]! * k, r: radius(n), w: m.measureText(text(n, rank)).width + pad, h }; });
+      const items = list.map(([n, rank]) => { m.font = tierFont(rank, s.labelSize, tier, this.theme.font); const h = tierType(rank, s.labelSize, tier).size * 1.5 + 4; return { node: n, rank, x: this.renderCoordinate(n, 0, 1) * k, y: this.renderCoordinate(n, 1, 1) * k, r: radius(n), w: m.measureText(text(n, rank)).width + pad, h }; });
       m.font = tierFont(1, s.labelSize, tier, this.theme.font);
       const layout = radialLabels(items, budget, DIRECT_LABELS, ego >= 0 ? direct : 0, m.measureText(`+${direct} more`).width + 24, 32);
       this.ranked = layout.slots.filter(x => x.node !== ego); this.moreAt = layout.more;
-      this.rankedKey = [lod, this.display, this.fit, this.width, this.height];
+      this.rankedKey = [lod, this.display, this.fit, this.width, this.height, this.lensRevision];
       this.overlay.className = 'graph-ng-overlay' + (v.labelPlates ? ' graph-ng-plates' : '');
       const pool = (list: HTMLElement[], count: number, cls: string) => { while (list.length > count) list.pop()!.remove(); while (list.length < count) list.push(this.overlay.appendChild(Object.assign(document.createElement('div'), { className: cls }))); };
       pool(this.tierLabels, this.ranked.length, ''); pool(this.tierLeaders, this.ranked.filter(x => x.leader).length, 'graph-ng-leader');
@@ -1110,7 +1215,7 @@ export class DetailRenderer {
   }
   private drawCanvas() {
     const ctx = this.ctx!, s = this.settings, c = this.colorBytes, focus = s.visuals.hoverHighlight ? this.focusLevel : 0, dim = s.visuals.dimOpacity, g = this.stateBytes;
-    const x = (n: number) => (this.display[n * 2]! - this.centerX) * this.scale + this.width / 2, y = (n: number) => (this.display[n * 2 + 1]! - this.centerY) * this.scale + this.height / 2;
+    const x = (n: number) => (this.renderCoordinate(n, 0) - this.centerX) * this.scale + this.width / 2, y = (n: number) => (this.renderCoordinate(n, 1) - this.centerY) * this.scale + this.height / 2;
     ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0); ctx.fillStyle = this.theme.background; ctx.fillRect(0, 0, this.width, this.height); ctx.strokeStyle = this.theme.edge; ctx.lineWidth = s.edgeSize;
     // The edge shader's tier weights: rest, neighbours of neighbours, then direct strokes on top.
@@ -1195,9 +1300,13 @@ export class DetailRenderer {
   /** Keyboard path: arrows select the nearest note in that screen direction, Enter opens, Escape clears. */
   private keyDown = (e: KeyboardEvent) => {
     const d = ['Right', 'Down', 'Left', 'Up'].indexOf(e.key.slice(5));
-    if (e.key === 'Escape' && (this.selected >= 0 || this.selectedEdges.length)) { this.selectNote(-1); this.canvas.focus(); }
+    // Escape layers: the card (or relationship card) first, then the lens, then a card-less selection, then "Only connections".
+    if (e.key === 'Escape' && (this.card.node >= 0 || this.selectedEdges.length)) { this.selectNote(-1, false, true); this.canvas.focus(); }
+    else if (e.key === 'Escape' && this.lensWanted >= 0) { this.setLens(-1); this.canvas.focus(); }
+    else if (e.key === 'Escape' && this.selected >= 0) { this.selectNote(-1); this.canvas.focus(); }
     else if (e.key === 'Escape' && this.isolation) this.isolate(-1);
     else if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight') && this.card.step(e.key === 'ArrowLeft' ? -1 : 1)) { /* handled */ }
+    else if (!e.altKey && !e.ctrlKey && !e.metaKey && !e.repeat && (e.key === 'l' || e.key === 'L')) { this.toggleLens(); }
     else if ((e.key === 'r' || e.key === 'R') && this.cycleEdge(e.shiftKey ? -1 : 1)) { /* handled */ }
     else if (e.target !== this.canvas) return;
     else if (e.key === 'Enter' && this.filterVisible[this.selected]) this.onNode(this.selected);

@@ -46,10 +46,11 @@ afterEach(() => {
   expect(frameCallbacks.size).toBe(0);
   expect(backstops.size).toBe(0);
 });
+let fixtureReducedMotion = false;
 const rendererWindow = { devicePixelRatio: 1 };
 const module = { exports: {} as any };
 const obsidian = { ItemView: class {}, Plugin: class {}, PluginSettingTab: class {}, Setting: class {}, TFile: class {}, apiVersion: 'synthetic', Notice: class {} };
-vm.runInNewContext(source + `\n;module.exports.__renderer=${rendererName};`, { module, exports: module.exports, require: () => obsidian, console, structuredClone, setTimeout: fixtureTimeout, clearTimeout: clearFixtureTimeout, performance, TextEncoder, TextDecoder, MessageChannel, document, window: rendererWindow, devicePixelRatio: 1, getComputedStyle: () => ({ getPropertyValue: () => '' }), matchMedia: () => ({ addEventListener() {}, removeEventListener() {} }), ResizeObserver: class { observe() {} disconnect() {} }, requestAnimationFrame: requestFrame, cancelAnimationFrame: cancelFrame }, { filename: 'production-main.js' });
+vm.runInNewContext(source + `\n;module.exports.__renderer=${rendererName};`, { module, exports: module.exports, require: () => obsidian, console, structuredClone, setTimeout: fixtureTimeout, clearTimeout: clearFixtureTimeout, performance, TextEncoder, TextDecoder, MessageChannel, document, window: rendererWindow, devicePixelRatio: 1, getComputedStyle: () => ({ getPropertyValue: () => '' }), matchMedia: (query: string) => ({ matches: query.includes('prefers-reduced-motion') && fixtureReducedMotion, addEventListener() {}, removeEventListener() {} }), ResizeObserver: class { observe() {} disconnect() {} }, requestAnimationFrame: requestFrame, cancelAnimationFrame: cancelFrame }, { filename: 'production-main.js' });
 const GraphPlugin = module.exports.default, GraphView = module.exports.GraphView, Renderer = module.exports.__renderer;
 const mangle = JSON.parse(readFileSync(new URL('../.workspace/evidence/main-mangle-cache.json', import.meta.url), 'utf8'));
 const compiled = (name: string) => { const key = mangle[name]; if (typeof key !== 'string') throw new Error(`Production mapping missing: ${name}`); return key; };
@@ -576,4 +577,79 @@ test('graduated focus pick radius follows the 60% enlarged focus node', async ()
   f.tap(2, 'touch'); const p = r.screenPoint(2), at = { x: p.x + s.nodeSize * (1 + s.visuals.degreeSizing) * 1.3 + 4, y: p.y };
   r[k('focusLevel')] = 0; expect(r.pick(at.x, at.y)).toBe(-1);
   r[k('focusLevel')] = 1; expect(r.pick(at.x, at.y)).toBe(2);
+});
+
+
+// Lens integration uses the actual compiled class and driver/Canvas seams, not a second renderer.
+// It does not establish native readability, GPU rasterization or a frame-time budget.
+test('lens production animation and picking follow sparse overrides without changing layout or settings', async () => {
+  const f = await graduated([[0, 1], [0, 2], [1, 3]]), { r, k } = f;
+  const positions = r.positions, bytes = [...positions], display = r[k('display')], camera = { ...r.camera }, settings = JSON.stringify(f.settings);
+  const before = [0, 1, 2, 3, 4].map(n => r.screenPoint(n));
+  r.setLens(0); expect(r.lensNode).toBe(0); expect(r[k('lensPoints')].size).toBe(2);
+  const motion = r[k('lensMotion')]; r[k('animate')](motion.start + 110);
+  expect(r[k('lensBlend')]).toBeCloseTo(.5, 10); const middle = r.screenPoint(1); expect(r.pick(middle.x, middle.y)).toBe(1);
+  r[k('animate')](motion.start + 220); const pulled = r.screenPoint(1);
+  expect(pulled).not.toEqual(before[1]); expect(r.pick(pulled.x, pulled.y)).toBe(1); expect(r.pick(before[1].x, before[1].y)).not.toBe(1);
+  for (const n of [0, 3, 4]) expect(r.screenPoint(n)).toEqual(before[n]);
+  f.hover(1); expect(r[k('focusNode')]).toBe(0); expect(r.lensNode).toBe(0);
+  const distance = Math.hypot(pulled.x - before[0].x, pulled.y - before[0].y);
+  r.setCamera(r.camera.x, r.camera.y, r.camera.ratio / 2);
+  const a = r.screenPoint(0), b = r.screenPoint(1); expect(Math.hypot(b.x - a.x, b.y - a.y)).toBeCloseTo(distance, 4);
+  r.setCamera(camera.x, camera.y, camera.ratio); r.setLens(-1); r[k('animate')](r[k('lensMotion')].start + 220);
+  expect(r[k('lensPoints')].size).toBe(0); expect(r.lensNode).toBe(-1);
+  for (let n = 0; n < 5; n++) expect(r.screenPoint(n)).toEqual(before[n]);
+  expect(r.positions).toBe(positions); expect([...positions]).toEqual(bytes); expect(r[k('display')]).toBe(display); expect(r.camera).toEqual(camera); expect(JSON.stringify(f.settings)).toBe(settings);
+});
+test('lens production retargeting and view invalidation remove stale overrides', async () => {
+  const { r, k } = await graduated([[0, 1], [0, 2], [1, 3]]);
+  const finish = () => r[k('animate')](r[k('lensMotion')].start + 220);
+  r.setLens(0); finish(); r.setLens(3); expect(r.lensNode).toBe(3); expect(r[k('lensAnchor')]).toBe(0);
+  finish(); expect(r[k('lensAnchor')]).toBe(3); finish(); expect([...r[k('lensPoints')].keys()]).toEqual([1]); expect(r[k('lensBytes')][2 * 4 + 2]).toBe(0);
+  r.setView(new Uint8Array(5).fill(1), { typeHidden: new Uint8Array([1]) }); expect(r[k('lensPoints')].size).toBe(0);
+  r.setView(new Uint8Array(5).fill(1), {}); expect([...r[k('lensPoints')].keys()]).toEqual([1]);
+  r.setView(new Uint8Array([1, 1, 1, 0, 1]), {}); expect(r.lensNode).toBe(-1); finish(); expect(r[k('lensAnchor')]).toBe(-1); expect(r[k('lensPoints')].size).toBe(0);
+  expect(() => r.setLens(NaN)).toThrow('LENS_NODE_INDEX'); expect(() => r.setLens(99)).toThrow('LENS_NODE_INDEX');
+});
+test('lens production L and Escape are keyboard reachable; reduced motion has no pending transition', async () => {
+  const { r, k } = await graduated([[0, 1], [0, 2]]); r.selected = 0;
+  const key = (name: string) => { let handled = false; r[k('keyDown')]({ key: name, target: r.canvas, preventDefault() { handled = true; } }); return handled; };
+  try {
+    fixtureReducedMotion = true; expect(key('L')).toBe(true); expect(r.lensNode).toBe(0); expect(r[k('lensBlend')]).toBe(1); expect(r[k('lensMotion')]).toBeUndefined();
+    expect(key('Escape')).toBe(true); expect(r.lensNode).toBe(-1); expect(r[k('lensPoints')].size).toBe(0); expect(r.selected).toBe(0);
+    key('l'); key('l'); expect(r.lensNode).toBe(-1); expect(r[k('lensMotion')]).toBeUndefined();
+  } finally { fixtureReducedMotion = false; }
+});
+test('lens production Canvas edges, node arcs and relationship picking use the interpolated coordinates', async () => {
+  const { r, k } = await graduated([[0, 1], [0, 2]]), saved = { arc: ctx.arc, moveTo: ctx.moveTo, lineTo: ctx.lineTo };
+  const arcs: number[][] = [], starts: number[][] = [], ends: number[][] = [];
+  Object.assign(ctx, { arc: (...v: number[]) => arcs.push(v), moveTo: (...v: number[]) => starts.push(v), lineTo: (...v: number[]) => ends.push(v) });
+  try {
+    r.setLens(0); r[k('animate')](r[k('lensMotion')].start + 110); r[k('drawCanvas')]();
+    const a = r.screenPoint(0), b = r.screenPoint(1);
+    expect(arcs.some(([x, y]) => x === b.x && y === b.y)).toBe(true);
+    expect(starts).toContainEqual([a.x, a.y]); expect(ends).toContainEqual([b.x, b.y]);
+    expect(r[k('pickEdge')]((a.x + b.x) / 2, (a.y + b.y) / 2)).toBe(0);
+  } finally { Object.assign(ctx, saved); }
+});
+test('lens production WebGL uploads only touched offsets; animation changes no position buffers', async () => {
+  const { r, k } = await graduated([[0, 1], [0, 2]]), writes: any[][] = [];
+  r.gl = new Proxy({ isContextLost: () => false, texImage2D: (...v: any[]) => writes.push(['image', ...v]), texSubImage2D: (...v: any[]) => writes.push(['sub', ...v]), bufferData: (...v: any[]) => writes.push(['buffer', ...v]) }, { get: (o: any, key: string) => key in o ? o[key] : key.toUpperCase() === key ? 1 : () => {} });
+  try {
+    r.setLens(0); const offsets = writes.filter(v => v[0] === 'sub'); expect(offsets.length).toBe(2);
+    expect(offsets.map(v => [...v.at(-1)])).toEqual([1, 2].map(n => Array.from(r[k('lensBytes')]).slice(n * 4, n * 4 + 4)));
+    writes.length = 0; const motion = r[k('lensMotion')]; r[k('animate')](motion.start + 110); r[k('animate')](motion.start + 220);
+    expect(writes).toEqual([]);
+    r[k('uploadLens')](); expect(writes[0]?.at(-1)).toBe(r[k('lensBytes')]); // restoration allocation retains the active ring
+    r.setLens(-1); r[k('animate')](r[k('lensMotion')].start + 220); expect([...r[k('lensBytes')]].every(v => v === 0)).toBe(true);
+  } finally { r.gl = null; }
+});
+
+test('lens production layout adoption and rollback retain a coherent overlay without owning coordinates', async () => {
+  const { r, k } = await graduated([[0, 1], [0, 2]]), original = r.positions;
+  r.setLens(0); r[k('animate')](r[k('lensMotion')].start + 220);
+  const before = r.screenPoint(1), next = Float32Array.from(original, (v: number) => v + 50);
+  const token = await prepare(r, next, () => true); token.commit();
+  expect(r.positions).toBe(next); expect(r.lensNode).toBe(0); const moved = r.screenPoint(1); expect(moved).not.toEqual(before); expect(r.pick(moved.x, moved.y)).toBe(1);
+  token.rollback(); token.discard(); expect(r.positions).toBe(original); expect(r.screenPoint(1)).toEqual(before); expect(r.pick(before.x, before.y)).toBe(1);
 });
