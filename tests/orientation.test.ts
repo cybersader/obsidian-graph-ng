@@ -1,7 +1,7 @@
 import { test, expect } from 'bun:test';
 import { zoomStep, atZoomLimit } from '../src/zoom-limit';
-import { miniFit, toMini, toCamera, viewRect, densityGrid } from '../src/minimap';
-import { crumbs } from '../src/breadcrumb';
+import { miniFit, toMini, toCamera, viewRect, densityGrid, miniBounds, viewMarker, MINI_MARKER } from '../src/minimap';
+import { crumbs, trail, crumbFade } from '../src/breadcrumb';
 import { NavHistory } from '../src/connection-card';
 
 test('zoom out with a held focus clamps at the overview threshold and never hands over', () => {
@@ -56,4 +56,44 @@ test('breadcrumb model: last 8 visited, current always included, shared card his
   // A new visit drops the forward branch, as the card does.
   h.visit(99); expect(crumbs(h.items, h.at).map(c => c.node)).toEqual([0, 1, 2, 99]);
   expect(crumbs([1, 2, 3], 1, 2).map(c => c.index)).toEqual([1, 2]);
+});
+
+test('minimap bounds hold the layout and the whole viewport, so the view rectangle is always inside', () => {
+  const layout = { minX: 0, minY: 0, width: 100, height: 100 }, inside = (cx: number, cy: number, w: number, h: number) => {
+    const b = miniBounds(layout, cx, cy, w, h), m = miniFit(b, 160, 120), r = viewRect(b, m, cx, cy, w, h, layout);
+    expect(r.x).toBeGreaterThan(0); expect(r.y).toBeGreaterThan(0); expect(r.x + r.w).toBeLessThan(160); expect(r.y + r.h).toBeLessThan(120);
+    // The layout stays inside too.
+    const [lx, ly] = toMini(b, m, 0, 0), [hx, hy] = toMini(b, m, 100, 100); expect(lx).toBeGreaterThan(0); expect(ly).toBeGreaterThan(0); expect(hx).toBeLessThan(160); expect(hy).toBeLessThan(120);
+    return { b, m, r };
+  };
+  // A view inside the layout: bounds are the padded layout, independent of the pan.
+  const a = inside(.5, .5, 20, 15).b, c = inside(.3, .7, 20, 15).b; expect(a).toEqual(c); expect(a.minX).toBeCloseTo(-6); expect(a.width).toBeCloseTo(112);
+  // Zoomed out past the layout: the rectangle encloses the whole dot cloud.
+  const out = inside(.5, .5, 1000, 750), [lx, ly] = toMini(out.b, out.m, 0, 0), [hx, hy] = toMini(out.b, out.m, 100, 100);
+  expect(out.r.x).toBeLessThan(lx); expect(out.r.y).toBeLessThan(ly); expect(out.r.x + out.r.w).toBeGreaterThan(hx); expect(out.r.y + out.r.h).toBeGreaterThan(hy);
+  // Panned far away: both still fit, with the view a real rectangle (not a line along an edge).
+  const away = inside(6, -4, 40, 30); expect(away.r.w).toBeGreaterThan(2); expect(away.r.h).toBeGreaterThan(2);
+  // Clicking the rectangle's centre in the drawn bounds returns the camera centre.
+  const [cx, cy] = toCamera(away.b, away.m, away.r.x + away.r.w / 2, away.r.y + away.r.h / 2, layout); expect(cx).toBeCloseTo(6); expect(cy).toBeCloseTo(-4);
+});
+
+test('minimap marker: a tiny viewport keeps a minimum-size marker with a crosshair, clamped inside', () => {
+  expect(viewMarker({ x: 50, y: 40, w: 30, h: 20 }, 160, 120)).toEqual({ x: 50, y: 40, w: 30, h: 20, cx: 65, cy: 50, tiny: false });
+  const t = viewMarker({ x: 80, y: 60, w: .4, h: .3 }, 160, 120);
+  expect(t.tiny).toBe(true); expect(t.w).toBe(MINI_MARKER); expect(t.h).toBe(MINI_MARKER); expect(t.cx).toBeCloseTo(80.2); expect(t.cy).toBeCloseTo(60.15);
+  // At the edge the marker stays fully drawn instead of being cut to a line.
+  const edge = viewMarker({ x: 159.9, y: -1, w: .1, h: .1 }, 160, 120); expect(edge.x + edge.w).toBeLessThanOrEqual(159); expect(edge.y).toBeGreaterThanOrEqual(1);
+  // Larger than the canvas: clamped to the frame, never past it.
+  const big = viewMarker({ x: -50, y: -50, w: 400, h: 300 }, 160, 120); expect([big.x, big.y, big.w, big.h]).toEqual([1, 1, 158, 118]);
+});
+
+test('trail: hidden under two visits, current emphasised, older visits fade and overflow into the … menu', () => {
+  expect(trail([], -1).shown).toEqual([]); expect(trail([5], 0)).toEqual({ shown: [], older: [] });
+  expect(trail([5, 6], 1)).toEqual({ shown: [{ index: 0, node: 5, current: false }, { index: 1, node: 6, current: true }], older: [] });
+  const items = [10, 11, 12, 13, 14, 15, 16], last = trail(items, 6);
+  expect(last.shown.map(c => c.node)).toEqual([13, 14, 15, 16]); expect(last.older.map(c => c.node)).toEqual([12, 11, 10]);
+  // Gone back: the window keeps the current entry with a forward one after it; older still collapse.
+  const back = trail(items, 2); expect(back.shown.map(c => [c.node, c.current])).toEqual([[12, true], [13, false], [14, false], [15, false]]); expect(back.older.map(c => c.index)).toEqual([1, 0]);
+  expect(trail(Array.from({ length: 40 }, (_, i) => i), 39).older.length).toBe(12);
+  expect(crumbFade(0)).toBe(1); expect(crumbFade(-1)).toBeLessThan(1); expect(crumbFade(-3)).toBeLessThan(crumbFade(-1)); expect(crumbFade(-20)).toBe(.5);
 });

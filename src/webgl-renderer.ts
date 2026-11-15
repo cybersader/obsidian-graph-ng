@@ -401,14 +401,16 @@ export class DetailRenderer {
     this.hoverLabel = this.overlay.appendChild(Object.assign(document.createElement('div'), { className: 'graph-ng-hover-label' }));
     const div = (className: string) => this.overlay.appendChild(Object.assign(document.createElement('div'), { className }));
     this.cueLine = div('graph-ng-cue-line'); this.cueRing = div('graph-ng-cue'); this.cueLine.hidden = this.cueRing.hidden = true;
-    const top = div('graph-ng-top'); this.crumbTrail = new Breadcrumb(top, n => this.name(n), by => this.card.step(by));
+    const top = div('graph-ng-top');
     this.isolationBar = top.appendChild(Object.assign(document.createElement('div'), { className: 'graph-ng-isolation' }));
     this.miniMap = new Minimap(this.overlay, this.cameraFrame, (x, y) => this.setCamera(x, y, this.camera.ratio), () => this.fitAll()); this.limitChip = zoomChip(this.overlay, () => this.onZoomOut());
     this.noteCard = div('graph-ng-card'); this.card = new ConnectionCard(this.noteCard, this.cardHost());
     const input = this.input = new Interaction(this.controls());
     ({ pointerDown: this.pointerDown, pointerMove: this.pointerMove, pointerUp: this.pointerUp, pointerLeave: this.pointerLeave, keyDown: this.keyDown } = input);
     this.noteCard.onkeydown = input.cardKeyDown;
-    ({ ripple: this.rippleEl, legend: this.legend, rows: this.legendRows, counts: this.legendCounts, pips: this.pipEls, parts: this.pipParts } = highlightOverlay(this.overlay, i => { this.tierMask ^= 1 << i; this.updateLegend(); this.rankedKey = []; this.refresh(); }, i => this.panTo(this.pipTargets[i] ?? -1)));
+    let stack: HTMLElement;
+    ({ ripple: this.rippleEl, stack, legend: this.legend, rows: this.legendRows, counts: this.legendCounts, pips: this.pipEls, parts: this.pipParts } = highlightOverlay(this.overlay, i => { this.tierMask ^= 1 << i; this.updateLegend(); this.rankedKey = []; this.refresh(); }, i => this.panTo(this.pipTargets[i] ?? -1)));
+    this.crumbTrail = new Breadcrumb(stack, n => this.name(n), by => this.card.step(by), () => this.clearTrail());
     this.resize();
     this.gl = software ? null : this.canvas.getContext('webgl2', { antialias: false, alpha: false, preserveDrawingBuffer: false });
     this.timings.context = performance.now() - started;

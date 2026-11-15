@@ -5,7 +5,7 @@ import { defaults } from '../src/settings';
 import { encodeStrings } from '../src/core/columns';
 import { ControlElement, control } from './support/controls-dom';
 import { focusTiers, incidentEdges } from '../src/render-data';
-import { miniFit, toCamera } from '../src/minimap';
+import { miniFit, miniBounds, toCamera } from '../src/minimap';
 
 // Actual production classes; the DOM/driver seam does not establish native rendering/performance.
 const source = readFileSync(new URL('../main.js', import.meta.url), 'utf8');
@@ -52,7 +52,7 @@ afterEach(() => {
 let fixtureReducedMotion = false;
 const rendererWindow = { devicePixelRatio: 1 };
 const module = { exports: {} as any };
-const obsidian = { ItemView: class {}, Menu: class {}, Plugin: class {}, PluginSettingTab: class {}, Setting: class {}, TFile: class {}, apiVersion: 'synthetic', Notice: class {}, setIcon: (el: any, icon: string) => { el.dataset ??= {}; el.dataset.icon = icon; } };
+const obsidian = { ItemView: class {}, Menu: class {}, Plugin: class {}, PluginSettingTab: class {}, Setting: class {}, TFile: class {}, apiVersion: 'synthetic', Notice: class {}, setIcon: (el: any, icon: string) => { el.dataset ??= {}; el.dataset.icon = icon; el.icon = icon; } };
 vm.runInNewContext(source + `\n;module.exports.__renderer=${rendererName};`, { module, exports: module.exports, require: () => obsidian, console, structuredClone, setTimeout: fixtureTimeout, clearTimeout: clearFixtureTimeout, performance, TextEncoder, TextDecoder, MessageChannel, document, window: rendererWindow, devicePixelRatio: 1, getComputedStyle: () => ({ getPropertyValue: () => '' }), matchMedia: (query: string) => ({ matches: query.includes('prefers-reduced-motion') && fixtureReducedMotion, addEventListener() {}, removeEventListener() {} }), ResizeObserver: class { observe() {} disconnect() {} }, requestAnimationFrame: requestFrame, cancelAnimationFrame: cancelFrame }, { filename: 'production-main.js' });
 const GraphPlugin = module.exports.default, GraphView = module.exports.GraphView, Renderer = module.exports.__renderer;
 const mangle = JSON.parse(readFileSync(new URL('../.workspace/evidence/main-mangle-cache.json', import.meta.url), 'utf8'));
@@ -941,14 +941,23 @@ test('orientation: a held focus clamps wheel and pinch zoom-out with a Group ove
   // The card history drives the breadcrumb; a chip travels back.
   const row = (name: string) => r[k('noteCard')].querySelectorAll('button').find((b: any) => b.textContent === name);
   r.setCamera(.5, .5, 1); row('1').click(); row('2').click(); r[k('placeOverlay')]();
-  expect(crumbs.hidden).toBe(false); expect(crumbs.querySelectorAll('button').map((b: any) => [b.textContent, b.getAttribute('aria-current')])).toEqual([['0', null], ['1', null], ['2', 'location']]);
-  control(crumbs, '0').click(); expect(r.selected).toBe(0); r[k('placeOverlay')](); expect(crumbs.querySelectorAll('button')[0].getAttribute('aria-current')).toBe('location');
+  const chipEls = () => crumbs.querySelectorAll('button').filter((b: any) => b.className === 'graph-ng-crumb');
+  expect(crumbs.hidden).toBe(false); expect(chipEls().map((b: any) => [b.textContent, b.getAttribute('aria-current')])).toEqual([['0', null], ['1', null], ['2', 'location']]);
+  // The trail is one strip in the top-left stack with the legend; X clears it (icon only, labelled).
+  expect(crumbs.parent).toBe(r[k('legend')].parent); const clear = crumbs.querySelectorAll('button').find((b: any) => b.getAttribute('aria-label') === 'Clear recent notes');
+  expect(clear.textContent).toBe(''); expect(clear.icon).toBe('x');
+  control(crumbs, '0').click(); expect(r.selected).toBe(0); r[k('placeOverlay')](); expect(chipEls()[0].getAttribute('aria-current')).toBe('location');
   f.settings.visuals.breadcrumb = false; r[k('placeOverlay')](); expect(crumbs.hidden).toBe(true);
   // Minimap: shown on wide canvases; a click centres the camera on that point.
   expect(mini.hidden).toBe(false);
-  const canvas = mini.children[0], frame = r[k('cameraFrame')], fit = miniFit(frame, 160, 120);
+  // The drawn bounds hold the layout and the view, so a click maps through them back to the camera frame.
+  const canvas = mini.children[0], frame = r[k('cameraFrame')], last = r[k('miniMap')][k('miniLast')];
+  const bounds = miniBounds(frame, last.cx, last.cy, last[k('worldW')], last[k('worldH')]), fit = miniFit(bounds, 160, 120);
   canvas.listeners.get('pointerdown')({ button: 0, pointerId: 3, clientX: 400, clientY: 300 });
-  const [x, y] = toCamera(frame, fit, 80, 60); expect(r.camera.x).toBeCloseTo(x); expect(r.camera.y).toBeCloseTo(y);
+  const [x, y] = toCamera(bounds, fit, 80, 60, frame); expect(r.camera.x).toBeCloseTo(x); expect(r.camera.y).toBeCloseTo(y);
+  // Collapse: an icon button hides the map; the choice is the minimap's own state.
+  const toggle = mini.children[1]; expect(toggle.textContent).toBe(''); expect(toggle.getAttribute('aria-label')).toBe('Hide minimap');
+  toggle.onclick(); expect(canvas.hidden).toBe(true); expect(toggle.getAttribute('aria-label')).toBe('Show minimap'); toggle.onclick(); expect(canvas.hidden).toBe(false);
   mini.listeners.get('keydown')({ key: 'ArrowRight', preventDefault() {}, stopPropagation() {} }); expect(r.camera.x).toBeGreaterThan(x);
   r[k('width')] = 400; r[k('placeOverlay')](); expect(mini.hidden).toBe(true);
   r[k('width')] = 800; f.settings.visuals.minimap = false; r[k('placeOverlay')](); expect(mini.hidden).toBe(true);
@@ -962,7 +971,7 @@ test('wave-4 wiring: Find path to… in the menu; Escape clears path, card, lens
   const menus: { ids: string[]; run: (id: string) => void }[] = [];
   r[k('showMenu')] = (entries: any[]) => menus.push({ ids: entries.map(e => e.id), run: id => entries.find(e => e.id === id).run() });
   const esc = () => r[k('keyDown')]({ key: 'Escape', target: r.canvas, preventDefault() {} });
-  const chips = () => { r[k('placeOverlay')](); return crumbs.hidden ? [] : crumbs.querySelectorAll('button').map((b: any) => b.textContent); };
+  const chips = () => { r[k('placeOverlay')](); return crumbs.hidden ? [] : crumbs.querySelectorAll('button').filter((b: any) => b.className === 'graph-ng-crumb').map((b: any) => b.textContent); };
   const row = (name: string) => card().querySelectorAll('button').find((b: any) => b.textContent === name);
   // Right-click a second note with a selection: the registry menu offers the path.
   f.tap(0); const q = r.screenPoint(3); r.input.contextMenu({ clientX: q.x, clientY: q.y, preventDefault() {} }); await Bun.sleep(0);
