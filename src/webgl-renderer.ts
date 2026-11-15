@@ -15,6 +15,7 @@ import { Interaction, type RendererControls } from './interaction';
 import type { MenuPresenter } from './context-menu';
 import { invalidateSearch, disposeSearch } from './search';
 import { highlightOverlay, paintLegend } from './overlays';
+import { discloseTiers, overlapsBox } from './hub-disclosure';
 import { findPath, alternatePath, hopRows, pathNotes, OUTCOME, MAX_ALTERNATES, MAX_HOPS, type Hop } from './path-finder';
 import { Minimap, MINIMAP_H, MINIMAP_W, MINIMAP_MIN_CANVAS } from './minimap';
 import { Breadcrumb } from './breadcrumb';
@@ -356,6 +357,8 @@ export class DetailRenderer {
   /** Direct connections without a label fold into one "+N more" button beside the focus. */
   private moreButton?: HTMLButtonElement;
   private moreAt?: { dx: number; dy: number };
+  /** The card's open hub sections, lit alone on the graph (see `discloseTiers`). */
+  private disclosed?: { node: number; direct: Set<number>; second: Set<number> };
   /** Label level of detail with hysteresis (see `stickyLevel`). */
   private labelLevel = -1;
   /** Host seam: "+N more" beside the focus asks the host to list all connections. No-op by default. */
@@ -1015,6 +1018,9 @@ export class DetailRenderer {
       // A selected relationship lights its rows and both endpoints as direct tiers, without a focus ring.
       if (edges) for (const e of edges) { t[e] = edges === this.pathView?.edges ? PATH_EDGE : 255; this.tierEdges.push(e); for (const n of [this.projection.source[e]!, this.projection.target[e]!]) if (!s[n * 4 + 1]) { s[n * 4 + 1] = 255; this.near.push(n); } }
       else this.tierPartial = focusTiers(node, this.edges, this.projection, this.edgeOn, this.filterVisible, s, t, this.near, this.tierEdges, 65536, this.settings.declaration.groupContext ? this.view.groupCodes : undefined);
+      // Cleared bytes leave the touched lists, so labels, counts, pips and the next reset see only lit notes.
+      const d = this.disclosed;
+      if (!edges && d && d.node === node && this.lensAnchor < 0) { discloseTiers(node, d.direct, d.second, this.projection, this.edges, s, t, this.near, this.tierEdges); this.near = this.near.filter(n => s[n * 4 + 1]); this.tierEdges = this.tierEdges.filter(e => t[e]); }
       if (this.gl && this.ready && !this.lost) this.uploadTiers();
       const notes = this.projection.carrierNodes; this.tierTotals = tierCounts(this.focusNode, this.near, s, notes);
       if (edges) this.tierTotals[0] = this.near.filter(n => !notes[n]).length;
@@ -1046,6 +1052,12 @@ export class DetailRenderer {
       act: (a, n) => this.cardAction(a, n),
       travel: n => this.travel(n),
       cue: n => { this.cue = n; this.refresh(); },
+      disclose: (n, open, second) => {
+        const d = this.disclosed, same = (a: Set<number>, b: number[]) => a.size === new Set(b).size && b.every(x => a.has(x));
+        if (!open ? !d : d && d.node === n && same(d.direct, open) && same(d.second, second)) return;
+        this.disclosed = open ? { node: n, direct: new Set(open), second: new Set(second) } : undefined;
+        if ((open ? n : d!.node) === this.focusNode) { this.emphasize(true); this.refresh(); }
+      },
       close: () => { this.selectNote(-1, false, true); this.canvas.focus(); },
     };
   }

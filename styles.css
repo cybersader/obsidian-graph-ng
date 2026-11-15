@@ -127,6 +127,7 @@
 .graph-ng-connection-id, .graph-ng-connection-relation { color:var(--text-muted); font-size:var(--font-ui-smaller); white-space:normal; line-height:1.3; }
 .graph-ng-connection-id { font-variant-numeric:tabular-nums; }
 .graph-ng-card .graph-ng-connection-more { font-variant-numeric:tabular-nums; width:100%; margin:4px 0; }
+.graph-ng-card .graph-ng-section-second { margin:2px 0 4px 18px; min-height:28px; }
 .graph-ng-card .graph-ng-connection { padding:9px 6px; border:0; border-radius:4px; }
 .graph-ng-connection-section + .graph-ng-connection-section { border-top:1px solid var(--background-modifier-border); }
 /* Segmented Open control: three equal segments sharing one outline. */
@@ -138,7 +139,7 @@
 /* Icon+label grid: labels wrap rather than clip. */
 .graph-ng-card-actions { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:4px; }
 .graph-ng-card-actions > button { display:flex; align-items:center; justify-content:flex-start; gap:6px; min-width:0; height:auto; padding:4px 8px; white-space:normal; text-align:left; line-height:1.2; }
-.graph-ng-card-actions button[aria-pressed=true] { background:var(--interactive-accent); color:var(--text-on-accent); }
+.graph-ng-card-actions button[aria-pressed=true], .graph-ng-section-second[aria-pressed=true] { background:var(--interactive-accent); color:var(--text-on-accent); }
 .graph-ng-connections { display:flex; flex-direction:column; min-height:0; overflow:auto; border-top:1px solid var(--background-modifier-border); padding-top:4px; }
 .graph-ng-connection-group { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; padding:6px 4px 2px; color:var(--text-muted); font-size:var(--font-ui-smaller); }
 .graph-ng-card .graph-ng-connection { display:flex; align-items:center; gap:8px; justify-content:flex-start; width:100%; background:transparent; box-shadow:none; text-align:left; }

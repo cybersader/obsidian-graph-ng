@@ -726,6 +726,29 @@ test('wiring: "+N more" opens a bounded group list and focuses its filter withou
   f.tap(EMPTY); expect(card().textContent).toBe(''); r.showConnections(0); expect(r.selected).toBe(0); expect(rows().length).toBe(50);
   r.showConnections(-1); r.showConnections(99); expect(r.selected).toBe(0);
 });
+test('hub sections: an open section lights only its notes, with an explicit neighbours-of-neighbours toggle', async () => {
+  // Hub 0: Alpha holds 1..55, Beta 56..60; 61 hangs off Beta's 56 and 62 off Alpha's 1.
+  const pairs: [number, number][] = [...Array.from({ length: 60 }, (_, i) => [0, i + 1] as [number, number]), [56, 61], [1, 62]];
+  const f = await graduated(pairs, 63), { r, k } = f, card = () => r[k('noteCard')];
+  r.setView(new Uint8Array(63).fill(1), { groupCodes: Uint32Array.from({ length: 63 }, (_, i) => i > 55 && i !== 62 ? 1 : 0), groupLabels: ['Alpha', 'Beta'] });
+  const lit = () => f.tiers().flatMap((t, i) => t ? [i] : []), toggles = () => card().querySelectorAll('button').filter((b: any) => b.className === 'graph-ng-section-second');
+  const range = (a: number, b: number) => Array.from({ length: b - a + 1 }, (_, i) => a + i);
+  // No section open: the graph is the whole hub, as before.
+  f.tap(0, 'touch'); expect(lit()).toEqual(range(0, 62)); expect(toggles()).toEqual([]);
+  // Opening Beta lights Beta alone; tier counts, labels and "+N more" follow the lit notes.
+  control(card(), 'Beta, 5 connections').click();
+  expect(lit()).toEqual([0, ...range(56, 60)]); expect(r[k('directs')].length).toBe(5); expect(f.tiers()[57]).toBe(255);
+  expect(toggles().length).toBe(1); expect(toggles()[0].attributes['aria-pressed']).toBe('false'); expect(r.selected).toBe(0);
+  // Neighbours of neighbours is per section: Beta reaches 61, never Alpha's 62.
+  toggles()[0].click(); expect(lit()).toEqual([0, ...range(56, 61)]); expect(f.tiers()[61]).toBe(128); expect(toggles()[0].attributes['aria-pressed']).toBe('true');
+  // Opening every section restores the whole hub and drops the toggle; closing all does too.
+  control(card(), 'Alpha, 55 connections').click(); expect(lit()).toEqual(range(0, 62)); expect(toggles()).toEqual([]);
+  control(card(), 'Alpha, 55 connections').click(); expect(lit()).toEqual([0, ...range(56, 61)]);
+  control(card(), 'Beta, 5 connections').click(); expect(lit()).toEqual(range(0, 62));
+  // Selecting another note and coming back starts from the whole hub again.
+  control(card(), 'Beta, 5 connections').click(); f.tap(EMPTY); expect(lit()).toEqual([]);
+  f.tap(0, 'touch'); expect(lit()).toEqual(range(0, 62));
+});
 test('wiring: card Lens action, lens-displaced picking/arrows/cue/labels, and Escape, L and Alt+arrow layers', async () => {
   const f = await graduated([[0, 1], [0, 2], [1, 3]]), { r, k } = f, card = () => r[k('noteCard')];
   const rows = () => card().querySelectorAll('button').filter((b: any) => b.className === 'graph-ng-connection');

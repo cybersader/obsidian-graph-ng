@@ -93,6 +93,9 @@ export interface CardHost {
   act(action: CardAction, n: number): void;
   travel(n: number): void;
   cue(n: number): void;
+  /** Hubs only: light just these open sections' notes (undefined restores the whole hub), plus
+   * neighbours of neighbours for the notes in `second`. Presentation state, never topology. */
+  disclose?(n: number, open: number[] | undefined, second: number[]): void;
   close(): void;
 }
 const ROWS = 50;
@@ -144,6 +147,8 @@ export class ConnectionCard {
   private navOpen = new Set<number>();
   private navClosed = new Set<number>();
   private navPages = new Map<number, number>();
+  /** Open sections whose neighbours of neighbours are lit on the graph. */
+  private navSecond = new Set<number>();
   private navGroupLimit = 100;
   private navList?: HTMLElement;
   private navInput?: HTMLInputElement;
@@ -153,11 +158,11 @@ export class ConnectionCard {
   private lensToggle?: HTMLElement;
   constructor(readonly root: HTMLElement, private host: CardHost) {}
   show(n: number) {
-    if (n !== this.node) { this.navQuery = ''; this.navClosed.clear(); this.navOpen.clear(); this.navPages.clear(); this.navGroupLimit = 100; this.navSections = []; }
+    if (n !== this.node) { this.navQuery = ''; this.navClosed.clear(); this.navOpen.clear(); this.navPages.clear(); this.navSecond.clear(); this.navGroupLimit = 100; this.navSections = []; }
     this.node = n; if (!this.moving) this.history.visit(n); this.render();
   }
   /** Closing keeps the visit history (the breadcrumb outlives the card); the renderer clears it on a view change. */
-  hide() { this.node = -1; this.rows = []; this.size = undefined; this.lensToggle = undefined; this.navList = this.navInput = this.navStatus = undefined; this.navSections = []; this.root.textContent = ''; this.root.removeAttribute?.('aria-label'); }
+  hide() { if (this.node >= 0) this.host.disclose?.(this.node, undefined, []); this.node = -1; this.rows = []; this.size = undefined; this.lensToggle = undefined; this.navList = this.navInput = this.navStatus = undefined; this.navSections = []; this.root.textContent = ''; this.root.removeAttribute?.('aria-label'); }
   /** Back (-1) or forward (1) through visited notes, also from a closed card (the breadcrumb). */
   step(step: number) {
     const n = this.history.go(step); if (n === undefined) return false;
@@ -210,6 +215,8 @@ export class ConnectionCard {
   private paintConnections() {
     const list = this.navList!, filtered = filterConnections(this.navSections, this.navQuery), searching = !!this.navQuery.trim();
     const total = this.navSections.reduce((sum, s) => sum + s.entries.length, 0), found = filtered.reduce((sum, s) => sum + s.entries.length, 0);
+    // A hub with some (not all) sections open lights only those sections on the graph.
+    const open = this.navSections.filter(s => this.navOpen.has(s.key)), scoped = total > ROWS && open.length > 0 && open.length < this.navSections.length;
     this.navStatus!.textContent = searching ? `${found.toLocaleString()} of ${total.toLocaleString()} connections` : `${total.toLocaleString()} direct connection${total === 1 ? '' : 's'} in ${filtered.length.toLocaleString()} group${filtered.length === 1 ? '' : 's'}`;
     list.textContent = ''; list.scrollTop = 0; this.rows = []; this.size = undefined;
     if (!found) list.append(el('div', searching ? 'No matching connections. Try another title, ID or group.' : 'No direct connections', 'graph-ng-explore-note'));
@@ -226,6 +233,13 @@ export class ConnectionCard {
       toggle.append(el('span', expanded ? '⌄' : '›', 'graph-ng-section-arrow'), el('span', label), el('span', entries.length.toLocaleString(), 'graph-ng-count'));
       const body = block.appendChild(el('div')); body.id = `${this.navId}-${key}`; body.hidden = !expanded;
       if (!expanded) continue;
+      if (scoped && this.navOpen.has(key)) {
+        const on = this.navSecond.has(key), two = body.appendChild(button('Neighbours of neighbours', `Show neighbours of neighbours for ${label} on the graph`, () => {
+          const scroll = list.scrollTop; if (on) this.navSecond.delete(key); else this.navSecond.add(key);
+          this.paintConnections(); list.scrollTop = scroll; (list.querySelector(`[data-second="${key}"]`) as HTMLElement | null)?.focus();
+        }, 'graph-ng-section-second'));
+        two.dataset.second = String(key); two.setAttribute('aria-pressed', String(on));
+      }
       const limit = this.navPages.get(key) ?? ROWS;
       for (const entry of entries.slice(0, limit)) {
         const row = body.appendChild(button('', `Go to ${entry.title}${entry.title !== entry.name ? ' (' + entry.name + ')' : ''}: ${entry.relations.join(', ')}`, () => this.go(entry.node), 'graph-ng-connection'));
@@ -244,6 +258,7 @@ export class ConnectionCard {
       const scroll = list.scrollTop, next = filtered[this.navGroupLimit]!; this.navGroupLimit += 100; this.paintConnections(); list.scrollTop = scroll;
       (list.querySelector(`[data-group="${next.key}"]`) as HTMLElement | null)?.focus();
     }));
+    this.host.disclose?.(this.node, scoped ? open.flatMap(s => s.entries.map(e => e.node)) : undefined, scoped ? open.filter(s => this.navSecond.has(s.key)).flatMap(s => s.entries.map(e => e.node)) : []);
     // Clear any obsolete row cue and schedule the host to remeasure the changed card rectangle.
     this.host.cue(-1);
   }
