@@ -461,6 +461,7 @@ Press **/** or **Ctrl/Cmd+K** over the note graph to open a search box. It finds
 - **Up/Down:** rings the highlighted note where it is. The camera does not move.
 - **Enter:** flies to the note (instantly under reduced motion), selects it and opens its connection card. Clicking a row does the same.
 - **Shift+Enter:** applies the text as the ordinary search filter, as the toolbar search does.
+- **Alt+Enter** (or Alt-click), with a note selected: finds the path from the selected note to the result instead (see *How are these connected?*). The box names the selected note when this is available.
 - **Esc:** closes the box. It closes before the connection card does.
 
 Matching runs in the worker over the same cached name-and-identity text as the search filter, once per pause in typing (120 ms), in chunks of 4,096 notes that a newer query cancels. Only note indices come back; identities stay in the worker. Nothing runs per frame. Aggregate graphs have no note search. Evidence: `tests/search.test.ts` and the worker test in `tests/pipeline.test.ts`; native keyboard and screen-reader acceptance are pending.
@@ -493,7 +494,7 @@ The search is a pure bidirectional BFS on the incident-edge index (`src/path-fin
 - **Zoom out without the cliff:** with a note selected or the lens on, zooming out with the wheel or a pinch stops at the Group overview threshold (`lodZoomRatio`) instead of switching. A chip says **Zoomed all the way out** with a **Group overview** button. With nothing selected the wheel switches as before.
 - **Back from Group overview:** opening Group overview from Notes with a selected (or lensed) note rings that note's group and shows **Back to** followed by the note name, which reopens Notes with the same note, card and camera.
 - **Minimap** (`visuals.minimap`, on): a 160×120 corner overview of where the notes are, with the current view as a rectangle and the focus and its direct connections as dots. Click or drag it to move the view. It is focusable: arrow keys pan and Home fits all. Hidden when the canvas is under 500 px wide. The density image is rebuilt only after positions or filters change and settle (O(notes)), never per frame.
-- **Visited-notes trail** (`visuals.breadcrumb`, on): chips for the last 8 visited notes along the top edge, joined by chevrons. It reads the connection card's own history (closing the card clears it, as before); a chip travels there, and Alt+Left/Right still step.
+- **Visited-notes trail** (`visuals.breadcrumb`, on): chips for the last 8 visited notes along the top edge, joined by chevrons. It reads the connection card's own history, which now outlives the card: closing the card keeps the trail, a filter drops hidden visits, and opening a saved view (or leaving the note graph) starts it over. A chip travels there, also with the card closed, and Alt+Left/Right still step.
 
 Both toggles are under Appearance → Finding connections. Evidence: `tests/orientation.test.ts` (clamp, minimap mapping and density, trail model) and the compiled-renderer orientation test in `tests/physics-transaction.test.ts`; native visual and screen-reader acceptance are pending.
 

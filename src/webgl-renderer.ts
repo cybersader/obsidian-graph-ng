@@ -433,6 +433,8 @@ export class DetailRenderer {
   setView(filterVisible: Uint8Array, view: RenderView, upload = true) {
     this.baseVisible = filterVisible; this.applyView(this.isolationMask(filterVisible, view), view, upload); this.showIsolation();
   }
+  /** A different view (a saved view opened): the visited-notes trail starts over. Filtering only prunes it. */
+  clearTrail() { this.card.history.clear(); this.refresh(); }
   private applyView(filterVisible: Uint8Array, view: RenderView, upload = true) {
     const started = performance.now(), n = filterVisible.length, p = this.projection;
     // Software detail stays inside both refusal budgets: refuse before any state changes, never truncate.

@@ -171,3 +171,21 @@ test('a newer query wins over a slower older one; a failed ranking shows no rows
   failing.key('/'); failing.box().findInput.value = 'x'; await failing.box().findSearch();
   expect(failing.box().findHits).toEqual([]);
 });
+
+test('with a note selected, Alt+Enter (or Alt-click) on a result finds the path from it; the box says so', async () => {
+  const r = rig(), box = r.box, paths: number[][] = [], host = r.host as unknown as { selected: number; findPath: (a: number, b: number) => void };
+  host.findPath = (a, b) => { paths.push([a, b]); };
+  // Nothing selected: no path hint, Alt+Enter just flies.
+  r.key('/'); expect((box() as unknown as { findBox: El }).findBox.textContent).not.toContain('Alt+Enter');
+  box().findInput.value = 'gam'; r.type('Enter', { altKey: true }); await Bun.sleep(0);
+  expect(r.calls).toEqual(['focus', 'fly 4']); expect(paths).toEqual([]);
+  host.selected = 1; r.calls.length = 0;
+  r.key('/'); expect((box() as unknown as { findBox: El }).findBox.textContent).toContain('Alt+Enter: find path from alpha.');
+  box().findInput.value = 'beta'; r.type('Enter', { altKey: true }); await Bun.sleep(0);
+  expect(paths).toEqual([[1, 3]]); expect(r.calls).toEqual(['focus']); expect(box().findOpen).toBe(false);
+  // Alt-click on a row does the same; a plain Enter still flies.
+  r.key('/'); box().findInput.value = 'gam'; await box().findSearch();
+  ((box().findList as unknown as El).find('graph-ng-find-row')[0]!.onclick!)({ altKey: true }); await Bun.sleep(0);
+  expect(paths).toEqual([[1, 3], [1, 4]]);
+  r.key('/'); box().findInput.value = 'gam'; r.type('Enter'); await Bun.sleep(0); expect(r.calls.at(-1)).toBe('fly 4');
+});

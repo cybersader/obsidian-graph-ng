@@ -908,3 +908,40 @@ test('orientation: a held focus clamps wheel and pinch zoom-out with a Group ove
   r[k('keyDown')]({ key: 'Escape', target: r.canvas, preventDefault() {} }); expect(r.selected).toBe(-1); r[k('placeOverlay')](); expect(chip.hidden).toBe(true);
   r.setCamera(.5, .5, 1); wheel(); expect(overviews).toBe(2);
 });
+// Wave-4 wiring through the compiled renderer: menu path start, Escape layers, breadcrumb lifetime, hover intent vs. lens and path.
+test('wave-4 wiring: Find path to… in the menu; Escape clears path, card, lens, isolation in order; the trail outlives the card and prunes on filter', async () => {
+  const f = await graduated([[0, 1], [1, 2], [2, 3], [0, 4], [4, 3]], 6), { r, k } = f, card = () => r[k('noteCard')], crumbs = r[k('crumbTrail')].root;
+  const menus: { ids: string[]; run: (id: string) => void }[] = [];
+  r[k('showMenu')] = (entries: any[]) => menus.push({ ids: entries.map(e => e.id), run: id => entries.find(e => e.id === id).run() });
+  const esc = () => r[k('keyDown')]({ key: 'Escape', target: r.canvas, preventDefault() {} });
+  const chips = () => { r[k('placeOverlay')](); return crumbs.hidden ? [] : crumbs.querySelectorAll('button').map((b: any) => b.textContent); };
+  const row = (name: string) => card().querySelectorAll('button').find((b: any) => b.textContent === name);
+  // Right-click a second note with a selection: the registry menu offers the path.
+  f.tap(0); const q = r.screenPoint(3); r.input.contextMenu({ clientX: q.x, clientY: q.y, preventDefault() {} }); await Bun.sleep(0);
+  expect(menus[0]!.ids).toContain('find-path'); menus[0]!.run('find-path');
+  expect(r[k('pathView')]).toBeDefined(); expect(card().textContent).toContain('Path: 0 → 3');
+  esc(); expect(r[k('pathView')]).toBeUndefined(); expect(card().textContent).toBe('');
+  // Visits build the trail; closing the card keeps it and a chip travels from a closed card.
+  f.tap(0); row('1').click(); row('2').click(); expect(chips()).toEqual(['0', '1', '2']);
+  esc(); expect(r.card.node).toBe(-1); expect(chips()).toEqual(['0', '1', '2']);
+  control(crumbs, '0').click(); expect(r.selected).toBe(0); expect(r.card.node).toBe(0); expect(r.card.history.items).toEqual([0, 1, 2]);
+  // Escape layers: card, then lens, then only-connections.
+  r[k('keyDown')]({ key: 'l', target: r.canvas, preventDefault() {} }); expect(r.lensNode).toBe(0); r.isolate(0);
+  esc(); expect(r.card.node).toBe(-1); expect(r.lensNode).toBe(0);
+  esc(); expect(r.lensNode).toBe(-1); expect(r[k('isolation')]).toBeDefined();
+  esc(); expect(r[k('isolation')]).toBeUndefined();
+  // A filter prunes hidden visits; a different view clears the trail.
+  r.setView(new Uint8Array([1, 0, 1, 1, 1, 1]), {}); expect(chips()).toEqual(['0', '2']);
+  r[k('clearTrail')](); expect(chips()).toEqual([]);
+});
+test('wave-4 wiring: the hover dwell never moves a path highlight or a pinned lens', async () => {
+  const f = await graduated([[0, 1], [1, 2], [2, 3], [0, 4], [4, 3]], 6), { r, k } = f;
+  f.settings.visuals.hoverDwellMs = 20;
+  const shift = (n: number) => { const { x, y } = r.screenPoint(n), e = { pointerId: 1, clientX: x, clientY: y, pointerType: 'mouse', shiftKey: true }; r[k('pointerDown')](e); r[k('pointerUp')](e); };
+  f.tap(0); shift(3); const path = f.actual(); expect(path[1]).toEqual([0, 0, 0, 253, 253]);
+  f.hover(1); await Bun.sleep(50); expect(r.hovered).toBe(1); expect(f.actual()).toEqual(path);
+  r[k('pointerMove')]({ pointerId: 9, clientX: r.screenPoint(2).x, clientY: r.screenPoint(2).y, pointerType: 'mouse', altKey: true }); expect(f.actual()).toEqual(path);
+  r[k('pointerLeave')](); f.tap(EMPTY);
+  f.tap(0); r[k('keyDown')]({ key: 'l', target: r.canvas, preventDefault() {} }); expect(r.lensNode).toBe(0);
+  const lensed = f.actual(); f.hover(3); await Bun.sleep(50); expect(r.hovered).toBe(3); expect(f.actual()).toEqual(lensed); expect(r.lensNode).toBe(0);
+});

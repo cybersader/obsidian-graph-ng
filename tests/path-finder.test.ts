@@ -112,7 +112,7 @@ test('hop list model: note, relationship type, next note, numbered from 1', () =
 });
 
 test('"Find path to…" is a menu action from the selection to the clicked note', () => {
-  const calls: number[][] = [], host = { selected: 2, findPath: (a: number, b: number) => calls.push([a, b]) } as unknown as RendererControls;
+  const calls: number[][] = [], host = { selected: 2, openable: () => true, findPath: (a: number, b: number) => calls.push([a, b]) } as unknown as RendererControls;
   const action = actions.menu({ host, node: 5 }).find(a => a.id === 'find-path')!;
   expect(action.label).toBe('Find path to…'); action.run({ host, node: 5 }); expect(calls).toEqual([[2, 5]]);
   expect(actions.menu({ host, node: 2 }).some(a => a.id === 'find-path')).toBe(false);

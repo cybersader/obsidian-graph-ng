@@ -108,10 +108,10 @@ export class ConnectionCard {
     if (n !== this.node) this.limit = ROWS;
     this.node = n; if (!this.moving) this.history.visit(n); this.render();
   }
-  hide() { this.node = -1; this.rows = []; this.size = undefined; this.lensToggle = this.lockToggle = undefined; this.history.clear(); this.root.textContent = ''; this.root.removeAttribute?.('aria-label'); }
-  /** Back (-1) or forward (1) through visited notes. */
+  /** Closing keeps the visit history (the breadcrumb outlives the card); the renderer clears it on a view change. */
+  hide() { this.node = -1; this.rows = []; this.size = undefined; this.lensToggle = this.lockToggle = undefined; this.root.textContent = ''; this.root.removeAttribute?.('aria-label'); }
+  /** Back (-1) or forward (1) through visited notes, also from a closed card (the breadcrumb). */
   step(step: number) {
-    if (this.node < 0) return false;
     const n = this.history.go(step); if (n === undefined) return false;
     this.moving = true; try { this.go(n); } finally { this.moving = false; }
     return true;

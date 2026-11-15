@@ -37,6 +37,7 @@ export class Omnibox {
   readonly findList: HTMLElement;
   readonly findStatus: HTMLElement;
   readonly findRing: HTMLElement;
+  private findKeys: HTMLElement;
   /** Ranked note indices. */
   findHits: number[] = [];
   /** Previewed row, or -1 (Enter then takes the first). */
@@ -54,14 +55,18 @@ export class Omnibox {
     for (const [k, v] of [['role', 'combobox'], ['aria-label', 'Find a note by name or identity'], ['aria-autocomplete', 'list'], ['aria-expanded', 'false'], ['aria-controls', this.findId]]) input.setAttribute(k!, v!);
     this.findList = make('div', 'graph-ng-find-list', root); this.findList.id = this.findId; this.findList.setAttribute('role', 'listbox');
     this.findStatus = make('div', 'graph-ng-find-status', root); this.findStatus.setAttribute('aria-live', 'polite');
-    make('div', 'graph-ng-find-keys', root).textContent = 'Enter: go there. Shift+Enter: filter.';
+    this.findKeys = make('div', 'graph-ng-find-keys', root);
     this.findRing = make('div', 'graph-ng-find-ring', parent); this.findRing.hidden = true; this.findRing.setAttribute('aria-hidden', 'true');
     input.oninput = () => { clearTimeout(this.findTimer); this.findTimer = setTimeout(() => void this.findSearch(), SEARCH_DEBOUNCE_MS); };
     input.onkeydown = this.findKey;
     input.onblur = (e: FocusEvent) => { if (!root.contains(e.relatedTarget as Node | null)) this.findClose(false); };
   }
   get findOpen() { return !this.findBox.hidden; }
-  findShow() { this.findBox.hidden = false; this.findInput.focus(); this.findInput.select?.(); if (this.findInput.value) void this.findSearch(); }
+  findShow() {
+    // With a note selected, Alt+Enter (or Alt-click) on a result is a keyboard-only path start.
+    const from = this.host.selected, p = from >= 0 ? this.findSource.projection() : undefined, name = p && from < p.nodeCount ? renderPath(p, from).replace(/^.*\//, '').replace(/\.md$/i, '') : '';
+    this.findKeys.textContent = 'Enter: go there. Shift+Enter: filter.' + (name ? ` Alt+Enter: find path from ${name}.` : '');
+    this.findBox.hidden = false; this.findInput.focus(); this.findInput.select?.(); if (this.findInput.value) void this.findSearch(); }
   findClose(refocus = true) {
     this.findToken++; clearTimeout(this.findTimer); this.findBox.hidden = this.findRing.hidden = true;
     if (refocus && this.host.live) this.host.focusCanvas();
@@ -89,7 +94,7 @@ export class Omnibox {
       const span = (cls: string, text: string) => { row.appendChild(Object.assign(document.createElement('span'), { className: cls, textContent: text })); };
       span('graph-ng-find-name', path.slice(path.lastIndexOf('/') + 1).replace(/\.md$/i, '')); span('graph-ng-find-count', `${count.toLocaleString()} connection${count === 1 ? '' : 's'}`); span('graph-ng-find-path', path);
       // Keep focus in the input so a row click is not a blur.
-      row.onpointerdown = (e: PointerEvent) => e.preventDefault(); row.onclick = () => void this.findGo(i);
+      row.onpointerdown = (e: PointerEvent) => e.preventDefault(); row.onclick = (e: MouseEvent) => void this.findGo(i, e.altKey);
     });
   }
   /** Ring the row's note where it is; the camera stays put. */
@@ -101,17 +106,19 @@ export class Omnibox {
     const q = h.screenPoint(node), x = Math.max(8, Math.min(h.width - 8, q.x)), y = Math.max(8, Math.min(h.height - 8, q.y));
     this.findRing.hidden = false; this.findRing.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px) translate(-50%, -50%)`;
   }
-  /** Fly to a row (default: the previewed one, else the first, ranking a changed query first), select it and open its card. */
-  async findGo(i?: number) {
+  /** Fly to a row (default: the previewed one, else the first, ranking a changed query first), select it and open its card.
+   * `path`: with a note selected, find the path from it to the row's note instead. */
+  async findGo(i?: number, path = false) {
     if (i === undefined && normal(this.findInput.value) !== this.ranked) await this.findSearch();
     const node = this.findHits[Math.max(0, i ?? this.findActive)]; if (node === undefined || !this.findOpen || !this.host.live) return;
-    this.findClose(); this.host.flyToNote(node);
+    const from = this.host.selected; this.findClose();
+    if (path && from >= 0 && from !== node) this.host.findPath(from, node); else this.host.flyToNote(node);
   }
   findKey = (e: KeyboardEvent) => {
     const k = e.key, n = this.findHits.length; if (e.isComposing) return;
     if (k === 'ArrowDown' || k === 'ArrowUp') { if (n) this.findPreview(((k === 'ArrowDown' ? this.findActive + 1 : this.findActive < 0 ? n - 1 : this.findActive - 1) + n) % n); }
     else if (k === 'Enter' && e.shiftKey) { this.findSource.filter(this.findInput.value.trim()); this.findClose(); }
-    else if (k === 'Enter') void this.findGo();
+    else if (k === 'Enter') void this.findGo(undefined, e.altKey);
     else if (k === 'Escape') this.findClose();
     else return;
     e.preventDefault(); e.stopPropagation();

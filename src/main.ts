@@ -724,6 +724,7 @@ export class GraphView extends ItemView {
     const current = generationCurrent(() => [this.closed, this.activeRevision, this.projection, this.detailScope, this.renderRevision, this.detailRenderer, this.plugin.sourceIdentity, canonical(this.plugin.settings.declaration), this.plugin.settings.groupLevel, this.plugin.settings.projectionFile]);
     await new Promise<void>((resolve, reject) => this.setView(saved.view, () => {
       // Never switch representation, expand scope or construct a renderer to restore a bookmark.
+      this.detailRenderer?.clearTrail();
       if (saved.camera && this.contentEl.dataset.mode === 'nodes') this.detailRenderer?.flyTo(saved.camera.x, saved.camera.y, saved.camera.ratio);
     }, undefined, error => error ? reject(error) : resolve(), current));
   }
