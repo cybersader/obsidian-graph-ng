@@ -22,7 +22,7 @@ test('persistent toolbar opens one overlay, keeps search visible and returns foc
   filters.focus(); filters.click(); expect(f.panel.root.hidden).toBe(false); expect(f.panel.search.hidden).toBe(false);
   expect(filters.getAttribute('aria-controls')).toBe(f.panel.root.id); expect(filters.getAttribute('aria-expanded')).toBe('true');
   control(f.root, 'Layout').click(); expect(filters.getAttribute('aria-expanded')).toBe('false');
-  control(f.root, 'Close').click(); expect(f.panel.root.hidden).toBe(true); expect(ControlElement.active).toBe(control(f.root, 'Layout'));
+  f.panel.closeButton.click(); expect(f.panel.root.hidden).toBe(true); expect(ControlElement.active).toBe(control(f.root, 'Layout'));
   expect(f.settings.explore.panelOpen).toBe(false); expect(f.persisted()).toBe(3); f.panel.dispose();
 });
 

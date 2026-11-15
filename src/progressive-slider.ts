@@ -1,4 +1,5 @@
-/** Shared progressive range slider: curve-mapped position, exact numeric input, fine scrubbing. Stored values keep their own units. */
+import { setIcon } from 'obsidian';
+/** Shared progressive range slider: curve-mapped position, exact numeric chip, fine scrubbing. Stored values keep their own units. */
 export interface Curve { min: number; max: number; /** power curve exponent; >1 adds resolution near min */ k?: number; /** logarithmic (min > 0) */ log?: boolean; /** whole numbers only */ int?: boolean }
 export const STEPS = 1000;
 const clamp01 = (t: number) => t > 0 ? t < 1 ? t : 1 : 0;
@@ -15,43 +16,101 @@ export function toPosition(c: Curve, v: number): number {
 }
 /** Drag speed by vertical pointer distance (CSS px) from the track centre. */
 export const fineFactor = (dy: number) => dy < 30 ? 1 : dy < 80 ? .5 : dy < 150 ? .25 : .1;
-export const fineLabel = (f: number) => `Fine: ${f === .5 ? '½' : f === .25 ? '¼' : '1/10'} speed`;
+export const fineLabel = (f: number) => `fine ×${f}`;
 /** Keyboard position delta: arrows 0.4%, Shift+arrows 4%, PageUp/Down 10%, Home/End full range. */
 export function keyStep(key: string, shift: boolean): number | null {
   const dir = key === 'ArrowUp' || key === 'ArrowRight' || key === 'PageUp' || key === 'End' ? 1 : key === 'ArrowDown' || key === 'ArrowLeft' || key === 'PageDown' || key === 'Home' ? -1 : 0;
   return !dir ? null : dir * (key.startsWith('Page') ? .1 : key.length < 5 || key === 'Home' ? 1 : shift ? .04 : .004);
 }
-
-/** Attach a progressive range after `number`; the number input remains the exact editable readout. */
-export function progressiveSlider(parent: HTMLElement, number: HTMLInputElement, label: string, c: Curve, changed: (value: string) => void, commit?: () => void) {
-  const range = parent.createEl('input', { attr: { type: 'range', min: '0', max: String(STEPS), step: 'any', 'aria-label': `${label} slider`, 'aria-valuemin': String(c.min), 'aria-valuemax': String(c.max) } });
-  const hint = parent.createSpan({ cls: 'graph-ng-fine-hint', attr: { 'aria-hidden': 'true' } }); hint.hidden = true;
-  range.disabled = number.disabled;
+/** Number-chip arrow step in value units: a round decimal near 1% of the span (log curves: of the value), ×10 with Shift.
+ * In-range values stay in range; a typed out-of-range value steps unclamped. */
+export function chipStep(c: Curve, v: number, dir: 1 | -1, big: boolean): number {
+  const mag = c.log ? Math.max(Math.abs(dir < 0 ? v * .999 : v), c.min) : c.max - c.min;
+  let step = 10 ** (c.log ? Math.floor(Math.log10(mag)) - 1 : Math.round(Math.log10(mag)) - 2) * (big ? 10 : 1);
+  if (c.int) step = Math.max(1, Math.round(step));
+  const next = Number((v + dir * step).toPrecision(12));
+  return v < c.min || v > c.max ? next : Math.min(c.max, Math.max(c.min, next));
+}
+/** Thumb diameter in CSS px (styles.css); markers sit where the thumb centre would. */
+const THUMB = 16;
+const at = (t: number) => `calc(${(t * 100).toFixed(2)}% + ${(THUMB / 2 - THUMB * t).toFixed(2)}px)`;
+export interface SliderOptions {
+  /** Accessible name of the number chip; the range is named "<label> slider". */
+  label: string;
+  /** Visible name when it differs from `label`. */
+  name?: string;
+  /** One muted line under the name. */
+  desc?: string;
+  unit?: string;
+  curve: Curve;
+  value: string;
+  /** Default value: a tick on the track, plus reset (icon or double-click the thumb) while the value differs. */
+  def?: number;
+  disabled?: boolean;
+  /** Extra attributes for the number chip (min, max, step). */
+  attr?: Record<string, string>;
+  cls?: string;
+  changed: (value: string) => void;
+  commit?: () => void;
+}
+/** One settings row: name and reset on top, optional description, then track and exact number chip. */
+export function progressiveSlider(parent: HTMLElement, o: SliderOptions) {
+  const { curve: c, unit = '', def } = o, name = o.name ?? o.label;
+  const row = parent.createDiv({ cls: `graph-ng-setting graph-ng-slider${o.cls ? ` ${o.cls}` : ''}` });
+  row.createSpan({ cls: 'graph-ng-setting-name', text: name });
+  const reset = row.createEl('button', { cls: 'clickable-icon graph-ng-slider-reset', attr: { 'aria-label': `Reset ${name} to ${def}${unit ? ` ${unit}` : ''}`, title: `Reset to default (${def})` } });
+  setIcon(reset, 'rotate-ccw');
+  if (o.desc) row.createDiv({ cls: 'graph-ng-setting-desc', text: o.desc });
+  const line = row.createDiv({ cls: 'graph-ng-slider-line' }), track = line.createDiv({ cls: 'graph-ng-slider-track' });
+  const scale = track.createSpan({ cls: 'graph-ng-slider-scale', attr: { 'aria-hidden': 'true' } });
+  const fill = track.createSpan({ cls: 'graph-ng-slider-fill', attr: { 'aria-hidden': 'true' } });
+  const tick = track.createSpan({ cls: 'graph-ng-slider-tick', attr: { 'aria-hidden': 'true', title: `Default ${def}` } });
+  const range = track.createEl('input', { attr: { type: 'range', min: '0', max: String(STEPS), step: 'any', 'aria-label': `${o.label} slider`, 'aria-valuemin': String(c.min), 'aria-valuemax': String(c.max) } });
+  const bubble = track.createDiv({ cls: 'graph-ng-slider-bubble', attr: { 'aria-hidden': 'true' } }), shown = bubble.createSpan(), mode = bubble.createSpan({ cls: 'graph-ng-slider-mode' });
+  const chip = line.createEl('label', { cls: 'graph-ng-slider-chip' });
+  const number = chip.createEl('input', { attr: { type: 'number', step: 'any', 'aria-label': o.label, ...o.attr } });
+  if (unit) chip.createSpan({ cls: 'graph-ng-slider-unit', text: unit, attr: { 'aria-hidden': 'true' } });
+  number.value = o.value; bubble.hidden = mode.hidden = true;
+  range.disabled = number.disabled = reset.disabled = !!o.disabled;
+  if (def === undefined) tick.hidden = true; else tick.style.left = at(toPosition(c, def));
+  const numeric = (raw: string) => raw.trim() ? Number(raw) : NaN;
   let pos = 0, drag: { id: number; x: number } | null = null;
   const show = (raw: string, t: number) => {
-    const n = raw.trim() ? Number(raw) : NaN; pos = clamp01(t); range.value = String(pos * STEPS);
-    if (Number.isFinite(n)) { range.setAttribute('aria-valuenow', String(n)); range.setAttribute('aria-valuetext', raw); }
+    const n = numeric(raw); pos = clamp01(t); range.value = String(pos * STEPS);
+    // The bubble leans inward near the ends so it never leaves the panel.
+    fill.style.width = bubble.style.left = at(pos); bubble.style.transform = `translateX(-${(pos * 100).toFixed(1)}%)`; shown.textContent = `${raw}${unit ? ` ${unit}` : ''}`;
+    reset.hidden = def === undefined || n === def;
+    if (Number.isFinite(n)) { range.setAttribute('aria-valuenow', String(n)); range.setAttribute('aria-valuetext', shown.textContent); }
   };
-  const move = (t: number) => {
-    const v = String(toValue(c, t)), same = v === number.value; number.value = v; show(v, t); if (!same) changed(v);
+  const set = (v: string, t = toPosition(c, numeric(v))) => { const same = v === number.value; number.value = v; show(v, t); if (!same) o.changed(v); };
+  const move = (t: number) => set(String(toValue(c, t)), t);
+  const fine = (f: number) => { mode.hidden = f === 1; mode.textContent = f < 1 ? fineLabel(f) : ''; track.toggleClass('is-fine', f < 1); scale.style.backgroundSize = `${Math.round(6 / f)}px 100%`; };
+  const restore = () => { if (def === undefined || range.disabled) return; set(String(def)); o.commit?.(); };
+  show(number.value, toPosition(c, numeric(number.value)));
+  number.oninput = () => { show(number.value, toPosition(c, numeric(number.value))); o.changed(number.value); };
+  number.onkeydown = e => {
+    const dir = e.key === 'ArrowUp' ? 1 : e.key === 'ArrowDown' ? -1 : 0; if (!dir || number.disabled) return;
+    e.preventDefault(); const n = numeric(number.value);
+    set(String(chipStep(c, Number.isFinite(n) ? n : def ?? c.min, dir, e.shiftKey))); o.commit?.();
   };
-  show(number.value, toPosition(c, number.value.trim() ? Number(number.value) : NaN));
-  number.oninput = () => { show(number.value, toPosition(c, number.value.trim() ? Number(number.value) : NaN)); changed(number.value); };
+  reset.onclick = restore; range.ondblclick = restore;
   range.oninput = () => { if (!drag) move(Number(range.value) / STEPS); };
-  if (commit) range.onchange = number.onchange = commit;
+  if (o.commit) range.onchange = number.onchange = o.commit;
   range.ontouchstart = e => e.preventDefault();
   range.onpointerdown = e => {
     const r = range.getBoundingClientRect(); if (range.disabled || e.button > 0 || !r.width) return;
-    e.preventDefault(); const at = clamp01((e.clientX - r.left) / r.width);
-    if (Math.abs(at - pos) * r.width > 10) move(at);
-    drag = { id: e.pointerId, x: e.clientX }; range.setPointerCapture(e.pointerId); range.focus();
+    e.preventDefault(); const t = clamp01((e.clientX - r.left - THUMB / 2) / Math.max(1, r.width - THUMB));
+    if (Math.abs(t - pos) * r.width > 10) move(t);
+    drag = { id: e.pointerId, x: e.clientX }; range.setPointerCapture(e.pointerId); range.focus(); bubble.hidden = false; fine(1);
   };
   range.onpointermove = e => {
     const r = range.getBoundingClientRect(); if (!drag || e.pointerId !== drag.id || !r.width) return;
-    const f = fineFactor(Math.abs(e.clientY - r.top - r.height / 2)); hint.hidden = f === 1; hint.textContent = fineLabel(f);
-    move(pos + (e.clientX - drag.x) / r.width * f); drag.x = e.clientX;
+    const f = fineFactor(Math.abs(e.clientY - r.top - r.height / 2)); fine(f);
+    // The magnified scale travels with the pointer while the thumb moves f times as far.
+    scale.style.backgroundPosition = `${Math.round(e.clientX - r.left)}px 0`;
+    move(pos + (e.clientX - drag.x) / Math.max(1, r.width - THUMB) * f); drag.x = e.clientX;
   };
-  range.onpointerup = range.onpointercancel = e => { if (!drag || e.pointerId !== drag.id) return; drag = null; hint.hidden = true; commit?.(); };
-  range.onkeydown = e => { const d = keyStep(e.key, e.shiftKey); if (d === null || range.disabled) return; e.preventDefault(); move(pos + d); commit?.(); };
-  return range;
+  range.onpointerup = range.onpointercancel = e => { if (!drag || e.pointerId !== drag.id) return; drag = null; bubble.hidden = true; fine(1); o.commit?.(); };
+  range.onkeydown = e => { const d = keyStep(e.key, e.shiftKey); if (d === null || range.disabled) return; e.preventDefault(); move(pos + d); o.commit?.(); };
+  return { row, range, number, reset };
 }

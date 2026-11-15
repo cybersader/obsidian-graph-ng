@@ -122,6 +122,15 @@ test('UI pass download ceilings remain exactly bounded and active documentation 
   }
 });
 
+test('close controls are X icons: no visible "Close" button text in src (owner rule)', () => {
+  const walk = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap(e => e.isDirectory() ? walk(path.join(dir, e.name)) : /\.ts$/.test(e.name) ? [path.join(dir, e.name)] : []);
+  // Visible text is a `text:` option, a textContent/innerText assignment, or the first argument of a button helper. aria-label/title may say "Close".
+  const visible = /(?:\btext\s*:|\.(?:textContent|innerText)\s*=|\bbutton\s*\()\s*(['"`])\s*Close\b/;
+  const offenders = walk(path.join(import.meta.dir, '..', 'src')).flatMap(file => fs.readFileSync(file, 'utf8').split('\n').map((line, i) => visible.test(line) ? `${path.basename(file)}:${i + 1}` : '').filter(Boolean));
+  expect(offenders).toEqual([]);
+  expect(visible.test(`createEl('button', { text: 'Close' })`)).toBe(true); expect(visible.test(`button('Close', 'Close', run)`)).toBe(true);
+  expect(visible.test(`b.textContent = "Close card"`)).toBe(true); expect(visible.test(`button('×', 'Close', run)`)).toBe(false); expect(visible.test(`attr: { 'aria-label': 'Close graph tools' }`)).toBe(false);
+});
 test('UI strings never join fragments with a middle dot (owner rule)', () => {
   const walk = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap(e => e.isDirectory() ? walk(path.join(dir, e.name)) : /\.ts$/.test(e.name) ? [path.join(dir, e.name)] : []);
   const offenders = walk(path.join(import.meta.dir, '..', 'src')).filter(file => /·/.test(fs.readFileSync(file, 'utf8')));

@@ -152,7 +152,7 @@ test('Repair R2 existing Edge-note size slider dispatches the covered live refre
   f.host.carriers = () => 1; f.host.policy = () => []; f.host.visualsChanged = (labels: boolean) => calls.push(labels);
   f.panel.body.empty(); f.panel.display(f.panel.body);
   const row = f.panel.body.querySelectorAll('.graph-ng-slider').find((row: any) => row.children.some((child: any) => child.textContent === 'Edge-note size'));
-  expect(row).toBeDefined(); const input: any = row.querySelector('input'); input.value = '2'; input.oninput();
+  expect(row).toBeDefined(); const input: any = row.querySelectorAll('input').find((e: any) => e.type === 'number'); input.value = '2'; input.oninput();
   expect(f.plugin.settings.visuals.carrierSize).toBe(2); expect(calls).toEqual([false]); f.panel.dispose();
 });
 

@@ -40,7 +40,7 @@ test('numeric drafts survive rerenders; reset restores every exposed default; ex
   const f = fixture(); f.settings.layout.force.scalingRatio = 100000; f.panel.physicsDraft = undefined; f.panel.render();
   expect(numbers(f)[0].value).toBe('100000');
   input(f, 0, '999999'); input(f, 1, '0'); f.panel.render();
-  expect(f.panel.body.querySelectorAll('input')[0].value).toBe('999999'); expect(f.applied()).toBe(0);
+  expect(numbers(f)[0].value).toBe('999999'); expect(f.applied()).toBe(0);
   expect(f.panel.body.textContent).toContain('What changes on apply: Spread nodes 100000 → 999999; Pull to center 1 → 0.');
   control(f.panel.body, 'Reset to defaults').click(); expect(f.settings.layout.force.scalingRatio).toBe(100000);
   const d = physicsDefaults();

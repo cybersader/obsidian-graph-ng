@@ -267,7 +267,7 @@ test('TBR-2 production Workspace scope uses real renderer visibility update with
 test('TBR-3 Members exposes controlled region and expanded state across open, switch and Escape', () => {
   const f = fixture(), members = control(f.toolbar, 'Members');
   expect(members.getAttribute('aria-controls')).toBe(f.panel.root.id); expect(members.getAttribute('aria-expanded')).toBe('false');
-  members.click(); expect(members.getAttribute('aria-expanded')).toBe('true'); expect(ControlElement.active).toBe(control(f.panel.root, 'Close'));
+  members.click(); expect(members.getAttribute('aria-expanded')).toBe('true'); expect(ControlElement.active).toBe(f.panel.closeButton);
   control(f.toolbar, 'Saved views').click(); expect(members.getAttribute('aria-expanded')).toBe('false');
   members.click(); f.panel.root.onkeydown({ key: 'Escape', preventDefault() {}, stopPropagation() {} });
   expect(members.getAttribute('aria-expanded')).toBe('false'); expect(f.panel.root.hidden).toBe(true); expect(ControlElement.active).toBe(members); f.panel.dispose();

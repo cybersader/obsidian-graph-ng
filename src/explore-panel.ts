@@ -9,8 +9,8 @@ import { suggestions } from './core/expr/autocomplete';
 import { declaredKeys } from './core/columns';
 import { describePredicate, groupLabel, NO_COLOR, VIEW_LIMITS, validateSaved, validateView, type ExploreResult, type ExploreView, type SavedView, type ViewCamera } from './core/explore';
 import { canonical, validateDerivedGroup, validatePredicate, type GraphDeclaration, type GroupSource, type Predicate, type Scalar } from './core/declaration';
-import type { DegreeCurve, EdgeMode, Settings, Visuals } from './settings';
-import { progressiveSlider, type Curve } from './progressive-slider';
+import { defaults, defaultVisuals, type DegreeCurve, type EdgeMode, type Settings, type Visuals } from './settings';
+import { progressiveSlider, type Curve, type SliderOptions } from './progressive-slider';
 /** Slider travel per numeric layout control; typed values outside the span stay unclamped. */
 const PHYSICS_CURVES: Partial<Record<PhysicsKey, Curve>> = { scalingRatio: { min: .1, max: 100, log: true }, gravity: { min: 0, max: 20, k: 3 }, slowDown: { min: .1, max: 100, log: true }, iterations: { min: 1, max: 1000, log: true, int: true }, barnesHutTheta: { min: .1, max: 3, k: 2 } };
 import type { Suggestion } from './recommend';
@@ -70,6 +70,14 @@ export async function setRelationshipDisplay(plugin: { settings: Settings; apply
   const s = plugin.settings; if (s.declaration.display.reifiedAsNodes === nodes) return;
   await plugin.apply({ ...s, declaration: { ...s.declaration, display: { ...s.declaration.display, reifiedAsNodes: nodes } } });
 }
+/** Toggle/select row: name on the left with an optional muted line under it; the caller appends the control. Long
+ * toggle labels split at "(...)" or ": " into name and description; the control keeps the full accessible name. */
+function settingRow(host: HTMLElement, label: string, cls: string, desc?: string) {
+  const row = host.createEl('label', { cls: `graph-ng-setting ${cls}` }), [, name = label, a, b] = (!desc && /^(.+?)(?: \((.+)\)|: (.+))$/.exec(label)) || [], more = desc ?? a ?? b;
+  row.createSpan({ cls: 'graph-ng-setting-name', text: name });
+  if (more) row.createDiv({ cls: 'graph-ng-setting-desc', text: more[0]!.toUpperCase() + more.slice(1) });
+  return row;
+}
 let expressionPanelId = 0;
 const parseRaw = (raw: string): Scalar => { try { const v: unknown = JSON.parse(raw); return v === null || ['string', 'number', 'boolean'].includes(typeof v) ? v as Scalar : raw; } catch { return raw; } };
 /** One nonmodal overlay; opening tools never changes the canvas rectangle or graph. */
@@ -123,7 +131,8 @@ export class ExplorePanel {
     this.root = parent.createDiv({ cls: 'graph-ng-explore', attr: { role: 'region', 'aria-label': 'Graph tools', id: `graph-ng-controls-${this.expressionPanelId}` } });
     const head = this.root.createDiv({ cls: 'graph-ng-explore-head' });
     this.title = head.createEl('h3', { text: 'Views' });
-    this.closeButton = head.createEl('button', { text: 'Close', attr: { 'aria-label': 'Close graph tools' } });
+    this.closeButton = head.createEl('button', { cls: 'clickable-icon graph-ng-explore-close', attr: { 'aria-label': 'Close graph tools', title: 'Close graph tools' } });
+    setIcon(this.closeButton, 'x');
     this.closeButton.onclick = () => this.close();
     this.closeButton.onblur = () => { this.saveFocus = false; };
     this.root.onkeydown = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); this.close(); } };
@@ -440,19 +449,17 @@ export class ExplorePanel {
     this.flag(host, 'edgeDirection', 'Show direction (fade from source to target)');
   }
   private flag(host: HTMLElement, key: { [K in keyof Visuals]: Visuals[K] extends boolean ? K : never }[keyof Visuals], label: string, labels = false) {
-    const row = host.createEl('label', { cls: 'graph-ng-row' }), box = row.createEl('input', { attr: { type: 'checkbox', 'aria-label': label } });
-    box.checked = this.settings.visuals[key]; row.createSpan({ text: label });
+    const row = settingRow(host, label, 'graph-ng-toggle'), box = row.createEl('input', { attr: { type: 'checkbox', 'aria-label': label } });
+    box.checked = this.settings.visuals[key];
     box.onchange = () => { this.settings.visuals[key] = box.checked; this.host.visualsChanged(labels); this.guards.forEach(update => update()); };
   }
-  private slider(host: HTMLElement, label: string, curve: Curve, get: () => number, set: (v: number) => void, labels = false) {
-    const { min, max } = curve, row = host.createDiv({ cls: 'graph-ng-slider' }); row.createSpan({ text: label });
-    const number = row.createEl('input', { attr: { type: 'number', min: String(min), max: String(max), step: 'any', 'aria-label': label } });
-    number.value = String(get()); number.title = `${min}–${max}; exact values accepted`;
-    progressiveSlider(row, number, label, curve, value => {
+  private slider(host: HTMLElement, label: string, curve: Curve, get: () => number, set: (v: number) => void, labels = false, more: Partial<SliderOptions> = {}) {
+    const { min, max } = curve, [, name = label, unit] = /^(.+) \((px|ms)\)$/.exec(label) ?? [];
+    const { number } = progressiveSlider(host, { label, name, unit, curve, value: String(get()), attr: { min: String(min), max: String(max), title: `${min}–${max}; exact values accepted` }, ...more, changed: value => {
       const n = value.trim() ? Number(value) : NaN, valid = Number.isFinite(n) && n >= min && n <= max;
       number.setAttribute('aria-invalid', String(!valid)); if (!valid) return;
       set(n); this.host.visualsChanged(false); this.guards.forEach(update => update());
-    }, labels ? () => this.host.visualsChanged(true) : undefined);
+    }, commit: labels ? () => this.host.visualsChanged(true) : undefined });
   }
   private guard(host: HTMLElement, effect: string) {
     const box = host.createEl('details', { cls: 'graph-ng-guard' });
@@ -474,14 +481,13 @@ export class ExplorePanel {
     const summarize = () => { const now = applied(), diff = PHYSICS_FIELDS.filter(([key]) => draft[key] !== now[key]).map(([key, title]) => `${title} ${show(now[key])} → ${show(draft[key])}`); changes.textContent = [this.physicsNote, diff.length ? `What changes on apply: ${diff.join('; ')}.` : 'No pending changes.'].filter(Boolean).join(' '); };
     const basic = host.createDiv(), advanced = host.createEl('details', { cls: 'graph-ng-physics-advanced' });
     advanced.createEl('summary', { text: 'Advanced physics' }); advanced.open = this.physicsAdvanced; advanced.ontoggle = () => { this.physicsAdvanced = advanced.open; };
+    const initial = physicsDefaults();
     for (const [key, title, help, more] of PHYSICS_FIELDS) {
-      const parent = more ? advanced : basic, label = parent.createEl('label', { cls: 'graph-ng-physics-field' });
-      label.createSpan({ text: title });
-      const value = draft[key], input = label.createEl('input', { attr: typeof value === 'boolean' ? { type: 'checkbox', 'aria-label': title } : { type: 'number', step: key === 'iterations' ? '1' : 'any', ...(key === 'gravity' ? { min: '0' } : key === 'iterations' ? { min: '1' } : {}), 'aria-label': title } });
-      input.disabled = this.physicsBusy;
-      if (typeof value === 'boolean') { input.checked = value; input.onchange = () => { draft[key] = input.checked; summarize(); }; }
-      else { input.value = value; input.oninput = () => { draft[key] = input.value; summarize(); }; progressiveSlider(label, input, title, PHYSICS_CURVES[key]!, v => { draft[key] = v; summarize(); }); }
-      parent.createDiv({ cls: 'graph-ng-explore-note', text: help });
+      const parent = more ? advanced : basic, value = draft[key], def = initial[key];
+      if (typeof value === 'boolean') {
+        const row = settingRow(parent, title, 'graph-ng-toggle graph-ng-physics-field', help), input = row.createEl('input', { attr: { type: 'checkbox', 'aria-label': title } });
+        input.disabled = this.physicsBusy; input.checked = value; input.onchange = () => { draft[key] = input.checked; summarize(); };
+      } else progressiveSlider(parent, { label: title, desc: help, curve: PHYSICS_CURVES[key]!, value, def: def as number, disabled: this.physicsBusy, cls: 'graph-ng-physics-field', attr: { step: key === 'iterations' ? '1' : 'any', ...(key === 'gravity' ? { min: '0' } : key === 'iterations' ? { min: '1' } : {}) }, changed: v => { draft[key] = v; summarize(); } });
     }
     summarize();
     host.createDiv({ cls: 'graph-ng-explore-error', text: this.physicsError, attr: { role: 'alert' } });
@@ -521,17 +527,16 @@ export class ExplorePanel {
     const inputs: HTMLInputElement[] = [];
     const message = group.createDiv({ cls: 'graph-ng-explore-note', attr: { role: 'status', 'aria-live': 'polite' } }); message.textContent = this.sizingMessage;
     const changed = (key: keyof NodeSizingValues, value: string) => { draft[key] = value; this.sizingPreview = false; this.host.previewSizing?.(null); this.sizingMessage = message.textContent = 'Draft not previewed or saved.'; this.updateSizingReadout(); };
-    const curveRow = group.createEl('label', { cls: 'graph-ng-sizing-row' }); curveRow.createSpan({ text: 'Degree curve' });
+    const curveRow = settingRow(group, 'Degree curve', 'graph-ng-select');
     const curve = curveRow.createEl('select', { attr: { 'aria-label': 'Degree curve' } }); curve.disabled = this.sizingBusy;
     for (const [v, t] of [['sqrt', 'Square root'], ['log', 'Logarithmic'], ['linear', 'Linear'], ['legacy', 'Previous']]) curve.createEl('option', { value: v, text: t });
     const hint = () => ({ sqrt: 'Area grows with √degree: hubs stand out, leaves stay readable.', log: 'Area grows with log degree: gentle, most notes look alike.', linear: 'Area grows with degree: only the largest hubs grow.', legacy: 'Earlier curve: radius grows with log degree.' })[draft.curve as DegreeCurve];
-    curve.value = draft.curve; const curveHint = this.note(group, hint());
+    curve.value = draft.curve; const curveHint = curveRow.createDiv({ cls: 'graph-ng-setting-desc', text: hint() });
     curve.onchange = () => { changed('curve', curve.value); curveHint.textContent = hint(); };
+    const base = sizingValues(defaults('links')), initial = { ...base, compensation: base.compensation * 100, floor: base.floor * 100 };
     for (const [key, title, unit, range] of fields) {
-      const row = group.createEl('label', { cls: 'graph-ng-sizing-row' }); row.createSpan({ text: title });
-      const number = row.createEl('input', { attr: { type: 'number', step: 'any', 'aria-label': title } }); number.value = draft[key]; number.disabled = this.sizingBusy; inputs.push(number); number.min = key === 'prominence' ? '1' : '0'; number.max = String(key === 'radius' ? MAX_NODE_RADIUS : key === 'prominence' ? 9 : 100);
-      row.createSpan({ text: unit });
-      progressiveSlider(row, number, title, range, value => changed(key, value));
+      const { number } = progressiveSlider(group, { label: title, unit, curve: range, value: draft[key], def: initial[key], disabled: this.sizingBusy, cls: 'graph-ng-sizing-row', attr: { min: key === 'prominence' ? '1' : '0', max: String(key === 'radius' ? MAX_NODE_RADIUS : key === 'prominence' ? 9 : 100) }, changed: value => changed(key, value) });
+      inputs.push(number);
     }
     const help = group.createEl('details'); help.createEl('summary', { text: 'Sizing, density & brightness' });
     this.note(help, `Radius slider: 0.01–20 CSS px; type custom values up to ${MAX_NODE_RADIUS}. Degree counts incident edges, not hierarchy; curves other than Previous scale disc area, so a hub at maximum prominence P covers P² leaf areas. Density shrinks marks, not spacing. Highlights add 2 px; glow, halos and overlapping edges can still brighten a core.`);
@@ -582,13 +587,13 @@ export class ExplorePanel {
   private display(host: HTMLElement) {
     const s = this.settings, v = s.visuals;
     type NumericVisual = { [K in keyof Visuals]: Visuals[K] extends number ? K : never }[keyof Visuals];
-    const slider = (key: NumericVisual, label: string, curve: Curve) =>
-      this.slider(host, label, curve, () => v[key], value => { v[key] = value; });
+    const initial = defaultVisuals(), slider = (key: NumericVisual, label: string, curve: Curve) =>
+      this.slider(host, label, curve, () => v[key], value => { v[key] = value; }, false, { def: initial[key] });
     this.suggested(host);
     this.nodes(host);
     this.note(host, 'Closing ends a preview; drafts stay here. Live controls below save automatically in plugin settings, not named views.');
     host.createEl('h4', { text: 'Live appearance defaults' });
-    this.slider(host, 'Label density', { min: .25, max: 3, log: true }, () => s.labelDensity, x => { s.labelDensity = x; }, true);
+    this.slider(host, 'Label density', { min: .25, max: 3, log: true }, () => s.labelDensity, x => { s.labelDensity = x; }, true, { def: 1 });
     this.edgeMode(host);
     slider('edgeOpacity', 'Edge opacity (0–1)', { min: 0, max: 1, k: 2.5 });
     slider('edgeColorMix', 'Edge color blend', { min: 0, max: 1 });
@@ -609,8 +614,7 @@ export class ExplorePanel {
     }
     this.flag(host, 'clickOpens', 'Click opens notes directly (skip the connection card)');
     const find = host.createEl('details', { cls: 'graph-ng-highlight-options' }); find.createEl('summary', { text: 'Finding connections' });
-    this.slider(find, 'Minimum highlighted size (px)', { min: 0, max: 16, k: 1.5 }, () => v.tierMinSize, x => { v.tierMinSize = x; });
-    this.note(find, 'Direct connections never draw smaller than this at any zoom; neighbours of neighbours get a bit over half. 0 turns it off.');
+    this.slider(find, 'Minimum highlighted size (px)', { min: 0, max: 16, k: 1.5 }, () => v.tierMinSize, x => { v.tierMinSize = x; }, false, { def: initial.tierMinSize, desc: 'Direct connections never draw smaller than this; neighbours of neighbours a bit over half. 0 turns it off.' });
     this.flag(find, 'tierRings', 'Rings around the focus and direct connections');
     this.flag(find, 'focusEdges', 'Strong focus lines (fade the rest)');
     this.flag(find, 'offscreenPips', 'Arrows to off-screen direct connections');
@@ -620,7 +624,7 @@ export class ExplorePanel {
     this.flag(find, 'breadcrumb', 'Trail of visited notes along the top');
     this.flag(find, 'minimap', 'Minimap (hidden under 500 px wide)');
     this.flag(host, 'labelFade', 'Fade labels by zoom and importance', true);
-    this.slider(host, 'Label scale by tier', { min: 1, max: 1.6, k: 1.5 }, () => v.labelTierScale, x => { v.labelTierScale = x; }, true);
+    this.slider(host, 'Label scale by tier', { min: 1, max: 1.6, k: 1.5 }, () => v.labelTierScale, x => { v.labelTierScale = x; }, true, { def: initial.labelTierScale });
     this.flag(host, 'labelPlates', 'Label plates');
     this.note(host, 'Focus labels largest, then direct connections, then 2-hop. Hubs get larger names. 1 keeps one size.');
     this.flag(host, 'zoomAdapt', 'Adapt to zoom: fade crowded edges and shrink hubs when zoomed out');
