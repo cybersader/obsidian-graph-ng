@@ -15,10 +15,10 @@ function args(text: string) { let depth = 0, start = 0; const parts: string[] = 
 function output(code: string, name: string) { const text = [...code.matchAll(new RegExp('\\s+' + name + ' = vec4\\((.*)\\);', 'g'))].at(-1)![1]!; return args(text).map(expression); }
 function nodeProgram(code: string) {
   const read = (name: string) => expression(code.match(new RegExp('(?:float|vec3) ' + name + ' = (.*);'))![1]!);
-  const core = read('core'), halo = read('halo'), shade = read('shade'), [rgb, alpha] = output(code, 'outputColor');
-  return (color: number[], d: number, glow: number, tintAlpha = 1, dark = true) => {
-    const s: any = { ...builtins, d, glow, spread: glow > 0 ? 2.3 : 1, tintAlpha, additive: +dark };
-    s.core = core(s); s.halo = halo(s);
+  const core = read('core'), halo = read('halo'), shade = read('shade'), rim = code.includes('float rim') ? read('rim') : undefined, [rgb, alpha] = output(code, 'outputColor');
+  return (color: number[], d: number, glow: number, tintAlpha = 1, dark = true, ring = 0) => {
+    const s: any = { ...builtins, d, glow, spread: glow > 0 ? 2.3 : ring ? 1.4 : 1, tintAlpha, additive: +dark, ring };
+    s.core = core(s); s.halo = halo(s); s.rim = rim ? rim(s) : s.halo;
     return [...color.map(tintColor => { s.tintColor = tintColor; s.shade = shade(s); return rgb!(s); }), alpha!(s)];
   };
 }
@@ -68,7 +68,10 @@ test('density sparse node cores and light-theme output are unchanged; translucen
     result.slice(0, 3).forEach(v => { expect(v).toBeGreaterThanOrEqual(0); expect(v).toBeLessThanOrEqual(result[3]! + 1e-12); });
     if (d < .82 || glow === 0) expect(result).toEqual(oldNode(color, d, glow, alpha));
     expect(newNode(color, d, glow, alpha, false)).toEqual(oldNode(color, d, glow, alpha, false));
+    // The graduated focus ring is coverage, not addition: bounded by the tint alpha, premultiplied.
+    for (const ring of [.5, 1]) { const r = newNode(color, d, glow, alpha, true, ring); expect(r[3]).toBeLessThanOrEqual(alpha + 1e-12); r.slice(0, 3).forEach(v => expect(v).toBeLessThanOrEqual(r[3]! + 1e-12)); }
   }
+  for (const glow of [0, 1]) { expect(newNode(colors[0]!, 1.22, glow, 1, true, 1)[3]).toBeGreaterThan(newNode(colors[0]!, 1.22, glow, 1, true, 0)[3]! + .5); expect(newNode(colors[0]!, .5, glow, 1, true, 1)).toEqual(newNode(colors[0]!, .5, glow, 1, true, 0)); }
 });
 test('density zero-edge contract and explicit current focus remain continuous across zoom and density', () => {
   const settings = defaults('links'), saved = JSON.stringify(settings);
@@ -82,8 +85,10 @@ test('density zero-edge contract and explicit current focus remain continuous ac
   expect(JSON.stringify(settings)).toBe(saved);
 });
 test('density correction leaves node radius and edge geometry/direction/focus equations intact', () => {
-  // Graduated hover changes only the node tint line, the edge focus line and adds the edge tier attribute.
-  const focusFree = (code: string) => code.replace(/\n tint = vec4\(c\.rgb,.*;/, '').replace(/\n if \(focus > 0\.\) alpha = .*;/, '').replace('\nlayout(location=3) in uint tier;', '');
+  // Graduated hover changes only the node tint line, the edge focus line and adds the edge tier attribute;
+  // graduated tier styling adds the focus ring/growth lines and the focus-incident edge width factor.
+  const focusFree = (code: string) => code.replace(/\n tint = vec4\(c\.rgb,.*;/, '').replace(/\n if \(focus > 0\.\) alpha = .*;/, '').replace('\nlayout(location=3) in uint tier;', '')
+    .replace(/\n.*(\bego\b|Graduated tiers).*/g, '').replace('\nout float ring;', '').replace(/\n float wide = .*;/, '').replace('* wide)', '* max(.5, edgeSize))');
   expect(focusFree(shader('nodeVertex'))).toBe(focusFree(before.nodeVertex)); expect(shader('nodeVertex')).not.toBe(before.nodeVertex);
   const geometry = (code: string) => focusFree(code.slice(0, code.lastIndexOf('tint = vec4(rgb * alpha,'))); expect(geometry(shader('edgeVertex'))).toBe(geometry(before.edge));
   const s = defaults('links'); s.nodeSizing = { policy: 'predictable', compensation: 1, floor: .3 };

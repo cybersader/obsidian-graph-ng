@@ -82,6 +82,17 @@ export function focusTiers(f: number, inc: { offsets: Uint32Array; edges: Uint32
   const direct = grow([f], 255); budget = max; grow(direct, 128);
   return budget < 0;
 }
+/** Graduated tier styling for Canvas; the shaders write the same expressions (tests compare both).
+ * `g` is the node tier byte / 255 and `f` the eased focus level. Node: [alpha factor, radius
+ * factor, ring coverage] — the focus grows 60% and gains a ring, direct notes grow 25% at full
+ * alpha, 2-hop notes sit halfway to the dim opacity, context reaches it. */
+export const tierNode = (g: number, hot: boolean, isFocus: boolean, f: number, dim: number) => [hot ? 1 : 1 - (1 - dim) * f * (1 - g), 1 + f * (isFocus ? .6 : g > .9 ? .25 : 0), isFocus ? f : 0] as const;
+/** Edge: [alpha, width factor]. Focus-incident strokes triple (capped at 1) and widen 60%, 2-hop
+ * strokes keep the base alpha, context strokes fade to 60% of the dim opacity. */
+export const tierEdge = (tier: number, a: number, f: number, dim: number) => [a + ((tier > 200 ? Math.min(1, a * 3) : tier ? a : a * dim * .6) - a) * f, 1 + f * (tier > 200 ? .6 : 0)] as const;
+/** Atlas label alpha: tiered notes hand over to the graduated focus labels; context labels fade to
+ * half the dim opacity. */
+export const tierLabel = (g: number, a: number, f: number, dim: number) => a + ((g > .1 ? 0 : a * dim * .5) - a) * f;
 /** Bound software draw work by both visible nodes and visible edges; never silently truncate. */
 export function canvasDetailEdges(p: Pick<Projection, 'source' | 'target'>, visible: Uint8Array, maxNodes: number, maxEdges: number) {
   if (visible.reduce((n, v) => n + (v ? 1 : 0), 0) > maxNodes) throw new Error('CANVAS_DETAIL_NODE_LIMIT: use group member lists');

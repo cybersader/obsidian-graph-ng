@@ -189,7 +189,9 @@ test('production sizing preview/cancel keeps renderer camera selection scope set
   expect(f.renderer.sizingReadout()).toContain('12.00–12.00');
   const point = f.renderer.screenPoint(2); expect(f.renderer.pick(point.x + 16, point.y)).toBe(2);
   const radii: number[] = []; ctx.arc = (_x: number, _y: number, radius: number) => radii.push(radius);
-  f.renderer[compiled('drawCanvas')](); expect(radii).toEqual([12, 12, 14]);
+  f.renderer[compiled('drawCanvas')](); expect(radii.slice(0, 2)).toEqual([12, 12]);
+  // The selected note is the graduated focus: radius 14 grows by 60% at full focus and gains its ring stroke.
+  const level = f.renderer[compiled('focusLevel')]; [14 * (1 + .6 * level), 14 * (1 + .6 * level) * 1.22].slice(0, level ? 2 : 1).forEach((v, i) => expect(radii[2 + i]!).toBeCloseTo(v, 9));
   await f.renderer[compiled('prepareLabels')](() => true);
   expect(f.renderer.atlas.levels.every((level: Float32Array) => level.length % 11 === 0)).toBe(true);
   const populated = f.renderer.atlas.levels.find((level: Float32Array) => level.length > 0); expect(populated).toBeDefined(); expect(populated[10]).toBe(1);
@@ -330,14 +332,34 @@ test('graduated production Canvas parity: tier batches, graded nodes and labels,
   try {
     f.tap(0); const plain = paint(0); expect(plain.strokes.length).toBe(1); expect(plain.strokes[0]![1]).toBe(3);
     const a = plain.strokes[0]![0], lit = paint(1);
-    expect(lit.strokes.map(s => s[1])).toEqual([1, 1, 1]);
+    // Three edge batches, then the focus ring (an arc stroke with no line segments) at full focus.
+    expect(lit.strokes.map(s => s[1])).toEqual([1, 1, 1, 0]); expect(lit.strokes[3]![0]).toBeCloseTo(plain.fills[0]!, 12);
     [a * (1 - (1 - dim * .6)), a, Math.min(1, a * 3)].forEach((v, i) => expect(lit.strokes[i]![0]).toBeCloseTo(v, 12));
     const ratio = lit.fills.map((v, i) => v / plain.fills[i]!);
     [1, 1, 1 - (1 - dim) * (1 - 128 / 255), dim, dim].forEach((v, i) => expect(ratio[i]!).toBeCloseTo(v, 12));
-    for (const [text, alpha] of lit.labels) expect(alpha).toBeCloseTo(+text < 3 ? 1 : dim, 12);
+    // Tiered atlas labels hand over to the graduated DOM labels; context labels go very faint.
+    for (const [text, alpha] of lit.labels) { expect(+text).toBeGreaterThanOrEqual(3); expect(alpha).toBeCloseTo(dim * .5, 12); }
+    expect(plain.labels.every(([, alpha]) => alpha === 1)).toBe(true);
     f.settings.visuals.edgeOpacity = 0; const hidden = paint(1);
-    expect(hidden.strokes).toEqual([]); expect(hidden.fills.map((v, i) => v / plain.fills[i]!)).toEqual(ratio);
+    expect(hidden.strokes.filter(s => s[1])).toEqual([]); expect(hidden.fills.map((v, i) => v / plain.fills[i]!)).toEqual(ratio);
   } finally { Object.assign(ctx, saved); }
+});
+test('graduated production labels: focus largest, direct then 2-hop by priority, placed once per focus or LOD change, every reset clears', async () => {
+  const f = await graduated([[0, 1], [1, 2], [2, 3], [3, 4]]), { r, k } = f;
+  const paint = () => { r[k('focusLevel')] = 1; r[k('placeOverlay')](); return r[k('tierLabels')].map((el: any) => [el.textContent, el.className, el.style.opacity]); };
+  const name = (n: number) => r[k('name')](n);
+  f.tap(1); const first = paint();
+  expect(first).toEqual([[name(0), 'graph-ng-focus-label graph-ng-tier-1', '1'], [name(2), 'graph-ng-focus-label graph-ng-tier-1', '1'], [name(3), 'graph-ng-focus-label graph-ng-tier-2', '1']]);
+  expect(r[k('hoverLabel')].className).toBe('graph-ng-hover-label graph-ng-focus'); expect(r[k('hoverLabel')].textContent).toBe(name(1));
+  // Per frame only translates; the placement is reused until focus or LOD changes.
+  const ranked = r[k('ranked')]; r.setCamera(r.camera.x + .01, r.camera.y, r.camera.ratio); paint(); expect(r[k('ranked')]).toBe(ranked);
+  r.setCamera(r.camera.x, r.camera.y, r.camera.ratio * 16); paint(); expect(r[k('ranked')]).not.toBe(ranked);
+  // Budget: one label per viewport keeps only the focus (shown by the focus readout).
+  f.settings.labelsMaxPerViewport = 1; f.tap(2); expect(paint()).toEqual([]); f.settings.labelsMaxPerViewport = 400;
+  f.tap(3); expect(paint().map((x: string[]) => x[0])).toEqual([name(2), name(4), name(1)]);
+  f.tap(EMPTY); expect(paint()).toEqual([]); expect(r[k('hoverLabel')].textContent).toBe('');
+  f.settings.visuals.hoverHighlight = false; f.hover(2); expect(paint()).toEqual([]); expect(r[k('hoverLabel')].className).toBe('graph-ng-hover-label');
+  f.settings.visuals.hoverHighlight = true; f.hover(3); expect(paint().length).toBe(3); r[k('pointerLeave')](); expect(paint()).toEqual([]);
 });
 test('graduated production WebGL uploads the tier column and state on focus and on view re-upload', async () => {
   const f = await graduated([[0, 1], [1, 2], [2, 3]]), { r, k } = f;
