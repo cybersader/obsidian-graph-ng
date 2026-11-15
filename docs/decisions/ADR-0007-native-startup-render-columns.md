@@ -24,7 +24,7 @@ The final GPU-resize approach flushes a public WebGL2 fence and asynchronously p
 
 ## Find a note (2026-11-15 addendum)
 
-Find-and-fly search keeps this boundary: the main realm sends a query and a copied mask of notes it can show; the worker ranks over its existing cached name-and-identity search text in cooperative, cancellable chunks and returns at most 20 note indices. Identities are not added to the render columns. The main realm renders rows from packed paths and its own edge columns.
+Find-and-fly search keeps this boundary: the main realm sends a query and a copied mask of notes it can show; the worker ranks over its existing cached name-and-identity search text in cooperative, cancellable chunks and returns at most 20 note indices. Identities are not added to the render columns. The main realm renders rows from packed paths and its existing incidence offsets. The transferred request mask is never read after dispatch. Cold search-text cache construction also yields by chunk and publishes only a complete cache; cancellations cannot leave a partial cache for another request. Query, view and renderer changes invalidate pending rows and previews, and renderer teardown removes the search overlay.
 
 ## Local results
 

@@ -32,7 +32,7 @@ export function findPath(from: number, to: number, inc: Incidence, p: Columns, o
       if (own(e, v)) for (let k = inc.offsets[v]!; k < inc.offsets[v + 1]!; k++) {
         if (--budget < 0) return false;
         const f = inc.edges[k]!, w = other(f, v);
-        if (f !== e && w !== u && w !== v && own(f, v) && ok(f, w) && visit({ from: u, to: w, edges: [e, f], carrier: v })) return true;
+        if (f !== e && w !== u && w !== v && own(f, v) && (!p.carrierNodes[w] || w === from || w === to) && ok(f, w) && visit({ from: u, to: w, edges: [e, f], carrier: v })) return true;
       }
     }
     return undefined;

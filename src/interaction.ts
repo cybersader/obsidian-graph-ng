@@ -178,11 +178,9 @@ export class Interaction {
     this.release(); this.gestures.dispose();
   }
   /** Drop active pointers (context loss, dispose). */
-  release() { this.pointers.clear(); }
+  release() { this.pointers.clear(); this.gestures.cancel(); }
   /** Re-run hover at the last pointer position after coordinates change under it. */
   replayHover() { if (this.lastPointer) this.pointerMove({ ...this.lastPointer, pointerId: -1 } as PointerEvent); }
-  /** Context for actions run outside a key press (menus). */
-  context(node = this.host.selected >= 0 ? this.host.selected : this.host.hovered): ActionContext { return { host: this.host, node }; }
   pointerDown = (e: PointerEvent) => { const h = this.host; if (!h.live || e.button > 0) return; h.stopFlight(); this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY }); h.canvas.setPointerCapture(e.pointerId); this.downX = e.clientX; this.downY = e.clientY; this.moved = this.pointers.size > 1;
     // A still touch held for 500 ms opens the menu; a drag, a second finger or lifting cancels it.
     if (e.pointerType === 'touch' && !this.moved) this.gestures.hold(() => { const r = h.canvas.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top, node = h.pick(x, y); this.pointerCancel(e); this.gestures.open(node, node < 0 ? h.pickEdge(x, y) : -1, e.clientX, e.clientY); });

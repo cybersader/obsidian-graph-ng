@@ -945,3 +945,50 @@ test('wave-4 wiring: the hover dwell never moves a path highlight or a pinned le
   f.tap(0); r[k('keyDown')]({ key: 'l', target: r.canvas, preventDefault() {} }); expect(r.lensNode).toBe(0);
   const lensed = f.actual(); f.hover(3); await Bun.sleep(50); expect(r.hovered).toBe(3); expect(f.actual()).toEqual(lensed); expect(r.lensNode).toBe(0);
 });
+
+
+test('review: minimap rebuild is not starved by continuous frames and disposal cancels it', async () => {
+  const { r, k } = await graduated([[0, 1], [1, 2]]);
+  r[k('placeOverlay')](); const mini = r[k('miniMap')], version = mini[k('densityVersion')];
+  r.setView(new Uint8Array([1, 1, 0, 1, 1]), {});
+  for (let i = 0; i < 7; i++) { r[k('placeOverlay')](); await Bun.sleep(50); }
+  expect(mini[k('densityVersion')]).toBe(version + 1);
+  r.setView(new Uint8Array(5).fill(1), {}); r[k('placeOverlay')]();
+  r.dispose(); await Bun.sleep(300); expect(mini[k('densityVersion')]).toBe(version + 1);
+});
+
+test('review: minimap can revisit a source after a pending rebuild returned to the original', async () => {
+  const { r, k } = await graduated([[0, 1]]); r[k('placeOverlay')]();
+  const mini = r[k('miniMap')], a = mini[k('miniLast')], b = { ...a, visible: a.visible.slice() }, version = mini[k('densityVersion')];
+  mini.update(b); mini.update(a); await Bun.sleep(300);
+  mini.update(b); await Bun.sleep(300);
+  expect(mini[k('densityVersion')]).toBe(version + 2);
+});
+
+test('review: relationship menu retains endpoint actions when optional carrier lookup fails', async () => {
+  const { r, k } = await graduated([[0, 1]]), menus: any[][] = [];
+  r.projection.carrier[0] = 0;
+  r[k('describeEdges')] = async () => { throw new Error('worker unavailable'); };
+  r[k('showMenu')] = (entries: any[]) => menus.push(entries);
+  const a = r.screenPoint(0), b = r.screenPoint(1);
+  r.canvas.listeners.get('contextmenu')({ clientX: (a.x + b.x) / 2, clientY: (a.y + b.y) / 2, preventDefault() {} });
+  await Bun.sleep(0);
+  expect(menus[0]!.map(e => e.id)).toEqual(['menu-source', 'menu-target']);
+  menus[0]![1].run(); expect(r.selected).toBe(1);
+});
+
+test('review: collapsing an inner path note clears its path, not just paths with hidden endpoints', async () => {
+  const { r, k } = await graduated([[0, 1], [1, 2], [2, 3]]);
+  r[k('findPath')](0, 3); expect(r[k('pathView')]).toBeDefined();
+  r.setView(new Uint8Array(5).fill(1), { groupCodes: new Uint32Array([0, 1, 1, 0, 0]), groupLabels: ['Ends', 'Middle'], collapsed: new Uint8Array([0, 1]) });
+  expect(r[k('pathView')]).toBeUndefined(); expect(r[k('noteCard')].textContent).toBe('');
+});
+
+test('review: a failed Back-to detail attempt consumes pending focus before any early return', async () => {
+  const { view } = await fixture();
+  const setFocus = () => { view[compiled('pendingFocus')] = { projection: view.projection, node: 2, lens: true }; };
+  setFocus(); view.positions = undefined; await view.showDetails(); expect(view[compiled('pendingFocus')]).toBeUndefined();
+  view.positions = new Float32Array(6); view.gpu = { available: false, reason: 'synthetic refusal' };
+  view.admitDetail = () => false; setFocus();
+  await view.showDetails(); expect(view[compiled('pendingFocus')]).toBeUndefined();
+});

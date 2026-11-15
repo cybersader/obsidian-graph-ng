@@ -13,19 +13,12 @@ export interface SearchSource {
   filter(query: string): void;
 }
 export const SEARCH_DEBOUNCE_MS = 120;
-const sources = new WeakMap<Element, SearchSource>(), boxes = new WeakMap<RendererControls, Omnibox>();
-/** Incident counts for the rows, built once per projection. */
-const degrees = new WeakMap<RenderProjection, Uint32Array>();
+const sources = new WeakMap<Element, SearchSource>(), boxes = new WeakMap<HTMLCanvasElement, Omnibox>();
 let serial = 0;
 
 /** Renderers drawn inside `stage` may open find-a-note over it. */
 export function searchable(stage: HTMLElement, source: SearchSource) { sources.set(stage, source); }
 
-function degreesOf(p: RenderProjection) {
-  let d = degrees.get(p);
-  if (!d) { d = new Uint32Array(p.nodeCount); for (let e = 0; e < p.source.length; e++) { d[p.source[e]!]!++; d[p.target[e]!]!++; } degrees.set(p, d); }
-  return d;
-}
 const normal = (q: string) => q.trim().toLowerCase().replace(/\0/g, '');
 
 /** Find-and-fly: a box over the graph that lists up to 20 ranked notes (name prefix, then name
@@ -57,7 +50,7 @@ export class Omnibox {
     this.findStatus = make('div', 'graph-ng-find-status', root); this.findStatus.setAttribute('aria-live', 'polite');
     this.findKeys = make('div', 'graph-ng-find-keys', root);
     this.findRing = make('div', 'graph-ng-find-ring', parent); this.findRing.hidden = true; this.findRing.setAttribute('aria-hidden', 'true');
-    input.oninput = () => { clearTimeout(this.findTimer); this.findTimer = setTimeout(() => void this.findSearch(), SEARCH_DEBOUNCE_MS); };
+    input.oninput = () => { this.findReset(); this.findTimer = setTimeout(() => void this.findSearch(), SEARCH_DEBOUNCE_MS); };
     input.onkeydown = this.findKey;
     input.onblur = (e: FocusEvent) => { if (!root.contains(e.relatedTarget as Node | null)) this.findClose(false); };
   }
@@ -67,29 +60,40 @@ export class Omnibox {
     const from = this.host.selected, p = from >= 0 ? this.findSource.projection() : undefined, name = p && from < p.nodeCount ? renderPath(p, from).replace(/^.*\//, '').replace(/\.md$/i, '') : '';
     this.findKeys.textContent = 'Enter: go there. Shift+Enter: filter.' + (name ? ` Alt+Enter: find path from ${name}.` : '');
     this.findBox.hidden = false; this.findInput.focus(); this.findInput.select?.(); if (this.findInput.value) void this.findSearch(); }
+  private findReset() {
+    this.findToken++; clearTimeout(this.findTimer); this.findHits = []; this.findActive = -1; this.ranked = '';
+    this.findRing.hidden = true; this.findPaint();
+  }
   findClose(refocus = true) {
-    this.findToken++; clearTimeout(this.findTimer); this.findBox.hidden = this.findRing.hidden = true;
+    this.findReset(); this.findBox.hidden = true;
     if (refocus && this.host.live) this.host.focusCanvas();
+  }
+  dispose() {
+    this.findClose(false);
+    this.findInput.oninput = this.findInput.onkeydown = this.findInput.onblur = null;
+    this.findBox.remove(); this.findRing.remove();
   }
   /** Rank the notes the view can open for the box's query; a newer search or close wins. */
   async findSearch() {
     clearTimeout(this.findTimer);
     const token = ++this.findToken, query = normal(this.findInput.value), h = this.host, p = this.findSource.projection();
-    let best: number[] = [];
+    const visible = h.visible; let best: number[] = [], failed = false;
     if (query && p && h.live && p.nodeCount === h.visible.length) {
       const keep = new Uint8Array(p.nodeCount); for (let i = 0; i < keep.length; i++) keep[i] = +h.openable(i);
-      try { best = (await this.findSource.rank(query, keep)).filter(n => n >= 0 && n < keep.length && keep[n]).slice(0, 20); } catch { /* Superseded or unavailable: no rows. */ }
+      // `keep` is transferred to the worker (its buffer detaches), so re-check results against the live view.
+      try { best = (await this.findSource.rank(query, keep)).filter(n => Number.isInteger(n) && n >= 0 && n < p.nodeCount && h.openable(n)).slice(0, 20); } catch { failed = true; }
     }
-    if (token !== this.findToken || !h.live) return;
+    if (token !== this.findToken || !h.live || p !== this.findSource.projection() || visible !== h.visible || query !== normal(this.findInput.value)) return;
     this.ranked = query; this.findHits = best; this.findActive = -1; this.findRing.hidden = true; this.findPaint(p);
+    if (failed) this.findStatus.textContent = 'Search unavailable. Try again.';
   }
   private findPaint(p?: RenderProjection) {
     const list = this.findList; list.textContent = ''; this.findInput.setAttribute('aria-expanded', String(this.findHits.length > 0)); this.findInput.removeAttribute('aria-activedescendant');
     this.findStatus.textContent = this.ranked && !this.findHits.length ? 'No matching notes' : '';
     if (!p) return;
-    const degree = degreesOf(p);
+    const o = p.offsets;
     this.findHits.forEach((node, i) => {
-      const row = list.appendChild(Object.assign(document.createElement('div'), { className: 'graph-ng-find-row', id: `${this.findId}-${i}` })), path = renderPath(p, node), count = degree[node]!;
+      const row = list.appendChild(Object.assign(document.createElement('div'), { className: 'graph-ng-find-row', id: `${this.findId}-${i}` })), path = renderPath(p, node), count = o[node + 1]! - o[node]!;
       row.setAttribute('role', 'option'); row.setAttribute('aria-selected', 'false');
       const span = (cls: string, text: string) => { row.appendChild(Object.assign(document.createElement('span'), { className: cls, textContent: text })); };
       span('graph-ng-find-name', path.slice(path.lastIndexOf('/') + 1).replace(/\.md$/i, '')); span('graph-ng-find-count', `${count.toLocaleString()} connection${count === 1 ? '' : 's'}`); span('graph-ng-find-path', path);
@@ -99,7 +103,7 @@ export class Omnibox {
   }
   /** Ring the row's note where it is; the camera stays put. */
   findPreview(i: number) {
-    const node = this.findHits[i], h = this.host; if (node === undefined) return;
+    const node = this.findHits[i], h = this.host; if (node === undefined || !h.openable(node)) return;
     this.findActive = i; this.findInput.setAttribute('aria-activedescendant', `${this.findId}-${i}`);
     [...this.findList.children].forEach((row, j) => row.setAttribute('aria-selected', String(j === i)));
     (this.findList.children[i] as HTMLElement | undefined)?.scrollIntoView?.({ block: 'nearest' });
@@ -110,7 +114,7 @@ export class Omnibox {
    * `path`: with a note selected, find the path from it to the row's note instead. */
   async findGo(i?: number, path = false) {
     if (i === undefined && normal(this.findInput.value) !== this.ranked) await this.findSearch();
-    const node = this.findHits[Math.max(0, i ?? this.findActive)]; if (node === undefined || !this.findOpen || !this.host.live) return;
+    const node = this.findHits[Math.max(0, i ?? this.findActive)]; if (node === undefined || !this.findOpen || !this.host.live || !this.host.openable(node)) return;
     const from = this.host.selected; this.findClose();
     if (path && from >= 0 && from !== node) this.host.findPath(from, node); else this.host.flyToNote(node);
   }
@@ -125,10 +129,15 @@ export class Omnibox {
   };
 }
 
+/** A filter change invalidates ranked rows and pending replies without creating a box. */
+export function invalidateSearch(canvas: HTMLCanvasElement) { const box = boxes.get(canvas); if (box) box.findClose(box.findOpen); }
+/** The find box lives beside the canvas, so renderer teardown must remove it explicitly. */
+export function disposeSearch(canvas: HTMLCanvasElement) { boxes.get(canvas)?.dispose(); boxes.delete(canvas); }
+
 /** The view's find box for this renderer, created on first use; undefined when the stage is not searchable. */
 export function omnibox(host: RendererControls) {
-  let box = boxes.get(host); const parent = host.canvas.parentElement, source = parent && sources.get(parent);
-  if (!box && parent && source) boxes.set(host, box = new Omnibox(host, parent, source));
+  let box = boxes.get(host.canvas); const parent = host.canvas.parentElement, source = parent && sources.get(parent);
+  if (!box && parent && source) boxes.set(host.canvas, box = new Omnibox(host, parent, source));
   return box;
 }
 // "/" or Ctrl/Cmd+K opens the box; its Escape outranks the card's (order 10).
@@ -137,4 +146,4 @@ registerAction({
   when: ({ host, event: e }) => !!e && !e.altKey && (e.key === '/' ? !e.ctrlKey && !e.metaKey : e.ctrlKey || e.metaKey) && host.live && !!omnibox(host),
   run: ({ host }) => omnibox(host)!.findShow(),
 });
-registerAction({ id: 'close-find', label: 'Close find a note', key: 'Escape', order: 5, when: ({ host }) => !!boxes.get(host)?.findOpen, run: ({ host }) => boxes.get(host)!.findClose() });
+registerAction({ id: 'close-find', label: 'Close find a note', key: 'Escape', order: 5, when: ({ host }) => !!boxes.get(host.canvas)?.findOpen, run: ({ host }) => boxes.get(host.canvas)!.findClose() });

@@ -487,7 +487,7 @@ Select a note, then **Shift-click** a second note (or right-click it and choose 
 - **Limits:** at most 6 steps and 200,000 scanned connections. The card says **No path within 6 steps** or **Search limit reached** instead of guessing.
 - Relationship notes drawn as dots are part of a step, never a step of their own. Hidden notes and relationship types are never crossed. Esc, an empty click or selecting another note clears the path.
 
-The search is a pure bidirectional BFS on the incident-edge index (`src/path-finder.ts`); it runs once per request, never per frame. WebGL and Canvas draw the same path strokes; the rings and badges are DOM overlays. Evidence: `tests/path-finder.test.ts` and the compiled-renderer path test in `tests/physics-transaction.test.ts`; native visual and screen-reader acceptance are pending. Known gaps: there is no keyboard-only way to choose the second note yet (it needs the right-click menu or search stream), and the path follows the hover-highlight switch.
+The search is a pure bidirectional BFS on the incident-edge index (`src/path-finder.ts`); it runs once per request, never per frame. WebGL and Canvas draw the same path strokes; the rings and badges are DOM overlays. Evidence: `tests/path-finder.test.ts` and the compiled-renderer path test in `tests/physics-transaction.test.ts`; native visual and screen-reader acceptance are pending. With a note selected, **Alt+Enter** on a Find a note result chooses the second note without a pointer. Paths clear when a filter or collapsed group hides any step. Known gap: the path follows the hover-highlight switch.
 
 ### Orientation: zoom limit, minimap and visited-notes trail (unreleased)
 

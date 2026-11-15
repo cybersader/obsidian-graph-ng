@@ -13,6 +13,7 @@ import { interestScorer, byInterest, type Scorer } from './interest';
 import { lensConnections, lensLayout, lensAmount, lensCoordinate, pickLens, type LensConnection, type LensPoint } from './lens-layout';
 import { Interaction, type RendererControls } from './interaction';
 import type { MenuPresenter } from './context-menu';
+import { invalidateSearch, disposeSearch } from './search';
 import { highlightOverlay, paintLegend } from './overlays';
 import { findPath, alternatePath, hopRows, pathNotes, OUTCOME, MAX_ALTERNATES, MAX_HOPS, type Hop } from './path-finder';
 import { Minimap, MINIMAP_MIN_CANVAS } from './minimap';
@@ -439,6 +440,7 @@ export class DetailRenderer {
     const started = performance.now(), n = filterVisible.length, p = this.projection;
     // Software detail stays inside both refusal budgets: refuse before any state changes, never truncate.
     const canvasEdges = !this.gl && this.ctx ? canvasDetailEdges(p, filterVisible, this.settings.canvasMaxDetailNodes, this.settings.canvasMaxDetailEdges) : undefined;
+    invalidateSearch(this.canvas); this.input?.gestures.cancel();
     const visibleChanged = filterVisible !== this.filterVisible || view.collapsed !== this.view.collapsed || view.groupCodes !== this.view.groupCodes;
     this.filterVisible = filterVisible; this.view = view; this.groupCount = view.groupLabels?.length ?? 0; if (view.colors && view.colors.length === filterVisible.length) this.colors = view.colors;
     Object.assign(this, this.coordinateState(this.positions, filterVisible, view));
@@ -451,7 +453,7 @@ export class DetailRenderer {
     const card = this.card;
     card?.history.retain(n => !!this.baseVisible[n]);
     const path = this.pathView;
-    if (path ? !render[path.from] || !render[path.to] || !path.edges.every(this.edgeDrawn) : this.selectedEdges?.length ? !this.selectedEdges.every(this.edgeDrawn) : !filterVisible[this.selected]) { this.pathView = undefined; this.selectedEdges = []; this.edgeToken++; card?.hide(); }
+    if (path ? !render[path.from] || !render[path.to] || !path.edges.every(e => this.edgeDrawn(e) && render[p.source[e]!] && render[p.target[e]!]) : this.selectedEdges?.length ? !this.selectedEdges.every(this.edgeDrawn) : !filterVisible[this.selected]) { this.pathView = undefined; this.selectedEdges = []; this.edgeToken++; card?.hide(); }
     else if (card && card.node >= 0 && card.node === this.selected) card.render();
     if (this.near.length || this.selected >= 0 && this.ready) this.emphasize(true);
     this.recolor(); this.choosePolicy();
@@ -1425,13 +1427,13 @@ export class DetailRenderer {
       act: (a, n) => this.cardAction(a, n),
       travel: n => this.travel(n),
       fitAll: () => this.fitAll(),
-      relationship: async e => { const carrier = p.carrier[e] === 0xffffffff ? undefined : (await this.describeEdges?.([e]))?.[0]?.carrier; return { source: p.source[e]!, target: p.target[e]!, note: carrier ? () => this.openPath?.(carrier) : undefined }; },
+      relationship: async e => { const carrier = p.carrier[e] === 0xffffffff ? undefined : (await this.describeEdges?.([e]).catch(() => []))?.[0]?.carrier; return { source: p.source[e]!, target: p.target[e]!, note: carrier ? () => this.openPath?.(carrier) : undefined }; },
       showMenu: (entries, x, y, n) => this.showMenu?.(entries, x, y, n >= 0 ? this.path(n) : undefined),
       findPath: (from, to) => this.findPath(from, to),
     };
   }
   private contextLost = (e: Event) => {
-    e.preventDefault(); if (this.disposed) return; this.lost = true; this.ready = false; this.input.release(); this.container.title = ''; this.canvas.style.cursor = 'wait';
+    e.preventDefault(); if (this.disposed) return; this.lost = true; this.ready = false; this.input.release(); invalidateSearch(this.canvas); this.container.title = ''; this.canvas.style.cursor = 'wait';
     cancelAnimationFrame(this.frameId); clearTimeout(this.frameTimer); this.frameTimer = undefined; this.frameId = 0; this.canvas.dataset.context = 'lost';
     clearTimeout(this.restoreTimer); this.restoreTimer = setTimeout(() => { if (!this.disposed && this.lost) { this.canvas.dataset.context = 'failed'; this.onUnavailable(); } }, this.settings.contextRestoreTimeoutMs);
   };
@@ -1442,7 +1444,7 @@ export class DetailRenderer {
   };
   dispose() { clearTimeout(this.sizingTimer);
     if (this.disposed) return; this.disposed = true; this.labelsRevision++; clearTimeout(this.restoreTimer); this.restoreTimer = undefined; cancelAnimationFrame(this.frameId); clearTimeout(this.frameTimer); this.frameTimer = undefined; this.observer.disconnect(); this.media.removeEventListener('change', this.refreshTheme);
-    this.input.detach(this.container); this.miniMap.dispose();
+    this.input.detach(this.container); disposeSearch(this.canvas); this.miniMap.dispose();
     this.canvas.removeEventListener('webglcontextlost', this.contextLost); this.canvas.removeEventListener('webglcontextrestored', this.contextRestored);
     const gl = this.gl; if (gl && !this.lost) { for (const p of this.programs) gl.deleteProgram(p.handle); for (const b of [...this.buffers, ...this.labelBuffers, ...this.discBuffers]) if (b) gl.deleteBuffer(b); for (const v of [...this.vaos, ...this.labelVaos]) gl.deleteVertexArray(v); for (const t of this.textures) gl.deleteTexture(t); }
     gl?.getExtension('WEBGL_lose_context')?.loseContext();

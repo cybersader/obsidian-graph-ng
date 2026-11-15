@@ -88,3 +88,18 @@ test('hover intent: no selection retiers at once; with one, hover previews until
   expect(h.selected).toBe(3); expect(h.cardNode).toBe(3); expect(g.locked).toBe(true); expect(Gestures.of(h)).toBe(g);
   input.detach({ removeEventListener() {} } as any);
 });
+
+
+test('release cancels long-press and dwell; stale relationship replies never reopen a menu', async () => {
+  const s = surface(20); s.h.selected = 0;
+  s.g.hover(2, -1); s.input.pointerDown(at(1, 100, 100)); s.input.release();
+  await Bun.sleep(550); expect(s.menus).toEqual([]); expect(s.h.focusNode).toBe(0);
+  let resolve!: (r: any) => void;
+  s.h.relationship = () => new Promise(done => { resolve = done; });
+  s.g.open(-1, 0, 0, 0); s.input.release(); resolve({ source: 0, target: 1 });
+  await Promise.resolve(); expect(s.menus).toEqual([]);
+  (s.g as any).opened = -Infinity;
+  s.g.open(-1, 0, 0, 0); s.h.visible = s.h.visible.slice(); resolve({ source: 0, target: 1 });
+  await Promise.resolve(); expect(s.menus).toEqual([]);
+  s.g.dispose();
+});

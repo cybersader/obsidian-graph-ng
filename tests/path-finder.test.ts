@@ -118,3 +118,14 @@ test('"Find path to…" is a menu action from the selection to the clicked note'
   expect(actions.menu({ host, node: 2 }).some(a => a.id === 'find-path')).toBe(false);
   expect(actions.menu({ host: { ...host, selected: -1 } as RendererControls, node: 5 }).some(a => a.id === 'find-path')).toBe(false);
 });
+
+
+test('nested relationship-note dots cannot become numbered intermediate steps', () => {
+  // C1 (3) owns rows 0/1; C2 (4) owns rows 2/3. The chain through two dots
+  // must not expose C2 as a numbered hop or use its unrelated outgoing row.
+  const g = graph(6, [[0, 3, 0, 0], [3, 4, 0, 0], [4, 1, 0, 1], [4, 2, 0, 1], [2, 5]], [[3, 0], [4, 1]]);
+  expect(findPath(0, 5, g.inc, g.p, g.on, g.vis)).toEqual({ reason: 'none' });
+  expect(findPath(5, 0, g.inc, g.p, g.on, g.vis)).toEqual({ reason: 'none' });
+  // Explicitly choosing the relationship note as an endpoint is still supported.
+  expect(pathNotes(hopsOf(findPath(0, 4, g.inc, g.p, g.on, g.vis)))).toEqual([0, 4]);
+});

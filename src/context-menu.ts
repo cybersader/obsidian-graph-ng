@@ -26,6 +26,7 @@ export class Gestures {
   private dwell?: ReturnType<typeof setTimeout>;
   private press?: ReturnType<typeof setTimeout>;
   private opened = -Infinity;
+  private menuToken = 0;
   constructor(readonly host: RendererControls, readonly registry: ActionRegistry) { views.set(host, this); }
   static of(host: RendererControls) { return views.get(host); }
   /** Focus lock applies to the current selection; the renderer releases it when the selection clears. */
@@ -46,12 +47,13 @@ export class Gestures {
   unpress() { clearTimeout(this.press); this.press = undefined; }
   /** Open the menu for a note, a relationship or (both -1) the empty canvas, at client coordinates. */
   open(node: number, edge: number, x: number, y: number) {
-    const now = performance.now(), h = this.host; if (now - this.opened < REOPEN_MS) return; this.opened = now;
-    const show = (ctx: MenuContext) => h.live && h.showMenu(this.registry.menu(ctx).map(a => ({ id: a.id, title: a.label, checked: CHECKED[a.id]?.(ctx), run: () => { a.run(ctx); } })), x, y, node);
+    const now = performance.now(), h = this.host; if (now - this.opened < REOPEN_MS) return; this.opened = now; const token = ++this.menuToken, visible = h.visible;
+    const show = (ctx: MenuContext) => token === this.menuToken && visible === h.visible && h.live && h.showMenu(this.registry.menu(ctx).map(a => ({ id: a.id, title: a.label, checked: CHECKED[a.id]?.(ctx), run: () => { a.run(ctx); } })), x, y, node);
     if (edge >= 0) void h.relationship(edge).then(relation => show({ host: h, node: -1, edge, relation }), () => {});
     else show({ host: h, node, edge: -1 });
   }
-  dispose() { this.unpress(); clearTimeout(this.dwell); }
+  cancel() { this.unpress(); clearTimeout(this.dwell); this.previewing = false; this.menuToken++; }
+  dispose() { this.cancel(); }
 }
 
 const CHECKED: Record<string, (ctx: MenuContext) => boolean> = { 'menu-lens': c => c.host.lensNode === c.node, 'lock-focus': c => c.host.selected === c.node && !!Gestures.of(c.host)?.locked };

@@ -147,9 +147,19 @@ export function rankMatches(text: (i: number) => string, query: string, from: nu
 /** Find-a-note: up to `limit` notes kept by `keep`, in rank order, over the cached search text. Yields
  * between chunks of `chunk` notes so `cooperative` can bound, cancel and interleave the work. */
 export function* searchSteps(p: Projection, query: string, keep: Uint8Array, limit = 20, chunk = 4096): Generator<void, SearchHit[]> {
-  const text = searchText(p), q = query.trim().toLowerCase().replace(/\0/g, '').slice(0, VIEW_LIMITS.query), best: SearchHit[] = [];
-  if (keep.length !== text.length) throw new Error('SEARCH_MASK');
-  for (let i = 0; q && i < text.length; i += chunk) { if (i) yield; rankMatches(j => text[j]!, q, i, Math.min(text.length, i + chunk), best, Math.min(limit, 50), j => !!keep[j]); }
+  const q = query.trim().toLowerCase().replace(/\0/g, '').slice(0, VIEW_LIMITS.query), best: SearchHit[] = [];
+  if (keep.length !== p.paths.length) throw new Error('SEARCH_MASK');
+  if (!q) return best;
+  // The first search must yield while building the cache too, not map every identity in one step.
+  const cached = lowered.get(p), text = cached ?? new Array<string>(p.paths.length);
+  for (let i = 0; i < text.length; i += chunk) {
+    if (i) yield;
+    const end = Math.min(text.length, i + chunk);
+    if (!cached) for (let j = i; j < end; j++) text[j] = searchKey(p.paths[j]!, p.identities[j]!);
+    rankMatches(j => text[j]!, q, i, end, best, Math.min(limit, 50), j => !!keep[j]);
+  }
+  // Cancellation must never publish a partially initialised cache.
+  if (!cached) lowered.set(p, text);
   return best;
 }
 /** Pure, worker-side compilation of a view to typed masks and bounded summaries.

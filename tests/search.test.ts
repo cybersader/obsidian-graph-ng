@@ -3,7 +3,7 @@ import { matchRank, rankMatches, searchKey, searchSteps, type SearchHit } from '
 import { encodeStrings } from '../src/core/columns';
 import type { Projection } from '../src/core/projection';
 import { actions, type RendererControls } from '../src/interaction';
-import { omnibox, searchable, SEARCH_DEBOUNCE_MS, type SearchSource } from '../src/search';
+import { omnibox, searchable, invalidateSearch, disposeSearch, SEARCH_DEBOUNCE_MS, type SearchSource } from '../src/search';
 import type { RenderProjection } from '../src/render-projection';
 
 /** Just enough DOM for the find box: no layout, no events beyond the handler properties it sets. */
@@ -22,6 +22,7 @@ class El {
   removeAttribute(k: string) { delete this.attrs[k]; }
   focus() { El.active = this; }
   select() {}
+  remove() { if (this.parentElement) this.parentElement.children = this.parentElement.children.filter(c => c !== this); this.parentElement = null; }
   find(cls: string): El[] { return this.children.flatMap(c => [...(c.className === cls ? [c] : []), ...c.find(cls)]); }
 }
 const g = globalThis as { document?: unknown }, real = g.document;
@@ -34,7 +35,9 @@ const paths = (names: string[]) => names.map(n => `Folder/${n}.md`);
 /** The worker's view (paths and identities) and the main realm's (packed paths and edges only). */
 function worker(names = NAMES, ids = IDS) { return { paths: paths(names), identities: ids } as unknown as Projection; }
 function render(names = NAMES, pairs: [number, number][] = [[1, 0], [1, 2], [1, 3], [2, 3]]): RenderProjection {
-  return { nodeCount: names.length, paths: encodeStrings(paths(names)), offsets: new Uint32Array(names.length + 1), source: Uint32Array.from(pairs, p => p[0]), target: Uint32Array.from(pairs, p => p[1]), type: new Uint32Array(pairs.length), types: [], carrier: new Uint32Array(pairs.length), carrierNodes: new Uint32Array(names.length), quarantined: [], groups: [] };
+  // Incidence CSR offsets, as buildProjection makes them (each row counts at both ends).
+  const offsets = new Uint32Array(names.length + 1); for (const [a, b] of pairs) { offsets[a + 1]!++; offsets[b + 1]!++; } for (let i = 1; i < offsets.length; i++) offsets[i]! += offsets[i - 1]!;
+  return { nodeCount: names.length, paths: encodeStrings(paths(names)), offsets, source: Uint32Array.from(pairs, p => p[0]), target: Uint32Array.from(pairs, p => p[1]), type: new Uint32Array(pairs.length), types: [], carrier: new Uint32Array(pairs.length), carrierNodes: new Uint32Array(names.length), quarantined: [], groups: [] };
 }
 function drain<T>(steps: Generator<void, T>) { let s = steps.next(), yields = 0; while (!s.done) { yields++; s = steps.next(); } return { value: s.value, yields }; }
 function rig(p = render(), w = worker(), visible = Uint8Array.from({ length: p.nodeCount }, (_, i) => +(i !== 5)), rank?: SearchSource['rank']) {
@@ -188,4 +191,60 @@ test('with a note selected, Alt+Enter (or Alt-click) on a result finds the path 
   ((box().findList as unknown as El).find('graph-ng-find-row')[0]!.onclick!)({ altKey: true }); await Bun.sleep(0);
   expect(paths).toEqual([[1, 3], [1, 4]]);
   r.key('/'); box().findInput.value = 'gam'; r.type('Enter'); await Bun.sleep(0); expect(r.calls.at(-1)).toBe('fly 4');
+});
+
+test('the keep mask may be transferred to the worker (detached) without losing the rows', async () => {
+  const w = worker();
+  const r = rig(undefined, w, undefined, async (q, keep) => {
+    const hits = drain(searchSteps(w, q, keep)).value.map(h => h.node);
+    structuredClone(keep, { transfer: [keep.buffer as ArrayBuffer] }); expect(keep.length).toBe(0);
+    return hits;
+  });
+  r.key('/'); r.box().findInput.value = 'alpha'; await r.box().findSearch();
+  expect(r.box().findHits.length).toBeGreaterThan(0);
+  expect(r.box().findHits).not.toContain(5);
+});
+
+
+test('search invalidates on input before debounce, on filter change and on disposal', async () => {
+  const pending: ((v: number[]) => void)[] = [];
+  const r = rig(undefined, undefined, undefined, () => new Promise(resolve => pending.push(resolve))), b = r.box();
+  r.key('/'); b.findInput.value = 'a'; const first = b.findSearch();
+  b.findInput.value = 'b'; b.findInput.oninput!({} as Event);
+  pending[0]!([1]); await first; expect(b.findHits).toEqual([]);
+  const second = b.findSearch(); pending[1]!([3]); await second; b.findPreview(0);
+  expect(b.findRing.hidden).toBe(false);
+  invalidateSearch(r.host.canvas);
+  expect(b.findHits).toEqual([]); expect(b.findRing.hidden).toBe(true); expect(b.findOpen).toBe(false);
+  expect(b.findInput.getAttribute('aria-expanded')).toBe('false');
+  expect(b.findInput.getAttribute('aria-activedescendant')).toBeNull();
+  r.key('/'); const last = b.findSearch();
+  const parent = b.findBox.parentElement!;
+  disposeSearch(r.host.canvas); pending.at(-1)!([1]); await last;
+  expect(b.findHits).toEqual([]); expect(parent.contains(b.findBox)).toBe(false); expect(parent.contains(b.findRing)).toBe(false);
+  expect(b.findInput.oninput).toBeNull();
+});
+
+test('search never previews or travels to a result hidden since ranking, and reports worker failures', async () => {
+  const r = rig(), b = r.box(); r.key('/'); b.findInput.value = 'alpha'; await b.findSearch();
+  r.host.visible[1] = 0; b.findPreview(0); await b.findGo(0);
+  expect(b.findRing.hidden).toBe(true); expect(r.calls).toEqual([]);
+  const failed = rig(undefined, undefined, undefined, () => Promise.reject(new Error('worker stopped')));
+  failed.key('/'); failed.box().findInput.value = 'x'; await failed.box().findSearch();
+  expect(failed.box().findStatus.textContent).toBe('Search unavailable. Try again.');
+  disposeSearch(r.host.canvas); disposeSearch(failed.host.canvas);
+});
+
+
+test('cold worker search builds its text cache in cancellable chunks, never on an invalid mask', () => {
+  const n = 16000, w = worker(Array.from({ length: n }, (_, i) => `note ${i}`), Array.from({ length: n }, String));
+  let reads = 0;
+  w.identities = new Proxy(w.identities, { get(target, key, receiver) { if (typeof key === 'string' && /^\d+$/.test(key)) reads++; return Reflect.get(target, key, receiver); } });
+  expect(() => drain(searchSteps(w, 'note', new Uint8Array(1)))).toThrow('SEARCH_MASK'); expect(reads).toBe(0);
+  const visible = new Uint8Array(n).fill(1), first = searchSteps(w, 'note', visible, 20, 256);
+  expect(first.next().done).toBe(false); expect(reads).toBe(256); first.return([]);
+  // The cancelled partial cache is not reused; a completed cache is reused without identity reads.
+  const next = drain(searchSteps(w, 'note', visible, 20, 256));
+  expect(next.value.length).toBe(20); expect(reads).toBe(n + 256);
+  drain(searchSteps(w, 'note 1', visible)); expect(reads).toBe(n + 256);
 });

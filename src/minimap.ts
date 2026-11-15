@@ -45,6 +45,8 @@ export class Minimap {
   private miniLast?: MiniState;
   private miniDrawn: unknown[] = [];
   private miniBuilt: unknown[] = [];
+  /** Source the pending rebuild waits on; the timer restarts only when it changes again. */
+  private miniWanted: unknown[] = [];
   private densityVersion = 0;
   private miniTimer?: ReturnType<typeof setTimeout>;
   constructor(parent: HTMLElement, private miniFrame: MiniFrame, private panCamera: (x: number, y: number) => void, private fitCamera: () => void) {
@@ -72,12 +74,11 @@ export class Minimap {
   update(s: MiniState) {
     this.miniLast = s; this.root.hidden = !s.on; if (!s.on) return;
     const source = [s.positions, s.visible, s.ink];
-    if (source.some((x, i) => x !== this.miniBuilt[i])) {
-      clearTimeout(this.miniTimer);
-      // First build is immediate; later changes wait for positions to stop moving.
-      if (!this.miniBuilt.length) this.rebuildDensity(source);
-      else this.miniTimer = setTimeout(() => { this.rebuildDensity([this.miniLast!.positions, this.miniLast!.visible, this.miniLast!.ink]); this.update(this.miniLast!); }, 250);
-      if (!this.miniBuilt.length) return;
+    // First build is immediate; later changes wait for positions to stop moving (a pan alone does not restart the wait).
+    if (!this.miniBuilt.length) this.rebuildDensity(source);
+    else if (source.some((x, i) => x !== this.miniBuilt[i]) && source.some((x, i) => x !== this.miniWanted[i])) {
+      clearTimeout(this.miniTimer); this.miniWanted = source;
+      this.miniTimer = setTimeout(() => { this.rebuildDensity([this.miniLast!.positions, this.miniLast!.visible, this.miniLast!.ink]); this.update(this.miniLast!); }, 250);
     }
     const key = [this.densityVersion, s.cx, s.cy, s.worldW, s.worldH, s.focus, s.directs, s.accent];
     if (key.every((x, i) => x === this.miniDrawn[i])) return;
@@ -91,7 +92,7 @@ export class Minimap {
     ctx.globalAlpha = 1; if (s.focus >= 0) { dot(s.focus, 6); }
   }
   private rebuildDensity(source: unknown[]) {
-    this.miniTimer = undefined; this.miniBuilt = source; this.densityVersion++;
+    this.miniTimer = undefined; this.miniBuilt = this.miniWanted = source; this.densityVersion++;
     const s = this.miniLast!, ctx = this.densityCanvas.getContext('2d'), image = ctx?.createImageData?.(MINIMAP_W, MINIMAP_H);
     if (!ctx || !image?.data) return;
     const grid = densityGrid(s.positions, s.visible, this.miniFrame, this.fitting, MINIMAP_W, MINIMAP_H);
