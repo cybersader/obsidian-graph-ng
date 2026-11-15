@@ -8,15 +8,16 @@ type On = (edge: number) => boolean;
 export interface ConnectionGroup { type: string; out: boolean; nodes: number[] }
 /** Visit each drawn neighbour of `u` in O(degree). A relationship-note dot owned by the edge is
  * transparent: it is reported once as a dot, then its far endpoints as direct neighbours. */
-function neighbours(u: number, inc: Incidence, p: Columns, on: On, vis: ArrayLike<number>, visit: (edge: number, node: number, dot: boolean) => void) {
+function neighbours(u: number, inc: Incidence, p: Columns, on: On, vis: ArrayLike<number>, visit: (edge: number, node: number, dot: boolean) => void, scan = () => true) {
   const own = (e: number, c: number) => !!p.carrierNodes[c] && p.carrier[e]! + 1 === p.carrierNodes[c];
   const other = (e: number, a: number) => p.source[e] === a ? p.target[e]! : p.source[e]!;
   for (let j = inc.offsets[u]!; j < inc.offsets[u + 1]!; j++) {
+    if (!scan()) return;
     const e = inc.edges[j]!, v = other(e, u);
     if (!on(e) || !vis[v] || v === u) continue;
     if (!own(e, v)) { visit(e, v, false); continue; }
     visit(e, v, true);
-    for (let k = inc.offsets[v]!; k < inc.offsets[v + 1]!; k++) { const f = inc.edges[k]!, w = other(f, v); if (f !== e && on(f) && own(f, v) && w !== u && vis[w]) visit(e, w, false); }
+    for (let k = inc.offsets[v]!; k < inc.offsets[v + 1]!; k++) { if (!scan()) return; const f = inc.edges[k]!, w = other(f, v); if (f !== e && on(f) && own(f, v) && w !== u && vis[w]) visit(e, w, false); }
   }
 }
 /** Direct connections of `focus`, grouped by relationship type and direction. Groups run largest
@@ -32,19 +33,44 @@ export function connectionGroups(focus: number, inc: Incidence, p: Columns, on: 
   const list = [...groups.values()].map(({ type, out, nodes }) => ({ type, out, nodes: nodes.sort(order) }));
   return { groups: list.sort((a, b) => b.nodes.length - a.nodes.length || a.type.localeCompare(b.type) || +b.out - +a.out), direct: all.size };
 }
-/** Focus plus direct connections (and neighbours of neighbours at `hops` 2), relationship-note dots
- * included. Hop 2 stops after `budget` incident rows and reports truncation. */
-export function reach(focus: number, inc: Incidence, p: Columns, on: On, vis: ArrayLike<number>, hops: number, budget = 65536) {
-  const nodes = new Set<number>(), first: number[] = []; let second = 0, scanned = 0, truncated = false;
-  if (focus < 0 || !vis[focus]) return { nodes, direct: 0, second, truncated };
-  nodes.add(focus);
-  neighbours(focus, inc, p, on, vis, (_, w, dot) => { if (!nodes.has(w)) { nodes.add(w); if (!dot) first.push(w); } });
-  if (hops > 1) for (const u of first) {
-    if (scanned > budget) { truncated = true; break; }
-    scanned += inc.offsets[u + 1]! - inc.offsets[u]!;
-    neighbours(u, inc, p, on, vis, (_, w, dot) => { if (!nodes.has(w)) { nodes.add(w); if (!dot) second++; } });
+/** Undirected semantic hops: owned relationship-note dots are transparent but retained.
+ * Work is bounded by incident rows, including carrier fan-out. `truncated` is never silent. */
+export function reach(focus: number, inc: Incidence, p: Columns, on: On, vis: ArrayLike<number>, hops: number, budget = 200000, consume = () => budget-- > 0) {
+  const nodes = new Set<number>(); let direct = 0, second = 0, truncated = false;
+  if (focus < 0 || !vis[focus]) return { nodes, direct, second, truncated };
+  nodes.add(focus); let wave = [focus];
+  const scan = () => consume() || (truncated = true, false);
+  for (let h = 0; h < hops && wave.length && !truncated; h++) {
+    const next: number[] = [];
+    for (const u of wave) {
+      neighbours(u, inc, p, on, vis, (_, w, dot) => {
+        if (nodes.has(w)) return;
+        nodes.add(w); if (!dot) { next.push(w); if (h === 0) direct++; else second++; }
+      }, scan);
+      if (truncated) break;
+    }
+    wave = next;
   }
-  return { nodes, direct: first.length, second, truncated };
+  return { nodes, direct, second, truncated };
+}
+/** One mask authority: base ego network, then explicit one-hop expansions in visit order.
+ * Filter changes cannot retain an expansion disconnected from the anchor. Frontier counts are
+ * distinct hidden neighbours, not parallel edges; excluded nodes/types never count. */
+export function neighbourhood(focus: number, hops: number, expanded: Set<number>, inc: Incidence, p: Columns, on: On, base: Uint8Array) {
+  let budget = 200000; const scan = () => budget-- > 0;
+  const result = reach(focus, inc, p, on, base, hops, 0, scan), mask = new Uint8Array(base.length), frontier = new Map<number, number>();
+  for (const n of expanded) if (result.nodes.has(n)) {
+    const more = reach(n, inc, p, on, base, 1, 0, scan); for (const v of more.nodes) result.nodes.add(v);
+    result.truncated ||= more.truncated;
+  }
+  for (const n of result.nodes) mask[n] = 1;
+  for (const n of result.nodes) {
+    const hidden = new Set<number>();
+    neighbours(n, inc, p, on, base, (_, w, dot) => { if (!dot && !mask[w]) hidden.add(w); }, scan);
+    if (budget < 0) { result.truncated = true; break; }
+    if (hidden.size) frontier.set(n, hidden.size);
+  }
+  return { mask, frontier, partial: result.truncated };
 }
 /** Back/forward history of visited notes; a new visit drops the forward branch. */
 export class NavHistory {
@@ -79,7 +105,7 @@ export function dockCard(width: number, height: number, w: number, h: number, m 
 export const DOCK_ROOM = 336;
 /** Bottom sheet when the view is narrow, or when the tools panel leaves no room for the docked card. */
 export const sheetCard = (width: number, right = 0) => width < SHEET_WIDTH || width - right < DOCK_ROOM;
-export type CardAction = 'open' | 'tab' | 'split' | 'focus' | 'isolate' | 'lens' | 'copy';
+export type CardAction = 'open' | 'tab' | 'split' | 'focus' | 'isolate' | 'lens' | 'copy' | 'expand';
 export interface CardHost {
   name(n: number): string;
   color(n: number): string;
@@ -88,6 +114,7 @@ export interface CardHost {
   group?(n: number): { key: number; label: string };
   groups(n: number): { groups: ConnectionGroup[]; direct: number };
   isolated(): boolean;
+  frontier?(n: number): number;
   /** Whether the connection lens is open on this note; hosts without a lens omit it (no Lens action). */
   lensed?(n: number): boolean;
   act(action: CardAction, n: number): void;
@@ -208,7 +235,10 @@ export class ConnectionCard {
     open.append(button('Open', 'Open ' + name, act('open')), button('New tab', `Open ${name} in a new tab`, act('tab')), button('Right', `Open ${name} to the right`, act('split')));
     const actions = c.appendChild(el('div', '', 'graph-ng-card-actions')), tool = (icon: string, text: string, label: string, a: CardAction) => actions.appendChild(iconButton(icon, label, act(a), text, ''));
     tool('crosshair', 'Focus', `Focus here: fit ${name} and its direct connections`, 'focus');
-    tool('network', 'Only connections', 'Show only connections of ' + name, 'isolate').setAttribute('aria-pressed', String(h.isolated()));
+    const hidden = h.frontier?.(n) ?? 0;
+    if (h.isolated()) {
+      const expand = tool('plus', `Expand +${hidden}`, `Add ${hidden} hidden neighbours of ${name}`, 'expand'); expand.disabled = !hidden; expand.className = 'graph-ng-count';
+    } else tool('network', 'Neighbourhood', 'Show neighbourhood of ' + name, 'isolate');
     this.lensToggle = h.lensed ? tool('search', 'Lens', 'Connection lens for ' + name, 'lens') : undefined; this.syncLens();
     tool('link', 'Copy link', 'Copy link to ' + name, 'copy');
     const nav = c.appendChild(el('div', '', 'graph-ng-navigator'));
@@ -326,10 +356,14 @@ export class ConnectionCard {
     e.preventDefault(); e.stopPropagation?.(); return true;
   }
 }
-/** "Show only connections" bar: who it is centred on, a 2-hop toggle and the way back. */
-export function isolationBar(bar: HTMLElement, name: string, hops: number, setHops: (hops: number) => void, clear: () => void) {
+/** Persistent anchor, exact mask count, explicit reach and a single exit. */
+export function isolationBar(bar: HTMLElement, name: string, hops: number, count: number, expanded: number, partial: boolean, setHops: (hops: number) => void, clear: () => void) {
   bar.textContent = ''; if (!name) return;
-  bar.append(el('span', 'Only connections of ' + name));
-  const two = bar.appendChild(button('Neighbours of neighbours', 'Include neighbours of neighbours', () => setHops(hops > 1 ? 1 : 2))); two.setAttribute('aria-pressed', String(hops > 1));
-  bar.append(button('Back to full graph', 'Back to full graph', clear));
+  const title = bar.appendChild(el('span', `Neighbourhood of ${name}, reach ${hops}, ${count.toLocaleString()} nodes`, 'graph-ng-count'));
+  title.setAttribute('role', 'status');
+  const controls = bar.appendChild(el('div', '', 'graph-ng-reach')); controls.setAttribute('role', 'group'); controls.setAttribute('aria-label', 'Neighbourhood reach');
+  controls.append(el('span', 'Reach'));
+  for (let h = 0; h <= 3; h++) { const b = controls.appendChild(button(String(h), `Reach ${h} hops`, () => setHops(h), 'graph-ng-count')); b.setAttribute('aria-pressed', String(h === hops)); }
+  controls.append(closeButton(clear));
+  bar.append(el('small', partial ? 'Partial neighbourhood: scan limit reached' : expanded ? 'Expanded beyond reach. Change reach to reset.' : 'Expand a + badge to reveal hidden neighbours.'));
 }

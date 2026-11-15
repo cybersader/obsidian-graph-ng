@@ -527,25 +527,56 @@ test('connection card: grouped rows travel, history goes back and forward, keys 
   // Narrow views get a bottom sheet.
   f.tap(2); r[k('width')] = 400; r[k('placeOverlay')](); expect(card().className).toBe('graph-ng-card graph-ng-sheet');
 });
-test('connection card actions: open modes, copy link, focus here, and Show only connections with a 2-hop toggle and a way back', async () => {
+test('neighbourhood: reach 0–3, additive expansion, anchored travel, filters and one exit', async () => {
   const f = await graduated([[0, 1], [1, 2], [2, 3], [0, 4]]), { r, k } = f, card = () => r[k('noteCard')], bar = () => r[k('isolationBar')], opens: string[][] = [], copies: string[] = [];
   f.tap(0); control(card(), 'Open').click(); control(card(), 'New tab').click(); expect(f.opened).toEqual([0, 0]);
   r.openNote = (path: string, mode: string) => opens.push([path, mode]); r.copyLink = (path: string) => copies.push(path);
   for (const name of ['Open', 'New tab', 'Right', 'Copy link']) control(card(), name).click();
   expect(opens).toEqual([['0.md', 'reuse'], ['0.md', 'tab'], ['0.md', 'split']]); expect(copies).toEqual(['0.md']);
   const before = { ...r.camera }; control(card(), 'Focus').click(); expect(r[k('flight')].to).not.toEqual(before);
-  control(card(), 'Only connections').click();
-  expect([...r[k('filterVisible')]]).toEqual([1, 1, 0, 0, 1]); expect(bar().textContent).toContain('Only connections of 0'); expect(control(card(), 'Only connections').attributes['aria-pressed']).toBe('true');
-  control(bar(), 'Neighbours of neighbours').click(); expect([...r[k('filterVisible')]]).toEqual([1, 1, 1, 0, 1]); expect(r.selected).toBe(0);
-  // The list still offers every connection; travel re-centres the temporary view.
-  control(bar(), 'Neighbours of neighbours').click(); expect([...r[k('filterVisible')]]).toEqual([1, 1, 0, 0, 1]);
-  card().querySelectorAll('button').find((b: any) => b.attributes['aria-label']?.startsWith('Go to 1:')).click(); expect(r.selected).toBe(1); expect([...r[k('filterVisible')]]).toEqual([1, 1, 1, 0, 0]);
-  // A host view change keeps the temporary view over the new filter; Back to full graph restores it.
-  r.setView(new Uint8Array([1, 1, 0, 1, 1]), {}); expect([...r[k('filterVisible')]]).toEqual([1, 1, 0, 0, 0]);
-  control(bar(), 'Back to full graph').click(); expect([...r[k('filterVisible')]]).toEqual([1, 1, 0, 1, 1]); expect(bar().textContent).toBe('');
-  // Escape clears the selection first, then the temporary view.
-  control(card(), 'Only connections').click(); r[k('keyDown')]({ key: 'Escape', target: r.canvas, preventDefault() {} }); expect(bar().textContent).not.toBe('');
-  r[k('keyDown')]({ key: 'Escape', target: r.canvas, preventDefault() {} }); expect(bar().textContent).toBe(''); expect([...r[k('filterVisible')]]).toEqual([1, 1, 0, 1, 1]);
+  control(card(), 'Neighbourhood').click();
+  expect([...r[k('filterVisible')]]).toEqual([1, 1, 0, 0, 1]); expect(bar().textContent).toContain('Neighbourhood of 0, reach 1, 3 nodes');
+  control(bar(), 'Reach 2 hops').click(); expect([...r[k('filterVisible')]]).toEqual([1, 1, 1, 0, 1]);
+  control(bar(), 'Reach 3 hops').click(); expect([...r[k('filterVisible')]]).toEqual([1, 1, 1, 1, 1]);
+  control(bar(), 'Reach 0 hops').click(); expect([...r[k('filterVisible')]]).toEqual([1, 0, 0, 0, 0]);
+  control(bar(), 'Reach 1 hops').click();
+  // Travel within the region keeps its anchor and mask; hidden adjacent rows expand on demand.
+  r[k('travel')](1); expect(r.selected).toBe(1); expect([...r[k('filterVisible')]]).toEqual([1, 1, 0, 0, 1]);
+  expect(r[k('frontier')].get(1)).toBe(1); expect(control(card(), 'Expand +1').disabled).toBe(false);
+  const camera = { ...r.camera }, positions = r.positions;
+  control(card(), 'Expand +1').click(); expect([...r[k('filterVisible')]]).toEqual([1, 1, 1, 0, 1]);
+  expect(r.camera).toEqual(camera); expect(r.positions).toBe(positions); expect(r[k('isolation')].node).toBe(0);
+  r[k('travel')](2); r[k('travel')](3); expect(r.selected).toBe(3); expect([...r[k('filterVisible')]]).toEqual([1, 1, 1, 1, 1]);
+  control(bar(), 'Reach 1 hops').click(); expect(r.selected).toBe(0); expect(r[k('isolation')].expanded.size).toBe(0);
+  // Host filter removes an expansion route; filtered nodes can never be restored by expansion.
+  r.setView(new Uint8Array([1, 1, 0, 1, 1]), {}); expect([...r[k('filterVisible')]]).toEqual([1, 1, 0, 0, 1]);
+  control(bar(), 'Close').click(); expect([...r[k('filterVisible')]]).toEqual([1, 1, 0, 1, 1]); expect(bar().textContent).toBe('');
+  expect(r[k('frontierBadges')]).toHaveLength(0);
+  control(card(), 'Neighbourhood').click(); r[k('keyDown')]({ key: 'Escape', target: r.canvas, preventDefault() {} }); expect(bar().textContent).not.toBe('');
+  r[k('keyDown')]({ key: 'Escape', target: r.canvas, preventDefault() {} }); expect(bar().textContent).toBe('');
+});
+test('neighbourhood frontier badges are bounded, clickable, text-only and independent of hover', async () => {
+  const pairs: [number, number][] = [];
+  for (let n = 1; n <= 30; n++) pairs.push([0, n], [n, n + 30]);
+  const f = await graduated(pairs, 61), { r, k } = f;
+  f.tap(0); r.isolate(0, 1, false);
+  expect(r[k('frontier')].size).toBe(30); expect(r[k('frontierBadges')]).toHaveLength(24);
+  expect(r[k('isolationBar')].textContent).toContain('Up to 24 badges');
+  const mask = r[k('filterVisible')]; f.hover(1); expect(r[k('filterVisible')]).toBe(mask); expect(r[k('isolation')].node).toBe(0);
+  const badge = r[k('frontierBadges')][0]; expect(badge.el.textContent).toBe('+1'); expect(badge.el.className).toContain('graph-ng-count');
+  badge.el.click(); expect(r[k('filterVisible')][badge.node + 30]).toBe(1); expect(r[k('frontier')].has(badge.node)).toBe(false);
+  r.setView(new Uint8Array(61).fill(1), { typeHidden: new Uint8Array([1]) });
+  expect(r[k('filterVisible')].reduce((a: number, b: number) => a + b)).toBe(1); expect(r[k('frontierBadges')]).toHaveLength(0);
+  const base = new Uint8Array(61).fill(1); base[0] = 0; r.setView(base, {});
+  expect(r[k('isolation')]).toBeUndefined(); expect(r[k('filterVisible')]).toBe(base);
+});
+test('neighbourhood expansion refuses Canvas overflow before changing mask, anchor or frontier', async () => {
+  const f = await graduated([[0, 1], [1, 2], [2, 3]]), { r, k } = f;
+  r.isolate(0, 1, false); f.settings.canvasMaxDetailNodes = 2;
+  const mask = r[k('filterVisible')], region = r[k('isolation')], frontier = r[k('frontier')];
+  r[k('expandNeighbourhood')](1);
+  expect(r[k('filterVisible')]).toBe(mask); expect(r[k('isolation')]).toBe(region); expect(r[k('frontier')]).toBe(frontier);
+  expect(r[k('isolationBar')].textContent).toContain('exceeds renderer limits');
 });
 test('hub navigator auto-opens a lone section, collapses on demand and pages each group by 50', async () => {
   const pairs: [number, number][] = Array.from({ length: 60 }, (_, i) => [0, i + 1]);
@@ -966,7 +997,7 @@ test('docked card: a fixed right-edge panel that never moves with the camera; la
   expect(head.children[3].children[0].dataset.icon).toBe('x');
   // One segmented Open control, then the icon+label grid.
   const open = root.children.find((c: any) => c.className === 'graph-ng-card-open'); expect(open.attributes.role).toBe('group'); expect(open.children.map((b: any) => b.textContent)).toEqual(['Open', 'New tab', 'Right']);
-  expect(root.children.find((c: any) => c.className === 'graph-ng-card-actions').children.map((b: any) => b.textContent)).toEqual(['Focus', 'Only connections', 'Lens', 'Copy link']);
+  expect(root.children.find((c: any) => c.className === 'graph-ng-card-actions').children.map((b: any) => b.textContent)).toEqual(['Focus', 'Neighbourhood', 'Lens', 'Copy link']);
   // Panning and zooming never move the card.
   r[k('pointerDown')]({ pointerId: 1, button: 0, clientX: 300, clientY: 300 }); r[k('pointerMove')]({ pointerId: 1, clientX: 120, clientY: 210 }); r[k('pointerUp')]({ pointerId: 1, clientX: 120, clientY: 210 });
   r.setCamera(r.camera.x + .2, r.camera.y - .1, r.camera.ratio * .5); r[k('placeOverlay')]();
@@ -1025,7 +1056,7 @@ test('docked card: Only connections, Lens and path cards share the dock; labels 
   root.offsetWidth = 320; root.offsetHeight = 260;
   const dock = () => { r[k('placeOverlay')](); return root.style.transform; };
   f.tap(0); const at = dock(); expect(at).toBe('translate(472px, 8px)');
-  control(root, 'Only connections').click(); expect(r[k('isolation')]).toBeDefined(); expect(dock()).toBe(at); expect(control(root, 'Only connections').attributes['aria-pressed']).toBe('true');
+  control(root, 'Neighbourhood').click(); expect(r[k('isolation')]).toBeDefined(); expect(dock()).toBe(at); expect(control(root, 'Expand +0').disabled).toBe(true);
   control(root, 'Lens').click(); expect(r.lensNode).toBe(0); expect(dock()).toBe(at);
   r.isolate(-1); r.setLens(-1);
   const shift = (n: number) => { const { x, y } = r.screenPoint(n), e = { pointerId: 1, clientX: x, clientY: y, pointerType: 'mouse', shiftKey: true }; r[k('pointerDown')](e); r[k('pointerUp')](e); };

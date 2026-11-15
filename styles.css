@@ -147,7 +147,7 @@
 .graph-ng-swatch { flex:none; width:10px; height:10px; border-radius:50%; border:1px solid var(--background-modifier-border); }
 .graph-ng-cue { position:absolute; left:0; top:0; width:28px; height:28px; border:2px solid var(--interactive-accent); border-radius:50%; }
 .graph-ng-cue-line { position:absolute; left:0; top:0; height:2px; transform-origin:0 50%; background:var(--interactive-accent); opacity:.8; pointer-events:none; }
-.graph-ng-isolation { position:absolute; left:50%; top:8px; transform:translateX(-50%); display:flex; flex-wrap:wrap; align-items:center; gap:6px; max-width:calc(100% - 16px); pointer-events:auto; font-size:var(--font-ui-small); background:var(--background-primary); border:1px solid var(--background-modifier-border); border-radius:var(--radius-m, 8px); padding:4px 8px; }
+.graph-ng-isolation { order:-2; display:flex; flex-direction:column; align-items:stretch; gap:6px; max-width:280px; pointer-events:auto; font-size:var(--font-ui-small); background:var(--background-primary); border:1px solid var(--background-modifier-border); border-radius:var(--radius-m, 8px); padding:4px 8px; }
 .graph-ng-isolation:empty { display:none; }
 .graph-ng-isolation button { min-height:32px; }
 .graph-ng-isolation button[aria-pressed=true] { background:var(--interactive-accent); color:var(--text-on-accent); }
@@ -355,3 +355,12 @@
   .graph-ng-explore .graph-ng-slider-reset { grid-column:1; justify-self:end; }
 }
 @media (prefers-reduced-motion: reduce) { .graph-ng-slider-track *, .graph-ng-slider-track::before, .graph-ng-slider-track input[type=range]::-webkit-slider-thumb { transition:none; } }
+
+.graph-ng-reach { display:flex; align-items:center; gap:4px; }
+.graph-ng-reach > span { margin-right:auto; }
+.graph-ng-reach button { min-width:32px; padding:4px; }
+.graph-ng-isolation small { color:var(--text-muted); }
+.graph-ng-frontier { position:absolute; left:0; top:0; min-width:32px; height:32px; text-align:center; font-size:var(--font-ui-small); padding:2px 4px; pointer-events:auto; border:1px solid var(--interactive-accent); border-radius:16px; background:var(--background-primary); color:var(--text-normal); z-index:1; }
+.graph-ng-frontier[hidden] { display:none; }
+
+.graph-ng-isolation > .graph-ng-count { text-align:left; white-space:normal; font-size:var(--font-ui-small); color:var(--text-normal); line-height:1.4; }

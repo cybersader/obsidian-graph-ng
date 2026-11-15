@@ -8,7 +8,7 @@ import { DIRECT_LABELS, LABEL_CHARS, middleTruncate, radialLabels, stickyLevel, 
 import { carrierAlpha, carrierColors, carrierVisibility, categorical, degreeSizes, densityScale, edgeAlpha, edgeInk, overdraw, inkAlpha, unionAlpha, fadeLength, lengthFade, type EdgeInk, effectPolicy, prominenceKeep, zoomFade, neutralizeGroups, easeInOut, hoverPulse, groupHalos, isDark, labelFade, nodeColors, type EffectPolicy, type Halo, type RGB } from './render-effects';
 import { yieldTask } from './core/scheduler';
 import { generationCurrent } from './physics-controls';
-import { ConnectionCard, connectionGroups, isolationBar, dockCard, sheetCard, reach, button, closeButton, el, type CardAction, type CardHost } from './connection-card';
+import { ConnectionCard, connectionGroups, isolationBar, dockCard, sheetCard, reach, neighbourhood, button, closeButton, el, type CardAction, type CardHost } from './connection-card';
 import { interestScorer, byInterest, type Scorer } from './interest';
 import { lensConnections, lensLayout, lensAmount, lensCoordinate, pickLens, type LensConnection, type LensPoint } from './lens-layout';
 import { Interaction, type RendererControls } from './interaction';
@@ -355,9 +355,12 @@ export class DetailRenderer {
   /** Host measure of the graph tools panel's overlap with the view's right edge (CSS px). */
   measureTools?: () => number;
   private toolsInset = 0;
-  /** "Show only connections": a temporary mask over the host's filter, recomputed when the host view changes. */
+  /** Neighbourhood: a temporary mask over the host's filter, recomputed when the host view changes. */
   private baseVisible: Uint8Array;
-  private isolation?: { node: number; hops: number };
+  private isolation?: { node: number; hops: number; expanded: Set<number> };
+  private frontier = new Map<number, number>();
+  private frontierBadges: { node: number; el: HTMLElement; width: number }[] = [];
+  private neighbourhoodPartial = false;
   private isolationBar: HTMLElement;
   private hubLabels: HTMLElement[] = [];
   /** Graduated focus labels: placed slots (radial offsets, optional leader), their DOM text and leader lines, and the key they were placed at. */
@@ -438,8 +441,7 @@ export class DetailRenderer {
     this.hoverLabel = this.overlay.appendChild(Object.assign(document.createElement('div'), { className: 'graph-ng-hover-label' }));
     const div = (className: string) => this.overlay.appendChild(Object.assign(document.createElement('div'), { className }));
     this.cueLine = div('graph-ng-cue-line'); this.cueRing = div('graph-ng-cue'); this.cueLine.hidden = this.cueRing.hidden = true;
-    const top = div('graph-ng-top');
-    this.isolationBar = top.appendChild(Object.assign(document.createElement('div'), { className: 'graph-ng-isolation' }));
+    this.isolationBar = el('div', '', 'graph-ng-isolation');
     this.miniMap = new Minimap(this.overlay, this.cameraFrame, (x, y) => this.setCamera(x, y, this.camera.ratio), () => this.fitAll(), () => this.refresh()); this.limitChip = zoomChip(this.overlay, () => this.onZoomOut());
     this.noteCard = div('graph-ng-card'); this.card = new ConnectionCard(this.noteCard, this.cardHost());
     const input = this.input = new Interaction(this.controls());
@@ -447,6 +449,7 @@ export class DetailRenderer {
     this.noteCard.onkeydown = input.cardKeyDown;
     let stack: HTMLElement;
     ({ ripple: this.rippleEl, stack, legend: this.legend, rows: this.legendRows, counts: this.legendCounts, pips: this.pipEls, parts: this.pipParts } = highlightOverlay(this.overlay, i => { this.tierMask ^= 1 << i; this.updateLegend(); this.rankedKey = []; this.refresh(); }, i => this.panTo(this.pipTargets[i] ?? -1)));
+    stack.appendChild(this.isolationBar);
     this.crumbTrail = new Breadcrumb(stack, n => this.name(n), by => this.card.step(by), () => this.clearTrail());
     this.panels = [stack, this.miniMap.root];
     this.resize();
@@ -474,7 +477,7 @@ export class DetailRenderer {
     const cells = packed.width * packed.height * 4; this.stateBytes = new Uint8Array(cells); this.colorBytes = new Uint8Array(cells); this.lensBytes = new Float32Array(cells);
   }
   /** Apply worker view masks without rebuilding the renderer. O(n + m), no worker calls. An active
-   * "Show only connections" mask is re-applied over the new host filter. */
+   * neighbourhood mask is re-applied over the new host filter. */
   setView(filterVisible: Uint8Array, view: RenderView, upload = true) {
     this.baseVisible = filterVisible; this.applyView(this.isolationMask(filterVisible, view), view, upload); this.showIsolation();
   }
@@ -1055,7 +1058,7 @@ export class DetailRenderer {
     if (card && node >= 0) this.card.show(node); else this.card.hide();
   }
   /** The navigator's view of the graph: every lookup is O(degree) over the incident-edge CSR. Rows
-   * list connections under the host filter, so a "Show only connections" mask never hides them. */
+   * list connections under the host filter, so a neighbourhood mask never hides them. */
   private cardHost(): CardHost {
     const p = this.projection, on = (e: number) => !!this.edgeOn[e];
     return {
@@ -1065,6 +1068,7 @@ export class DetailRenderer {
       color: n => { const c = this.colorBytes, k = n * 4; return `rgb(${c[k]},${c[k + 1]},${c[k + 2]})`; },
       groups: n => { const names = new Map<number, string>(), name = (m: number) => names.get(m) ?? names.set(m, this.name(m)).get(m)!; return connectionGroups(n, this.edges, p, on, this.baseVisible, byInterest(this.interestOf(n), (a, b) => name(a).localeCompare(name(b)))); },
       isolated: () => !!this.isolation,
+      frontier: n => this.frontier.get(n) ?? 0,
       lensed: n => this.lensWanted >= 0 && this.lensWanted === n,
       act: (a, n) => this.cardAction(a, n),
       travel: n => this.travel(n),
@@ -1089,7 +1093,8 @@ export class DetailRenderer {
     const path = this.path(n);
     if (action === 'lens') this.setLens(this.lensWanted === n ? -1 : n);
     else if (action === 'focus') this.frameNodes(reach(n, this.edges, this.projection, e => !!this.edgeOn[e], this.filterVisible, 1).nodes);
-    else if (action === 'isolate') this.isolate(this.isolation ? -1 : n);
+    else if (action === 'isolate') this.isolate(n);
+    else if (action === 'expand') this.expandNeighbourhood(n);
     else if (action === 'copy') { if (this.copyLink) this.copyLink(path); else void navigator.clipboard?.writeText(`[[${this.name(n)}]]`).catch(() => {}); }
     else if (this.openNote) this.openNote(path, action === 'open' ? 'reuse' : action);
     else this.onNode(n);
@@ -1117,33 +1122,57 @@ export class DetailRenderer {
     this.toolsInset = inset; this.card.size = undefined; this.refresh();
   }
   /** Travel from a Connections row or history: the note becomes focus and selection, the camera flies
-   * to it (zooming in when far out) and an active "Show only connections" re-centres on it. */
+   * to it (zooming in when far out) and an active neighbourhood keeps its anchor. */
   private travel(n: number) {
     if (!this.baseVisible[n]) return;
-    // Select before re-centring isolation: its mask may exclude the old selection,
-    // but that transient state must not clear the history we are travelling through.
+    // Travelling reveals a hidden target through the current frontier, never moves the anchor.
+    if (this.isolation && !this.filterVisible[n]) this.expandNeighbourhood(this.selected);
+    if (!this.filterVisible[n]) this.isolate(-1, 1, false); // A history jump outside this region exits it.
+    if (!this.filterVisible[n]) return;
     const lensed = this.lensWanted >= 0;
     this.selectNote(n, true);
-    if (this.isolation && this.isolation.node !== n) this.isolate(n, this.isolation.hops, false);
     // Isolation may close the old lens while changing masks; preserve the travel intent.
     if (lensed && this.lensWanted !== n) this.setLens(n);
     this.centreOn(this.display[n * 2]!, this.display[n * 2 + 1]!, Math.min(this.camera.ratio, this.homeRatio * .5), undefined, ...this.cardInset());
   }
-  /** Temporary "Show only connections" view: the focus plus direct connections (hops 2 adds
-   * neighbours of neighbours). A negative node returns to the full graph. */
-  isolate(node: number, hops = 1, fit = true) {
-    this.isolation = node >= 0 && this.baseVisible[node] ? { node, hops } : undefined;
-    const mask = this.isolationMask(this.baseVisible, this.view); this.applyView(mask, this.view); this.showIsolation();
-    if (this.isolation && fit) this.frameNodes(reach(node, this.edges, this.projection, e => !!this.edgeOn[e], mask, hops).nodes);
+  /** Temporary neighbourhood, intersected with the host filter. Reach changes reset expansion. */
+  isolate(node: number, hops = 1, fit = true, expanded = new Set<number>()) {
+    const previous = this.isolation, frontier = this.frontier, partial = this.neighbourhoodPartial;
+    this.isolation = node >= 0 && this.baseVisible[node] ? { node, hops: Math.max(0, Math.min(3, hops)), expanded } : undefined;
+    try { this.applyView(this.isolationMask(this.baseVisible, this.view), this.view); }
+    catch (error) {
+      if (!String(error).includes('CANVAS_DETAIL_')) throw error;
+      this.isolation = previous; this.frontier = frontier; this.neighbourhoodPartial = partial; this.showIsolation(); this.isolationBar.append(el('small', 'Neighbourhood exceeds renderer limits')); return;
+    }
+    if (this.isolation && !this.filterVisible[this.selected]) this.selectNote(node, true);
+    this.showIsolation();
+    if (this.isolation && fit) this.frameNodes(Array.from(this.filterVisible.keys()).filter(n => !!this.filterVisible[n]));
+  }
+  private expandNeighbourhood(n: number) {
+    const s = this.isolation; if (!s || !this.frontier.has(n)) return;
+    this.isolate(s.node, s.hops, false, new Set([...s.expanded, n]));
+    this.canvas.focus();
   }
   private isolationMask(base: Uint8Array, view: RenderView) {
-    const s = this.isolation, p = this.projection; if (!s) return base;
-    if (!base[s.node]) { this.isolation = undefined; return base; }
-    const mask = new Uint8Array(base.length);
-    for (const n of reach(s.node, this.edges, p, e => !view.typeHidden?.[p.type[e]!], base, s.hops).nodes) mask[n] = 1;
-    return mask;
+    const s = this.isolation, p = this.projection; this.frontier = new Map(); this.neighbourhoodPartial = false;
+    if (!s || !base[s.node]) { this.isolation = undefined; return base; }
+    const result = neighbourhood(s.node, s.hops, s.expanded, this.edges, p, e => !view.typeHidden?.[p.type[e]!], base);
+    this.frontier = result.frontier; this.neighbourhoodPartial = result.partial; return result.mask;
   }
-  private showIsolation() { const s = this.isolation; if (this.isolationBar) isolationBar(this.isolationBar, s ? this.name(s.node) : '', s?.hops ?? 1, h => this.isolate(s!.node, h), () => this.isolate(-1)); }
+  private showIsolation() {
+    if (!this.isolationBar) return;
+    const s = this.isolation;
+    isolationBar(this.isolationBar, s ? this.name(s.node) : '', s?.hops ?? 1, this.filterVisible.reduce((a, b) => a + b, 0), s?.expanded.size ?? 0, this.neighbourhoodPartial, h => { this.isolate(s!.node, h); this.isolationBar.querySelectorAll('button')[h]?.focus(); }, () => { this.isolate(-1); this.canvas.focus(); });
+    for (const b of this.frontierBadges) b.el.remove(); this.frontierBadges = [];
+    for (const [node, count] of this.frontier) {
+      if (this.frontierBadges.length === 24) break;
+      const b = button(`+${count}`, `Expand ${this.name(node)}: ${count} hidden neighbours`, () => this.expandNeighbourhood(node), 'graph-ng-frontier graph-ng-count');
+      b.title = b.getAttribute('aria-label')!;
+      const width = Math.max(32, 16 + String(count).length * 7); b.style.width = `${width}px`;
+      this.frontierBadges.push({ node, el: this.overlay.appendChild(b), width });
+    }
+    if (this.frontier.size > 24) this.isolationBar.append(el('small', 'Up to 24 badges. Select any node to expand.'));
+  }
   /** The lens, else the selection, is the focus: hover never moves it (hover is only a ring and a name).
    * The graduated-highlight switch turns it off. */
   private emphasize(immediate?: boolean) { const v = this.lensAnchor >= 0 ? this.lensAnchor : this.selected, on = this.settings.visuals.hoverHighlight, path = this.lensAnchor < 0 ? this.pathView?.edges : undefined; this.setFocus(on && !path ? v : -1, immediate, on ? path ?? (v < 0 && this.selectedEdges?.length ? this.selectedEdges : undefined) : undefined); }
@@ -1272,7 +1301,7 @@ export class DetailRenderer {
       const program = this.programs[i]!, u = program.uniforms;
       gl.useProgram(program.handle); gl.uniform1i(u.lensPositions!, 5); gl.uniform1f(u.lensBlend!, this.lensBlend); gl.uniform1i(u.lensAnchor!, this.lensAnchor); gl.uniform1i(u.positions!, 0); gl.uniform1i(u.palette!, 1); gl.uniform1i(u.atlas!, 2); gl.uniform1i(u.nodeColors!, 3); gl.uniform1i(u.nodeState!, 4); gl.uniform1i(u.positionWidth!, this.positionWidth);
       gl.uniform2f(u.center!, this.centerX, this.centerY); gl.uniform2f(u.viewport!, this.width, this.height); gl.uniform1f(u.scale!, this.scale); gl.uniform1f(u.nodeSize!, nodeSize); gl.uniform1f(u.edgeSize!, edgeWidth); gl.uniform1i(u.hovered!, this.hoverFx.n); gl.uniform2f(u.pulse!, this.fx[0]!, this.fx[1]!); gl.uniform1i(u.selected!, this.selected); gl.uniform1i(u.focusNode!, this.focusNode); gl.uniform1i(u.edgeHovered!, this.hoveredEdge);
-      gl.uniform1f(u.focus!, focus); gl.uniform1f(u.dim!, v.dimOpacity); gl.uniform1f(u.glow!, layer ? policy.glow : 0);
+      gl.uniform1f(u.focus!, focus); gl.uniform1f(u.dim!, this.isolation ? 1 : v.dimOpacity); gl.uniform1f(u.glow!, layer ? policy.glow : 0);
       gl.uniform1f(u.carrierAlpha!, notes.alpha); gl.uniform1f(u.carrierFold!, notes.visibility); gl.uniform1f(u.carrierSize!, v.carrierSize); gl.uniform1i(u.layer!, layer);
       gl.uniform1i(u.tierMask!, this.tierMask); gl.uniform1f(u.minSize!, v.tierMinSize); gl.uniform1f(u.rings!, v.tierRings ? (this.directs.length > 50 ? .5 : 1) : 0); gl.uniform1f(u.strong!, v.focusEdges && this.directs.length <= 50 ? 1 : 0);
       gl.uniform1i(u.segments!, policy.segments); gl.uniform1f(u.curvature!, policy.curves ? v.curvature : 0); gl.uniform1f(u.edgeAlpha!, alpha); gl.uniform1f(u.direction!, v.edgeDirection ? 1 : 0); gl.uniform1f(u.colorMix!, v.edgeColorMix); gl.uniform1f(u.inkAlpha!, ink); gl.uniform1f(u.fadeLength!, Math.min(reach, 1e9)); gl.uniform1f(u.focusOnly!, v.edgeMode === 'focus' ? 1 : 0);
@@ -1297,7 +1326,13 @@ export class DetailRenderer {
     this.placeHighlights(focus);
     // Overlay text never runs under the card or an overlay panel: each label's whole rectangle is
     // tested against their cached rects (the opaque stack and card also sit above as a backstop).
-    const under = (x: number, y: number, w = 1, h = 1) => overlapsBox(x, y, w, h, this.cardRect) || this.panelRects.some(r => overlapsBox(x, y, w, h, r));
+    const badgeBoxes: number[][] = [];
+    const under = (x: number, y: number, w = 1, h = 1) => badgeBoxes.some(r => overlapsBox(x, y, w, h, r)) || overlapsBox(x, y, w, h, this.cardRect) || this.panelRects.some(r => overlapsBox(x, y, w, h, r));
+    for (const { node: n, el: b, width } of this.frontierBadges) {
+      const p = this.screenPoint(n), x = p.x + radius(n) + 2, y = p.y - 16;
+      b.hidden = !this.visible[n] || x < 0 || y < 0 || x + width > this.width - this.toolsInset || y + 32 > this.height || under(x, y, width, 32);
+      if (!b.hidden) { b.style.transform = `translate(${x}px, ${y}px)`; badgeBoxes.push([x, y, width, 32]); }
+    }
     const lod = this.lodLevel(), s = this.settings, tier = v.labelTierScale, hover = this.hoverLabel;
     if (node >= 0) {
       const text = this.noteCaption(node), cls = 'graph-ng-hover-label' + (node === ego && focus ? ' graph-ng-focus' : ''), font = node === ego && focus ? tierFont(0, s.labelSize, tier, this.theme.font) : '', key = text + '\n' + cls + '\n' + font;
@@ -1439,7 +1474,7 @@ export class DetailRenderer {
     line.hidden = length < 4; line.style.width = `${Math.round(length)}px`; line.style.transform = `translate(${Math.round(ax)}px, ${Math.round(ay)}px) rotate(${Math.atan2(y - ay, x - ax)}rad)`;
   }
   private drawCanvas() {
-    const ctx = this.ctx!, s = this.settings, c = this.colorBytes, focus = s.visuals.hoverHighlight ? this.focusLevel : 0, dim = s.visuals.dimOpacity, g = this.stateBytes;
+    const ctx = this.ctx!, s = this.settings, c = this.colorBytes, focus = s.visuals.hoverHighlight ? this.focusLevel : 0, dim = this.isolation ? 1 : s.visuals.dimOpacity, g = this.stateBytes;
     const x = (n: number) => (this.renderCoordinate(n, 0) - this.centerX) * this.scale + this.width / 2, y = (n: number) => (this.renderCoordinate(n, 1) - this.centerY) * this.scale + this.height / 2;
     ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0); ctx.fillStyle = this.theme.background; ctx.fillRect(0, 0, this.width, this.height); ctx.strokeStyle = this.theme.edge; ctx.lineWidth = s.edgeSize;

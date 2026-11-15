@@ -1,5 +1,5 @@
 import { test, expect, beforeAll, afterAll } from 'bun:test';
-import { connectionGroups, navigatorSections, filterConnections, entryTitle, ConnectionCard, NAV_DEBOUNCE_MS, type CardHost, reach, NavHistory, dockCard, sheetCard, DOCK_ROOM, SHEET_WIDTH } from '../src/connection-card';
+import { connectionGroups, navigatorSections, filterConnections, entryTitle, ConnectionCard, NAV_DEBOUNCE_MS, type CardHost, reach, neighbourhood, NavHistory, dockCard, sheetCard, DOCK_ROOM, SHEET_WIDTH } from '../src/connection-card';
 import { incidentEdges } from '../src/render-data';
 
 // Synthetic graph. Types: 0 'cites', 1 'part of'. Node 9 is a relationship-note dot owned by row 0
@@ -220,4 +220,38 @@ test('titles are fetched only for drawn rows and memoized for the card build', (
   r.type('note'); r.flush(); expect(fresh()).toBe(80); // searching needs every title, each once
   r.type('id-1'); r.flush(); r.type(''); r.flush(); expect(fresh()).toBe(0);
   r.card.render(); expect(fresh()).toBe(40); // a new build fetches again, only for the 40 drawn rows
+});
+
+test('neighbourhood mask: zero through three hops, distinct frontier, transparent carriers and additive branches', () => {
+  const g = graph(), run = (h: number, expanded = new Set<number>(), base = g.all, on = g.on) => neighbourhood(0, h, expanded, g.inc, g.p, on, base);
+  expect([...reach(0, g.inc, g.p, g.on, g.all, 0).nodes]).toEqual([0]);
+  expect([...reach(0, g.inc, g.p, g.on, g.all, 3).nodes]).toContain(6);
+  const zero = run(0); expect([...zero.frontier]).toEqual([[0, 5]]); expect(zero.mask[9]).toBe(0);
+  const one = run(1); expect(one.mask[9]).toBe(1); expect(one.mask[10]).toBe(1); expect([...one.frontier]).toEqual([[1, 1], [4, 1]]);
+  const more = run(1, new Set([1, 5])); expect(more.mask[5]).toBe(1); expect(more.mask[6]).toBe(1); expect(more.mask[8]).toBe(0); expect(more.mask[4]).toBe(1);
+  expect([...run(1).mask]).toEqual([...one.mask]);
+  const base = g.all.slice(); base[1] = 0;
+  const filtered = run(1, new Set([1, 5]), base); expect(filtered.mask[6]).toBe(0); expect(filtered.mask[5]).toBe(0); expect(filtered.mask[1]).toBe(0);
+  expect([...run(3, new Set(), g.all, () => false).frontier]).toEqual([]);
+  expect(run(3, new Set(), g.all, () => false).mask.reduce((a, b) => a + b)).toBe(1);
+});
+test('neighbourhood scan budget includes carrier fan-out and visibly reports incomplete traversal', () => {
+  const n = 600, source = Uint32Array.from({ length: n - 1 }, (_, i) => i + 1), target = new Uint32Array(n - 1);
+  const p = { nodeCount: n, source, target, type: new Uint32Array(n - 1), types: ['link'], carrier: new Uint32Array(n - 1), carrierNodes: new Uint32Array(n) }; p.carrierNodes[0] = 1;
+  const inc = incidentEdges(p), all = new Uint8Array(n).fill(1);
+  const bounded = reach(1, inc, p, () => true, all, 1, 2); expect(bounded.truncated).toBe(true); expect(bounded.nodes.size).toBeLessThan(4);
+  const result = neighbourhood(1, 3, new Set(), inc, p, () => true, all);
+  expect(result.partial).toBe(true); expect(result.mask[1]).toBe(1);
+});
+
+test('neighbourhood remains bounded at 16k nodes / 55k edges and never admits excluded nodes', () => {
+  const n = 16000, m = 55000, source = Uint32Array.from({ length: m }, (_, i) => i % n), target = Uint32Array.from(source, (v, i) => (v + 1 + (Math.floor(i / n) % 7) * 17) % n);
+  const p = { nodeCount: n, source, target, type: new Uint32Array(m), types: ['edge'], carrier: new Uint32Array(m).fill(NONE), carrierNodes: new Uint32Array(n) };
+  const base = new Uint8Array(n).fill(1); for (let i = 100; i < n; i += 31) base[i] = 0;
+  let checked = 0;
+  const result = neighbourhood(0, 3, new Set(), incidentEdges(p), p, () => { checked++; return true; }, base);
+  expect(result.partial).toBe(false); expect(result.mask[0]).toBe(1); expect(result.mask.length).toBe(n);
+  expect(checked).toBeLessThanOrEqual(200000);
+  for (let i = 0; i < n; i++) if (!base[i]) expect(result.mask[i]).toBe(0);
+  for (const [node, count] of result.frontier) { expect(result.mask[node]).toBe(1); expect(count).toBeGreaterThan(0); }
 });
