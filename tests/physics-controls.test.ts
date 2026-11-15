@@ -1,7 +1,8 @@
 import { test, expect } from 'bun:test';
 import './support/obsidian-fixture';
 import { defaults } from '../src/settings';
-import { physicsSettings } from '../src/physics-controls';
+import { physicsSettings, physicsDefaults, presetValues, PHYSICS_FIELDS, PHYSICS_PRESETS } from '../src/physics-controls';
+import { upgradeSettings } from '../src/settings';
 import { ExplorePanel } from '../src/explore-panel';
 import { emptyView } from '../src/core/explore';
 import { ControlElement, control } from './support/controls-dom';
@@ -34,15 +35,56 @@ test('invalid zero negative NaN Infinity and invalid full settings are atomic', 
   for (const key of ['scalingRatio', 'gravity', 'slowDown']) for (const value of [-1, NaN, Infinity, -Infinity, ...(key === 'gravity' ? [] : [0])]) expect(() => physicsSettings(s, { ...values, [key]: value })).toThrow();
   expect(s).toEqual(before); expect(() => physicsSettings({ ...s, nodeSize: NaN }, values)).toThrow();
 });
-test('numeric drafts survive rerenders; reset changes only three drafts; explicit apply runs once', async () => {
+const byLabel = (f: ReturnType<typeof fixture>, label: string): any => f.panel.body.querySelectorAll('input').find((e: any) => e.getAttribute('aria-label') === label);
+test('numeric drafts survive rerenders; reset restores every exposed default; explicit apply runs once', async () => {
   const f = fixture(); f.settings.layout.force.scalingRatio = 100000; f.panel.physicsDraft = undefined; f.panel.render();
   expect(numbers(f)[0].value).toBe('100000');
   input(f, 0, '999999'); input(f, 1, '0'); f.panel.render();
-  expect(numbers(f)[0].value).toBe('999999'); expect(f.applied()).toBe(0);
-  control(f.panel.body, 'Reset layout values').click(); expect(f.settings.layout.force.scalingRatio).toBe(100000);
-  expect(numbers(f).map((e: any) => e.value)).toEqual(['2', '1', '1']);
+  expect(f.panel.body.querySelectorAll('input')[0].value).toBe('999999'); expect(f.applied()).toBe(0);
+  expect(f.panel.body.textContent).toContain('What changes on apply: Spread nodes 100000 → 999999; Pull to center 1 → 0.');
+  control(f.panel.body, 'Reset to defaults').click(); expect(f.settings.layout.force.scalingRatio).toBe(100000);
+  const d = physicsDefaults();
+  for (const [key, label] of PHYSICS_FIELDS) { const e = byLabel(f, label); expect(typeof d[key] === 'boolean' ? e.checked : e.value).toBe(typeof d[key] === 'boolean' ? d[key] : String(d[key])); }
   const apply: any = control(f.panel.body, 'Apply and recompute'); const pending = apply.onclick(); apply.onclick(); await pending;
   expect(f.applied()).toBe(1); expect(f.settings.layout.force.scalingRatio).toBe(2); f.panel.dispose();
+});
+test('every control has a plain label and an effect hint; advanced controls sit in a collapsed section', () => {
+  const f = fixture(), details: any = f.panel.body.querySelector('details');
+  expect(details.open).toBeFalsy(); expect(details.textContent).toContain('Advanced physics');
+  for (const [, label, hint, advanced] of PHYSICS_FIELDS) {
+    expect(hint.length).toBeGreaterThan(30); expect(f.panel.body.textContent).toContain(hint);
+    expect(details.contains(byLabel(f, label))).toBe(advanced);
+  }
+  expect(PHYSICS_FIELDS.filter(([, , , advanced]) => !advanced).map(([key]) => key)).toEqual(['scalingRatio', 'gravity']);
+  f.panel.dispose();
+});
+test('presets and checkboxes only fill drafts; one explicit apply sends every exposed value', async () => {
+  const f = fixture(); let sent: any; f.panel.host.applyLayout = async (v: any) => { sent = v; f.settings.layout = physicsSettings(f.settings, v).layout; };
+  const before = structuredClone(f.settings);
+  control(f.panel.body, 'Clustered').click();
+  expect(f.settings).toEqual(before); expect(sent).toBeUndefined();
+  expect(byLabel(f, 'Tighter clusters (LinLog)').checked).toBe(true); expect(byLabel(f, 'Spread nodes').value).toBe('4');
+  expect(f.panel.body.textContent).toContain('Clustered preset loaded');
+  const overlap = byLabel(f, 'Prevent overlap'); overlap.checked = true; overlap.onchange();
+  f.panel.render(); expect(byLabel(f, 'Prevent overlap').checked).toBe(true);
+  await (control(f.panel.body, 'Apply and recompute') as any).onclick();
+  expect(sent).toEqual({ ...presetValues('Clustered'), adjustSizes: true });
+  expect(f.settings.layout.iterations).toBe(200); expect(f.settings.layout.force.linLogMode).toBe(true);
+  expect(f.settings.layout.force.outboundAttractionDistribution).toBe(true); expect(f.settings.layout.force.adjustSizes).toBe(true);
+  expect({ ...f.settings.layout, iterations: 100, force: before.layout.force }).toEqual(before.layout);
+  f.panel.dispose();
+});
+test('presets validate, touch only exposed controls, and older saved settings without them still migrate', () => {
+  const s = defaults('links'); s.layout.seed = 9; s.layout.maxForce = 7; s.layout.force.edgeWeightInfluence = 3; s.layout.force.barnesHutOptimize = false;
+  for (const [name] of PHYSICS_PRESETS) {
+    const next = physicsSettings(s, presetValues(name));
+    expect(next.layout.seed).toBe(9); expect(next.layout.maxForce).toBe(7); expect(next.layout.force.edgeWeightInfluence).toBe(3); expect(next.layout.force.barnesHutOptimize).toBe(false);
+  }
+  expect(() => presetValues('Nope')).toThrow(); expect(() => physicsSettings(s, { ...values, seed: 1 } as any)).toThrow('Unknown layout control');
+  for (const bad of [{ iterations: 0 }, { iterations: 1.5 }, { barnesHutTheta: 0 }, { linLogMode: 'yes' }]) expect(() => physicsSettings(s, { ...values, ...bad } as any)).toThrow();
+  const old = upgradeSettings({ layout: { iterations: 50, force: { scalingRatio: 5, gravity: 2, slowDown: 1 } } }, 'links');
+  expect(old.layout.iterations).toBe(50); expect(old.layout.force.scalingRatio).toBe(5); expect(old.layout.force.linLogMode).toBe(false);
+  expect(physicsSettings(old, values).layout.iterations).toBe(50);
 });
 test('invalid and disposed panel apply neither saves nor runs; rejected host shows inline error', async () => {
   const f = fixture(), before = structuredClone(f.settings);

@@ -22,15 +22,22 @@ While pressing a slider (mouse, pen or touch), move the pointer up or down away 
 
 ## Layout controls
 
-Open **Layout** in graph controls. Numeric changes are drafts until **Apply and recompute**; editing alone neither saves nor runs layout.
+Open **Layout** in graph controls. Numeric changes, checkboxes and presets are drafts until **Apply and recompute**; editing alone neither saves nor runs layout. A "What changes on apply" line lists every pending difference from the applied settings.
 
-| Control | Existing setting | Effect and valid values |
+| Control | Existing setting | Visible effect and valid values |
 | --- | --- | --- |
-| Spread nodes | `layout.force.scalingRatio` | More repulsion, not target link distance; positive finite values. |
-| Pull toward center (gravity) | `layout.force.gravity` | Stronger pull can compress structure; nonnegative finite values, including zero. |
-| Layout step slowdown (advanced) | `layout.force.slowDown` | Larger values reduce movement per iteration; positive finite values. Not damping or animation speed. |
+| Spread nodes | `layout.force.scalingRatio` | Pushes every node away from the others; higher = more space between nodes and clusters. More repulsion, not target link distance; positive finite. |
+| Pull to center | `layout.force.gravity` | Draws everything toward the middle; higher = rounder, tighter graph; 0 lets unlinked parts drift. Nonnegative finite. |
+| Tighter clusters (LinLog), advanced | `layout.force.linLogMode` | Weaker long-distance link pull separates well-linked groups into distinct clumps. |
+| Dissuade hubs, advanced | `layout.force.outboundAttractionDistribution` | Heavily linked notes pull less, so hubs move to the edge of their cluster. |
+| Prevent overlap, advanced | `layout.force.adjustSizes` | Nodes keep a minimum separation (`layout.nodeRadius`); settles more slowly. |
+| Strong gravity, advanced | `layout.force.strongGravityMode` | Pull to center no longer weakens with distance; use with a small Pull to center. |
+| Quality (iterations), advanced | `layout.iterations` | More steps = more settled shapes, slower apply. Integer 1 or more; the worker timeout still applies. |
+| Step slowdown, advanced | `layout.force.slowDown` | Higher = smaller moves per iteration; positive finite. Not damping or animation speed. |
+| Approximation, advanced | `layout.force.barnesHutTheta` | Lower = more accurate, slower repulsion; higher = faster, rougher. Positive finite. |
 
-Each field also has a slider (spread and slowdown 0.1–100 logarithmic, gravity 0–20); sliders only edit the draft. The slider span is not a validation maximum: typed values outside it are kept unclamped and the slider rests at its end. **Reset layout values** changes only three drafts to 2, 1, 1; applying remains explicit. Full settings validation preserves unexposed layout and appearance settings. Invalid, failed or stale worker results do not replace the last good settings or graph.
+Each field also has a slider (spread and slowdown 0.1–100 logarithmic, gravity 0–20); sliders only edit the draft. The slider span is not a validation maximum: typed values outside it are kept unclamped and the slider rests at its end. **Reset to defaults** changes only three drafts to 2, 1, 1; applying remains explicit. Full settings validation preserves unexposed layout and appearance settings. Invalid, failed or stale worker results do not replace the last good settings or graph.
+Advanced controls are collapsed by default. Presets fill drafts from defaults: **Clustered** (LinLog + Dissuade hubs, Spread 4, 200 iterations), **Spacious** (Spread 10, Pull 0.5), **Compact** (Spread 1, Pull 3). **Reset to defaults** restores every exposed control's default draft (Spread 2, Pull 1, Step slowdown 1, 100 iterations, Approximation 1.2, toggles off). There is no slider maximum or clamping of valid custom values. Edge weight influence stays hidden because projection edges are unit-weight. Full settings validation preserves unexposed layout and appearance settings (seed, maximum force, Barnes-Hut on/off). Invalid, failed or stale worker results do not replace the last good settings or graph.
 
 Apply runs one finite layout-only worker recomputation on the current projection without body reads, source re-ingestion or cache mutation. Only a still-current open view commits settings and displayed positions. Positions can change; detail coordinates update on the same renderer/context with retained camera-frame bounds, camera and scope. **Fit graph** stays separate. Preview coordinates do not replace persisted worker generations: repeated applies start from the worker's previous completed baseline; ordinary refresh uses saved layout settings through existing cache validation. Saved-view schema is unchanged. External aggregate projections cannot apply note-layout settings.
 

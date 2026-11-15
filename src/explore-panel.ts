@@ -1,8 +1,7 @@
 import { folderPredicate, folderView } from './saved-views';
 import { setIcon } from 'obsidian';
 import { sizingValues, sizingSettings, MAX_NODE_RADIUS, type NodeSizingValues } from './node-sizing';
-import { DEFAULT_LAYOUT } from './core/layout-options';
-import { physicsSettings, type PhysicsValues } from './physics-controls';
+import { physicsSettings, physicsDefaults, presetValues, PHYSICS_FIELDS, PHYSICS_PRESETS, type PhysicsKey, type PhysicsValues } from './physics-controls';
 import { editAsExpression, builderPredicate, checked } from './core/expr/engine';
 import { validate } from './core/expr/syntax';
 import { suggestions } from './core/expr/autocomplete';
@@ -11,6 +10,8 @@ import { describePredicate, groupLabel, NO_COLOR, VIEW_LIMITS, validateSaved, va
 import { canonical, validateDerivedGroup, validatePredicate, type GraphDeclaration, type GroupSource, type Predicate, type Scalar } from './core/declaration';
 import type { Settings, Visuals } from './settings';
 import { progressiveSlider, type Curve } from './progressive-slider';
+/** Slider travel per numeric layout control; typed values outside the span stay unclamped. */
+const PHYSICS_CURVES: Partial<Record<PhysicsKey, Curve>> = { scalingRatio: { min: .1, max: 100, log: true }, gravity: { min: 0, max: 20, k: 3 }, slowDown: { min: .1, max: 100, log: true }, iterations: { min: 1, max: 1000, log: true }, barnesHutTheta: { min: .1, max: 3, k: 2 } };
 /** The view owns the worker, renderer and persistence; the panel only edits state. */
 export interface PanelHost {
   settings(): Settings;
@@ -51,11 +52,6 @@ function toolButton(host: HTMLElement, text: string, icon: string) {
   return button;
 }
 const SECTIONS: Record<string, [Section, string][]> = { views: [['views', 'Saved views']], filters: [['filters', 'Filters'], ['groups', 'Grouping'], ['edges', 'Relationships']], appearance: [['display', 'Appearance'], ['colors', 'Color rules']], layout: [['physics', 'Layout']] };
-const PHYSICS_FIELDS: [keyof PhysicsValues, string, string, Curve][] = [
-      ['scalingRatio', 'Spread nodes', 'Positive finite values; more repulsion, not target distance.', { min: .1, max: 100, log: true }],
-      ['gravity', 'Pull toward center (gravity)', 'Stronger pull can compress structure. Zero is valid.', { min: 0, max: 20, k: 3 }],
-      ['slowDown', 'Layout step slowdown (advanced)', 'Positive finite values; higher means smaller iteration steps, not damping or animation speed.', { min: .1, max: 100, log: true }],
-    ];
 let expressionPanelId = 0;
 const parseRaw = (raw: string): Scalar => { try { const v: unknown = JSON.parse(raw); return v === null || ['string', 'number', 'boolean'].includes(typeof v) ? v as Scalar : raw; } catch { return raw; } };
 /** One nonmodal overlay; opening tools never changes the canvas rectangle or graph. */
@@ -68,7 +64,9 @@ export class ExplorePanel {
   private viewMessage = '';
   private viewBusy = false;
   private openRequest = 0;
-  private physicsDraft?: Record<keyof PhysicsValues, string>;
+  private physicsDraft?: Record<PhysicsKey, string | boolean>;
+  private physicsNote = '';
+  private physicsAdvanced = false;
   private sizingDraft?: Record<keyof NodeSizingValues, string>;
   private sizingMessage = '';
   private sizingBusy = false;
@@ -416,30 +414,42 @@ export class ExplorePanel {
     this.guards.push(update); update();
   }
   private physics(host: HTMLElement) {
-    const fields = PHYSICS_FIELDS, draft = this.physicsDraft ??= Object.fromEntries(fields.map(([key]) => [key, String(this.settings.layout.force[key])])) as Record<keyof PhysicsValues, string>;
-    this.note(host, 'Edit drafts, then Apply and recompute. Fit graph is separate.');
-    for (const [key, title, help, curve] of fields) {
-      const label = host.createEl('label', { cls: 'graph-ng-physics-field' });
-      label.createSpan({ text: title });
-      const input = label.createEl('input', { attr: { type: 'number', step: 'any', 'aria-label': title } });
-      if (key === 'gravity') input.min = '0';
-      input.value = draft[key]; input.disabled = this.physicsBusy;
-      progressiveSlider(label, input, title, curve, value => { draft[key] = value; });
-      this.note(host, help);
+    const applied = (): Record<PhysicsKey, string | boolean> => { const l = this.settings.layout; return Object.fromEntries(PHYSICS_FIELDS.map(([key]) => { const v = key === 'iterations' ? l.iterations : l.force[key]; return [key, typeof v === 'boolean' ? v : String(v)]; })) as Record<PhysicsKey, string | boolean>; };
+    const draft = this.physicsDraft ??= applied();
+    const fill = (values: Required<PhysicsValues>, note: string) => { for (const [key] of PHYSICS_FIELDS) { const v = values[key]; draft[key] = typeof v === 'boolean' ? v : String(v); } this.physicsError = ''; this.physicsNote = note; this.render(); };
+    this.note(host, 'Change values or pick a preset, then Apply and recompute. Nothing is saved or moved until you apply. Fit graph is separate.');
+    const presets = host.createDiv({ cls: 'graph-ng-form', attr: { role: 'group', 'aria-label': 'Layout presets' } });
+    for (const [name, effect] of PHYSICS_PRESETS) {
+      const b = presets.createEl('button', { text: name, attr: { title: effect } }); b.disabled = this.physicsBusy;
+      b.onclick = () => fill(presetValues(name), `${name} preset loaded: ${effect} Apply and recompute to see it.`);
     }
+    const changes = host.createDiv({ cls: 'graph-ng-explore-note', attr: { 'aria-live': 'polite' } }), show = (v: string | boolean) => typeof v === 'boolean' ? (v ? 'on' : 'off') : v;
+    const summarize = () => { const now = applied(), diff = PHYSICS_FIELDS.filter(([key]) => draft[key] !== now[key]).map(([key, title]) => `${title} ${show(now[key])} → ${show(draft[key])}`); changes.textContent = [this.physicsNote, diff.length ? `What changes on apply: ${diff.join('; ')}.` : 'No pending changes.'].filter(Boolean).join(' '); };
+    const basic = host.createDiv(), advanced = host.createEl('details', { cls: 'graph-ng-physics-advanced' });
+    advanced.createEl('summary', { text: 'Advanced physics' }); advanced.open = this.physicsAdvanced; advanced.ontoggle = () => { this.physicsAdvanced = advanced.open; };
+    for (const [key, title, help, more] of PHYSICS_FIELDS) {
+      const parent = more ? advanced : basic, label = parent.createEl('label', { cls: 'graph-ng-physics-field' });
+      label.createSpan({ text: title });
+      const value = draft[key], input = label.createEl('input', { attr: typeof value === 'boolean' ? { type: 'checkbox', 'aria-label': title } : { type: 'number', step: key === 'iterations' ? '1' : 'any', ...(key === 'gravity' ? { min: '0' } : key === 'iterations' ? { min: '1' } : {}), 'aria-label': title } });
+      input.disabled = this.physicsBusy;
+      if (typeof value === 'boolean') { input.checked = value; input.onchange = () => { draft[key] = input.checked; summarize(); }; }
+      else { input.value = value; input.oninput = () => { draft[key] = input.value; summarize(); }; progressiveSlider(label, input, title, PHYSICS_CURVES[key]!, v => { draft[key] = v; summarize(); }); }
+      parent.createDiv({ cls: 'graph-ng-explore-note', text: help });
+    }
+    summarize();
     host.createDiv({ cls: 'graph-ng-explore-error', text: this.physicsError, attr: { role: 'alert' } });
     const actions = host.createDiv({ cls: 'graph-ng-form' });
-    const reset = actions.createEl('button', { text: 'Reset layout values' });
+    const reset = actions.createEl('button', { text: 'Reset to defaults' });
     reset.disabled = this.physicsBusy;
-    reset.onclick = () => { for (const [key] of fields) draft[key] = String(DEFAULT_LAYOUT.force[key]); this.physicsError = ''; this.render(); };
+    reset.onclick = () => fill(physicsDefaults(), '');
     const apply = actions.createEl('button', { text: this.physicsBusy ? 'Recomputing…' : 'Apply and recompute', cls: 'mod-cta' });
     apply.disabled = this.physicsBusy;
     apply.onclick = async () => {
       if (this.physicsBusy || this.disposed) return;
       try {
-        const values = Object.fromEntries(fields.map(([key]) => [key, draft[key].trim() ? Number(draft[key]) : NaN])) as PhysicsValues;
+        const values = Object.fromEntries(PHYSICS_FIELDS.map(([key]) => { const v = draft[key]; return [key, typeof v === 'boolean' ? v : v.trim() ? Number(v) : NaN]; })) as unknown as PhysicsValues;
         physicsSettings(this.settings, values);
-        this.physicsBusy = true; this.physicsError = ''; this.render();
+        this.physicsBusy = true; this.physicsError = ''; this.physicsNote = ''; this.render();
         await this.host.applyLayout(values);
       } catch (e) { this.physicsError = `Not applied: ${e instanceof Error ? e.message : String(e)}`; }
       finally { this.physicsBusy = false; if (!this.disposed) this.render(); }

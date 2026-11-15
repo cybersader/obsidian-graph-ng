@@ -59,6 +59,9 @@
 
 .graph-ng-physics-field { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
 .graph-ng-physics-field input { width:100%; min-width:0; }
+.graph-ng-physics-advanced { margin:8px 0; }
+.graph-ng-physics-advanced > summary { cursor:pointer; font-weight:600; }
+.graph-ng-physics-field input[type=checkbox] { width:auto; }
 .graph-ng-explore-physics .graph-ng-explore-note { color:var(--text-normal); }
 
 .graph-ng-sizing-row { display: grid; grid-template-columns: minmax(0,1fr) 6em auto; gap: 6px; align-items: center; margin-block: 8px; }
