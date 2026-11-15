@@ -1404,7 +1404,8 @@ export class DetailRenderer {
       let y = (h.y - this.centerY) * this.scale + this.height / 2 + h.radius + 4;
       for (let k = 0; k < placed.length; k++) { const [px, py, ph] = placed[k]!; if (Math.abs(px - x) < half + ph && Math.abs(py - y) < line) { y = py + line + 2; k = -1; } }
       // Placed labels, "+N more" and the hover label above keep their place: a hub label never lands on them.
-      el.hidden = taken.some(b => overlapsBox(x - half, y, 2 * half, line, b)); placed.push([x, y, half]); el.style.transform = `translate(-50%, 0) translate(${Math.round(x)}px, ${Math.round(y)}px)`;
+      // Visibility, not `hidden`: a covered label keeps its measured size, so it cannot flicker.
+      el.style.visibility = taken.some(b => overlapsBox(x - half, y, 2 * half, line, b)) ? 'hidden' : ''; placed.push([x, y, half]); el.style.transform = `translate(-50%, 0) translate(${Math.round(x)}px, ${Math.round(y)}px)`;
     });
   }
   /** Where Group overview leads back to: the selection (or lens), its group and the camera. */

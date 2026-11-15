@@ -1228,8 +1228,11 @@ test('a collapsed-group hub label never lands on the hover label', async () => {
   const [x, y] = hover.style.transform.match(/-?[\d.]+/g).map(Number), scale = r[k('scale')];
   // Move the hub so its centred label (below the disc) would sit on the hover label, then away again.
   const put = (sx: number, sy: number) => { hub.x = r[k('centerX')] + (sx - r[k('width')] / 2) / scale; hub.y = r[k('centerY')] + (sy - hub.radius - 4 - r[k('height')] / 2) / scale; r[k('placeOverlay')](); };
-  put(x + 10, y + 2); expect(hover.hidden).toBe(false); expect(label.hidden).toBe(true);
-  put(x + 10, y + 200); expect(label.hidden).toBe(false);
+  // Covered by visibility, never `hidden`: display:none would zero its measured width and flip it back every frame.
+  label.offsetWidth = 200; label.offsetHeight = 18;
+  put(x + 10, y + 2); expect(hover.hidden).toBe(false); expect(label.style.visibility).toBe('hidden'); expect(label.hidden).toBeFalsy();
+  r[k('placeOverlay')](); expect(label.style.visibility).toBe('hidden');
+  put(x + 10, y + 200); expect(label.style.visibility).toBe('');
 });
 
 test('review: collapsing an inner path note clears its path, not just paths with hidden endpoints', async () => {

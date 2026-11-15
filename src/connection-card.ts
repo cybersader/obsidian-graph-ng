@@ -61,13 +61,18 @@ export function reach(focus: number, inc: Incidence, p: Columns, on: On, vis: Ar
 export function neighbourhood(focus: number, hops: number, expanded: Set<number>, inc: Incidence, p: Columns, on: On, base: Uint8Array, shown: Iterable<number> = []) {
   let budget = 200000; const scan = () => budget-- > 0;
   const result = reach(focus, inc, p, on, base, hops, 0, scan), mask = new Uint8Array(base.length), frontier = new Map<number, number>();
-  for (const n of expanded) if (result.nodes.has(n)) {
-    const more = reach(n, inc, p, on, base, 1, 0, scan); for (const v of more.nodes) result.nodes.add(v);
-    result.truncated ||= more.truncated;
-  }
-  for (const t of shown) if (base[t] && !result.nodes.has(t)) {
-    const dots = new Map<number, number>();
-    neighbours(t, inc, p, on, base, (e, w, dot) => { if (dot) dots.set(e, w); else if (result.nodes.has(w)) { result.nodes.add(t); if (dots.has(e)) result.nodes.add(dots.get(e)!); } }, scan);
+  // Fixpoint: an expansion may hang off a travel target and a target off an expansion.
+  const todo = new Set(expanded); let size = 0;
+  while (size < result.nodes.size) {
+    size = result.nodes.size;
+    for (const n of todo) if (result.nodes.has(n)) {
+      todo.delete(n); const more = reach(n, inc, p, on, base, 1, 0, scan); for (const v of more.nodes) result.nodes.add(v);
+      result.truncated ||= more.truncated;
+    }
+    for (const t of shown) if (base[t] && !result.nodes.has(t)) {
+      const dots = new Map<number, number>();
+      neighbours(t, inc, p, on, base, (e, w, dot) => { if (dot) dots.set(e, w); else if (result.nodes.has(w)) { result.nodes.add(t); if (dots.has(e)) result.nodes.add(dots.get(e)!); } }, scan);
+    }
   }
   for (const n of result.nodes) mask[n] = 1;
   for (const n of result.nodes) {

@@ -267,4 +267,7 @@ test('neighbourhood travel reveals: a shown target joins alone, with its linking
   // A target that does not touch the region is not admitted; neither is a filtered one.
   expect(run(1, [6]).mask[6]).toBe(0);
   const base = g.all.slice(); base[5] = 0; expect(ones(run(1, [5, 6], base).mask)).toEqual(ones(run(1, []).mask));
+  // Expanding a travel-revealed note works whatever the order: 5 is shown, then expanded to reach 6.
+  expect(neighbourhood(0, 1, new Set([5]), g.inc, g.p, g.on, g.all, [5]).mask[6]).toBe(1);
+  expect(run(1, [6, 5]).mask[6]).toBe(1);
 });
