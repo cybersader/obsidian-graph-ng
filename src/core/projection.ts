@@ -34,6 +34,9 @@ export interface Projection {
   up?: { offsets: Uint32Array; targets: Uint32Array };
   /** Per edge 1 when its reified rule declares `highlight: 'tint'`; absent when no rule does. */
   tint?: Uint8Array;
+  /** Declared `interest`, when bound: per node, the rank of its finite number in [0, 1] (ties share
+   * a rank); NaN when the value is missing or not a finite number. Presentation only. */
+  interest?: Float32Array;
 }
 export const NONE = 0xffffffff;
 const compare = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
@@ -136,9 +139,22 @@ export function buildProjection(input: readonly FactRow[], d: GraphDeclaration):
     lists.forEach((l, i) => { offsets[i + 1] = offsets[i]! + l.length; });
     up = { offsets, targets: Uint32Array.from(lists.flat()) };
   }
-  return { up, tint: tint.some(Boolean) ? Uint8Array.from(tint) : undefined, paths, identities, carrierPaths: rows.map(r => r.path), offsets, targets,
+  const ik = d.interest?.property;
+  return { up, interest: ik === undefined ? undefined : interestColumn(nodes.map(r => r.properties[ik])), tint: tint.some(Boolean) ? Uint8Array.from(tint) : undefined, paths, identities, carrierPaths: rows.map(r => r.path), offsets, targets,
     source: Uint32Array.from(src), target: Uint32Array.from(dst), type: tc.codes, carrier: Uint32Array.from(carrier), rule: Uint32Array.from(rule), carrierNodes: Uint32Array.from(nodes, r => carriers.has(r.path) ? rowIndex.get(r.path)! + 1 : 0), types: tc.values,
     columns, groups, folders, unresolved, quarantined, dropped };
+}
+/** Rank-normalise finite numbers to [0, 1] (scale-free, outlier-proof); anything else is NaN. */
+export function interestColumn(values: readonly unknown[]): Float32Array {
+  const out = new Float32Array(values.length).fill(NaN), at = values.flatMap((v, i) => typeof v === 'number' && Number.isFinite(v) ? [i] : []);
+  at.sort((a, b) => (values[a] as number) - (values[b] as number) || a - b);
+  for (let i = 0; i < at.length;) {
+    let j = i; while (j + 1 < at.length && values[at[j + 1]!] === values[at[i]!]) j++;
+    const q = at.length > 1 ? (i + j) / 2 / (at.length - 1) : 1;
+    for (let k = i; k <= j; k++) out[at[k]!] = q;
+    i = j + 1;
+  }
+  return out;
 }
 export function filterNodes(p: Projection, predicate?: Predicate): Uint8Array {
   return predicate ? expressionFilter(p, lowerPredicate(predicate)) : new Uint8Array(p.paths.length).fill(1);

@@ -148,7 +148,8 @@
     "offscreenPips": true,
     "focusRipple": true,
     "tierLegend": true,
-    "clickOpens": false
+    "clickOpens": false,
+    "bridgesFirst": true
   },
   "explore": {
     "panelOpen": true,

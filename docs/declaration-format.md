@@ -30,6 +30,7 @@ All top-level fields except `carrierResolvers` are required. Unknown declaration
 | `colors` | Ordered `{name,color,predicate}` rules, first match wins. Colors must be `#rrggbb`, `#rrggbbaa`, or a restricted `var(--name)` reference resolved from computed host CSS. These are explicit declarations, not a hidden palette tied to any ontology. |
 | `hierarchy` | Optional `{parentProperty}`: a frontmatter property whose scalar value(s) name the parent's identity (declared identity or exact path). Presentation only; see [Focus emphasis](#focus-emphasis-optional). |
 | `groupContext` | Optional boolean. `true` shows other members of the focus's current group as a faint highlight tier. |
+| `interest` | Optional `{property}`: a frontmatter property holding a finite number; higher ranks a note earlier among a focus's connections. Presentation only; see [Interest ranking](#interest-ranking-optional). |
 | `carrierResolvers` | Optional unique `{kind,key}` bindings. `$path` means an exact local note path; other keys are declared frontmatter lookups. Absent/ambiguous matches cannot navigate. Carrier strings have no guessed meaning. |
 | `carrierResolvers` | Optional unique `{kind,key}` bindings. `$path` means an exact local note path; other keys are declared frontmatter lookups. Absent/ambiguous matches cannot navigate. Carrier strings have no guessed meaning. In the Notes view of a vault projection, a selected line's carrier is the reified rule's own note path (the `note-path` meaning), offered as **Open relationship note** and opened only when that file exists locally. |
 
@@ -58,6 +59,20 @@ Precedence is fixed: focus > direct > ancestor > 2-hop > same group > context.
 Only the focus-emphasis-relevant fields are shown; a complete declaration also needs the required fields above. Hovering a control then shows its direct links and mappings brightest, its parent chain softer, 2-hop neighbours medium, the rest of its framework faintly, and crosswalk edges tinted.
 
 Unresolved edge endpoints are dropped and counted. Self-links and parallel edges survive. Directed edge columns retain direction; CSR adjacency includes both traversal directions. Filters compare scalar type exactly (`1`, `"1"`, `true`, null and missing differ). Folder prefixes use path boundaries, not arbitrary string prefixes.
+
+## Interest ranking (optional)
+
+When a focus has more connections than there are label slots, ring places or visible card rows, Graph NG ranks them by *degree of interest* (after van Ham and Perer): a priori interest − hop distance + user interest. Hop distance always wins, so tiers never reorder. Within a tier:
+
+- **A priori:** rarer notes beat hubs (inverse connection count). With `interest: {"property": "..."}` declared, that property adds a bonus.
+- **User:** notes visited recently in the card's trail rank higher; the latest visit most.
+- **Bridges first** (Appearance setting `visuals.bridgesFirst`, on by default): with a current grouping, connections in a different group from the focus rank higher. Nothing ontology-specific is named; in a crosswalk this surfaces cross-framework mappings.
+
+`interest.property` is read like any declared key. Only finite JSON numbers count (exact type, as in filters): strings, booleans, lists, null and missing values add nothing. Values are rank-normalised over the graph to 0–1 (ties share a rank), so the scale and outliers do not matter. The field is presentation: it is excluded from layout identity, and absent means the declaration bytes, digest and ranking inputs are unchanged. Scores are computed once per focus change over its direct connections (O(degree log degree)), never per frame.
+
+```json
+{ "interest": { "property": "priority" } }
+```
 
 ## Predicate grammar
 

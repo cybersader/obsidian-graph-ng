@@ -9,7 +9,7 @@ export const predicateColumn = (p: Predicate): string | string[] | undefined => 
 /** Colors and focus emphasis are presentation. Layout/cache identity excludes them, so a legend or
  * highlight edit never reseeds or relayouts. Absent fields keep historical digest bytes. */
 export const layoutDeclaration = (d: GraphDeclaration): GraphDeclaration => {
-  const { hierarchy: _, groupContext: __, ...rest } = d;
+  const { hierarchy: _, groupContext: __, interest: ___, ...rest } = d;
   return { ...rest, colors: [], edges: d.edges.map(e => { const { highlight: _h, ...x } = e as EdgeDeclaration & { highlight?: unknown }; return x as EdgeDeclaration; }) };
 };
 export type EdgeDeclaration =
@@ -36,6 +36,8 @@ export interface GraphDeclaration {
   hierarchy?: { parentProperty: string };
   /** Optional focus emphasis: other members of the focus's current group form a faint tier. */
   groupContext?: boolean;
+  /** Optional ranking hint: a property holding a finite number; higher means more interesting. Presentation only. */
+  interest?: { property: string };
 }
 export const defaultDeclaration = (producer: string): GraphDeclaration => ({
   version: 2, identity: [], edges: [{ name: 'links', kind: 'producer', producer, type: 'link' }],
@@ -67,7 +69,7 @@ export function validatePredicate(v: unknown): asserts v is Predicate {
   } else throw new Error('Unknown predicate kind');
 }
 export function validateDeclaration(v: unknown): asserts v is GraphDeclaration {
-  record(v); only(v, ['version', 'identity', 'edges', 'groups', 'display', 'columns', 'colors', 'carrierResolvers', 'exclude', 'hierarchy', 'groupContext']);
+  record(v); only(v, ['version', 'identity', 'edges', 'groups', 'display', 'columns', 'colors', 'carrierResolvers', 'exclude', 'hierarchy', 'groupContext', 'interest']);
   if (v.version !== 2) throw new Error('Declaration version must be 2');
   for (const k of ['identity', 'edges', 'groups', 'columns', 'colors']) if (!Array.isArray(v[k])) throw new Error(`${k} must be an array`);
   for (const i of v.identity as unknown[]) { record(i); only(i, ['key']); text(i.key); }
@@ -97,6 +99,7 @@ export function validateDeclaration(v: unknown): asserts v is GraphDeclaration {
     for (const resolver of v.carrierResolvers) { record(resolver); only(resolver, ['kind', 'key']); text(resolver.kind); text(resolver.key); if (kinds.has(resolver.kind)) throw new Error('Duplicate carrier resolver'); kinds.add(resolver.kind); }
   }
   if (v.hierarchy !== undefined) { record(v.hierarchy); only(v.hierarchy, ['parentProperty']); text(v.hierarchy.parentProperty); }
+  if (v.interest !== undefined) { record(v.interest); only(v.interest, ['property']); text(v.interest.property); }
   if (v.groupContext !== undefined && typeof v.groupContext !== 'boolean') throw new Error('groupContext must be boolean');
   if (v.exclude !== undefined) { if (!Array.isArray(v.exclude) || v.exclude.length > 64) throw new Error('exclude must be at most 64 folders'); for (const f of v.exclude) { validateFolderPath(f); if (!folderPath(f as FolderPath)) throw new Error('exclude folders must be nonempty'); } }
   for (const c of v.colors as unknown[]) { record(c); only(c, ['name', 'color', 'predicate']); text(c.name); if (typeof c.color !== 'string' || !/^(?:#[0-9a-f]{6}(?:[0-9a-f]{2})?|var\(--[a-z0-9-]+\))$/i.test(c.color)) throw new Error('Color must be #rrggbb[aa] or var(--name)'); validatePredicate(c.predicate); }

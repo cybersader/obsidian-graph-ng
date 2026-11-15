@@ -9,6 +9,7 @@ import { carrierAlpha, carrierColors, carrierVisibility, categorical, degreeSize
 import { yieldTask } from './core/scheduler';
 import { generationCurrent } from './physics-controls';
 import { ConnectionCard, connectionGroups, isolationBar, placeCard, reach, button, type CardAction, type CardHost } from './connection-card';
+import { interestScorer, byInterest, type Scorer } from './interest';
 import { lensConnections, lensLayout, lensAmount, lensCoordinate, pickLens, type LensConnection, type LensPoint } from './lens-layout';
 import { Interaction, type RendererControls } from './interaction';
 import { highlightOverlay, paintLegend } from './overlays';
@@ -288,6 +289,7 @@ export class DetailRenderer {
   private lensMotion?: { from: number; to: number; start: number };
   private lensPoints = new Map<number, LensPoint>();
   private lensRows: LensConnection[] = [];
+  private interestMemo?: { key: unknown[]; score: Scorer };
   private lensBytes = new Float32Array();
   private lensRadius = 0;
   private lensLabelWidth = 0;
@@ -818,7 +820,7 @@ export class DetailRenderer {
   }
   /** Collect/sort once per explicit target or view change. Neither hover nor frames traverse edges. */
   private rebuildLens() {
-    this.lensRows = lensConnections(this.lensAnchor, this.projection, this.edges, this.edgeOn, this.filterVisible, this.visible, n => this.name(n));
+    this.lensRows = lensConnections(this.lensAnchor, this.projection, this.edges, this.edgeOn, this.filterVisible, this.visible, n => this.name(n), this.interestOf(this.lensAnchor));
     this.lensLabelWidth = 0;
     if (this.lensRows.length) {
       const m = this.measure ??= document.createElement('canvas').getContext('2d')!;
@@ -961,11 +963,11 @@ export class DetailRenderer {
   /** The navigator's view of the graph: every lookup is O(degree) over the incident-edge CSR. Rows
    * list connections under the host filter, so a "Show only connections" mask never hides them. */
   private cardHost(): CardHost {
-    const p = this.projection, on = (e: number) => !!this.edgeOn[e], degree = (n: number) => this.edges.offsets[n + 1]! - this.edges.offsets[n]!;
+    const p = this.projection, on = (e: number) => !!this.edgeOn[e];
     return {
       name: n => this.name(n),
       color: n => { const c = this.colorBytes, k = n * 4; return `rgb(${c[k]},${c[k + 1]},${c[k + 2]})`; },
-      groups: n => { const names = new Map<number, string>(), name = (m: number) => names.get(m) ?? names.set(m, this.name(m)).get(m)!; return connectionGroups(n, this.edges, p, on, this.baseVisible, (a, b) => degree(b) - degree(a) || name(a).localeCompare(name(b))); },
+      groups: n => { const names = new Map<number, string>(), name = (m: number) => names.get(m) ?? names.set(m, this.name(m)).get(m)!; return connectionGroups(n, this.edges, p, on, this.baseVisible, byInterest(this.interestOf(n), (a, b) => name(a).localeCompare(name(b)))); },
       secondHop: n => reach(n, this.edges, p, on, this.baseVisible, 2),
       isolated: () => !!this.isolation,
       lensed: n => this.lensWanted >= 0 && this.lensWanted === n,
@@ -974,6 +976,13 @@ export class DetailRenderer {
       cue: n => { this.cue = n; this.refresh(); },
       close: () => { this.selectNote(-1, false, true); this.canvas.focus(); },
     };
+  }
+  /** Degree-of-interest scorer for a focus, rebuilt only when the focus, trail, grouping or setting changes. */
+  private interestOf(focus: number): Scorer {
+    const h = this.card.history, trail = h.items.slice(0, h.at + 1), bridges = this.settings.visuals.bridgesFirst, key = [focus, this.projection, this.view.groupCodes, bridges, ...trail], m = this.interestMemo;
+    if (m && m.key.length === key.length && m.key.every((x, i) => x === key[i])) return m.score;
+    const score = interestScorer(focus, { offsets: this.projection.offsets, groups: this.view.groupCodes, declared: this.projection.interest, trail, bridges });
+    this.interestMemo = { key, score }; return score;
   }
   private cardAction(action: CardAction, n: number) {
     const path = this.path(n);
@@ -1130,7 +1139,7 @@ export class DetailRenderer {
       // Placement measures each bounded candidate once with the font and text the DOM label then uses, at the radius offset it is shown with.
       const k = this.scale * this.camera.ratio / LABEL_RATIOS[lod]!, budget = Math.max(1, Math.min(s.labelsMaxPerViewport, FOCUS_LABELS, Math.floor(this.width * this.height / s.labelGridCellSize ** 2 * s.labelDensity))), m = this.measure ??= document.createElement('canvas').getContext('2d')!;
       const pad = v.labelPlates ? 16 : 4, text = (n: number, rank: number) => n === ego ? this.noteCaption(n) : middleTruncate(this.name(n), LABEL_CHARS[rank]!);
-      const { list, direct } = rankFocus(ego, this.near, this.stateBytes, this.visible, this.projection.offsets, budget * s.labelCandidateMultiplier, this.projection.carrierNodes);
+      const { list, direct } = rankFocus(ego, this.near, this.stateBytes, this.visible, this.projection.offsets, budget * s.labelCandidateMultiplier, this.projection.carrierNodes, ego >= 0 ? this.interestOf(ego) : undefined);
       const items = list.map(([n, rank]) => { m.font = tierFont(rank, s.labelSize, tier, this.theme.font); const h = tierType(rank, s.labelSize, tier).size * 1.5 + 4; return { node: n, rank, x: this.renderCoordinate(n, 0, 1) * k, y: this.renderCoordinate(n, 1, 1) * k, r: radius(n), w: m.measureText(text(n, rank)).width + pad, h }; });
       m.font = tierFont(1, s.labelSize, tier, this.theme.font);
       const layout = radialLabels(items, budget, DIRECT_LABELS, ego >= 0 ? direct : 0, m.measureText(`+${direct} more`).width + 24, 32);

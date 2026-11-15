@@ -393,7 +393,7 @@ Tiers are topological, by minimum hop count. Only type-visible relationships bet
 
 One pure helper beside the incident-edge index computes the tiers once per focus change, never per frame, and clears its previous bytes by touched lists. The same bytes drive WebGL (node state texture and a per-edge tier attribute) and Canvas (three batched edge strokes, graded node and label alpha), which also closes the earlier Canvas gap where emphasis dimmed all edges uniformly. Hop 1 is complete; hop 2 stops deterministically after 65,536 scanned incident entries and the hover label then says "2-hop context truncated"; ancestor relationship scans share that bound. The same-group scan reads at most 262,144 entries and marks at most 4,096 notes, then says "group context truncated". Emphasis multiplies alpha inside the existing coverage-preserving source-over blending, so overlap cannot add toward white. At edge opacity 0 edges stay hidden while nodes and labels still grade; there is no alpha floor. View, filter, type or scope changes recompute against the new masks; pointer leave, empty clicks and turning the switch off clear stale bytes; a GPU context restore re-uploads them.
 
-**Graduated labels.** While a focus is active, its name is shown largest and bold beside it (with the truncation note when applicable); direct neighbours get full labels, declared ancestors muted labels, 2-hop neighbours smaller, muted labels and same-group members the smallest, faintest ones. Candidates are ranked focus > direct > ancestor > 2-hop > same group, then by connection count, capped like the ordinary labels, and placed under the same `labelsMaxPerViewport` budget (at most 64) with radial collision avoidance (below), so a 2-hop label never displaces a nearer one. Ordinary labels for tiered notes hand over to these, and context labels fade to half the dim opacity; when the focus clears, the ordinary labels return. Placement runs once per focus change or label level-of-detail change, never per frame; panning only translates the bounded text-only overlay, identical on WebGL and Canvas.
+**Graduated labels.** While a focus is active, its name is shown largest and bold beside it (with the truncation note when applicable); direct neighbours get full labels, declared ancestors muted labels, 2-hop neighbours smaller, muted labels and same-group members the smallest, faintest ones. Candidates are ranked focus > direct > ancestor > 2-hop > same group, then by degree of interest (below), capped like the ordinary labels, and placed under the same `labelsMaxPerViewport` budget (at most 64) with radial collision avoidance (below), so a 2-hop label never displaces a nearer one. Ordinary labels for tiered notes hand over to these, and context labels fade to half the dim opacity; when the focus clears, the ordinary labels return. Placement runs once per focus change or label level-of-detail change, never per frame; panning only translates the bounded text-only overlay, identical on WebGL and Canvas.
 
 **Label sizing.** Labels follow one type scale around the label size setting:
 
@@ -412,6 +412,15 @@ One pure helper beside the incident-edge index computes the tiers once per focus
 - **No focus.** Ordinary labels grow with connection count, so hubs are named first and largest (the top hub matches the focus size). More appear as you zoom in. The label level changes only once the zoom is clearly past a boundary, so labels do not flicker when you stop near one. Canvas now applies the same zoom fade, importance cut and hub sizes as WebGL.
 
 Placement is cached per focus and label level, so hover frames only move the bounded overlay.
+
+**Which connections win (interest ranking).** When a hub has hundreds of connections, label slots, the **+N more** order, the card's rows within each relationship group and the lens rings within each type are ranked by *degree of interest*, not alphabetically or by size:
+
+- Rarer notes beat hubs.
+- Notes you visited recently in the card rank higher.
+- **Bridges first** (Appearance → Finding connections, `visuals.bridgesFirst`, on): connections in a different group from the focus rank higher. In a crosswalk, cross-framework mappings rise without naming any framework.
+- An optional declared number (`interest.property`, see [declaration-format.md](docs/declaration-format.md#interest-ranking-optional)) adds a bonus.
+
+Tiers keep their order; ties fall to the name, then a fixed id, so the order is stable. Scores are computed once per focus change, over direct connections only.
 
 **Finding connections.** Tinting alone leaves direct connections as tiny dots at overview zoom, so a focus also makes them findable. Each aid has a switch under **Appearance → Finding connections**:
 
@@ -436,7 +445,7 @@ Highlighting shows where the connections are; the connection card makes them fin
 
 - **Header:** the note name, a chip with its **direct connections** count and one with its **neighbours of neighbours** count ("+" when the 2-hop scan was cut short).
 - **Actions:** **Open** (reuses an open note tab), **New tab**, **Right** (split), **Focus** (fly to fit the focus and its direct connections), **Only connections** and **Copy link** (a `[[wikilink]]`).
-- **Connections list:** direct connections grouped by relationship type and direction (→ outgoing, ← incoming) with counts, most-connected first. Each row shows the note's colour swatch and name. Hover or focus a row and a ring and a leader line point at that note; click it to travel there (it becomes the focus and selection, and the camera flies to it). The first 50 rows show, then **Show all**.
+- **Connections list:** direct connections grouped by relationship type and direction (→ outgoing, ← incoming) with counts, ranked by interest (above). Each row shows the note's colour swatch and name. Hover or focus a row and a ring and a leader line point at that note; click it to travel there (it becomes the focus and selection, and the camera flies to it). The first 50 rows show, then **Show all**.
 - **History:** ‹ and › go back and forward through visited notes, with the last few as a breadcrumb.
 - **Only connections:** a temporary view of the focus and its direct connections. A bar at the top adds **Neighbours of neighbours** or goes **Back to full graph**. Travel re-centres it; filters still apply underneath.
 - **Keys:** Esc closes the card (a second Esc leaves Only connections), arrows or Tab move through rows, Enter travels, Alt+Left goes back and Alt+Right forward.

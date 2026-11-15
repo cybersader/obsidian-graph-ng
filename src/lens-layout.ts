@@ -5,8 +5,9 @@ export interface LensConnection { node: number; type: string; name: string }
 export interface LensPoint { x: number; y: number }
 /** Visit only incident rows and transparent relationship-note rows, never the whole graph.
  * Parallel relationships use their alphabetically first visible type. Sorting is cached by
- * the renderer per target/view; subsequent geometry and picking are O(direct connections). */
-export function lensConnections(focus: number, p: RenderProjection, inc: { offsets: Uint32Array; edges: Uint32Array }, on: ArrayLike<number>, visible: ArrayLike<number>, rendered: ArrayLike<number>, name: (node: number) => string): LensConnection[] {
+ * the renderer per target/view; subsequent geometry and picking are O(direct connections).
+ * Within a type, `score` (degree of interest) orders first when given, then the name. */
+export function lensConnections(focus: number, p: RenderProjection, inc: { offsets: Uint32Array; edges: Uint32Array }, on: ArrayLike<number>, visible: ArrayLike<number>, rendered: ArrayLike<number>, name: (node: number) => string, score?: (node: number) => number): LensConnection[] {
   if (!Number.isInteger(focus) || focus < 0 || !rendered[focus]) return [];
   const types = new Map<number, string>(), carriers: number[] = [], seen = new Set([focus]);
   const scan = (node: number, own = false) => {
@@ -20,7 +21,7 @@ export function lensConnections(focus: number, p: RenderProjection, inc: { offse
   };
   scan(focus); for (let i = 0; i < carriers.length; i++) scan(carriers[i]!, true);
   const compare = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
-  return [...types].map(([node, type]) => ({ node, type, name: name(node) })).sort((a, b) => compare(a.type, b.type) || compare(a.name, b.name) || a.node - b.node);
+  return [...types].map(([node, type]) => ({ node, type, name: name(node) })).sort((a, b) => compare(a.type, b.type) || (score ? score(b.node) - score(a.node) : 0) || compare(a.name, b.name) || a.node - b.node);
 }
 /** Ordered concentric rings, in CSS pixels around the fixed focus. `spacing` bounds the
  * diagonal of a node + its label footprint, so chords and radial gaps both clear it.
