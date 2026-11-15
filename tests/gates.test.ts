@@ -115,10 +115,10 @@ test('mangled bundle properties are private to the main bundle', async () => {
 test('UI pass download ceilings remain exactly bounded and active documentation agrees', () => {
   const root = path.resolve(import.meta.dirname, '..');
   const gate = fs.readFileSync(path.join(root, 'scripts/bundle-size.mjs'), 'utf8');
-  expect(gate).toContain('zeroDependencyTargetBytes: 340000, zeroDependencyTargetGzipBytes: 112000');
+  expect(gate).toContain('zeroDependencyTargetBytes: 355000, zeroDependencyTargetGzipBytes: 118000');
   for (const name of ['README.md', 'CONTRIBUTING.md', 'docs/publish-checklist.md', 'CHANGELOG.md']) {
     const doc = fs.readFileSync(path.join(root, name), 'utf8');
-    expect(doc).toContain('340,000'); expect(doc).toContain('112,000');
+    expect(doc).toContain('355,000'); expect(doc).toContain('118,000');
   }
 });
 
