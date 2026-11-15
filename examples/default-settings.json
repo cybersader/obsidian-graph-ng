@@ -108,7 +108,8 @@
   "maxProjectionPairs": 200000,
   "maxProjectionCarriers": 1000000,
   "visuals": {
-    "degreeSizing": 1.6,
+    "degreeSizing": 4,
+    "degreeCurve": "sqrt",
     "edgeOpacity": 0.4,
     "edgeDensityReference": 3000,
     "edgeColorMix": 0.65,

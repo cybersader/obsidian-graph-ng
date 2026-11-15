@@ -1,4 +1,4 @@
-import type { Visuals } from './settings';
+import type { DegreeCurve, Visuals } from './settings';
 /** Pure presentation math: no DOM, GL or graph authority. */
 export type RGB = [number, number, number];
 export const parseHex = (hex: string): RGB => { const v = Number.parseInt(hex.slice(1, 7), 16); return [v >> 16 & 255, v >> 8 & 255, v & 255]; };
@@ -56,11 +56,14 @@ export function nodeColors(colors: Uint32Array, ruleCount: number, palette: Uint
   }
   return out;
 }
-/** Log-degree radius multiplier in [1, 1 + scale]; CSR offsets count both directions. */
-export function degreeSizes(offsets: Uint32Array, scale: number, out: Float32Array<ArrayBuffer> = new Float32Array(Math.max(0, offsets.length - 1))): Float32Array<ArrayBuffer> {
+/** Radius multiplier in [1, 1 + scale]; CSR offsets count both directions. `legacy` scales
+ * radius by log degree; linear/sqrt/log scale disc AREA by that function of degree
+ * (degree 0 → 1×, maximum degree → (1 + scale)² area), so perceived size tracks degree. */
+export function degreeSizes(offsets: Uint32Array, scale: number, curve: DegreeCurve = 'legacy', out: Float32Array<ArrayBuffer> = new Float32Array(Math.max(0, offsets.length - 1))): Float32Array<ArrayBuffer> {
+  const f = curve === 'linear' ? (d: number) => d : curve === 'sqrt' ? Math.sqrt : (d: number) => Math.log2(1 + d), area = (1 + scale) ** 2 - 1;
   let max = 0; for (let i = 0; i < out.length; i++) max = Math.max(max, offsets[i + 1]! - offsets[i]!);
-  const norm = Math.log2(1 + max) || 1;
-  for (let i = 0; i < out.length; i++) out[i] = 1 + scale * Math.log2(1 + offsets[i + 1]! - offsets[i]!) / norm;
+  const norm = f(max) || 1;
+  for (let i = 0; i < out.length; i++) { const t = f(offsets[i + 1]! - offsets[i]!) / norm; out[i] = curve === 'legacy' ? 1 + scale * t : Math.sqrt(1 + area * t); }
   return out;
 }
 export interface EffectPolicy { glow: number; curves: boolean; segments: number; halos: boolean; dark: boolean; reasons: string[] }

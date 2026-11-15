@@ -9,7 +9,7 @@ import { emptyView } from '../src/core/explore';
 import { ControlElement, control } from './support/controls-dom';
 import { readFileSync } from 'node:fs';
 const { default: GraphPlugin } = await import('../src/main');
-const values = { radius: 6, prominence: 5, compensation: 1, floor: .3 };
+const values = { radius: 6, prominence: 5, compensation: 1, floor: .3, curve: 'sqrt' as const };
 test('legacy and new installations retain defaults until explicit adoption; loading never writes', async () => {
   const fresh = defaults('links'); expect(fresh.nodeSizing.policy).toBe('legacy'); expect(fresh.nodeSize).toBe(3);
   const old: any = structuredClone(fresh); delete old.nodeSizing; const before = JSON.stringify(old);
@@ -138,4 +138,44 @@ test('Repair R2 existing Edge-note size slider dispatches the covered live refre
   const row = f.panel.body.querySelectorAll('.graph-ng-slider').find((row: any) => row.children.some((child: any) => child.textContent === 'Edge-note size'));
   expect(row).toBeDefined(); const input: any = row.querySelector('input'); input.value = '2'; input.oninput();
   expect(f.plugin.settings.visuals.carrierSize).toBe(2); expect(calls).toEqual([false]); f.panel.dispose();
+});
+
+// Star-heavy synthetic degree list: many leaves, some mid nodes, one hub (CSR offsets).
+const csr = (degrees: number[]) => { const o = new Uint32Array(degrees.length + 1); degrees.forEach((d, i) => { o[i + 1] = o[i]! + d; }); return o; };
+const skewed = csr([0, 1, 1, 1, 2, 3, 10, 40, 200, 2000]);
+test('degree curves: area-proportional linear/sqrt/log, legacy radius-log, all within [1, 1 + scale]', () => {
+  for (const curve of ['linear', 'sqrt', 'log', 'legacy'] as const) {
+    const s = degreeSizes(skewed, 4, curve);
+    expect(s[0]).toBe(1); expect(s[9]).toBeCloseTo(5, 5);
+    for (let i = 1; i < s.length; i++) expect(s[i]!).toBeGreaterThanOrEqual(s[i - 1]!);
+  }
+  const area = (curve: 'linear' | 'sqrt' | 'log', i: number) => degreeSizes(skewed, 4, curve)[i]! ** 2 - 1;
+  // Area above a degree-0 node is proportional to f(degree) / f(max).
+  expect(area('linear', 7) / area('linear', 9)).toBeCloseTo(40 / 2000, 5);
+  expect(area('sqrt', 7) / area('sqrt', 9)).toBeCloseTo(Math.sqrt(40 / 2000), 5);
+  expect(area('log', 7) / area('log', 9)).toBeCloseTo(Math.log2(41) / Math.log2(2001), 5);
+  expect([...degreeSizes(skewed, 0, 'sqrt')].every(x => x === 1)).toBe(true);
+  expect([...degreeSizes(new Uint32Array([0, 0, 0]), 8, 'sqrt')]).toEqual([1, 1]);
+});
+test('default curve makes hubs measurably larger than leaves; single-degree nodes stay near the base radius', () => {
+  const v = defaults('links').visuals; expect(v.degreeCurve).toBe('sqrt');
+  const now = degreeSizes(skewed, v.degreeSizing, v.degreeCurve), before = degreeSizes(skewed, 1.6, 'legacy');
+  expect(now[1]).toBeGreaterThanOrEqual(1); expect(now[1]).toBeLessThan(1.25);
+  expect(now[9]! / now[1]!).toBeGreaterThan(4); expect(now[9]! / now[1]!).toBeGreaterThan(before[9]! / before[1]! * 1.5);
+  expect(now[8]! ** 2 / now[6]! ** 2).toBeGreaterThan(2);
+});
+test('saved settings without a degree curve keep the earlier appearance; curve round-trips through apply', () => {
+  const fresh = defaults('links'), old: any = structuredClone(fresh); delete old.visuals.degreeCurve; old.visuals.degreeSizing = 1.6;
+  const up = upgradeSettings(old, 'links'); expect(up.visuals.degreeCurve).toBe('legacy'); expect(up.visuals.degreeSizing).toBe(1.6);
+  const partial: any = structuredClone(fresh); partial.visuals = { glow: .2 }; expect(upgradeSettings(partial, 'links').visuals).toMatchObject({ degreeCurve: 'legacy', degreeSizing: 1.6, glow: .2 });
+  expect(upgradeSettings({}, 'links').visuals.degreeCurve).toBe('sqrt');
+  expect(() => validateSettings({ ...fresh, visuals: { ...fresh.visuals, degreeCurve: 'cubic' } as any })).toThrow('degreeCurve');
+  const next = sizingSettings(up, { ...values, curve: 'linear' }); expect(sizingValues(next).curve).toBe('linear');
+  expect(upgradeSettings(settingsForSave(next), 'links').visuals.degreeCurve).toBe('linear');
+});
+test('curve selector drafts, previews and applies the curve explicitly', async () => {
+  const f = panelFixture(); const select: any = f.panel.body.querySelectorAll('select').find((e: any) => e.getAttribute('aria-label') === 'Degree curve');
+  expect(select.value).toBe('sqrt'); select.value = 'log'; select.onchange(); expect(f.preview()).toBeNull(); expect(f.writes.length).toBe(0);
+  control(f.panel.body, 'Preview sizing').click(); expect(f.preview().curve).toBe('log'); expect(f.plugin.settings.visuals.degreeCurve).toBe('sqrt');
+  await (control(f.panel.body, 'Apply and save sizing') as any).onclick(); expect(f.plugin.settings.visuals.degreeCurve).toBe('log'); f.panel.dispose();
 });

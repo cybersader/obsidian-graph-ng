@@ -151,7 +151,7 @@ export default class GraphPlugin extends Plugin {
       try {
         await this.saveData({ settings: settingsForSave(next) });
         if (!current()) throw new Error('Sizing view changed during save');
-        this.settings.nodeSize = next.nodeSize; this.settings.visuals.degreeSizing = next.visuals.degreeSizing; this.settings.nodeSizing = next.nodeSizing;
+        this.settings.nodeSize = next.nodeSize; this.settings.visuals.degreeSizing = next.visuals.degreeSizing; this.settings.visuals.degreeCurve = next.visuals.degreeCurve; this.settings.nodeSizing = next.nodeSizing;
       } catch (error) {
         try { await this.saveData({ settings: settingsForSave(this.settings) }); } catch { throw new Error('Sizing save failed; restoring saved settings also failed; storage recovery uncertain'); }
         throw error;

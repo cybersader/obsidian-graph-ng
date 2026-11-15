@@ -8,7 +8,7 @@ import { suggestions } from './core/expr/autocomplete';
 import { declaredKeys } from './core/columns';
 import { describePredicate, groupLabel, NO_COLOR, VIEW_LIMITS, validateSaved, validateView, type ExploreResult, type ExploreView, type SavedView, type ViewCamera } from './core/explore';
 import { canonical, validateDerivedGroup, validatePredicate, type GraphDeclaration, type GroupSource, type Predicate, type Scalar } from './core/declaration';
-import type { Settings, Visuals } from './settings';
+import type { DegreeCurve, Settings, Visuals } from './settings';
 import { progressiveSlider, type Curve } from './progressive-slider';
 /** Slider travel per numeric layout control; typed values outside the span stay unclamped. */
 const PHYSICS_CURVES: Partial<Record<PhysicsKey, Curve>> = { scalingRatio: { min: .1, max: 100, log: true }, gravity: { min: 0, max: 20, k: 3 }, slowDown: { min: .1, max: 100, log: true }, iterations: { min: 1, max: 1000, log: true }, barnesHutTheta: { min: .1, max: 3, k: 2 } };
@@ -459,25 +459,32 @@ export class ExplorePanel {
   private nodes(host: HTMLElement) {
     const group = host.createDiv({ cls: 'graph-ng-nodes' }); group.createEl('h4', { text: 'Nodes' });
     const current = sizingValues(this.settings);
-    const draft = this.sizingDraft ??= { radius: String(current.radius), prominence: String(current.prominence), compensation: String(current.compensation * 100), floor: String(current.floor * 100) };
+    const draft = this.sizingDraft ??= { radius: String(current.radius), prominence: String(current.prominence), compensation: String(current.compensation * 100), floor: String(current.floor * 100), curve: current.curve };
     this.note(group, this.settings.nodeSizing?.policy !== 'predictable' ? 'Legacy sizing · Apply adopts predictable sizing.' : 'Predictable sizing · saved in plugin settings.');
-    const fields: [keyof NodeSizingValues, string, string, Curve][] = [
+    const fields: [Exclude<keyof NodeSizingValues, 'curve'>, string, string, Curve][] = [
       ['radius', 'Base node radius', 'CSS px', { min: .01, max: 20, k: 3 }], ['prominence', 'Maximum degree prominence', '× radius', { min: 1, max: 9, k: 2 }],
       ['compensation', 'Density compensation', '%', { min: 0, max: 100 }], ['floor', 'Minimum retained size', '% > 0', { min: .1, max: 100, k: 2 }],
     ];
     const inputs: HTMLInputElement[] = [];
     const message = group.createDiv({ cls: 'graph-ng-explore-note', attr: { role: 'status', 'aria-live': 'polite' } }); message.textContent = this.sizingMessage;
-    for (const [key, title, unit, curve] of fields) {
+    const changed = (key: keyof NodeSizingValues, value: string) => { draft[key] = value; this.sizingPreview = false; this.host.previewSizing?.(null); this.sizingMessage = message.textContent = 'Draft · not previewed or saved'; this.updateSizingReadout(); };
+    const curveRow = group.createEl('label', { cls: 'graph-ng-sizing-row' }); curveRow.createSpan({ text: 'Degree curve' });
+    const curve = curveRow.createEl('select', { attr: { 'aria-label': 'Degree curve' } }); curve.disabled = this.sizingBusy;
+    for (const [v, t] of [['sqrt', 'Square root'], ['log', 'Logarithmic'], ['linear', 'Linear'], ['legacy', 'Previous']]) curve.createEl('option', { value: v, text: t });
+    const hint = () => ({ sqrt: 'Area grows with √degree: hubs stand out, leaves stay readable.', log: 'Area grows with log degree: gentle, most notes look alike.', linear: 'Area grows with degree: only the largest hubs grow.', legacy: 'Earlier curve: radius grows with log degree.' })[draft.curve as DegreeCurve];
+    curve.value = draft.curve; const curveHint = this.note(group, hint());
+    curve.onchange = () => { changed('curve', curve.value); curveHint.textContent = hint(); };
+    for (const [key, title, unit, range] of fields) {
       const row = group.createEl('label', { cls: 'graph-ng-sizing-row' }); row.createSpan({ text: title });
       const number = row.createEl('input', { attr: { type: 'number', step: 'any', 'aria-label': title } }); number.value = draft[key]; number.disabled = this.sizingBusy; inputs.push(number); number.min = key === 'prominence' ? '1' : '0'; number.max = String(key === 'radius' ? MAX_NODE_RADIUS : key === 'prominence' ? 9 : 100);
       row.createSpan({ text: unit });
-      progressiveSlider(row, number, title, curve, value => { draft[key] = value; this.sizingPreview = false; this.host.previewSizing?.(null); this.sizingMessage = message.textContent = 'Draft · not previewed or saved'; this.updateSizingReadout(); });
+      progressiveSlider(row, number, title, range, value => changed(key, value));
     }
     const help = group.createEl('details'); help.createEl('summary', { text: 'Sizing, density & brightness' });
-    this.note(help, `Radius slider: 0.01–20 CSS px; type custom values up to ${MAX_NODE_RADIUS}. Degree counts incident edges, not hierarchy. Density shrinks marks, not spacing. Highlights add 2 px; glow, halos and overlapping edges can still brighten a core.`);
+    this.note(help, `Radius slider: 0.01–20 CSS px; type custom values up to ${MAX_NODE_RADIUS}. Degree counts incident edges, not hierarchy; curves other than Previous scale disc area, so a hub at maximum prominence P covers P² leaf areas. Density shrinks marks, not spacing. Highlights add 2 px; glow, halos and overlapping edges can still brighten a core.`);
     this.sizingOutput = group.createDiv({ cls: 'graph-ng-explore-note' }); this.updateSizingReadout();
     const values = () => {
-      const parsed = Object.fromEntries(Object.entries(draft).map(([key, value]) => [key, value.trim() ? Number(value) : NaN])) as unknown as NodeSizingValues;
+      const parsed = Object.fromEntries(Object.entries(draft).map(([key, value]) => [key, key === 'curve' ? value : value.trim() ? Number(value) : NaN])) as unknown as NodeSizingValues;
       parsed.compensation /= 100; parsed.floor /= 100; sizingSettings(this.settings, parsed); return parsed;
     };
     const actions = group.createDiv({ cls: 'graph-ng-form' });

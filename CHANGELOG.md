@@ -4,6 +4,7 @@ The owner-approved bounded download ceilings for this UI pass are **245,000 raw 
 
 ## Unreleased Nodes sizing successor
 
+- Add a degree curve to **Appearance → Nodes**: Square root, Logarithmic and Linear scale disc area (perceived size tracks degree); Previous keeps the earlier log-radius curve. New installations default to Square root with maximum prominence 5×, so hubs read clearly larger than leaves on large graphs. Saved settings without a curve load as Previous with their saved prominence until the curve is changed and applied. Explicit preview/apply/restore, picking, density compensation and Canvas/WebGL parity are unchanged; no layout rerun. Native visual acceptance on a large vault pending.
 - Add explicit opt-in predictable node sizing with numeric drafts, preview/cancel/apply and current-zoom radius readout. Preserve legacy sizing until adoption; no new layout engine or hierarchy binding.
 - Share predictable screen-space sizing across WebGL/Canvas, picking and label offsets. Independent runtime visual acceptance remains pending.
 

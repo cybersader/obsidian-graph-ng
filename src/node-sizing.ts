@@ -1,8 +1,8 @@
-import type { Settings } from './settings';
+import type { DegreeCurve, Settings } from './settings';
 import { validateSettings } from './settings';
 import { densityScale } from './render-effects';
 export interface NodeSizingPolicy { policy: 'legacy' | 'predictable'; compensation: number; floor: number }
-export interface NodeSizingValues { radius: number; prominence: number; compensation: number; floor: number }
+export interface NodeSizingValues { radius: number; prominence: number; compensation: number; floor: number; curve: DegreeCurve }
 /** Binary32 preserves integer CSS-pixel increments only through 2^24 - 1.
  * Reserve the maximum validated 9x prominence, 4x carrier size, +2px highlight
  * and 2.3x glow extent. This arithmetic limit is not a slider convenience cap. */
@@ -14,9 +14,9 @@ export const legacySizing = (): NodeSizingPolicy => ({ policy: 'legacy', compens
 export function validateNodeSizing(s: NodeSizingPolicy) {
   if (!s || Object.keys(s).some(k => !['policy', 'compensation', 'floor'].includes(k)) || !['legacy', 'predictable'].includes(s.policy) || !Number.isFinite(s.compensation) || s.compensation < 0 || s.compensation > 1 || !Number.isFinite(s.floor) || s.floor <= 0 || s.floor > 1) throw new Error('Sizing: compensation 0–100%; retained size greater than 0 and at most 100%');
 }
-export const sizingValues = (s: Settings): NodeSizingValues => ({ radius: s.nodeSize, prominence: 1 + s.visuals.degreeSizing, compensation: (s.nodeSizing ?? legacySizing()).compensation, floor: (s.nodeSizing ?? legacySizing()).floor });
+export const sizingValues = (s: Settings): NodeSizingValues => ({ radius: s.nodeSize, prominence: 1 + s.visuals.degreeSizing, compensation: (s.nodeSizing ?? legacySizing()).compensation, floor: (s.nodeSizing ?? legacySizing()).floor, curve: s.visuals.degreeCurve });
 export function sizingSettings(s: Settings, v: NodeSizingValues): Settings {
-  const next = { ...s, nodeSize: v.radius, visuals: { ...s.visuals, degreeSizing: v.prominence - 1 }, nodeSizing: { policy: 'predictable' as const, compensation: v.compensation, floor: v.floor } };
+  const next = { ...s, nodeSize: v.radius, visuals: { ...s.visuals, degreeSizing: v.prominence - 1, degreeCurve: v.curve }, nodeSizing: { policy: 'predictable' as const, compensation: v.compensation, floor: v.floor } };
   validateSettings(next); return next;
 }
 /** CSS-pixel base radius. Legacy Canvas intentionally retains its old unscaled appearance. */

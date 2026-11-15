@@ -32,7 +32,7 @@ export async function buildLabels(p: RenderProjection, grid: Pick<PickGrid, 'pos
     strings.set(node, text); widths.set(node, w);
     if (i % 128 === 0) { await yieldTask(); if (!current()) throw new Error('Renderer superseded'); }
   }
-  const predictable = s.nodeSizing.policy === 'predictable', sizes = predictable ? degreeSizes(p.offsets, s.visuals.degreeSizing) : undefined;
+  const predictable = s.nodeSizing.policy === 'predictable', sizes = predictable ? degreeSizes(p.offsets, s.visuals.degreeSizing, s.visuals.degreeCurve) : undefined;
   const multiplier = (node: number) => sizes ? sizes[node]! * (p.carrierNodes[node] ? s.visuals.carrierSize : 1) : 0;
   const fit = Math.min(width / (grid.width * 1.1), height / (grid.height * 1.1));
   const levels: Float32Array[] = [], nodes: Uint32Array[] = [];

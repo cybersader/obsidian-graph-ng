@@ -3,8 +3,12 @@ import { DEFAULT_LAYOUT, validateLayout, type LayoutOptions } from './core/layou
 import { defaultDeclaration, migrateDeclaration, validateDeclaration, type GraphDeclaration } from './core/declaration';
 import { canonicalView, emptyView, validateSaved, validateView, type ExploreView, type SavedView } from './core/explore';
 /** Presentation knobs. Each effect has an explicit cost ceiling and software policy. */
+/** Degree → node size. linear/sqrt/log are area-proportional; legacy is the earlier log-of-radius curve. */
+export type DegreeCurve = 'linear' | 'sqrt' | 'log' | 'legacy';
+export const DEGREE_CURVES: DegreeCurve[] = ['sqrt', 'log', 'linear', 'legacy'];
 export interface Visuals {
   degreeSizing: number;
+  degreeCurve: DegreeCurve;
   edgeOpacity: number;
   edgeDensityReference: number;
   edgeColorMix: number;
@@ -46,7 +50,7 @@ export interface Visuals {
 export interface DisabledDerive { location: string; key: string; pattern: string }
 export interface ExploreSettings { panelOpen: boolean; facetValues: number; legendPageSize: number; view: ExploreView; savedViews: SavedView[]; disabledDerived: DisabledDerive[] }
 export const defaultVisuals = (): Visuals => ({
-  degreeSizing: 1.6, edgeOpacity: .4, edgeDensityReference: 3000, edgeColorMix: .65, edgeDirection: false, glow: .3,
+  degreeSizing: 4, degreeCurve: 'sqrt', edgeOpacity: .4, edgeDensityReference: 3000, edgeColorMix: .65, edgeDirection: false, glow: .3,
   curvedEdges: true, curvature: .12, curveSegments: 8, hoverHighlight: true, dimOpacity: .12, groupHalos: true, haloOpacity: .08,
   autoPalette: true, labelFade: true, cameraAnimationMs: 450, glowMaxNodes: 250000, curvesMaxEdges: 60000, halosMaxGroups: 48, hubsMaxGroups: 256, softwareEffects: false,
   carrierTint: true, carrierBridge: 'blend', carrierBridgeAccent: .35, carrierOpacity: .7, carrierSize: .6, carrierDensityReference: 8000, carrierLod: true, carrierLodNear: .3, carrierLodFar: .6,
@@ -63,6 +67,7 @@ export function validateVisuals(v: unknown): asserts v is Visuals {
   for (const k of unit) if (typeof o[k] !== 'number' || !(o[k] as number >= 0 && o[k] as number <= 1)) throw new Error(`visuals.${k} must be between 0 and 1`);
   for (const k of counts) if (!Number.isSafeInteger(o[k]) || (o[k] as number) < 0) throw new Error(`visuals.${k} must be a nonnegative integer (0 disables)`);
   if (typeof o.degreeSizing !== 'number' || !(o.degreeSizing >= 0 && o.degreeSizing <= 8)) throw new Error('visuals.degreeSizing must be between 0 and 8');
+  if (!DEGREE_CURVES.includes(o.degreeCurve as DegreeCurve)) throw new Error('visuals.degreeCurve must be sqrt, log, linear or legacy');
   if (typeof o.curvature !== 'number' || !(o.curvature >= 0 && o.curvature <= .5)) throw new Error('visuals.curvature must be between 0 and 0.5');
   if ((o.curveSegments as number) < 2 || (o.curveSegments as number) > 32) throw new Error('visuals.curveSegments must be 2–32');
   if (o.carrierBridge !== 'blend' && o.carrierBridge !== 'source') throw new Error('visuals.carrierBridge must be blend or source');
@@ -253,8 +258,9 @@ export function upgradeSettings(input: unknown, producer: string): Settings {
     else old.groupLevel = level! - removed.filter(i => i < level!).length;
   }
   if (disabled.length) explore.disabledDerived = [...(explore.disabledDerived ?? []), ...disabled].slice(-64);
+  // Saved visuals predating degree curves keep the earlier log-radius appearance until explicit adoption.
   const settings = { ...base, ...old, layout: { ...base.layout, ...old.layout, force: { ...base.layout.force, ...old.layout?.force } }, ingest: { ...base.ingest, ...old.ingest }, cache: { ...base.cache, ...old.cache }, declaration: migrateDeclaration(old.declaration ?? base.declaration),
-    nodeSizing: { ...base.nodeSizing, ...old.nodeSizing }, visuals: { ...base.visuals, ...old.visuals }, explore: { ...base.explore, ...explore } };
+    nodeSizing: { ...base.nodeSizing, ...old.nodeSizing }, visuals: { ...base.visuals, ...old.visuals && { degreeSizing: 1.6, degreeCurve: 'legacy' as const }, ...old.visuals }, explore: { ...base.explore, ...explore } };
   settings.explore = canonicalExplore(settings.explore);
   if (old.settingsVersion === undefined) for (const key of ['maxProjectionGroups', 'maxProjectionPairs', 'maxProjectionCarriers'] as const) if (settings[key] === 0) settings[key] = base[key];
   validateSettings(settings); return settings;

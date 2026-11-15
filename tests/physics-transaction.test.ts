@@ -182,7 +182,7 @@ test('production token discard/rollback cannot overwrite a newer winning token',
 
 test('production sizing preview/cancel keeps renderer camera selection scope settings and layout unchanged', async () => {
   const f = await fixture(), original = structuredClone(f.plugin.settings), camera = { ...f.renderer.camera }, positions = f.renderer.positions, canvas = f.renderer.canvas;
-  const value = { radius: 12, prominence: 5, compensation: 0, floor: .3 };
+  const value = { radius: 12, prominence: 5, compensation: 0, floor: .3, curve: 'sqrt' as const };
   f.renderer.previewSizing(value);
   expect(f.plugin.settings).toEqual(original); expect(f.writes.length).toBe(0); expect(f.requests()).toBe(0);
   expect(f.renderer.camera).toEqual(camera); expect(f.renderer.selected).toBe(2); expect(f.renderer.positions).toBe(positions); expect(f.renderer.canvas).toBe(canvas);
@@ -193,11 +193,11 @@ test('production sizing preview/cancel keeps renderer camera selection scope set
   await f.renderer[compiled('prepareLabels')](() => true);
   expect(f.renderer.atlas.levels.every((level: Float32Array) => level.length % 11 === 0)).toBe(true);
   const populated = f.renderer.atlas.levels.find((level: Float32Array) => level.length > 0); expect(populated).toBeDefined(); expect(populated[10]).toBe(1);
-  f.renderer.previewSizing(null); expect(f.renderer.pick(point.x + 16, point.y)).not.toBe(2); expect(f.plugin.settings).toEqual(original); expect(f.renderer.camera).toEqual(camera);
+  f.renderer.previewSizing(null); expect(f.renderer.pick(point.x + original.nodeSize * (1 + original.visuals.degreeSizing) + 5, point.y)).not.toBe(2); expect(f.plugin.settings).toEqual(original); expect(f.renderer.camera).toEqual(camera);
 });
 
 test('production sizing apply acknowledgement and rejected save preserve last-saved policy', async () => {
-  const f = await fixture(), value = { radius: 6, prominence: 9, compensation: .5, floor: .2 }, camera = { ...f.renderer.camera };
+  const f = await fixture(), value = { radius: 6, prominence: 9, compensation: .5, floor: .2, curve: 'linear' as const }, camera = { ...f.renderer.camera };
   f.renderer.previewSizing(value); await f.plugin.commitSizing(value, () => true); f.renderer.previewSizing(null, true);
   expect(f.plugin.settings.nodeSizing.policy).toBe('predictable'); expect(f.plugin.settings.nodeSize).toBe(6); expect(f.renderer.camera).toEqual(camera); expect(f.renderer.selected).toBe(2); expect(f.requests()).toBe(0);
   const saved = structuredClone(f.plugin.settings); let calls = 0; f.plugin.saveData = async () => { if (++calls === 1) throw new Error('synthetic failure'); };
@@ -208,7 +208,7 @@ test('production sizing apply acknowledgement and rejected save preserve last-sa
 
 
 test('Repair R2 carrier-size edits invalidate stale label multipliers and coalesce without relayout', async () => {
-  const f = await fixture(), v = { radius: 10, prominence: 1, compensation: 0, floor: .3 }, camera = { ...f.renderer.camera }, positions = f.renderer.positions;
+  const f = await fixture(), v = { radius: 10, prominence: 1, compensation: 0, floor: .3, curve: 'log' as const }, camera = { ...f.renderer.camera }, positions = f.renderer.positions;
   f.renderer.projection.carrierNodes[0] = 1; f.plugin.settings.visuals.carrierLod = false;
   f.renderer.setView(new Uint8Array([1, 0, 0]), {});
   await f.plugin.commitSizing(v, () => true); f.renderer.previewSizing(null, true);

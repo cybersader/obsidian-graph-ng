@@ -264,7 +264,7 @@ export class DetailRenderer {
     this.filterVisible = visible; this.visible = visible; this.picker = this.grid; this.display = positions; this.colors = colors;
     this.carrierCount = projection.carrierNodes.reduce((n, v) => n + +!!v, 0);
     this.labelCarrierSize = settings.visuals.carrierSize;
-    this.sizes = degreeSizes(projection.offsets, settings.visuals.degreeSizing); this.edgeOn = new Uint8Array(projection.source.length).fill(1); this.edgeTier = new Uint8Array(projection.source.length);
+    this.sizes = degreeSizes(projection.offsets, settings.visuals.degreeSizing, settings.visuals.degreeCurve); this.edgeOn = new Uint8Array(projection.source.length).fill(1); this.edgeTier = new Uint8Array(projection.source.length);
     this.timings.grid = performance.now() - started; started = performance.now();
     this.theme = readTheme(container, settings);
     this.timings.theme = performance.now() - started; started = performance.now();
@@ -516,7 +516,7 @@ export class DetailRenderer {
   private sizingTimer?: ReturnType<typeof setTimeout>;
   private labelCarrierSize = 0;
   onSizingChange?: () => void;
-  private sizingSettings() { return this.nodePreview ? { ...this.settings, nodeSize: this.nodePreview.radius, visuals: { ...this.settings.visuals, degreeSizing: this.nodePreview.prominence - 1 }, nodeSizing: { policy: 'predictable' as const, compensation: this.nodePreview.compensation, floor: this.nodePreview.floor } } : this.settings; }
+  private sizingSettings() { return this.nodePreview ? { ...this.settings, nodeSize: this.nodePreview.radius, visuals: { ...this.settings.visuals, degreeSizing: this.nodePreview.prominence - 1, degreeCurve: this.nodePreview.curve }, nodeSizing: { policy: 'predictable' as const, compensation: this.nodePreview.compensation, floor: this.nodePreview.floor } } : this.settings; }
   previewSizing(values: NodeSizingValues | null, force = false) {
     if (this.disposed || (!force && !values && !this.nodePreview)) return;
     if (values) sizingSettings(this.settings, values);
@@ -549,7 +549,7 @@ export class DetailRenderer {
     this.labelCarrierSize = this.settings.visuals.carrierSize;
     const rebuildCarrier = carrierChanged && this.sizingSettings().nodeSizing?.policy === 'predictable';
     if (rebuildCarrier) this.queueSizingLabels();
-    this.sizes = degreeSizes(this.projection.offsets, this.sizingSettings().visuals.degreeSizing, this.sizes); this.recolor(); this.choosePolicy(); this.updateSizingRange(); if (this.ready) this.emphasize(true);
+    const sv = this.sizingSettings().visuals; this.sizes = degreeSizes(this.projection.offsets, sv.degreeSizing, sv.degreeCurve, this.sizes); this.recolor(); this.choosePolicy(); this.updateSizingRange(); if (this.ready) this.emphasize(true);
     if (this.gl && this.ready && !this.lost) { const gl = this.gl; gl.bindBuffer(gl.ARRAY_BUFFER, this.buffers[4]!); gl.bufferData(gl.ARRAY_BUFFER, this.sizes, gl.STATIC_DRAW); this.uploadView(); }
     if (labels && !rebuildCarrier && this.ready) void this.prepareLabels(() => !this.disposed).catch(() => {});
     this.refresh();
