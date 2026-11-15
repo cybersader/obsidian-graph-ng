@@ -106,6 +106,10 @@ export function focusTiers(f: number, inc: { offsets: Uint32Array; edges: Uint32
 }
 /** Tinted edge layer (254 or 127): drawn at its tier's weight with the accent mixed in by `f / 2`. */
 export const tintedEdge = (t: number) => t === 254 || t === 127;
+/** Path tier edge byte: a found path's rows, drawn above every focus tier and never legend-masked. */
+export const PATH_EDGE = 253;
+/** Path stroke from the direct-tier [alpha]: near-opaque accent and 2.5x width at full focus `f` (the shader's 253 branch). */
+export const pathStroke = (alpha: number, f: number) => [alpha + (1 - alpha) * f, 1 + 1.5 * f] as const;
 /** Edge tier bucket for the Canvas passes: 255 focus-incident, 128 lit, 0 context. */
 export const edgeBucket = (t: number) => t > 200 ? 255 : t ? 128 : 0;
 /** Graduated tier styling for Canvas; the shaders write the same expressions (tests compare both).

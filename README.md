@@ -476,6 +476,18 @@ Right-click a note, long-press it for half a second on touch, or press Shift+F10
 
 **Focus lock.** With a note selected, hovering another note only previews it: a ring and its name, while the highlight stays on the selection. Rest on it for 350 ms, or hold Alt, and the highlight moves. **Lock focus** (the menu, the card's chip, or **K**) keeps the highlight on the selection however you hover; the chip reads **Focus locked** while on. Clearing the selection releases the lock. With nothing selected, hover works as before. **Hover delay (ms)** (`visuals.hoverDwellMs`, Appearance, Finding connections, 0 to 5000, default 350; 0 moves the highlight at once). Reveal in file explorer is not in the menu because Obsidian has no public API for it. Evidence: `tests/context-menu.test.ts` and the compiled-renderer menu and hover-intent tests in `tests/physics-transaction.test.ts`; native menu, touch and screen-reader acceptance are pending.
 
+### How are these connected? (unreleased)
+
+Select a note, then **Shift-click** a second note (or right-click it and choose **Find path to…**). Graph NG finds the shortest path between them through the notes and relationships currently drawn.
+
+- **On the canvas:** the path becomes the top highlight: thick accent lines, a ring around both ends and a numbered badge on each later note. Everything else dims. The camera frames the whole path.
+- **In the card:** a **Path** list, one row per step: note, relationship type ("(reverse)" when walked against its direction), next note. Each note name opens it; a relationship drawn as a dot opens its relationship note.
+- **Another path:** up to three more paths that share no notes or relationships with the earlier ones.
+- **Limits:** at most 6 steps and 200,000 scanned connections. The card says **No path within 6 steps** or **Search limit reached** instead of guessing.
+- Relationship notes drawn as dots are part of a step, never a step of their own. Hidden notes and relationship types are never crossed. Esc, an empty click or selecting another note clears the path.
+
+The search is a pure bidirectional BFS on the incident-edge index (`src/path-finder.ts`); it runs once per request, never per frame. WebGL and Canvas draw the same path strokes; the rings and badges are DOM overlays. Evidence: `tests/path-finder.test.ts` and the compiled-renderer path test in `tests/physics-transaction.test.ts`; native visual and screen-reader acceptance are pending. Known gaps: there is no keyboard-only way to choose the second note yet (it needs the right-click menu or search stream), and the path follows the hover-highlight switch.
+
 ### Resolution-change candidate (unverified)
 
 The next detail paint reconciles a changed device-pixel ratio even when the CSS box did not resize. This preserves CSS geometry, semantic colors and layout; it does not establish the cause of scale-dependent color shifts or guarantee all-scale crispness. The optional `probe:zoom` local synthetic harness compares fixed coordinates at far/small-step/mid/near zoom on actual WebGL and bounded Canvas with DPR 1→2, records backend/backing resolution and screenshots, and requires separate runtime authorization. Source authoring is not execution or native/live-tab evidence.

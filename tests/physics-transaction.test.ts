@@ -576,6 +576,30 @@ test('relationship keyboard: R cycles the selected note relationships one stop p
   expect(f.key('Enter')).toBe(false); expect(f.opened).toEqual([]);
   expect(f.key('Escape')).toBe(true); expect(f.edges()).toEqual([]); expect(f.card().textContent).toBe(''); expect(f.actual()).toEqual([[0, 0, 0], [0, 0, 0]]);
 });
+// "How are these connected?" through the compiled renderer (Canvas fixture): bytes, card text and reset paths only.
+test('path finder: Shift-click lights the path as its own tier, lists hops with Open, finds another path, Escape clears', async () => {
+  const f = await graduated([[0, 1], [1, 2], [2, 3], [0, 4], [4, 3]], 6), { r, k } = f, card = () => r[k('noteCard')];
+  const shift = (n: number) => { const { x, y } = r.screenPoint(n), e = { pointerId: 1, clientX: x, clientY: y, pointerType: 'mouse', shiftKey: true }; r[k('pointerDown')](e); r[k('pointerUp')](e); };
+  // Shift-click without a selection only selects.
+  shift(0); expect(r.selected).toBe(0); expect(r[k('pathView')]).toBeUndefined();
+  shift(3); expect(r.selected).toBe(-1);
+  expect(f.actual()).toEqual([[255, 0, 0, 255, 255, 0], [0, 0, 0, 253, 253]]);
+  expect(card().textContent).toContain('Path: 0 → 3'); expect(card().textContent).toContain('2 steps');
+  const hops = card().querySelectorAll('li'); expect(hops.map((li: any) => li.children.map((c: any) => c.textContent))).toEqual([['0', 'link', '4'], ['4', 'link', '3']]);
+  hops[0].children[2].click(); expect(f.opened).toEqual([4]);
+  r[k('drawCanvas')](); r[k('placeOverlay')]();
+  control(card(), 'Another path').click(); expect(card().textContent).toContain('3 steps (path 2)');
+  expect(f.actual()).toEqual([[255, 255, 255, 255, 0, 0], [253, 253, 253, 0, 0]]);
+  control(card(), 'Another path').click(); expect(card().textContent).toContain('No other path within 6 steps');
+  expect(card().querySelectorAll('button').some((b: any) => b.textContent === 'Another path')).toBe(false);
+  // Hover never replaces the path highlight; Escape clears path, bytes and card.
+  f.hover(5); expect(f.actual()[1]).toEqual([253, 253, 253, 0, 0]);
+  r[k('keyDown')]({ key: 'Escape', target: r.canvas, preventDefault() {} });
+  expect(r[k('pathView')]).toBeUndefined(); expect(card().textContent).toBe(''); expect(f.actual()[1]).toEqual([0, 0, 0, 0, 0]);
+  // Unreachable notes say so; a filter that hides an endpoint drops the path.
+  f.tap(0); shift(5); expect(card().textContent).toContain('No path within 6 steps');
+  f.tap(0); shift(3); r.setView(new Uint8Array([1, 1, 1, 0, 1, 1]), {}); expect(r[k('pathView')]).toBeUndefined(); expect(card().textContent).toBe('');
+});
 test('graduated focus pick radius follows the 60% enlarged focus node', async () => {
   const f = await relationships(), { r, k } = f, s = f.settings;
   f.tap(2, 'touch'); const p = r.screenPoint(2), at = { x: p.x + s.nodeSize * (1 + s.visuals.degreeSizing) * 1.3 + 4, y: p.y };

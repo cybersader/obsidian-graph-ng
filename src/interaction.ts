@@ -24,7 +24,7 @@ export interface RendererControls {
   readonly lensNode: number;
   /** Note shown in the connection card, or -1. */
   readonly cardNode: number;
-  /** A relationship (line) card is open. */
+  /** A relationship (line) or path card is open. */
   readonly edgeCard: boolean;
   /** "Only connections" is active. */
   readonly isolated: boolean;
@@ -73,6 +73,8 @@ export interface RendererControls {
   relationship(edge: number): Promise<Relation>;
   /** Show a context menu at client coordinates; `node` is the clicked note or -1. */
   showMenu(entries: MenuEntry[], x: number, y: number, node: number): void;
+  /** "How are these connected?": find, highlight, frame and list the shortest path between two notes. */
+  findPath(from: number, to: number): void;
 }
 
 export interface ActionContext {
@@ -214,6 +216,8 @@ export class Interaction {
       // Notes outrank lines. A line click or tap selects its relationship and never opens anything.
       const node = h.pick(x, y), touch = e.pointerType === 'touch', edge = node < 0 ? h.pickEdge(x, y) : -1;
       if (edge >= 0) { h.selectEdge(edge); return; }
+      // Shift-click a second note: how are these connected?
+      if (e.shiftKey && node >= 0 && h.selected >= 0 && node !== h.selected) { h.findPath(h.selected, node); return; }
       // A click shows the connection card; Ctrl/Cmd-click (or "Click opens notes directly") opens.
       const direct = !touch && (h.settings.visuals.clickOpens || e.ctrlKey || e.metaKey);
       h.selectNote(node, !direct); if (node >= 0 && direct) h.open(node);

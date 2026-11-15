@@ -1,6 +1,6 @@
 import { renderPath, type RenderProjection } from './render-projection';
 import type { Settings } from './settings';
-import { PickGrid, positionTexture, incidentEdges, focusTiers, tintedEdge, edgeBucket, tierNode, tierEdge, tierLabel, segmentDistance, shownTier, shownEdgeTier, tierCounts, tierLift, liftRadius, strongEdge, offscreenPips, TIERS, ALL_TIERS, PIP_DIRECTIONS, canvasDetailEdges, resizeDrawingBuffer, LABEL_RATIOS } from './render-data';
+import { PickGrid, positionTexture, incidentEdges, focusTiers, tintedEdge, edgeBucket, tierNode, tierEdge, tierLabel, segmentDistance, shownTier, shownEdgeTier, tierCounts, tierLift, liftRadius, strongEdge, offscreenPips, TIERS, ALL_TIERS, PIP_DIRECTIONS, canvasDetailEdges, resizeDrawingBuffer, LABEL_RATIOS, PATH_EDGE, pathStroke } from './render-data';
 import { readTheme, type GraphTheme } from './render-theme';
 import { baseRadius, sizedRadius, sizingSettings, type NodeSizingValues } from './node-sizing';
 import { buildLabels, rankFocus, type LabelAtlas } from './render-labels';
@@ -8,12 +8,13 @@ import { DIRECT_LABELS, LABEL_CHARS, middleTruncate, radialLabels, stickyLevel, 
 import { carrierAlpha, carrierColors, carrierVisibility, categorical, degreeSizes, densityScale, edgeAlpha, effectPolicy, prominenceKeep, zoomFade, neutralizeGroups, easeInOut, groupHalos, isDark, labelFade, nodeColors, type EffectPolicy, type Halo, type RGB } from './render-effects';
 import { yieldTask } from './core/scheduler';
 import { generationCurrent } from './physics-controls';
-import { ConnectionCard, connectionGroups, isolationBar, placeCard, reach, button, type CardAction, type CardHost } from './connection-card';
+import { ConnectionCard, connectionGroups, isolationBar, placeCard, reach, button, el, type CardAction, type CardHost } from './connection-card';
 import { interestScorer, byInterest, type Scorer } from './interest';
 import { lensConnections, lensLayout, lensAmount, lensCoordinate, pickLens, type LensConnection, type LensPoint } from './lens-layout';
 import { Interaction, type RendererControls } from './interaction';
 import type { MenuPresenter } from './context-menu';
 import { highlightOverlay, paintLegend } from './overlays';
+import { findPath, alternatePath, hopRows, pathNotes, OUTCOME, MAX_ALTERNATES, MAX_HOPS, type Hop } from './path-finder';
 /** Hard DOM bound for graduated focus labels, under `labelsMaxPerViewport`. */
 const FOCUS_LABELS = 64;
 /** Selection ripple length (ms), and the inset of off-screen pips from the view border (CSS px). */
@@ -132,7 +133,7 @@ uniform float colorMix;
 out vec4 tint;
 void main() {
  int s = int(source), t = int(target); vec4 sa = state(s), sb = state(t);
- uint tier = tierByte > 200u ? ((tierMask & 1) != 0 ? tierByte : 0u) : tierByte > 0u && (tierMask & 4) != 0 ? tierByte : 0u;
+ uint tier = tierByte == 253u ? 255u : tierByte > 200u ? ((tierMask & 1) != 0 ? tierByte : 0u) : tierByte > 0u && (tierMask & 4) != 0 ? tierByte : 0u;
  tint = vec4(0.);
  if (edgeAlpha <= 0. || typeOn == 0u || sa.r < .5 || sb.r < .5) { gl_Position = offscreen; return; }
  int segment = gl_VertexID / 6; vec2 c = corners[gl_VertexID % 6];
@@ -152,6 +153,7 @@ void main() {
  if (strong > 0.) alpha = tier > 200u ? alpha + ((alpha > 0. ? .95 : 0.) - alpha) * focus : alpha * (1. - focus * (tier > 0u ? .5 : .65));
  if (strong > 0. && tier > 200u) alpha *= mix(1., mix(.35, 1., u), focus);
  if (tier == 254u || tier == 127u) rgb = mix(rgb, color(4).rgb, focus * .5);
+ if (tierByte == 253u) { rgb = mix(rgb, color(4).rgb, focus); alpha += (1. - alpha) * focus; wide *= 1. + 1.5 * focus; gl_Position = clip(mix(mix(a, q, u), mix(q, b, u), u) + side * c.y * wide); }
  if (gl_InstanceID == edgeHovered) { rgb = color(4).rgb; alpha = min(1., alpha * 3.); }
  tint = vec4(rgb * alpha, alpha);
 }`;
@@ -356,6 +358,10 @@ export class DetailRenderer {
   private ripple?: { start: number; reach: number };
   /** The hover is a preview (ring and label) and the highlight stays on the selection. */
   private hoverPreview = false;
+  /** "How are these connected?": endpoints, paths found so far (shown: `hops`), its rows and the outcome note. */
+  private pathView?: { from: number; to: number; found: Hop[][]; hops: Hop[]; edges: number[]; note: string };
+  /** Two endpoint rings, then numbered hop badges (at most MAX_HOPS). */
+  private pathMarks: HTMLElement[] = [];
   static async create(container: HTMLElement, p: RenderProjection, positions: Float32Array, visible: Uint8Array, settings: Settings, onNode: (i: number) => void, onZoomOut: () => void, colors: Uint32Array, current = () => true, software = false, onUnavailable = onZoomOut, view: RenderView = {}) {
     await yieldTask(); if (!current()) throw new Error('Renderer superseded');
     let renderer: DetailRenderer | undefined;
@@ -433,7 +439,8 @@ export class DetailRenderer {
     if (canvasEdges) this.canvasEdges = canvasEdges;
     const card = this.card;
     card?.history.retain(n => !!this.baseVisible[n]);
-    if (this.selectedEdges?.length ? !this.selectedEdges.every(this.edgeDrawn) : !filterVisible[this.selected]) { this.selectedEdges = []; this.edgeToken++; card?.hide(); }
+    const path = this.pathView;
+    if (path ? !render[path.from] || !render[path.to] || !path.edges.every(this.edgeDrawn) : this.selectedEdges?.length ? !this.selectedEdges.every(this.edgeDrawn) : !filterVisible[this.selected]) { this.pathView = undefined; this.selectedEdges = []; this.edgeToken++; card?.hide(); }
     else if (card && card.node >= 0 && card.node === this.selected) card.render();
     if (this.near.length || this.selected >= 0 && this.ready) this.emphasize(true);
     this.recolor(); this.choosePolicy();
@@ -947,7 +954,7 @@ export class DetailRenderer {
       for (const e of this.tierEdges) t[e] = 0;
       this.near = []; this.tierEdges = []; this.tierSource = key; this.focusNode = edges ? -1 : node; this.rankedKey = []; this.tierPartial = 0;
       // A selected relationship lights its rows and both endpoints as direct tiers, without a focus ring.
-      if (edges) for (const e of edges) { t[e] = 255; this.tierEdges.push(e); for (const n of [this.projection.source[e]!, this.projection.target[e]!]) if (!s[n * 4 + 1]) { s[n * 4 + 1] = 255; this.near.push(n); } }
+      if (edges) for (const e of edges) { t[e] = edges === this.pathView?.edges ? PATH_EDGE : 255; this.tierEdges.push(e); for (const n of [this.projection.source[e]!, this.projection.target[e]!]) if (!s[n * 4 + 1]) { s[n * 4 + 1] = 255; this.near.push(n); } }
       else this.tierPartial = focusTiers(node, this.edges, this.projection, this.edgeOn, this.filterVisible, s, t, this.near, this.tierEdges, 65536, this.settings.declaration.groupContext ? this.view.groupCodes : undefined);
       if (this.gl && this.ready && !this.lost) this.uploadTiers();
       const notes = this.projection.carrierNodes; this.tierTotals = tierCounts(this.focusNode, this.near, s, notes);
@@ -962,7 +969,7 @@ export class DetailRenderer {
    * explicit Open button (or Enter on the canvas) opens the note. */
   private selectNote(node: number, card?: boolean, keepLens = false) {
     if (node < 0 && this.lensAnchor >= 0 && !keepLens) this.setLens(-1);
-    this.selected = node; this.selectedEdges = []; this.edgeAnchor = -1; this.edgeToken++; this.cue = -1; if (card || node < 0) this.hovered = -1; this.emphasize(); this.startRipple(node); this.refresh();
+    this.selected = node; this.selectedEdges = []; this.pathView = undefined; this.edgeAnchor = -1; this.edgeToken++; this.cue = -1; if (card || node < 0) this.hovered = -1; this.emphasize(); this.startRipple(node); this.refresh();
     if (card && node >= 0) this.card.show(node); else this.card.hide();
     if (node < 0) this.input?.gestures.lock(false);
   }
@@ -1036,12 +1043,53 @@ export class DetailRenderer {
   }
   private showIsolation() { const s = this.isolation; if (this.isolationBar) isolationBar(this.isolationBar, s ? this.name(s.node) : '', s?.hops ?? 1, h => this.isolate(s!.node, h), () => this.isolate(-1)); }
   /** Hover outranks the persistent selection; the hover-highlight switch turns both off. */
-  private emphasize(immediate?: boolean) { const v = this.lensAnchor >= 0 ? this.lensAnchor : this.hovered < 0 || this.hoverPreview ? this.selected : this.hovered, on = this.settings.visuals.hoverHighlight; this.setFocus(on ? v : -1, immediate, on && v < 0 && this.selectedEdges?.length ? this.selectedEdges : undefined); }
+  private emphasize(immediate?: boolean) { const v = this.lensAnchor >= 0 ? this.lensAnchor : this.hovered < 0 || this.hoverPreview ? this.selected : this.hovered, on = this.settings.visuals.hoverHighlight, path = this.lensAnchor < 0 ? this.pathView?.edges : undefined; this.setFocus(on && !path ? v : -1, immediate, on ? path ?? (v < 0 && this.selectedEdges?.length ? this.selectedEdges : undefined) : undefined); }
+  /** Path mode from `from` to `to`: the shortest path over drawn notes and relationships becomes its
+   * own top tier, the camera frames it and the card lists its hops. Bounded by MAX_HOPS and MAX_SCAN. */
+  private findPath(from: number, to: number) {
+    if (from === to || !this.visible[from] || !this.visible[to]) return;
+    this.selectNote(-1); this.tierMask = ALL_TIERS; this.updateLegend();
+    this.pathView = { from, to, found: [], hops: [], edges: [], note: '' }; this.nextPath();
+  }
+  /** First the shortest path, then each "Another path": up to MAX_ALTERNATES node-disjoint alternates. */
+  private nextPath() {
+    const t = this.pathView!, p = this.projection, r = t.found.length ? alternatePath(t.from, t.to, this.edges, p, this.edgeOn, this.visible, t.found) : findPath(t.from, t.to, this.edges, p, this.edgeOn, this.visible);
+    if ('hops' in r) { t.found.push(t.hops = r.hops); t.edges = r.hops.flatMap(h => h.edges); this.frameNodes(pathNotes(r.hops)); }
+    else t.note = r.reason === 'none' && t.found.length ? `No other path within ${MAX_HOPS} steps` : OUTCOME[r.reason];
+    this.emphasize(); this.showPath(); this.refresh();
+  }
+  /** The Path section: each hop as note, relationship type, next note; Open on every note and relationship note. Text only. */
+  private showPath() {
+    const t = this.pathView!, c = this.noteCard, p = this.projection;
+    const open = (n: number) => button(this.name(n), 'Open ' + this.name(n), () => this.cardAction('open', n));
+    this.card.hide(); c.setAttribute('role', 'region'); c.setAttribute('aria-label', 'Path');
+    const box = c.appendChild(el('div', '', 'graph-ng-relationships')), head = box.appendChild(el('div', '', 'graph-ng-card-head'));
+    head.append(el('strong', `Path: ${this.name(t.from)} → ${this.name(t.to)}`, 'graph-ng-card-title'), button('×', 'Close', () => { this.selectNote(-1); this.canvas.focus(); }, 'graph-ng-card-nav'));
+    if (t.hops.length) box.append(el('small', `${t.hops.length} step${t.hops.length === 1 ? '' : 's'}${t.found.length > 1 ? ` (path ${t.found.length})` : ''}`));
+    const list = box.appendChild(el('ol', '', 'graph-ng-path')); list.setAttribute('aria-label', 'Path');
+    for (const h of hopRows(t.hops, p)) {
+      const row = list.appendChild(el('li', '', 'graph-ng-relationship')), type = h.type + (h.reverse ? ' (reverse)' : '');
+      row.append(open(h.from), h.carrier >= 0 ? button(type, 'Open relationship note ' + this.name(h.carrier), () => this.cardAction('open', h.carrier)) : el('span', type), open(h.to));
+    }
+    const note = box.appendChild(el('div', t.note, 'graph-ng-explore-note')); note.setAttribute('aria-live', 'polite');
+    if (t.hops.length && !t.note && t.found.length <= MAX_ALTERNATES) box.append(button('Another path', 'Find another path that shares no notes', () => this.nextPath()));
+  }
+  /** Per frame, O(path): ring both endpoints and number each later note by its hop. Decorative; the card holds the text. */
+  private placePath(radius: (n: number) => number, focus: number) {
+    const notes = this.pathView && focus ? pathNotes(this.pathView.hops) : [], k = notes.length, marks = this.pathMarks;
+    while (k && marks.length < k + 1) { const m = this.overlay.appendChild(Object.assign(document.createElement('div'), { className: marks.length < 2 ? 'graph-ng-path-end' : 'graph-ng-path-badge' })); m.setAttribute('aria-hidden', 'true'); marks.push(m); }
+    marks.forEach((m, i) => {
+      m.hidden = !k || i > k; if (m.hidden) return;
+      const n = i < 2 ? notes[i ? k - 1 : 0]! : notes[i - 1]!, q = this.screenPoint(n), r = radius(n), d = i < 2 ? 0 : r * .75 + 6;
+      if (i < 2) m.style.width = m.style.height = `${Math.round(2 * r + 12)}px`; else if (m.textContent !== String(i - 1)) m.textContent = String(i - 1);
+      m.style.opacity = String(focus); m.style.transform = `translate(${Math.round(q.x + d)}px, ${Math.round(q.y - d)}px) translate(-50%, -50%)`;
+    });
+  }
   /** Select a relationship (never opens). The card lists every drawn parallel row between the pair;
    * rule names and relationship-note paths arrive from the worker and fill in when resolved. */
   private selectEdge(edge: number, anchor = -1) {
     const p = this.projection, c = this.noteCard, token = ++this.edgeToken;
-    this.card.hide(); this.selected = this.hovered = -1; this.cue = -1; this.edgeAnchor = anchor; this.selectedEdges = this.edgeParallels(edge); this.emphasize(); this.refresh(); this.input.gestures.lock(false);
+    this.card.hide(); this.selected = this.hovered = -1; this.pathView = undefined; this.cue = -1; this.edgeAnchor = anchor; this.selectedEdges = this.edgeParallels(edge); this.emphasize(); this.refresh(); this.input.gestures.lock(false);
     const el = (tag: string, text = '', cls = '') => Object.assign(document.createElement(tag), { textContent: text, className: cls });
     const a = p.source[edge]!, b = p.target[edge]!, box = el('div', '', 'graph-ng-relationships'), na = this.name(a), nb = this.name(b);
     box.append(el('strong', `${na} → ${nb}`));
@@ -1178,7 +1226,7 @@ export class DetailRenderer {
       const at = this.moreAt, show = !!at && ego >= 0 && focus > 0; this.moreButton.hidden = !show;
       if (show) { const p = this.screenPoint(ego); this.moreButton.style.opacity = String(focus); this.moreButton.style.transform = `translate(${Math.round(p.x + at.dx)}px, ${Math.round(p.y + at.dy)}px) translateY(-50%)`; }
     }
-    this.placeCard(radius);
+    this.placeCard(radius); this.placePath(radius, focus);
     // Greedy vertical nudge keeps coincident hub labels legible (hubs are bounded).
     const placed: [number, number, number][] = [];
     this.hubLabels.forEach((el, i) => {
@@ -1205,7 +1253,7 @@ export class DetailRenderer {
   /** Per frame: O(direct connections) pip projection, legend visibility and the ripple ring. */
   private placeHighlights(focus: number) {
     const v = this.settings.visuals, on = v.hoverHighlight && this.focusTarget > 0;
-    this.legend.hidden = !(on && v.tierLegend && this.tierTotals.some(Boolean));
+    this.legend.hidden = !(on && v.tierLegend && this.tierTotals.some(Boolean)) || !!this.pathView;
     const ids = on && focus > 0 && v.offscreenPips && this.tierMask & 1 ? this.directs : [];
     if (this.pipXY.length < ids.length * 2) this.pipXY = new Float64Array(ids.length * 2);
     const xy = this.pipXY;
@@ -1231,13 +1279,13 @@ export class DetailRenderer {
    * The leader line runs from the card edge to the cued row's note. O(1) per frame. */
   private placeCard(radius: (n: number) => number) {
     const c = this.noteCard, e = this.selectedEdges[0], s = this.selected, w = this.width, h = this.height, p = this.projection;
-    if (this.card.node < 0 && !this.selectedEdges.length) { this.cueRing.hidden = this.cueLine.hidden = true; return; }
+    if (this.card.node < 0 && !this.selectedEdges.length && !this.pathView) { this.cueRing.hidden = this.cueLine.hidden = true; return; }
     const sheet = w < 520, cls = 'graph-ng-card' + (sheet ? ' graph-ng-sheet' : '');
     if (c.className !== cls) { c.className = cls; this.card.size = undefined; }
     const [cw, ch] = this.card.size ??= [c.offsetWidth || 300, c.offsetHeight || 240];
     if (sheet) { c.style.transform = ''; this.cardRect = [0, h - ch, w, ch]; }
     else {
-      const a = s >= 0 ? this.screenPoint(s) : e !== undefined ? this.screenPoint(p.source[e]!) : { x: 8, y: h }, b = s >= 0 || e === undefined ? a : this.screenPoint(p.target[e]!);
+      const a = s >= 0 ? this.screenPoint(s) : e !== undefined ? this.screenPoint(p.source[e]!) : this.pathView ? this.screenPoint(this.pathView.to) : { x: 8, y: h }, b = s >= 0 || e === undefined ? a : this.screenPoint(p.target[e]!);
       const at = placeCard((a.x + b.x) / 2, (a.y + b.y) / 2, s >= 0 ? radius(s) + 12 : 12, w, h, cw, ch); c.style.transform = `translate(${at.x}px, ${at.y}px)`; this.cardRect = [at.x, at.y, cw, ch];
     }
     const n = this.cue, ring = this.cueRing, line = this.cueLine;
@@ -1269,6 +1317,8 @@ export class DetailRenderer {
       }
       // Tinted relationship layer: the shader mixes the accent by focus / 2 at the same weight.
       if (s.visuals.edgeOpacity > 0 && hue.length) { ctx.strokeStyle = this.theme.accent; ctx.globalAlpha = alpha * focus * .5; ctx.beginPath(); hue.forEach(line); ctx.stroke(); ctx.strokeStyle = this.theme.edge; }
+      // Path tier on top, as the shader's 253 branch: accent, pathStroke alpha and width.
+      if (tier === 255 && this.pathView && s.visuals.edgeOpacity > 0) { const [pa, pw] = pathStroke(alpha, focus); ctx.strokeStyle = this.theme.accent; ctx.globalAlpha = pa; ctx.lineWidth = width * wide * pw; ctx.beginPath(); for (const e of this.pathView.edges) if (this.edgeTier[e] === PATH_EDGE) line(e); ctx.stroke(); ctx.strokeStyle = this.theme.edge; }
     }
     const notes = this.projection.carrierNodes, level = this.carrierLevel();
     // Edge notes first (beneath), then the other nodes.
@@ -1312,7 +1362,7 @@ export class DetailRenderer {
       get focusNode() { return r.focusNode; },
       get lensNode() { return r.lensWanted; },
       get cardNode() { return r.card.node; },
-      get edgeCard() { return r.selectedEdges.length > 0; },
+      get edgeCard() { return r.selectedEdges.length > 0 || !!r.pathView; },
       get isolated() { return !!r.isolation; },
       pick: (x, y) => this.pick(x, y),
       pickHub: (x, y) => this.pickHub(x, y),
@@ -1351,6 +1401,7 @@ export class DetailRenderer {
       fitAll: () => this.fitAll(),
       relationship: async e => { const carrier = p.carrier[e] === 0xffffffff ? undefined : (await this.describeEdges?.([e]))?.[0]?.carrier; return { source: p.source[e]!, target: p.target[e]!, note: carrier ? () => this.openPath?.(carrier) : undefined }; },
       showMenu: (entries, x, y, n) => this.showMenu?.(entries, x, y, n >= 0 ? this.path(n) : undefined),
+      findPath: (from, to) => this.findPath(from, to),
     };
   }
   private contextLost = (e: Event) => {
