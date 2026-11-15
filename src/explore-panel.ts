@@ -649,7 +649,7 @@ export class ExplorePanel {
     this.guard(host, 'halos');
     this.flag(host, 'autoPalette', 'Color by group when no rule matches');
     this.flag(host, 'hoverHighlight', 'Graduated connections on the selected note');
-    this.note(host, 'Direct connections brightest, then neighbours of neighbours; the rest fades. Ancestor or framework levels need declared structural relationships; none are inferred.');
+    this.note(host, 'Direct connections brightest, then neighbours of neighbours; the rest fades. Ancestor and group levels need declared structural relationships; none are inferred.');
     if (this.host.toggleLens) {
       this.lensButton = host.createEl('button', { cls: 'graph-ng-lens-toggle', attr: { 'aria-label': 'Connection lens', 'aria-pressed': 'false' } });
       this.lensButton.onclick = () => { this.host.toggleLens?.(); this.updateLensControl(); };

@@ -48,7 +48,7 @@ export function recommend(t: GraphStats, s: Settings): Suggestion[] {
   return out;
 }
 /** Layout values that read well for a graph of this size; the base every preset scales.
- * Measured on synthetic framework graphs (500 to 16k notes, about 3 links per note, 5% orphans):
+ * Measured on synthetic clustered graphs (500 to 16k notes, about 3 links per note, 5% orphans):
  * - Display fits the graph to the view, so Spread is only a zoom; it stays at 10.
  * - Normal gravity lets unlinked notes fly out in rings and squeezes the real graph into the
  *   middle. Strong gravity grows with distance and keeps them close; 0.12 to 0.22 balanced
