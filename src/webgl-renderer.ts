@@ -10,6 +10,8 @@ import { yieldTask } from './core/scheduler';
 import { generationCurrent } from './physics-controls';
 import { ConnectionCard, connectionGroups, isolationBar, placeCard, reach, button, type CardAction, type CardHost } from './connection-card';
 import { lensConnections, lensLayout, lensAmount, lensCoordinate, pickLens, type LensConnection, type LensPoint } from './lens-layout';
+import { Interaction, type RendererControls } from './interaction';
+import { highlightOverlay, paintLegend } from './overlays';
 /** Hard DOM bound for graduated focus labels, under `labelsMaxPerViewport`. */
 const FOCUS_LABELS = 64;
 /** Selection ripple length (ms), and the inset of off-screen pips from the view border (CSS px). */
@@ -207,7 +209,6 @@ export class DetailRenderer {
   grid: PickGrid;
   private cameraFrame: Pick<PickGrid, 'minX' | 'minY' | 'width' | 'height'>;
   private coordinateRevision = 0;
-  private lastPointer?: { clientX: number; clientY: number };
   readonly camera: Camera = { x: .5, y: .5, ratio: 1 };
   readonly gpu: boolean;
   hovered = -1;
@@ -258,10 +259,6 @@ export class DetailRenderer {
   private homeRatio = 1;
   private edges: ReturnType<typeof incidentEdges>;
   private colors: Uint32Array;
-  private pointers = new Map<number, { x: number; y: number }>();
-  private moved = false;
-  private downX = 0;
-  private downY = 0;
   private positionWidth = 1;
   private positionHeight = 1;
   private display: Float32Array;
@@ -338,12 +335,19 @@ export class DetailRenderer {
   private directs: number[] = [];
   private pipXY = new Float64Array();
   private pipTargets: number[] = [];
-  private pipEls: HTMLElement[] = [];
+  private pipEls!: HTMLElement[];
   private legend!: HTMLElement;
-  private legendRows: HTMLElement[] = [];
-  private legendCounts: HTMLElement[] = [];
-  private pipParts: [HTMLElement, HTMLElement][] = [];
+  private legendRows!: HTMLElement[];
+  private legendCounts!: HTMLElement[];
+  private pipParts!: [HTMLElement, HTMLElement][];
   private rippleEl!: HTMLElement;
+  /** Pointer, wheel and key input (src/interaction.ts). The handler fields are the input seams tests and the card call. */
+  private input: Interaction;
+  private pointerDown: (e: PointerEvent) => void;
+  private pointerMove: (e: PointerEvent) => void;
+  private pointerUp: (e: PointerEvent) => void;
+  private pointerLeave: (e?: PointerEvent) => void;
+  private keyDown: (e: KeyboardEvent) => void;
   private ripple?: { start: number; reach: number };
   static async create(container: HTMLElement, p: RenderProjection, positions: Float32Array, visible: Uint8Array, settings: Settings, onNode: (i: number) => void, onZoomOut: () => void, colors: Uint32Array, current = () => true, software = false, onUnavailable = onZoomOut, view: RenderView = {}) {
     await yieldTask(); if (!current()) throw new Error('Renderer superseded');
@@ -380,8 +384,10 @@ export class DetailRenderer {
     this.cueLine = div('graph-ng-cue-line'); this.cueRing = div('graph-ng-cue'); this.cueLine.hidden = this.cueRing.hidden = true;
     this.isolationBar = div('graph-ng-isolation');
     this.noteCard = div('graph-ng-card'); this.card = new ConnectionCard(this.noteCard, this.cardHost());
-    this.noteCard.onkeydown = (e: KeyboardEvent) => { if (!(this.card.node >= 0 && this.card.key(e))) this.keyDown(e); };
-    this.buildHighlightOverlay();
+    const input = this.input = new Interaction(this.controls());
+    ({ pointerDown: this.pointerDown, pointerMove: this.pointerMove, pointerUp: this.pointerUp, pointerLeave: this.pointerLeave, keyDown: this.keyDown } = input);
+    this.noteCard.onkeydown = input.cardKeyDown;
+    ({ ripple: this.rippleEl, legend: this.legend, rows: this.legendRows, counts: this.legendCounts, pips: this.pipEls, parts: this.pipParts } = highlightOverlay(this.overlay, i => { this.tierMask ^= 1 << i; this.updateLegend(); this.rankedKey = []; this.refresh(); }, i => this.panTo(this.pipTargets[i] ?? -1)));
     this.resize();
     this.gl = software ? null : this.canvas.getContext('webgl2', { antialias: false, alpha: false, preserveDrawingBuffer: false });
     this.timings.context = performance.now() - started;
@@ -391,9 +397,8 @@ export class DetailRenderer {
       this.ctx = this.canvas.getContext('2d'); if (!this.ctx) { this.canvas.remove(); this.overlay.remove(); throw new Error('CANVAS_UNAVAILABLE'); }
     }
     this.packState(); this.setView(visible, view, false); this.fitAll(0);
-    this.container.addEventListener('pointerleave', this.pointerLeave);
     this.canvas.addEventListener('webglcontextlost', this.contextLost); this.canvas.addEventListener('webglcontextrestored', this.contextRestored);
-    this.canvas.addEventListener('pointerdown', this.pointerDown); this.canvas.addEventListener('pointermove', this.pointerMove); this.canvas.addEventListener('pointerup', this.pointerUp); this.canvas.addEventListener('pointercancel', this.pointerCancel); this.canvas.addEventListener('pointerleave', this.pointerLeave); this.canvas.addEventListener('keydown', this.keyDown); this.canvas.addEventListener('wheel', this.wheel, { passive: false });
+    input.attach(this.container);
     this.media.addEventListener('change', this.refreshTheme);
     this.observer = new ResizeObserver(() => { const changed = this.resize(); if (changed && this.ready) void this.prepareLabels(() => !this.disposed).catch(() => {}); }); this.observer.observe(container);
   }
@@ -488,7 +493,7 @@ export class DetailRenderer {
         previous = Object.fromEntries(Object.keys(prepared).map(key => [key, (this as unknown as Record<string, unknown>)[key]])) as typeof prepared;
         try {
           Object.assign(this, prepared); upload(); committed = true;
-          if (this.lastPointer) this.pointerMove({ ...this.lastPointer, pointerId: -1 } as PointerEvent);
+          this.input.replayHover();
           this.refresh();
         } catch (error) {
           try { rollback(); } catch (restore) { throw new Error(`${error}; ${restore}`); }
@@ -1166,28 +1171,7 @@ export class DetailRenderer {
       placed.push([x, y, half]); el.style.transform = `translate(-50%, 0) translate(${Math.round(x)}px, ${Math.round(y)}px)`;
     });
   }
-  /** Bounded, text-only highlight overlay: tier legend (4 toggle rows), 8 off-screen pips and one ripple ring. */
-  private buildHighlightOverlay() {
-    const make = (tag: string, cls: string, parent: HTMLElement = this.overlay) => parent.appendChild(Object.assign(document.createElement(tag), { className: cls }));
-    this.rippleEl = make('div', 'graph-ng-ripple'); this.rippleEl.hidden = true; this.rippleEl.setAttribute('aria-hidden', 'true');
-    this.legend = make('div', 'graph-ng-tier-legend'); this.legend.hidden = true; this.legend.setAttribute('role', 'group'); this.legend.setAttribute('aria-label', 'Graduated connection highlighting');
-    this.legendRows = TIERS.map(([name], i) => {
-      const row = make('button', 'graph-ng-tier-row', this.legend); row.hidden = true;
-      make('span', 'graph-ng-tier-key graph-ng-tier-key-' + i, row); make('span', 'graph-ng-tier-name', row).textContent = name; this.legendCounts.push(make('span', 'graph-ng-legend-count', row));
-      row.onclick = () => { this.tierMask ^= 1 << i; this.updateLegend(); this.rankedKey = []; this.refresh(); };
-      return row;
-    });
-    for (let i = 0; i < 8; i++) {
-      const pip = make('button', 'graph-ng-pip'), arrow = make('span', 'graph-ng-pip-arrow', pip); pip.hidden = true; arrow.setAttribute('aria-hidden', 'true'); this.pipParts.push([arrow, make('span', 'graph-ng-pip-count', pip)]);
-      pip.onclick = () => this.panTo(this.pipTargets[i] ?? -1); this.pipEls.push(pip);
-    }
-  }
-  private updateLegend() {
-    this.legendRows.forEach((row, i) => {
-      const on = !!(this.tierMask & 1 << i); row.hidden = !this.tierTotals[i]; row.setAttribute('aria-pressed', String(on)); row.className = 'graph-ng-tier-row' + (on ? '' : ' graph-ng-tier-off');
-      this.legendCounts[i]!.textContent = this.tierTotals[i]!.toLocaleString();
-    });
-  }
+  private updateLegend() { paintLegend(this.legendRows, this.legendCounts, this.tierMask, this.tierTotals); }
   /** Keep the zoom; centre the note. */
   private panTo(n: number) {
     if (n < 0 || !this.visible[n]) return;
@@ -1295,80 +1279,59 @@ export class DetailRenderer {
       const name = this.name(n), lx = x(n) + this.nodeRadius(n) + 4; if (s.visuals.labelPlates) ctx.strokeText(name, lx, y(n)); ctx.fillText(name, lx, y(n));
     });
   }
-  private pointerDown = (e: PointerEvent) => { if (this.disposed || this.lost || e.button > 0) return; this.flight = undefined; this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY }); this.canvas.setPointerCapture(e.pointerId); this.downX = e.clientX; this.downY = e.clientY; this.moved = this.pointers.size > 1; };
-  private pointerMove = (e: PointerEvent) => {
-    if (this.disposed || this.lost) return;
-    this.lastPointer = { clientX: e.clientX, clientY: e.clientY };
-    const old = this.pointers.get(e.pointerId);
-    if (old) {
-      const dx = e.clientX - old.x, dy = e.clientY - old.y;
-      if (Math.hypot(e.clientX - this.downX, e.clientY - this.downY) > 3) this.moved = true;
-      if (this.pointers.size === 2) { for (const [id, other] of this.pointers) if (id !== e.pointerId) { const before = Math.hypot(old.x - other.x, old.y - other.y), after = Math.hypot(e.clientX - other.x, e.clientY - other.y); if (before > 0 && after > 0) this.setCamera(this.camera.x, this.camera.y, this.camera.ratio * before / after); } }
-      else this.setCamera(this.camera.x - dx / this.scale / this.cameraFrame.width, this.camera.y - dy / this.scale / this.cameraFrame.height, this.camera.ratio);
-      old.x = e.clientX; old.y = e.clientY; return;
-    }
-    const rect = this.canvas.getBoundingClientRect(), x = e.clientX - rect.left, y = e.clientY - rect.top;
-    const hub = this.pickHub(x, y), node = hub >= 0 ? -1 : this.pick(x, y), edge = node < 0 && hub < 0 ? this.pickEdge(x, y) : -1;
-    // With no selection, keep the last hover focus across empty canvas so its controls
-    // can be reached. Another node, an empty click, or leaving the graph clears it.
-    const keep = node < 0 && hub < 0 && this.selected < 0 && this.focusNode >= 0 && this.settings.visuals.hoverHighlight, next = keep ? this.hovered : node;
-    if (next === this.hovered && edge === this.hoveredEdge) return;
-    this.hovered = next; this.hoveredEdge = edge; this.emphasize();
-    this.container.title = hub >= 0 ? `${this.view.groupLabels?.[hub] ?? ''} (collapsed) — click to expand` : node >= 0 ? this.path(node) : edge >= 0 ? `${this.path(this.projection.source[edge]!)} → ${this.path(this.projection.target[edge]!)} [${this.projection.types[this.projection.type[edge]!]!}]` : '';
-    this.canvas.style.cursor = node >= 0 || hub >= 0 || edge >= 0 ? 'pointer' : 'grab'; this.refresh();
-  };
-  private pointerUp = (e: PointerEvent) => {
-    if (this.disposed || this.lost) return;
-    const had = this.pointers.delete(e.pointerId); if (this.canvas.hasPointerCapture(e.pointerId)) this.canvas.releasePointerCapture(e.pointerId);
-    if (had && !this.moved) {
-      const rect = this.canvas.getBoundingClientRect(), x = e.clientX - rect.left, y = e.clientY - rect.top, hub = this.pickHub(x, y);
-      if (hub >= 0) { this.onHub?.(hub); return; }
-      // A touch tap only selects (precise taps on dense graphs misfire); mouse/pen clicks still open.
-      // A tap or click on empty canvas clears the selection.
-      // Notes outrank lines. A line click or tap selects its relationship and never opens anything.
-      const node = this.pick(x, y), touch = e.pointerType === 'touch', edge = node < 0 ? this.pickEdge(x, y) : -1;
-      if (edge >= 0) { this.selectEdge(edge); return; }
-      // A click shows the connection card; Ctrl/Cmd-click (or "Click opens notes directly") opens.
-      const direct = !touch && (this.settings.visuals.clickOpens || e.ctrlKey || e.metaKey);
-      this.selectNote(node, !direct); if (node >= 0 && direct) this.onNode(node);
-    }
-  };
-  /** Keyboard path: arrows select the nearest note in that screen direction, Enter opens, Escape clears. */
-  private keyDown = (e: KeyboardEvent) => {
-    const d = ['Right', 'Down', 'Left', 'Up'].indexOf(e.key.slice(5));
-    // Escape layers: the card (or relationship card) first, then the lens, then a card-less selection, then "Only connections".
-    if (e.key === 'Escape' && (this.card.node >= 0 || this.selectedEdges.length)) { this.selectNote(-1, false, true); this.canvas.focus(); }
-    else if (e.key === 'Escape' && this.lensWanted >= 0) { this.setLens(-1); this.canvas.focus(); }
-    else if (e.key === 'Escape' && this.selected >= 0) { this.selectNote(-1); this.canvas.focus(); }
-    else if (e.key === 'Escape' && this.hovered >= 0) this.selectNote(-1);
-    else if (e.key === 'Escape' && this.isolation) this.isolate(-1);
-    else if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight') && this.card.step(e.key === 'ArrowLeft' ? -1 : 1)) { /* handled */ }
-    else if (!e.altKey && !e.ctrlKey && !e.metaKey && !e.repeat && (e.key === 'l' || e.key === 'L')) { this.toggleLens(); }
-    else if ((e.key === 'r' || e.key === 'R') && this.cycleEdge(e.shiftKey ? -1 : 1)) { /* handled */ }
-    else if (e.target !== this.canvas) return;
-    else if (e.key === 'Enter' && this.filterVisible[this.selected]) this.onNode(this.selected);
-    else if (d >= 0 && e.key.startsWith('Arrow')) {
-      // Unit direction for Right, Down, Left, Up.
-      const from = this.selected < 0 ? { x: this.width / 2, y: this.height / 2 } : this.screenPoint(this.selected), ux = (1 - d) % 2, uy = (2 - d) % 2;
-      let best = -1, score = Infinity;
-      for (let i = 0; i < this.visible.length; i++) if (this.visible[i]) { const q = this.screenPoint(i), x = q.x - from.x, y = q.y - from.y, a = x * ux + y * uy, t = a + 2 * Math.abs(x * uy - y * ux); if (a > 0 && t < score) { best = i; score = t; } }
-      if (best >= 0) this.selectNote(best, true);
-    } else return;
-    e.preventDefault();
-  };
-  private pointerCancel = (e: PointerEvent) => { this.pointers.delete(e.pointerId); this.moved = true; };
-  private pointerLeave = (e?: PointerEvent) => {
-    const next = e?.relatedTarget;
-    if (next && (next === this.canvas || this.overlay.contains(next as Node))) return;
-    this.lastPointer = undefined; if (!this.pointers.size) { this.hovered = this.hoveredEdge = -1; this.emphasize(); this.container.title = ''; this.refresh(); }
-  };
-  private wheel = (e: WheelEvent) => {
-    e.preventDefault(); if (this.disposed || this.lost) return; this.flight = undefined; const rect = this.canvas.getBoundingClientRect(), x = e.clientX - rect.left - this.width / 2, y = e.clientY - rect.top - this.height / 2, before = this.scale;
-    this.camera.ratio = this.clampRatio(this.camera.ratio * Math.exp(Math.max(-1, Math.min(1, e.deltaY * .001))));
-    this.camera.x += (x / before - x / this.scale) / this.cameraFrame.width; this.camera.y += (y / before - y / this.scale) / this.cameraFrame.height; this.refresh(); if (this.camera.ratio >= this.settings.lodZoomRatio) this.onZoomOut();
-  };
+  /** The explicit renderer surface src/interaction.ts drives (and future input streams extend). */
+  private controls(): RendererControls {
+    const r = this, p = this.projection;
+    return {
+      canvas: this.canvas, camera: this.camera,
+      get live() { return !r.disposed && !r.lost; },
+      get settings() { return r.settings; },
+      get width() { return r.width; },
+      get height() { return r.height; },
+      get visible() { return r.visible; },
+      get selected() { return r.selected; },
+      get hovered() { return r.hovered; },
+      get hoveredEdge() { return r.hoveredEdge; },
+      get focusNode() { return r.focusNode; },
+      get lensNode() { return r.lensWanted; },
+      get cardNode() { return r.card.node; },
+      get edgeCard() { return r.selectedEdges.length > 0; },
+      get isolated() { return !!r.isolation; },
+      pick: (x, y) => this.pick(x, y),
+      pickHub: (x, y) => this.pickHub(x, y),
+      pickEdge: (x, y) => this.pickEdge(x, y),
+      screenPoint: n => this.screenPoint(n),
+      owns: t => t === this.canvas || this.overlay.contains(t as Node),
+      selectNote: (n, card, keepLens) => this.selectNote(n, card, keepLens),
+      selectEdge: e => this.selectEdge(e),
+      cycleEdge: step => this.cycleEdge(step),
+      setHover: (node, edge) => { this.hovered = node; this.hoveredEdge = edge; this.emphasize(); this.refresh(); },
+      hint: (hub, node, edge, cursor) => {
+        this.container.title = hub >= 0 ? `${this.view.groupLabels?.[hub] ?? ''} (collapsed) — click to expand` : node >= 0 ? this.path(node) : edge >= 0 ? `${this.path(p.source[edge]!)} → ${this.path(p.target[edge]!)} [${p.types[p.type[edge]!]!}]` : '';
+        if (cursor) this.canvas.style.cursor = node >= 0 || hub >= 0 || edge >= 0 ? 'pointer' : 'grab';
+      },
+      openable: n => !!this.filterVisible[n],
+      open: n => this.onNode(n),
+      openHub: g => this.onHub?.(g),
+      stopFlight: () => { this.flight = undefined; },
+      setCamera: (x, y, ratio) => this.setCamera(x, y, ratio),
+      flyTo: (x, y, ratio, ms) => this.flyTo(x, y, ratio, ms),
+      panBy: (dx, dy) => this.setCamera(this.camera.x - dx / this.scale / this.cameraFrame.width, this.camera.y - dy / this.scale / this.cameraFrame.height, this.camera.ratio),
+      zoomAt: (factor, x, y) => {
+        this.flight = undefined; const before = this.scale;
+        this.camera.ratio = this.clampRatio(this.camera.ratio * factor);
+        this.camera.x += (x / before - x / this.scale) / this.cameraFrame.width; this.camera.y += (y / before - y / this.scale) / this.cameraFrame.height; this.refresh(); if (this.camera.ratio >= this.settings.lodZoomRatio) this.onZoomOut();
+      },
+      setLens: n => this.setLens(n),
+      toggleLens: () => this.toggleLens(),
+      cardKey: e => this.card.key(e),
+      cardStep: step => this.card.step(step),
+      isolate: n => this.isolate(n),
+      focusCanvas: () => this.canvas.focus(),
+    };
+  }
   private contextLost = (e: Event) => {
-    e.preventDefault(); if (this.disposed) return; this.lost = true; this.ready = false; this.pointers.clear(); this.container.title = ''; this.canvas.style.cursor = 'wait';
+    e.preventDefault(); if (this.disposed) return; this.lost = true; this.ready = false; this.input.release(); this.container.title = ''; this.canvas.style.cursor = 'wait';
     cancelAnimationFrame(this.frameId); clearTimeout(this.frameTimer); this.frameTimer = undefined; this.frameId = 0; this.canvas.dataset.context = 'lost';
     clearTimeout(this.restoreTimer); this.restoreTimer = setTimeout(() => { if (!this.disposed && this.lost) { this.canvas.dataset.context = 'failed'; this.onUnavailable(); } }, this.settings.contextRestoreTimeoutMs);
   };
@@ -1379,10 +1342,10 @@ export class DetailRenderer {
   };
   dispose() { clearTimeout(this.sizingTimer);
     if (this.disposed) return; this.disposed = true; this.labelsRevision++; clearTimeout(this.restoreTimer); this.restoreTimer = undefined; cancelAnimationFrame(this.frameId); clearTimeout(this.frameTimer); this.frameTimer = undefined; this.observer.disconnect(); this.media.removeEventListener('change', this.refreshTheme);
-    this.container.removeEventListener('pointerleave', this.pointerLeave);
-    this.canvas.removeEventListener('webglcontextlost', this.contextLost); this.canvas.removeEventListener('webglcontextrestored', this.contextRestored); this.canvas.removeEventListener('pointerdown', this.pointerDown); this.canvas.removeEventListener('pointermove', this.pointerMove); this.canvas.removeEventListener('pointerup', this.pointerUp); this.canvas.removeEventListener('pointercancel', this.pointerCancel); this.canvas.removeEventListener('pointerleave', this.pointerLeave); this.canvas.removeEventListener('keydown', this.keyDown); this.canvas.removeEventListener('wheel', this.wheel);
+    this.input.detach(this.container);
+    this.canvas.removeEventListener('webglcontextlost', this.contextLost); this.canvas.removeEventListener('webglcontextrestored', this.contextRestored);
     const gl = this.gl; if (gl && !this.lost) { for (const p of this.programs) gl.deleteProgram(p.handle); for (const b of [...this.buffers, ...this.labelBuffers, ...this.discBuffers]) if (b) gl.deleteBuffer(b); for (const v of [...this.vaos, ...this.labelVaos]) gl.deleteVertexArray(v); for (const t of this.textures) gl.deleteTexture(t); }
     gl?.getExtension('WEBGL_lose_context')?.loseContext();
-    this.pointers.clear(); this.container.title = ''; this.canvas.remove(); this.overlay.remove();
+    this.container.title = ''; this.canvas.remove(); this.overlay.remove();
   }
 }
