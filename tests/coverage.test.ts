@@ -32,7 +32,7 @@ test('coverage accounts for every markdown note once, every category non-zero, a
   const e = explore(p, d, view, new Uint32Array(p.paths.length), 0, { facetValues: 50 });
   // Independent ground truth: notes outside the projection the adapter would report.
   const excluded: [string, number][] = [['_archive', 3], ['Templates', 1]], loading = 2, added = 1, listed = rows.length + loading, total = listed + 4 + added;
-  const r: InformationReport = { nodes: p.paths.length, edges: p.source.length, indexed: rows.length, listed, linksPending: false, provisional: true, unresolved: p.unresolved, duplicates: p.quarantined.length,
+  const r: InformationReport = { nodes: p.paths.length, edges: p.source.length, listed, linksPending: false, provisional: true, unresolved: p.unresolved, duplicates: p.quarantined.length,
     dropped: p.dropped, rows: p.carrierPaths.length + p.quarantined.length, ruleNotes: p.ruleNotes, rules: d.edges.map(x => x.name), vault: total, excluded };
   const a = accounting(r, e);
   expect(a.parts.map(x => [x.icon, x.label, x.count])).toEqual([
@@ -57,7 +57,7 @@ test('coverage accounts for every markdown note once, every category non-zero, a
 
 test('a complete, unfiltered graph says all notes are accounted for; lines break down by rule', () => {
   const rows = vault().filter(x => !x.path.startsWith('Dup/')), p = buildProjection(rows, d), e = explore(p, d, emptyView(), new Uint32Array(p.paths.length), 0, { facetValues: 50 });
-  const r: InformationReport = { nodes: p.paths.length, edges: p.source.length, indexed: rows.length, listed: rows.length, linksPending: false, provisional: false, unresolved: p.unresolved, duplicates: 0,
+  const r: InformationReport = { nodes: p.paths.length, edges: p.source.length, listed: rows.length, linksPending: false, provisional: false, unresolved: p.unresolved, duplicates: 0,
     dropped: p.dropped, rows: rows.length, ruleNotes: p.ruleNotes, rules: d.edges.map(x => x.name), vault: rows.length, excluded: [] };
   const a = accounting(r, e);
   expect(a.complete).toBe(true); expect(a.parts.map(x => [x.label, x.count])).toEqual([['Shown as dots', 15], ['Drawn as crosswalk lines', 4]]);
@@ -107,7 +107,7 @@ test('relationship notes drawn as lines offer "Show as notes", and name the filt
   // The worker counts filters on the relationship notes alone; the room filter hides all 4 of them.
   const carriers = relationshipNotes(rows, d)!; expect(carriers.paths.length).toBe(4);
   e.carrierHidden = hiddenBy(carriers, e.filters); expect(e.carrierHidden).toEqual([4]);
-  const r: InformationReport = { nodes: p.paths.length, edges: p.source.length, indexed: rows.length, listed: rows.length, linksPending: false, provisional: false, unresolved: 0, duplicates: 0,
+  const r: InformationReport = { nodes: p.paths.length, edges: p.source.length, listed: rows.length, linksPending: false, provisional: false, unresolved: 0, duplicates: 0,
     rows: rows.length, ruleNotes: p.ruleNotes, rules: d.edges.map(x => x.name), vault: rows.length, excluded: [] };
   const calls: unknown[] = [], host: any = new ControlElement(), act = { display: (nodes: boolean) => calls.push(['display', nodes]), remove: (i: number) => calls.push(['remove', i]) };
   renderInformation(host, '', 'ready', r, e, act);

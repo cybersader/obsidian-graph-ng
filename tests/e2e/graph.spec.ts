@@ -307,7 +307,7 @@ describe('Graph NG synthetic Obsidian path', () => {
   it('quarantines duplicate identities visibly without breaking the graph', async function () {
     if (large) { this.skip(); return; }
     await browser.executeObsidian(async ({ app }) => { await app.vault.create('Quarantine-Duplicate.md', '---\nid: "concept:0"\nfamily: "Family 1"\n---\nSynthetic duplicate.\n'); });
-    await browser.waitUntil(async () => (await $('.graph-ng-status').getText()).includes('2 notes share an ID') && (await $('.graph-ng-view').getAttribute('data-state')) === 'ready', { timeout: 15000 });
+    await browser.waitUntil(async () => (await $('.graph-ng-status').getText()).includes('Duplicate IDs, left out') && (await $('.graph-ng-view').getAttribute('data-state')) === 'ready', { timeout: 15000 });
     await $('.graph-ng-quarantine summary').click();
     assert.equal(await $$('.graph-ng-quarantine .graph-ng-list button').length, 2);
     assert.ok(Number(await $('.graph-ng-view').getAttribute('data-nodes')) > 500);

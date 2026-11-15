@@ -5,7 +5,7 @@ import { physicsSettings, presetValues, PHYSICS_FIELDS, PHYSICS_PRESETS, type Ph
 import { editAsExpression, builderPredicate, checked } from './core/expr/engine';
 import { validate } from './core/expr/syntax';
 import { filterSummary, hiddenClause, setToggles, toggledValues } from './filter-summary';
-import { statRow } from './graph-information';
+import { countSpan, num, plural, statRow, sum } from './graph-information';
 import { suggestions } from './core/expr/autocomplete';
 import { declaredKeys } from './core/columns';
 import { describePredicate, groupLabel, NO_COLOR, VIEW_LIMITS, validateSaved, validateView, type ExploreResult, type ExploreView, type SavedView, type ViewCamera } from './core/explore';
@@ -253,8 +253,8 @@ export class ExplorePanel {
     if (this.host.scoped?.()) this.counts.createDiv({ cls: 'graph-ng-scope-name', text: `In ${this.host.scope?.()}` });
     if (external || !r) { this.note(this.counts, external ? 'External aggregate' : 'Waiting for projection…'); return; }
     const stats = this.counts.createDiv({ cls: 'graph-ng-stats' });
-    statRow(stats, 'circle-dot', 'Notes', `${r.visible.reduce((n, v) => n + v, 0).toLocaleString()} of ${r.nodes.toLocaleString()}`);
-    statRow(stats, 'spline', 'Lines', `${r.visibleEdges.toLocaleString()} of ${r.edges.toLocaleString()}`);
+    statRow(stats, 'circle-dot', 'Notes', `${num(sum(r.visible))} of ${num(r.nodes)}`);
+    statRow(stats, 'spline', 'Lines', `${num(r.visibleEdges)} of ${num(r.edges)}`);
   }
   private note(host: HTMLElement, text: string) { return host.createDiv({ cls: 'graph-ng-explore-note', text }); }
   /** One bounded text editor serves filters, colours and custom group values. */
@@ -276,7 +276,7 @@ export class ExplorePanel {
       const source = input.value, timer = setTimeout(() => {
         this.expressionTimers.delete(timer);
         void this.host.preview(source, context).then(count => {
-          if (input.isConnected && source === input.value) feedback.textContent = `${count.matched.toLocaleString()} / ${count.total.toLocaleString()} matched${count.groups === undefined ? '' : ` in ${count.groups.toLocaleString()} groups`}`;
+          if (input.isConnected && source === input.value) feedback.textContent = `${num(count.matched)} / ${num(count.total)} matched${count.groups === undefined ? '' : ` in ${num(count.groups)} groups`}`;
         }).catch(e => { if (input.isConnected && source === input.value) feedback.textContent = String(e).includes('generation changed') ? 'Projection changed; edit to refresh count' : `Preview: ${String(e)}`; });
       }, 150); this.expressionTimers.add(timer);
     };
@@ -288,12 +288,12 @@ export class ExplorePanel {
   private filters(host: HTMLElement, r: ExploreResult) {
     const filters = this.view.filters, count = filters.length;
     // Per-filter counts only when the result is for exactly these filters.
-    const hidden = r.filters && canonical(r.filters.slice(0, count)) === canonical(filters) ? r.filterHidden : undefined, total = hidden?.slice(0, count).reduce((a, b) => a + b, 0);
+    const hidden = r.filters && canonical(r.filters.slice(0, count)) === canonical(filters) ? r.filterHidden : undefined, total = hidden && sum(hidden.slice(0, count));
     const sentence = host.createDiv({ cls: 'graph-ng-filter-sentence', attr: { role: 'status' } });
     if (!count) sentence.textContent = 'No filters. Every note is shown.';
     else {
       const clause = hiddenClause(filters[0]!);
-      sentence.createSpan({ text: `Hiding ${total === undefined ? '' : `${total.toLocaleString()} `}${total === 1 ? 'note' : 'notes'} ${count > 1 ? `with ${count} filters` : clause.code ? 'not matching ' : clause.text}` });
+      sentence.createSpan({ text: `Hiding ${total === undefined ? 'notes' : plural(total, 'note')} ${count > 1 ? `with ${count} filters` : clause.code ? 'not matching ' : clause.text}` });
       if (count === 1 && clause.code) sentence.createEl('code', { text: clause.text });
     }
     // Pills: readable summary, then small labelled icon actions. Text is never a click target.
@@ -302,7 +302,7 @@ export class ExplorePanel {
     this.view.filters.forEach((f, i) => {
       const chip = chips.createDiv({ cls: 'graph-ng-chip', attr: { role: 'listitem' } }), summary = filterSummary(f), description = describePredicate(f);
       chip.createSpan({ cls: summary.code ? 'graph-ng-chip-text graph-ng-chip-code' : 'graph-ng-chip-text', text: summary.text, attr: { title: description } });
-      if (hidden) chip.createSpan({ cls: 'graph-ng-count', text: hidden[i]!.toLocaleString(), attr: { title: 'Notes this filter hides that no earlier filter hides' } });
+      if (hidden) countSpan(chip, hidden[i]!, 'Notes this filter hides that no earlier filter hides');
       const converted = editAsExpression(f), edit = icon(chip, `Edit filter ${i + 1} as expression`, 'pencil');
       edit.disabled = !converted.text; if (converted.reason) edit.title = converted.reason;
       edit.onclick = () => { this.drafts.set(`Edit filter ${i + 1}`, converted.text!); this.render(); };
@@ -339,7 +339,7 @@ export class ExplorePanel {
       const row = box.createEl('label', { cls: 'graph-ng-toggle' }), tick = row.createEl('input', { attr: { type: 'checkbox', 'aria-label': `Show ${v.label}`, 'data-focus-key': `toggle:${facet.key}:${v.raw}` } });
       tick.checked = !hidden.has(v.raw);
       tick.onchange = () => { const next = new Set(hidden); if (tick.checked) next.delete(v.raw); else next.add(v.raw); this.update({ filters: setToggles(this.view.filters, facet.key, present, next) }); };
-      row.createSpan({ cls: 'graph-ng-stat-label', text: v.label }); row.createSpan({ cls: 'graph-ng-count', text: v.count.toLocaleString() });
+      row.createSpan({ cls: 'graph-ng-stat-label', text: v.label }); countSpan(row, v.count);
     }
   }
   /** Property choices are exactly the materialized declared columns, plus folder prefixes. */
@@ -352,8 +352,8 @@ export class ExplorePanel {
     for (const [v, t] of operators ? [['eq', 'is'], ['in', 'is any of'], ['exists', 'exists']] : [['eq', 'is'], ['exists', 'exists']]) op.createEl('option', { value: v, text: t });
     const values = form.createEl('select', { attr: { 'aria-label': 'Value' } }), folder = form.createEl('input', { attr: { type: 'text', placeholder: 'Folder/Subfolder', 'aria-label': 'Folder prefix' } });
     // Native options cannot align a count column; the selection's note count sits beside the picker.
-    const matched = form.createSpan({ cls: 'graph-ng-count', attr: { 'aria-live': 'polite' } });
-    const count = () => { const facet = r.facets.find(f => `k:${f.key}` === property.value), picked = new Set([...values.selectedOptions ?? []].map(o => o.value)), n = facet?.values.reduce((a, v) => a + (picked.has(v.raw) ? v.count : 0), 0) ?? 0; matched.textContent = values.hidden || !picked.size ? '' : `${n.toLocaleString()} ${n === 1 ? 'note' : 'notes'}`; };
+    const matched = countSpan(form, ''); matched.setAttribute('aria-live', 'polite');
+    const count = () => { const facet = r.facets.find(f => `k:${f.key}` === property.value), picked = new Set([...values.selectedOptions ?? []].map(o => o.value)), n = facet?.values.reduce((a, v) => a + (picked.has(v.raw) ? v.count : 0), 0) ?? 0; matched.textContent = values.hidden || !picked.size ? '' : plural(n, 'note'); };
     const sync = () => {
       const isFolder = property.value === 'folder'; op.hidden = isFolder; folder.hidden = !isFolder;
       values.hidden = isFolder || op.value === 'exists'; values.multiple = op.value === 'in'; values.size = op.value === 'in' ? 5 : 1; values.empty();
@@ -414,7 +414,7 @@ export class ExplorePanel {
       item.createSpan({ cls: 'graph-ng-swatch' }).style.background = this.host.groupColor(i);
       const name = item.createEl('button', { cls: 'graph-ng-legend-name', text: label, attr: { title: `${label} — ${nodes ? 'frame this group' : 'open members'}` } });
       name.onclick = () => this.host.focusGroup(i);
-      item.createSpan({ cls: 'graph-ng-count', text: r.groupVisible[i] === r.groupTotals[i] ? r.groupTotals[i]!.toLocaleString() : `${r.groupVisible[i]!.toLocaleString()}/${r.groupTotals[i]!.toLocaleString()}` });
+      countSpan(item, r.groupVisible[i] === r.groupTotals[i] ? num(r.groupTotals[i]!) : `${num(r.groupVisible[i]!)}/${num(r.groupTotals[i]!)}`);
       if (nodes) {
         const fold = item.createEl('button', { cls: 'graph-ng-fold clickable-icon', text: collapsed.has(key) ? '⊕' : '⊖', attr: { 'data-focus-key': `group-fold:${key}`, 'aria-label': `${collapsed.has(key) ? 'Expand' : 'Collapse'} ${label}`, 'aria-pressed': String(collapsed.has(key)) } }); fold.disabled = !storable && !collapsed.has(key);
         fold.onclick = () => this.update({ collapsedGroups: collapsed.has(key) ? this.view.collapsedGroups.filter(k => k !== key) : [...this.view.collapsedGroups, key] }, collapsed.has(key) ? () => this.host.focusGroup(i) : undefined);
@@ -456,7 +456,7 @@ export class ExplorePanel {
         swatch.onchange = () => void this.host.setColors(d.colors.map((c, j) => j === i ? { ...c, color: swatch.value } : c));
       } else item.createSpan({ cls: 'graph-ng-swatch', attr: { title: rule.color } }).style.background = rule.color;
       item.createSpan({ cls: 'graph-ng-legend-name', text: rule.name, attr: { title: describePredicate(rule.predicate) } });
-      item.createSpan({ cls: 'graph-ng-count', text: r.colorCounts[i]!.toLocaleString() });
+      countSpan(item, r.colorCounts[i]!);
       const up = item.createEl('button', { cls: 'clickable-icon', text: '↑', attr: { 'aria-label': `Move ${rule.name} earlier (first match wins)` } }); up.disabled = i === 0;
       up.onclick = () => { const next = d.colors.slice(); [next[i - 1], next[i]] = [next[i]!, next[i - 1]!]; void this.host.setColors(next); };
       item.createEl('button', { cls: 'clickable-icon', text: '×', attr: { 'aria-label': `Delete rule ${rule.name}` } }).onclick = () => void this.host.setColors(d.colors.filter((_, j) => j !== i));
@@ -464,7 +464,7 @@ export class ExplorePanel {
     const rest = list.createDiv({ cls: 'graph-ng-legend-row' }), eye = rest.createEl('input', { attr: { type: 'checkbox', 'aria-label': 'Show notes matching no rule' } });
     eye.checked = !hidden.has(NO_COLOR); eye.onchange = () => toggle(NO_COLOR, eye.checked);
     rest.createSpan({ cls: 'graph-ng-legend-name', text: this.settings.visuals.autoPalette ? 'No rule (group colors)' : 'No rule' });
-    rest.createSpan({ cls: 'graph-ng-count', text: r.colorCounts[d.colors.length]!.toLocaleString() });
+    countSpan(rest, r.colorCounts[d.colors.length]!);
     this.note(host, 'First matching rule colors a note; no relayout.');
     let name: HTMLInputElement, color: HTMLInputElement;
     this.predicateForm(host, r, 'Add rule', p => {
@@ -481,7 +481,7 @@ export class ExplorePanel {
       const item = list.createDiv({ cls: 'graph-ng-legend-row' }), eye = item.createEl('input', { attr: { type: 'checkbox', 'aria-label': `Show ${type} relationships` } });
       eye.checked = !hidden.has(type); eye.onchange = () => this.update({ hiddenTypes: eye.checked ? this.view.hiddenTypes.filter(t => t !== type) : [...this.view.hiddenTypes, type] });
       item.createSpan({ cls: 'graph-ng-legend-name', text: type });
-      item.createSpan({ cls: 'graph-ng-count', text: `${r.typeVisible[i]!.toLocaleString()}/${r.typeTotals[i]!.toLocaleString()}` });
+      countSpan(item, `${num(r.typeVisible[i]!)}/${num(r.typeTotals[i]!)}`);
     });
     if (!r.types.length) this.note(list, 'No relationships.');
     this.flag(host, 'edgeDirection', 'Show direction (fade from source to target)');

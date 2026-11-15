@@ -227,7 +227,7 @@ test('fact groups paint before layout, pending links prevent exact caching, and 
     showGroups() { painted++; expect(encoded).toBe(0); } });
   try {
     await view.refreshOnce(); expect(painted).toBe(1); expect(complete).toBe(false); expect(caches).toBe(0); expect(encoded).toBe(0);
-    expect(view.contentEl.dataset.verified).toBe('false'); expect(view.status.textContent).toContain('Links pending'); expect(view.status.textContent).toContain('Partial graph'); expect(view.statusSummary.textContent).toContain('1 note0 linesof 1 in vault'); expect(view.statusSummary.textContent).toContain('Still loading');
+    expect(view.contentEl.dataset.verified).toBe('false'); expect(view.status.textContent).toContain('Links pending'); expect(view.status.textContent).toContain('Still loading'); expect(view.statusSummary.textContent).toContain('1 note0 linesof 1 in vault'); expect(view.statusSummary.textContent).toContain('Still loading');
     links['a.md'] = {}; adapter.invalidate();
     await view.refreshOnce(); expect(complete).toBe(true); expect(encoded).toBe(1); expect(caches).toBe(1); expect(view.contentEl.dataset.verified).toBe('true');
     const request = pipeline.request;

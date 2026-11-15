@@ -4,7 +4,7 @@ import type { ExploreResult } from './core/explore';
 import { filterSummary, hiddenClause } from './filter-summary';
 /** Structured Graph information for one projected generation. Rendering only; no graph state. */
 export interface InformationReport {
-  nodes: number; edges: number; indexed: number; listed: number;
+  nodes: number; edges: number; listed: number;
   linksPending: boolean; provisional: boolean; unresolved: number; duplicates: number;
   layout?: { cached: boolean; ms: number; totalMs: number };
   dropped?: Record<string, EdgeRuleCounts>;
@@ -23,9 +23,11 @@ export interface Part { icon: string; label: string; count: number; lines?: bool
 export interface InformationActions { display?(nodes: boolean): void; remove?(filter: number): void }
 /** Every markdown note in the vault, in exactly one part; the parts sum to `total`. */
 export interface Accounting { total: number; dots: number; lines: number; parts: Part[]; complete: boolean }
-const n = (v: number) => v.toLocaleString();
-const plural = (v: number, one: string, many = `${one}s`) => `${n(v)} ${v === 1 ? one : many}`;
-const sum = (a: ArrayLike<number>) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i]!; return s; };
+/** Shared count text: locale digits, a counted noun, a total, and one tabular count element. */
+export const num = (v: number) => v.toLocaleString(), n = num;
+export const plural = (v: number, one: string, many = `${one}s`) => `${n(v)} ${v === 1 ? one : many}`;
+export const sum = (a: ArrayLike<number>) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i]!; return s; };
+export const countSpan = (host: HTMLElement, v: number | string, title?: string) => host.createSpan({ cls: 'graph-ng-count', text: typeof v === 'number' ? n(v) : v, attr: title ? { title } : {} });
 /** A view result for another projection is ignored. */
 const current = (r: InformationReport, e?: Explored) => e?.nodes === r.nodes ? e : undefined;
 export function accounting(r: InformationReport, view?: Explored): Accounting {
@@ -44,12 +46,10 @@ export function accounting(r: InformationReport, view?: Explored): Accounting {
   add('refresh-cw', changed > 0 ? 'Added since the last refresh' : 'Removed since the last refresh', changed);
   return { total, dots, lines: e?.visibleEdges ?? r.edges, parts, complete: !r.provisional && !loading && !changed };
 }
-/** Plain-English issues, most consequential first. Each is a title plus an explanation. */
+/** Issues the breakdown does not already show (loading and duplicate IDs are rows there). Title plus explanation. */
 export function informationIssues(r: InformationReport): [string, string][] {
   const issues: [string, string][] = [];
-  if (r.provisional) issues.push(['Partial graph', 'Properties or links are still loading; filters and members may change.']);
   if (r.linksPending) issues.push(['Links pending', 'Link targets are still being resolved.']);
-  if (r.duplicates) issues.push([`${plural(r.duplicates, 'note')} ${r.duplicates === 1 ? 'shares' : 'share'} an ID and ${r.duplicates === 1 ? 'is' : 'are'} excluded`, 'Give each note a unique ID to include it.']);
   if (r.unresolved) issues.push([plural(r.unresolved, 'unresolved link'), 'Their target notes do not exist, so they are not drawn.']);
   return issues;
 }
@@ -57,12 +57,12 @@ export function informationIssues(r: InformationReport): [string, string][] {
 export function statRow(host: HTMLElement, icon: string, label: string, value: string, cls = '') {
   const row = host.createDiv({ cls: `graph-ng-stat ${cls}` });
   setIcon(row.createSpan({ cls: 'graph-ng-stat-icon' }), icon);
-  row.createSpan({ cls: 'graph-ng-stat-label', text: label }); row.createSpan({ cls: 'graph-ng-count', text: value });
+  row.createSpan({ cls: 'graph-ng-stat-label', text: label }); countSpan(row, value);
   return row;
 }
 /** The always-visible canvas readout: dots, lines and the vault total, plus a loading state. */
 export function renderReadout(host: HTMLElement, a: Accounting) {
-  for (const [icon, text] of [['circle-dot', plural(a.dots, 'note')], ['spline', plural(a.lines, 'line')]]) { const chip = host.createSpan({ cls: 'graph-ng-readout' }); setIcon(chip.createSpan({ cls: 'graph-ng-stat-icon' }), icon!); chip.createSpan({ cls: 'graph-ng-count', text }); }
+  for (const [icon, text] of [['circle-dot', plural(a.dots, 'note')], ['spline', plural(a.lines, 'line')]]) { const chip = host.createSpan({ cls: 'graph-ng-readout' }); setIcon(chip.createSpan({ cls: 'graph-ng-stat-icon' }), icon!); countSpan(chip, text!); }
   host.createSpan({ cls: 'graph-ng-readout graph-ng-count', text: `of ${n(a.total)} in vault` });
 }
 /** The Lines/Notes switch for relationship notes, then each filter that hides (or would hide) them, with its remove button. */
@@ -87,6 +87,7 @@ export function renderInformation(host: HTMLElement, message: string, state: str
   let acted = false;
   for (const p of a.parts) {
     statRow(notes, p.icon, p.label, (p.count < 0 ? '−' : '') + n(Math.abs(p.count)));
+    if (p.icon === 'copy') notes.createDiv({ cls: 'graph-ng-stat-sub', text: 'These notes share an ID with another note. Give each note a unique ID to include it.' });
     if (p.lines && !acted) { acted = true; relationshipActions(notes, r, e, act); }
   }
   statRow(notes, 'files', 'Markdown notes in vault', n(a.total), 'graph-ng-stat-total');
@@ -106,10 +107,7 @@ export function renderInformation(host: HTMLElement, message: string, state: str
     if (c?.missing) statRow(lines, 'unlink', `${rule}: target note missing`, n(c.missing), 'graph-ng-stat-sub');
     if (c?.excluded) statRow(lines, 'copy', `${rule}: endpoint has a duplicate ID`, n(c.excluded), 'graph-ng-stat-sub');
   });
-  host.createEl('h4', { text: 'Build' });
-  const build = host.createDiv({ cls: 'graph-ng-stats' });
-  statRow(build, 'file-check', 'Properties loaded', `${n(r.indexed)} of ${n(r.listed)}`);
-  statRow(build, 'timer', 'Layout', r.layout ? (r.layout.cached ? 'Cached' : `${n(Math.round(r.layout.ms))} ms`) : 'Building…');
+  statRow(lines, 'timer', 'Layout', r.layout ? (r.layout.cached ? 'Cached' : `${n(Math.round(r.layout.ms))} ms`) : 'Building…');
   const issues = informationIssues(r);
   host.createEl('h4', { text: 'Issues' });
   if (!issues.length) host.createDiv({ cls: 'graph-ng-explore-note', text: 'No issues found.' });

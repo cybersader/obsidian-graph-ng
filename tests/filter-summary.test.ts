@@ -36,10 +36,14 @@ test('graph information renders icon stat rows, a plain-English issues list and 
   renderInformation(host, 'Building layout in worker…', 'ready', report);
   const rows = host.querySelectorAll('.graph-ng-stat').map((t: any) => [t.children[0].children[0].getAttribute('data-icon'), t.children[1].textContent, t.children[2].textContent]);
   expect(rows).toEqual([['circle-dot', 'Shown as dots', '16,121'], ['copy', 'Duplicate IDs, left out', '2'], ['files', 'Markdown notes in vault', '16,123'], ['spline', 'Lines drawn', '49,534'],
-    ['unlink', 'crosswalk: target note missing', '2'], ['copy', 'crosswalk: endpoint has a duplicate ID', '1'], ['file-check', 'Properties loaded', '90 of 100'], ['timer', 'Layout', 'Building…']]);
+    ['unlink', 'crosswalk: target note missing', '2'], ['copy', 'crosswalk: endpoint has a duplicate ID', '1'], ['timer', 'Layout', 'Building…']]);
   expect(host.querySelectorAll('.graph-ng-count').length).toBe(rows.length);
   const issues = host.querySelectorAll('li').map((li: any) => li.children[0].textContent);
-  expect(issues).toEqual(['Partial graph', 'Links pending', '2 notes share an ID and are excluded', '1 unresolved link']);
+  // Issues list only what the breakdown does not: loading is the coverage line, duplicate IDs a breakdown row with its fix.
+  expect(issues).toEqual(['Links pending', '1 unresolved link']);
+  expect(host.querySelector('.graph-ng-coverage-state').textContent).toBe('Still loading properties and links');
+  expect(host.querySelectorAll('.graph-ng-stat-sub').map((x: any) => x.textContent)).toContain('These notes share an ID with another note. Give each note a unique ID to include it.');
+  expect(host.textContent).not.toContain('Properties loaded'); expect(host.textContent).not.toContain('Partial graph');
   expect(host.textContent).not.toContain(' · ');
   // The tile bar, card and table are gone.
   for (const cls of ['.graph-ng-stat-bar', '.graph-ng-stat-value', '.graph-ng-rules']) expect(host.querySelector(cls)).toBeUndefined();

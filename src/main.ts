@@ -20,7 +20,7 @@ import { yieldTask, sliced } from './core/scheduler';
 import { WorkerPipeline, LAYOUT_PRODUCER, currentDetailGeneration, type ProjectResult, type DetailResult, type LayoutResult, type ViewResult } from './pipeline';
 import { groupPages, page } from './core/group-page';
 import { ContributionPage, type ContributionContext } from './contribution-page';
-import { accounting, renderInformation, renderReadout, type InformationReport } from './graph-information';
+import { accounting, num, renderInformation, renderReadout, sum, type InformationReport } from './graph-information';
 import { canonicalExplore, loadSettings, settingsForSave, validateSettings, type Settings } from './settings';
 import { searchable } from './search';
 import { DetailRenderer, GroupRenderer, gpuStatus, type Renderer, type RenderView } from './renderer';
@@ -420,7 +420,7 @@ export class GraphView extends ItemView {
         const p = await this.plugin.pipeline.request<GroupProjection>(revision, { kind: 'external', bytes, maxBytes: settings.maxProjectionBytes, limits: { groups: settings.maxProjectionGroups, pairs: settings.maxProjectionPairs, carriers: settings.maxProjectionCarriers } });
         if (!current()) return;
         this.projection = undefined; this.positions = undefined; this.explored = undefined; this.groupGraph = p; this.groupGeneration = revision; this.viewGeneration = -1; this.viewSource = 'external'; this.members.clear(); this.contributions.clear();
-        this.contentEl.dataset.state = 'ready'; this.statusText = `External aggregate: ${p.groups.length.toLocaleString()} groups and ${p.groupEdges.length.toLocaleString()} counted group pairs. Not verified and not merged with live notes.`;
+        this.contentEl.dataset.state = 'ready'; this.statusText = `External aggregate: ${num(p.groups.length)} groups and ${num(p.groupEdges.length)} counted group pairs. Not verified and not merged with live notes.`;
         this.showGroups(); return;
       }
       const configuredSource = this.sourceKey(this.view), config = { declaration: settings.declaration, layout: settings.layout, source: `${this.plugin.linkProducer}/${this.plugin.sourceIdentity}`, groupLevel: settings.groupLevel, predicate: this.predicate, view: this.view, facetValues: settings.explore?.facetValues, streamEveryIterations: settings.streamEveryIterations };
@@ -466,13 +466,13 @@ export class GraphView extends ItemView {
       if (result.invalidSaved) await this.plugin.store.quarantine(result.invalidSaved);
       const coverage = this.plugin.adapter.coverage(); this.provisional = !this.plugin.adapter.factsComplete();
       this.contentEl.dataset.verified = String(!this.provisional);
-      const report: InformationReport = this.report = { nodes: result.nodes, edges: result.edges, indexed: coverage.indexed, listed: coverage.listed, linksPending: this.plugin.adapter.linksPending(), provisional: this.provisional, unresolved: result.unresolved, duplicates: result.quarantined.length, dropped: result.dropped, rows: result.rows, ruleNotes: result.ruleNotes, rules: settings.declaration.edges.map(e => e.name), relationshipNodes: settings.declaration.display.reifiedAsNodes, ...this.vaultCount(settings.declaration) };
+      const report: InformationReport = this.report = { nodes: result.nodes, edges: result.edges, listed: coverage.listed, linksPending: this.plugin.adapter.linksPending(), provisional: this.provisional, unresolved: result.unresolved, duplicates: result.quarantined.length, dropped: result.dropped, rows: result.rows, ruleNotes: result.ruleNotes, rules: settings.declaration.edges.map(e => e.name), relationshipNodes: settings.declaration.display.reifiedAsNodes, ...this.vaultCount(settings.declaration) };
       this.statusText = 'Building layout in worker…';
       this.contentEl.dataset.nodes = String(result.nodes); this.contentEl.dataset.edges = String(result.edges);
       await yieldTask();
       const detail = await this.plugin.pipeline.request<DetailResult>(revision, { kind: 'detail' });
       if (!current()) return;
-      this.projection = detail.projection; this.detailGeneration = revision; this.viewGeneration = detail.view; this.viewSource = configuredSource; this.visible = detail.visible; this.colors = detail.colors; this.explored = detail.explore; this.contentEl.dataset.visibleNodes = String(detail.explore.visible.reduce((n, v) => n + v, 0)); this.explorePanel?.render(); this.statusText = this.statusText; settled();
+      this.projection = detail.projection; this.detailGeneration = revision; this.viewGeneration = detail.view; this.viewSource = configuredSource; this.visible = detail.visible; this.colors = detail.colors; this.explored = detail.explore; this.contentEl.dataset.visibleNodes = String(sum(detail.explore.visible)); this.explorePanel?.render(); this.statusText = this.statusText; settled();
       this.contributionPage.update(this.contributionContext());
       if (result.quarantined.length) this.showGroups(true);
       this.plugin.pipeline.onPositions = event => { if (event.revision === revision && current()) { if (this.positions && this.contentEl.dataset.mode === 'groups') this.plugin.pipeline.recycle(this.positions.buffer as ArrayBuffer); this.positions = event.positions; this.contentEl.dataset.streaming = 'true'; } };
@@ -526,7 +526,7 @@ export class GraphView extends ItemView {
       this.contentEl.dataset.canvasGroups = String(selected.groups.length);
     };
     previous.onclick = () => { canvasPage--; draw(); }; next.onclick = () => { canvasPage++; draw(); }; draw();
-    this.paginate(projection.groups, (g, host) => { const b = host.createEl('button', { cls: 'graph-ng-count-row', attr: { 'data-group': g.id, title: g.label } }); b.createSpan({ text: g.label }); b.createSpan({ cls: 'graph-ng-count', text: g.count.toLocaleString() }); b.onclick = () => this.drill(g.id); }, this.panel, 'graph-ng-group-controls');
+    this.paginate(projection.groups, (g, host) => { const b = host.createEl('button', { cls: 'graph-ng-count-row', attr: { 'data-group': g.id, title: g.label } }); b.createSpan({ text: g.label }); b.createSpan({ cls: 'graph-ng-count', text: num(g.count) }); b.onclick = () => this.drill(g.id); }, this.panel, 'graph-ng-group-controls');
     const edges = this.section('relationships'); edges.createEl('summary', { text: `Relationships (${projection.groupEdges.length} group pairs)` });
     this.paginate(projection.groupEdges, (edge, host) => {
       host.createEl('button', { text: `${pages.labels.get(edge.a)} ↔ ${pages.labels.get(edge.b)} (${edge.total})`, cls: 'graph-ng-edge' }).onclick = () => this.edgeList(edge, projection, generation, source);
@@ -580,7 +580,7 @@ export class GraphView extends ItemView {
     const draw = () => {
       const query = search.value.trim().toLocaleLowerCase(); rows.empty();
       const filtered = query ? items.filter(item => path(item).toLocaleLowerCase().includes(query)) : items;
-      rows.createDiv({ text: `${filtered.length.toLocaleString()} of ${items.length.toLocaleString()} available members`, cls: 'graph-ng-explore-note' });
+      rows.createDiv({ text: `${num(filtered.length)} of ${num(items.length)} available members`, cls: 'graph-ng-explore-note' });
       this.paginate(filtered, (item, host) => {
         const full = path(item), button = host.createEl('button', { cls: 'graph-ng-member', attr: { title: full, 'aria-label': `Open ${full}` } });
         button.createSpan({ text: full.split('/').pop()!.replace(/\.md$/, '') });
@@ -599,7 +599,7 @@ export class GraphView extends ItemView {
     this.contributionPage.clear();
     const group = this.groupGraph?.groups.find(g => g.id === id); if (!group) return;
     this.scopeName = group.label; this.explorePanel?.show('members');
-    this.panel.empty(); this.panel.createEl('strong', { text: `${group.label}: ${group.count.toLocaleString()} members${this.provisional ? ' (provisional)' : ''}` });
+    this.panel.empty(); this.panel.createEl('strong', { text: `${group.label}: ${num(group.count)} members${this.provisional ? ' (provisional)' : ''}` });
     const revision = this.activeRevision, projection = this.projection, renderRevision = ++this.renderRevision, view = this.viewGeneration;
     if (projection && !currentDetailGeneration(revision, this.activeRevision, this.detailGeneration)) { new Notice('Member dictionary is updating; try this group again when verification finishes.'); return; }
     const status = this.panel.createDiv({ text: 'Loading members…', attr: { role: 'status', 'aria-live': 'polite' } });
@@ -638,7 +638,7 @@ export class GraphView extends ItemView {
       return;
     }
     this.panel.empty();
-    this.panel.createEl('strong', { text: Object.entries(edge.typeCounts).map(([t, n]) => `${t}: ${n.toLocaleString()}`).join(', ') });
+    this.panel.createEl('strong', { text: Object.entries(edge.typeCounts).map(([t, n]) => `${t}: ${num(n)}`).join(', ') });
     if (edge.directional) { this.panel.createDiv({ text: `A → B: ${JSON.stringify(edge.directional.aToB)}` }); this.panel.createDiv({ text: `B → A: ${JSON.stringify(edge.directional.bToA)}` }); }
     const rows = this.contributions.get(pairKey(edge.a, edge.b));
     if (rows) this.paginate(rows, (r, host) => { const item = host.createDiv({ cls: 'graph-ng-contribution' }); item.createSpan({ text: `${r.source} → ${r.target} [${r.type}] ` }); if (r.carrier) item.createEl('button', { text: r.carrier }).onclick = () => this.openPath(r.carrier!); });
@@ -675,7 +675,7 @@ export class GraphView extends ItemView {
     const pager = this.contributionPage; if (!pager.selection || this.closed || !this.panel) return;
     this.panel.empty();
     const edge = pager.edge;
-    this.panel.createEl('strong', { text: edge ? Object.entries(edge.typeCounts).map(([t, n]) => `${t}: ${n.toLocaleString()}`).join(', ') : 'Contributing mappings' });
+    this.panel.createEl('strong', { text: edge ? Object.entries(edge.typeCounts).map(([t, n]) => `${t}: ${num(n)}`).join(', ') : 'Contributing mappings' });
     if (edge?.directional) { this.panel.createDiv({ text: `A → B: ${JSON.stringify(edge.directional.aToB)}` }); this.panel.createDiv({ text: `B → A: ${JSON.stringify(edge.directional.bToA)}` }); }
     const status = this.panel.createDiv({ cls: 'graph-ng-contribution-status', attr: { role: 'status', 'data-state': pager.status }, text: pager.message });
     if (pager.status === 'error') status.createEl('button', { text: 'Retry' }).onclick = () => pager.retry(this.contributionContext());
@@ -786,7 +786,7 @@ export class GraphView extends ItemView {
         if (!fits && completion) throw new Error('Detail limit exceeded; displayed graph is unchanged');
         this.explored = result.explore; this.colors = result.colors; this.visible = result.explore.visible; this.groupGraph = result.groups; this.groupGeneration = revision;
         this.viewGeneration = result.view; this.viewSource = this.sourceKey(sent); this.members.clear(); this.contributions.clear();
-        this.contentEl.dataset.exploreMs = String(performance.now() - started); const g = this.view.group; this.contentEl.dataset.groupSource = !g ? 'declared' : g.from === 'folder' ? `folder:${g.depth}` : g.from === 'expr' ? 'expression' : `${g.from}:${g.key}`; this.contentEl.dataset.visibleNodes = String(result.explore.visible.reduce((n, v) => n + v, 0));
+        this.contentEl.dataset.exploreMs = String(performance.now() - started); const g = this.view.group; this.contentEl.dataset.groupSource = !g ? 'declared' : g.from === 'folder' ? `folder:${g.depth}` : g.from === 'expr' ? 'expression' : `${g.from}:${g.key}`; this.contentEl.dataset.visibleNodes = String(sum(result.explore.visible));
         this.contributionPage.update(this.contributionContext()); this.statusText = this.statusText;
         if (detail && fits) detail.setView(this.detailVisible()!, this.renderView());
         else if (detail || this.contentEl.dataset.mode === 'groups') this.showGroups(true);
