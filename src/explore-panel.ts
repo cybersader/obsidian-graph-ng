@@ -10,6 +10,7 @@ import { declaredKeys } from './core/columns';
 import { describePredicate, groupLabel, NO_COLOR, VIEW_LIMITS, validateSaved, validateView, type ExploreResult, type ExploreView, type SavedView, type ViewCamera } from './core/explore';
 import { canonical, validateDerivedGroup, validatePredicate, type GraphDeclaration, type GroupSource, type Predicate, type Scalar } from './core/declaration';
 import type { Settings, Visuals } from './settings';
+import { progressiveSlider, type Curve } from './progressive-slider';
 /** The view owns the worker, renderer and persistence; the panel only edits state. */
 export interface PanelHost {
   settings(): Settings;
@@ -50,10 +51,10 @@ function toolButton(host: HTMLElement, text: string, icon: string) {
   return button;
 }
 const SECTIONS: Record<string, [Section, string][]> = { views: [['views', 'Saved views']], filters: [['filters', 'Filters'], ['groups', 'Grouping'], ['edges', 'Relationships']], appearance: [['display', 'Appearance'], ['colors', 'Color rules']], layout: [['physics', 'Layout']] };
-const PHYSICS_FIELDS: [keyof PhysicsValues, string, string][] = [
-      ['scalingRatio', 'Spread nodes', 'Positive finite values; more repulsion, not target distance.'],
-      ['gravity', 'Pull toward center (gravity)', 'Stronger pull can compress structure. Zero is valid.'],
-      ['slowDown', 'Layout step slowdown (advanced)', 'Positive finite values; higher means smaller iteration steps, not damping or animation speed.'],
+const PHYSICS_FIELDS: [keyof PhysicsValues, string, string, Curve][] = [
+      ['scalingRatio', 'Spread nodes', 'Positive finite values; more repulsion, not target distance.', { min: .1, max: 100, log: true }],
+      ['gravity', 'Pull toward center (gravity)', 'Stronger pull can compress structure. Zero is valid.', { min: 0, max: 20, k: 3 }],
+      ['slowDown', 'Layout step slowdown (advanced)', 'Positive finite values; higher means smaller iteration steps, not damping or animation speed.', { min: .1, max: 100, log: true }],
     ];
 let expressionPanelId = 0;
 const parseRaw = (raw: string): Scalar => { try { const v: unknown = JSON.parse(raw); return v === null || ['string', 'number', 'boolean'].includes(typeof v) ? v as Scalar : raw; } catch { return raw; } };
@@ -398,19 +399,15 @@ export class ExplorePanel {
     box.checked = this.settings.visuals[key]; row.createSpan({ text: label });
     box.onchange = () => { this.settings.visuals[key] = box.checked; this.host.visualsChanged(labels); this.guards.forEach(update => update()); };
   }
-  private slider(host: HTMLElement, label: string, min: number, max: number, step: number, get: () => number, set: (v: number) => void, labels = false) {
-    const row = host.createDiv({ cls: 'graph-ng-slider' }); row.createSpan({ text: label });
+  private slider(host: HTMLElement, label: string, curve: Curve, get: () => number, set: (v: number) => void, labels = false) {
+    const { min, max } = curve, row = host.createDiv({ cls: 'graph-ng-slider' }); row.createSpan({ text: label });
     const number = row.createEl('input', { attr: { type: 'number', min: String(min), max: String(max), step: 'any', 'aria-label': label } });
-    const input = row.createEl('input', { attr: { type: 'range', min: String(min), max: String(max), step: String(step), 'aria-label': `${label} slider` } });
-    number.value = input.value = String(get()); number.title = `${min}–${max}; exact values accepted`;
-    const apply = (value: string) => {
+    number.value = String(get()); number.title = `${min}–${max}; exact values accepted`;
+    progressiveSlider(row, number, label, curve, value => {
       const n = value.trim() ? Number(value) : NaN, valid = Number.isFinite(n) && n >= min && n <= max;
       number.setAttribute('aria-invalid', String(!valid)); if (!valid) return;
       set(n); this.host.visualsChanged(false); this.guards.forEach(update => update());
-    };
-    number.oninput = () => { input.value = number.value; apply(number.value); };
-    input.oninput = () => { number.value = input.value; apply(input.value); };
-    if (labels) number.onchange = input.onchange = () => this.host.visualsChanged(true);
+    }, labels ? () => this.host.visualsChanged(true) : undefined);
   }
   private guard(host: HTMLElement, effect: string) {
     const box = host.createEl('details', { cls: 'graph-ng-guard' });
@@ -421,13 +418,13 @@ export class ExplorePanel {
   private physics(host: HTMLElement) {
     const fields = PHYSICS_FIELDS, draft = this.physicsDraft ??= Object.fromEntries(fields.map(([key]) => [key, String(this.settings.layout.force[key])])) as Record<keyof PhysicsValues, string>;
     this.note(host, 'Edit drafts, then Apply and recompute. Fit graph is separate.');
-    for (const [key, title, help] of fields) {
+    for (const [key, title, help, curve] of fields) {
       const label = host.createEl('label', { cls: 'graph-ng-physics-field' });
       label.createSpan({ text: title });
       const input = label.createEl('input', { attr: { type: 'number', step: 'any', 'aria-label': title } });
       if (key === 'gravity') input.min = '0';
       input.value = draft[key]; input.disabled = this.physicsBusy;
-      input.oninput = () => { draft[key] = input.value; };
+      progressiveSlider(label, input, title, curve, value => { draft[key] = value; });
       this.note(host, help);
     }
     host.createDiv({ cls: 'graph-ng-explore-error', text: this.physicsError, attr: { role: 'alert' } });
@@ -454,20 +451,17 @@ export class ExplorePanel {
     const current = sizingValues(this.settings);
     const draft = this.sizingDraft ??= { radius: String(current.radius), prominence: String(current.prominence), compensation: String(current.compensation * 100), floor: String(current.floor * 100) };
     this.note(group, this.settings.nodeSizing?.policy !== 'predictable' ? 'Legacy sizing · Apply adopts predictable sizing.' : 'Predictable sizing · saved in plugin settings.');
-    const fields: [keyof NodeSizingValues, string, string, number, number, number][] = [
-      ['radius', 'Base node radius', 'CSS px', .01, 20, .01], ['prominence', 'Maximum degree prominence', '× radius', 1, 9, .1],
-      ['compensation', 'Density compensation', '%', 0, 100, 1], ['floor', 'Minimum retained size', '% > 0', .1, 100, .1],
+    const fields: [keyof NodeSizingValues, string, string, Curve][] = [
+      ['radius', 'Base node radius', 'CSS px', { min: .01, max: 20, k: 3 }], ['prominence', 'Maximum degree prominence', '× radius', { min: 1, max: 9, k: 2 }],
+      ['compensation', 'Density compensation', '%', { min: 0, max: 100 }], ['floor', 'Minimum retained size', '% > 0', { min: .1, max: 100, k: 2 }],
     ];
     const inputs: HTMLInputElement[] = [];
     const message = group.createDiv({ cls: 'graph-ng-explore-note', attr: { role: 'status', 'aria-live': 'polite' } }); message.textContent = this.sizingMessage;
-    for (const [key, title, unit, min, max, step] of fields) {
+    for (const [key, title, unit, curve] of fields) {
       const row = group.createEl('label', { cls: 'graph-ng-sizing-row' }); row.createSpan({ text: title });
       const number = row.createEl('input', { attr: { type: 'number', step: 'any', 'aria-label': title } }); number.value = draft[key]; number.disabled = this.sizingBusy; inputs.push(number); number.min = key === 'prominence' ? '1' : '0'; number.max = String(key === 'radius' ? MAX_NODE_RADIUS : key === 'prominence' ? 9 : 100);
       row.createSpan({ text: unit });
-      const slider = row.createEl('input', { attr: { type: 'range', min: String(min), max: String(max), step: String(step), 'aria-label': `${title} slider` } }); slider.value = draft[key]; slider.disabled = this.sizingBusy;
-      const changed = (value: string) => { draft[key] = value; this.sizingPreview = false; this.host.previewSizing?.(null); this.sizingMessage = message.textContent = 'Draft · not previewed or saved'; this.updateSizingReadout(); };
-      number.oninput = () => { changed(number.value); slider.value = number.value; };
-      slider.oninput = () => { number.value = slider.value; changed(slider.value); };
+      progressiveSlider(row, number, title, curve, value => { draft[key] = value; this.sizingPreview = false; this.host.previewSizing?.(null); this.sizingMessage = message.textContent = 'Draft · not previewed or saved'; this.updateSizingReadout(); });
     }
     const help = group.createEl('details'); help.createEl('summary', { text: 'Sizing, density & brightness' });
     this.note(help, `Radius slider: 0.01–20 CSS px; type custom values up to ${MAX_NODE_RADIUS}. Degree counts incident edges, not hierarchy. Density shrinks marks, not spacing. Highlights add 2 px; glow, halos and overlapping edges can still brighten a core.`);
@@ -492,17 +486,17 @@ export class ExplorePanel {
   private display(host: HTMLElement) {
     const s = this.settings, v = s.visuals;
     type NumericVisual = { [K in keyof Visuals]: Visuals[K] extends number ? K : never }[keyof Visuals];
-    const slider = (key: NumericVisual, label: string, min: number, max: number, step: number) =>
-      this.slider(host, label, min, max, step, () => v[key], value => { v[key] = value; });
+    const slider = (key: NumericVisual, label: string, curve: Curve) =>
+      this.slider(host, label, curve, () => v[key], value => { v[key] = value; });
     this.nodes(host);
     this.note(host, 'Closing ends a preview; drafts stay here. Live controls below save automatically in plugin settings, not named views.');
     host.createEl('h4', { text: 'Live appearance defaults' });
-    this.slider(host, 'Label density', .25, 3, .25, () => s.labelDensity, x => { s.labelDensity = x; }, true);
-    slider('edgeOpacity', 'Edge opacity (0–1)', 0, 1, .001);
-    slider('edgeColorMix', 'Edge color blend', 0, 1, .05);
-    slider('glow', 'Glow', 0, 1, .001);
+    this.slider(host, 'Label density', { min: .25, max: 3, log: true }, () => s.labelDensity, x => { s.labelDensity = x; }, true);
+    slider('edgeOpacity', 'Edge opacity (0–1)', { min: 0, max: 1, k: 2.5 });
+    slider('edgeColorMix', 'Edge color blend', { min: 0, max: 1 });
+    slider('glow', 'Glow', { min: 0, max: 1, k: 2 });
     this.guard(host, 'glow');
-    slider('curvature', 'Curvature', 0, .5, .02);
+    slider('curvature', 'Curvature', { min: 0, max: .5, k: 1.5 });
     this.flag(host, 'curvedEdges', 'Curved edges');
     this.guard(host, 'curves');
     this.flag(host, 'groupHalos', 'Group halos at mid zoom');
@@ -512,8 +506,8 @@ export class ExplorePanel {
     this.note(host, 'Direct connections brightest, then 2-hop neighbours; the rest fades. Ancestor or framework levels need declared structural relationships; none are inferred.');
     this.flag(host, 'labelFade', 'Fade labels by zoom and importance', true);
     if (this.host.carriers()) {
-      slider('carrierOpacity', 'Edge-note opacity', 0, 1, .001);
-      slider('carrierSize', 'Edge-note size', .001, 4, .001);
+      slider('carrierOpacity', 'Edge-note opacity', { min: 0, max: 1, k: 2 });
+      slider('carrierSize', 'Edge-note size', { min: .001, max: 4, k: 2 });
       this.flag(host, 'carrierTint', 'Color edge notes by their endpoints');
       this.flag(host, 'carrierLod', 'Fold edge notes into edges when zoomed out');
     }

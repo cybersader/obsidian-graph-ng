@@ -77,7 +77,8 @@ test('UX exact low-opacity input preserves zero; invalid input never saves and g
   const toggle = input(f.panel.root, 'Curved edges'); toggle.checked = false; toggle.onchange(); expect(curves.hidden).toBe(true); f.panel.dispose();
 });
 test('UX radius slider broadens precision without weakening finite numeric safety bounds', () => {
-  const f = fixture(); f.panel.show('appearance'); const slider = input(f.panel.root, 'Base node radius slider'); expect(slider.getAttribute('min')).toBe('0.01'); expect(slider.getAttribute('max')).toBe('20'); expect(slider.getAttribute('step')).toBe('0.01');
+  const f = fixture(); f.panel.show('appearance'); const slider = input(f.panel.root, 'Base node radius slider'); expect(slider.getAttribute('aria-valuemin')).toBe('0.01'); expect(slider.getAttribute('aria-valuemax')).toBe('20');
+  slider.value = '0'; slider.oninput(); expect(input(f.panel.root, 'Base node radius').value).toBe('0.01'); slider.value = '1000'; slider.oninput(); expect(input(f.panel.root, 'Base node radius').value).toBe('20'); expect(slider.getAttribute('aria-valuenow')).toBe('20');
   const radius = input(f.panel.root, 'Base node radius'); radius.value = '1e20'; radius.oninput(); control(f.panel.root, 'Preview sizing').click(); expect(f.state.preview).toBeNull(); expect(f.panel.sizingMessage).toContain('Not previewed'); f.panel.dispose();
 });
 test('UX member navigator renders bounded name/path rows, searches existing members and supports arrows', () => {

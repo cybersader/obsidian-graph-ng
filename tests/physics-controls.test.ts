@@ -16,8 +16,9 @@ function fixture() {
   panel.render = () => { panel.body.empty(); panel.physics(panel.body); }; panel.render();
   return { panel, settings, applied: () => applied };
 }
+const numbers = (f: ReturnType<typeof fixture>): any[] => f.panel.body.querySelectorAll('input').filter((e: any) => e.type === 'number');
 function input(f: ReturnType<typeof fixture>, key: number, value: string) {
-  const e: any = f.panel.body.querySelectorAll('input')[key]; e.value = value; e.oninput();
+  const e: any = numbers(f)[key]; e.value = value; e.oninput();
 }
 test('full settings merge preserves custom physics, visuals, saved views and other settings without clamping', () => {
   const s = defaults('links'); s.layout.force.linLogMode = true; s.layout.maxForce = 123; s.visuals.glow = .123;
@@ -35,11 +36,11 @@ test('invalid zero negative NaN Infinity and invalid full settings are atomic', 
 });
 test('numeric drafts survive rerenders; reset changes only three drafts; explicit apply runs once', async () => {
   const f = fixture(); f.settings.layout.force.scalingRatio = 100000; f.panel.physicsDraft = undefined; f.panel.render();
-  expect(f.panel.body.querySelectorAll('input')[0].value).toBe('100000');
+  expect(numbers(f)[0].value).toBe('100000');
   input(f, 0, '999999'); input(f, 1, '0'); f.panel.render();
-  expect(f.panel.body.querySelectorAll('input')[0].value).toBe('999999'); expect(f.applied()).toBe(0);
+  expect(numbers(f)[0].value).toBe('999999'); expect(f.applied()).toBe(0);
   control(f.panel.body, 'Reset layout values').click(); expect(f.settings.layout.force.scalingRatio).toBe(100000);
-  expect(f.panel.body.querySelectorAll('input').map((e: any) => e.value)).toEqual(['2', '1', '1']);
+  expect(numbers(f).map((e: any) => e.value)).toEqual(['2', '1', '1']);
   const apply: any = control(f.panel.body, 'Apply and recompute'); const pending = apply.onclick(); apply.onclick(); await pending;
   expect(f.applied()).toBe(1); expect(f.settings.layout.force.scalingRatio).toBe(2); f.panel.dispose();
 });

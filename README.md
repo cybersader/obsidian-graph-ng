@@ -14,6 +14,12 @@ Predictable sizing uses a fixed 3 CSS-pixel density reference, so increasing req
 
 The supported predictable base radius is at most `floor(((2^24 - 1) / 2.3 - 2) / (9 × 4))` CSS pixels. This derives from binary32 integer-pixel precision, reserving the existing maximum degree/carrier multipliers, highlight and glow extents; it is not a slider cap. Unsupported drafts fail before preview/save, without clamping. Label placement independently rejects nonfinite or inexact cell coordinates and handles wide boxes by bounded comparisons against accepted labels instead of traversing huge cell spans. Edge-note size changes coalesce label regeneration; stale GPU offsets are hidden until replacement rather than overlapping enlarged carriers.
 
+### Progressive sliders and fine scrubbing
+
+Appearance, Nodes and Layout sliders share one progressive mapping: slider travel follows a power or logarithmic curve, so the commonly tuned low range (faint edge opacity, small radii, light glow, forces near their defaults) gets most of the track. Stored settings keep their existing units and ranges; only the slider position mapping changed, so no settings migration occurs. The numeric field beside each slider is the exact, editable value; slider steps round to four significant digits and endpoints are exact.
+
+While pressing a slider (mouse, pen or touch), move the pointer up or down away from the track to scrub more slowly: full speed near the track, then ½, ¼ and 1/10 speed further away, with a small "Fine: ¼ speed" hint. Keyboard: arrows move 0.4% of the track, Shift+arrows 4%, PageUp/PageDown 10%, Home/End to the ends. Screen readers get the real value through `aria-valuenow`/`aria-valuetext`. Draft, preview and apply behavior is unchanged. Native pointer/touch acceptance is pending.
+
 ## Layout controls
 
 Open **Layout** in graph controls. Numeric changes are drafts until **Apply and recompute**; editing alone neither saves nor runs layout.
@@ -24,7 +30,7 @@ Open **Layout** in graph controls. Numeric changes are drafts until **Apply and 
 | Pull toward center (gravity) | `layout.force.gravity` | Stronger pull can compress structure; nonnegative finite values, including zero. |
 | Layout step slowdown (advanced) | `layout.force.slowDown` | Larger values reduce movement per iteration; positive finite values. Not damping or animation speed. |
 
-There is no slider maximum or clamping of valid custom values. **Reset layout values** changes only three drafts to 2, 1, 1; applying remains explicit. Full settings validation preserves unexposed layout and appearance settings. Invalid, failed or stale worker results do not replace the last good settings or graph.
+Each field also has a slider (spread and slowdown 0.1–100 logarithmic, gravity 0–20); sliders only edit the draft. The slider span is not a validation maximum: typed values outside it are kept unclamped and the slider rests at its end. **Reset layout values** changes only three drafts to 2, 1, 1; applying remains explicit. Full settings validation preserves unexposed layout and appearance settings. Invalid, failed or stale worker results do not replace the last good settings or graph.
 
 Apply runs one finite layout-only worker recomputation on the current projection without body reads, source re-ingestion or cache mutation. Only a still-current open view commits settings and displayed positions. Positions can change; detail coordinates update on the same renderer/context with retained camera-frame bounds, camera and scope. **Fit graph** stays separate. Preview coordinates do not replace persisted worker generations: repeated applies start from the worker's previous completed baseline; ordinary refresh uses saved layout settings through existing cache validation. Saved-view schema is unchanged. External aggregate projections cannot apply note-layout settings.
 

@@ -112,3 +112,6 @@
 }
 @container (max-width: 480px) { .graph-ng-explore { inset:8px; width:auto; } }
 @media (pointer: coarse) { .graph-ng-toolbar button, .graph-ng-explore button, .graph-ng-explore input:not([type=checkbox]):not([type=range]), .graph-ng-explore select { min-height:44px; } }
+.graph-ng-slider, .graph-ng-sizing-row, .graph-ng-physics-field { position: relative; }
+.graph-ng-slider input[type=range], .graph-ng-sizing-row input[type=range], .graph-ng-physics-field input[type=range] { touch-action: none; }
+.graph-ng-fine-hint { position: absolute; right: 0; top: 0; padding: 0 4px; border-radius: 4px; font-size: var(--font-ui-smaller); background: var(--background-secondary); pointer-events: none; }
