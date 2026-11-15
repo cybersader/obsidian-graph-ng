@@ -87,7 +87,7 @@ test('density zero-edge contract and explicit current focus remain continuous ac
 test('density correction leaves node radius and edge geometry/direction/focus equations intact', () => {
   // Graduated hover changes only the node tint line, the edge focus line and adds the edge tier attribute;
   // graduated tier styling adds the focus ring/growth lines and the focus-incident edge width factor.
-  const focusFree = (code: string) => code.replace(/\n tint = vec4\(c\.rgb,.*;/, '').replace(/\n if \(focus > 0\.\) alpha = .*;/, '').replace('\nlayout(location=3) in uint tier;', '')
+  const focusFree = (code: string) => code.replace(/\n tint = vec4\(c\.rgb,.*;/, '').replace(/\n if \(focus > 0\.\) alpha = .*;/, '').replace(/\n if \(tier == 254u.*/, '').replace('\nlayout(location=3) in uint tier;', '')
     .replace(/\n.*(\bego\b|Graduated tiers).*/g, '').replace('\nout float ring;', '').replace(/\n float wide = .*;/, '').replace('* wide)', '* max(.5, edgeSize))');
   expect(focusFree(shader('nodeVertex'))).toBe(focusFree(before.nodeVertex)); expect(shader('nodeVertex')).not.toBe(before.nodeVertex);
   const geometry = (code: string) => focusFree(code.slice(0, code.lastIndexOf('tint = vec4(rgb * alpha,'))); expect(geometry(shader('edgeVertex'))).toBe(geometry(before.edge));

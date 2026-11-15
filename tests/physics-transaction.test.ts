@@ -349,7 +349,7 @@ test('graduated production labels: focus largest, direct then 2-hop by priority,
   const paint = () => { r[k('focusLevel')] = 1; r[k('placeOverlay')](); return r[k('tierLabels')].map((el: any) => [el.textContent, el.className, el.style.opacity]); };
   const name = (n: number) => r[k('name')](n);
   f.tap(1); const first = paint();
-  expect(first).toEqual([[name(0), 'graph-ng-focus-label graph-ng-tier-1', '1'], [name(2), 'graph-ng-focus-label graph-ng-tier-1', '1'], [name(3), 'graph-ng-focus-label graph-ng-tier-2', '1']]);
+  expect(first).toEqual([[name(0), 'graph-ng-focus-label graph-ng-tier-1', '1'], [name(2), 'graph-ng-focus-label graph-ng-tier-1', '1'], [name(3), 'graph-ng-focus-label graph-ng-tier-3', '1']]);
   expect(r[k('hoverLabel')].className).toBe('graph-ng-hover-label graph-ng-focus'); expect(r[k('hoverLabel')].textContent).toBe(name(1));
   // Per frame only translates; the placement is reused until focus or LOD changes.
   const ranked = r[k('ranked')]; r.setCamera(r.camera.x + .01, r.camera.y, r.camera.ratio); paint(); expect(r[k('ranked')]).toBe(ranked);

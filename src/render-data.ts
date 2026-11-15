@@ -54,34 +54,60 @@ export function incidentEdges(p: Pick<Projection, 'paths' | 'source' | 'target'>
   for (let e = 0; e < p.source.length; e++) { edges[cursor[p.source[e]!]!++] = e; edges[cursor[p.target[e]!]!++] = e; }
   return { offsets, edges };
 }
-/** Graduated focus, presentation only: minimum hop distance from `f` over type-visible (`on`) edges
- * between filter-visible (`vis`) nodes. Tier bytes are 255 (focus and direct), 128 (neighbours of
- * neighbours) or 0; node tiers go in the G byte of the RGBA `state`. An edge note's own relationship
- * rows are transparent, so a reified mapping keeps its far endpoint direct (and stays lit at hop 2). Hop 1 is complete; hop 2
- * stops in incident-CSR order after `max` scanned entries and returns true. Only the appended
- * `nodes`/`edges` are written, so callers clear by those lists, never by a rescan. */
-export function focusTiers(f: number, inc: { offsets: Uint32Array; edges: Uint32Array }, p: Pick<Projection, 'source' | 'target' | 'carrier' | 'carrierNodes'>, on: ArrayLike<number>, vis: ArrayLike<number>, state: Uint8Array, edge: Uint8Array, nodes: number[], edges: number[], max = 65536) {
-  let budget = Infinity;
+/** Graduated focus, presentation only. Node tiers go in the G byte of the RGBA `state` with explicit
+ * precedence focus = direct (255) > ancestor (192) > 2-hop (128) > same group (64) > context (0):
+ * direct is the minimum hop over type-visible (`on`) edges between filter-visible (`vis`) nodes;
+ * ancestors follow the declared hierarchy `p.up` from the focus (at most 8 levels and 256 notes,
+ * cycle-safe; hidden ancestors are passed through, not lit), lighting the child-parent edge;
+ * 2-hop extends direct; same group marks other members of the focus's `codes` group, at most
+ * 4096 marked and `max * 4` scanned. An edge note's own relationship rows are transparent, so a
+ * reified mapping keeps its far endpoint direct (and stays lit at hop 2). Edge bytes are 255
+ * (focus-incident) or 128, minus 1 when `p.tint` marks the edge's rule (254/127: tinted layer,
+ * same weight). Hop 1 is complete; ancestor and hop-2 scans share `max` incident entries.
+ * Returns truncation bits: 1 hop/ancestor scan, 2 same group. Only the appended `nodes`/`edges`
+ * are written, so callers clear by those lists, never by a rescan. */
+export function focusTiers(f: number, inc: { offsets: Uint32Array; edges: Uint32Array }, p: Pick<Projection, 'source' | 'target' | 'carrier' | 'carrierNodes' | 'up' | 'tint'>, on: ArrayLike<number>, vis: ArrayLike<number>, state: Uint8Array, edge: Uint8Array, nodes: number[], edges: number[], max = 65536, codes?: ArrayLike<number>) {
+  let budget = Infinity, cut = 0;
   const tier = (i: number) => state[i * 4 + 1]! > 200, own = (e: number, c: number) => !!p.carrierNodes[c] && p.carrier[e]! + 1 === p.carrierNodes[c];
-  const grow = (from: number[], mark: number) => {
+  const mark = (v: number, m: number) => { if (!state[v * 4 + 1]) { state[v * 4 + 1] = m; nodes.push(v); return 1; } };
+  const lit = (e: number, m: number) => { if (!edge[e]) { edge[e] = m - (p.tint?.[e] ?? 0); edges.push(e); } };
+  const grow = (from: number[], m: number) => {
     const out: number[] = [], scan = (u: number, carrier?: boolean) => {
       for (let j = inc.offsets[u]!; j < inc.offsets[u + 1]! && budget-- > 0; j++) {
         const e = inc.edges[j]!, v = p.source[e] === u ? p.target[e]! : p.source[e]!;
         if (!on[e] || !vis[v] || carrier && !own(e, u)) continue;
-        if (!state[v * 4 + 1]) { state[v * 4 + 1] = mark; nodes.push(v); out.push(v); }
+        if (mark(v, m)) out.push(v);
         const a = tier(u), b = tier(v);
-        if (!edge[e] && (a || b || carrier)) { edge[e] = a && b && (u === f || v === f || own(e, u) || own(e, v)) ? 255 : 128; edges.push(e); }
+        if (a || b || carrier) lit(e, a && b && (u === f || v === f || own(e, u) || own(e, v)) ? 255 : 128);
       }
     };
     for (const u of from) scan(u);
     for (let i = 0; i < out.length; i++) if (p.carrierNodes[out[i]!]) scan(out[i]!, true);
     return out;
   };
-  if (f < 0 || !vis[f]) return false;
+  if (f < 0 || !vis[f]) return 0;
   state[f * 4 + 1] = 255; nodes.push(f);
-  const direct = grow([f], 255); budget = max; grow(direct, 128);
-  return budget < 0;
+  const direct = grow([f], 255), up = p.up; budget = max;
+  if (up) for (let from = [f], seen = new Set(from), d = 0; d < 8 && from.length; d++) {
+    const next: number[] = [];
+    for (const u of from) for (let j = up.offsets[u]!; j < up.offsets[u + 1]! && seen.size < 256; j++) {
+      const v = up.targets[j]!; if (seen.has(v)) continue; seen.add(v); next.push(v);
+      if (!vis[v]) continue; mark(v, 192);
+      if (vis[u]) for (let k = inc.offsets[u]!; k < inc.offsets[u + 1]! && budget-- > 0; k++) { const e = inc.edges[k]!; if (on[e] && (p.source[e] === v || p.target[e] === v)) lit(e, 128); }
+    }
+    from = next;
+  }
+  grow(direct, 128); if (budget < 0) cut = 1;
+  if (codes) for (let i = 0, c = codes[f], n = 0; i < codes.length; i++) {
+    if (i >= max * 4) { cut |= 2; break; }
+    if (codes[i] === c && vis[i] && !state[i * 4 + 1]) { if (n++ >= 4096) { cut |= 2; break; } mark(i, 64); }
+  }
+  return cut;
 }
+/** Tinted edge layer (254 or 127): drawn at its tier's weight with the accent mixed in by `f / 2`. */
+export const tintedEdge = (t: number) => t === 254 || t === 127;
+/** Edge tier bucket for the Canvas passes: 255 focus-incident, 128 lit, 0 context. */
+export const edgeBucket = (t: number) => t > 200 ? 255 : t ? 128 : 0;
 /** Graduated tier styling for Canvas; the shaders write the same expressions (tests compare both).
  * `g` is the node tier byte / 255 and `f` the eased focus level. Node: [alpha factor, radius
  * factor, ring coverage] — the focus grows 60% and gains a ring, direct notes grow 25% at full

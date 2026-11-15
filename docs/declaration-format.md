@@ -23,12 +23,38 @@ All top-level fields except `carrierResolvers` are required. Unknown declaration
 | --- | --- |
 | `version` | Exactly `2`. |
 | `identity` | Ordered `{key}` frontmatter sources. First present scalar wins; otherwise literal path. No sources means paths. Conflicting identity owners and identity/path aliases quarantine all affected notes; exact duplicate input paths fail. |
-| `edges` | Unique named rules. `reified` requires `sourceProperty`/`targetProperty`, optional `typeProperty` and/or `type`; retains the relationship note as carrier. `inline` requires `key` and `type`, with literal IDs, not an inferred link grammar. `producer` requires exact `producer` name and `type`; the host producer is pinned as `obsidian-links@<apiVersion>`. |
+| `edges` | Unique named rules. `reified` requires `sourceProperty`/`targetProperty`, optional `typeProperty` and/or `type`, and optional `highlight: "tint"` (presentation only); retains the relationship note as carrier. `inline` requires `key` and `type`, with literal IDs, not an inferred link grammar. `producer` requires exact `producer` name and `type`; the host producer is pinned as `obsidian-links@<apiVersion>`. |
 | `groups` | Ordered selectable groupings: `{from:"key",key}`, `{from:"folder",depth,prefix?}` with positive safe integer depth, `{from:"expr",expr}`, or `{from:"derived",key,transform}` (see [Derived group sources](#derived-group-sources)). `groupLevel` tuning selects one, not an inferred hierarchy. Missing keys form an explicit missing group; no rules means All notes. |
 | `display` | Required boolean `reifiedAsNodes`. False connects endpoints with a carrier; true makes the relationship note an intermediate node. The Appearance control **Relationship notes: Lines | Nodes** edits only this field. |
 | `columns` | Nonempty property-key strings materialized as dictionary-coded columns for filtering. Color/group keys are also materialized. |
 | `colors` | Ordered `{name,color,predicate}` rules, first match wins. Colors must be `#rrggbb`, `#rrggbbaa`, or a restricted `var(--name)` reference resolved from computed host CSS. These are explicit declarations, not a hidden palette tied to any ontology. |
+| `hierarchy` | Optional `{parentProperty}`: a frontmatter property whose scalar value(s) name the parent's identity (declared identity or exact path). Presentation only; see [Focus emphasis](#focus-emphasis-optional). |
+| `groupContext` | Optional boolean. `true` shows other members of the focus's current group as a faint highlight tier. |
 | `carrierResolvers` | Optional unique `{kind,key}` bindings. `$path` means an exact local note path; other keys are declared frontmatter lookups. Absent/ambiguous matches cannot navigate. Carrier strings have no guessed meaning. |
+
+## Focus emphasis (optional)
+
+Three optional, ontology-neutral fields extend the graduated hover/selection highlight. Absent fields mean the existing topological tiers exactly; no migration rewrites them. They are excluded from layout identity, so adding or editing them never reseeds or relayouts (a new `parentProperty` is ingested like any declared key).
+
+- `hierarchy.parentProperty` — each note's parents are the values of this property (a scalar or a list), resolved like inline edge targets: declared identity first, then exact path. Unresolved values and self references are dropped, duplicates collapse, multiple parents are allowed. The focus's ancestors (up to 8 levels, at most 256 notes, cycle-safe) form the *ancestor* tier.
+- `groupContext: true` — with a current grouping, other filter-visible members of the focus's group form the *same group* tier (bounded and reported when truncated).
+- `highlight: "tint"` on a `reified` rule — its edges keep their hop tier but mix in the accent color while a focus is active, so a mapping layer reads distinctly. Direct mappings stay direct.
+
+Precedence is fixed: focus > direct > ancestor > 2-hop > same group > context.
+
+**Example idea (Crosswalker-style frameworks, docs only, not a shipped preset):** framework entries carry `curie` and `parent_curie`; crosswalk notes (`kind: crosswalk-edge`) carry `subject_id`/`object_id`/`predicate_id`. Grouping by the CURIE prefix (part 1 of `curie` split at the first `:`) gives framework membership.
+
+```json
+{
+  "identity": [{"key": "curie"}],
+  "hierarchy": {"parentProperty": "parent_curie"},
+  "groupContext": true,
+  "groups": [{"from": "derived", "key": "curie", "transform": {"kind": "segment", "delimiter": ":", "index": 0}}],
+  "edges": [{"name": "crosswalk", "kind": "reified", "sourceProperty": "subject_id", "targetProperty": "object_id", "typeProperty": "predicate_id", "highlight": "tint"}]
+}
+```
+
+Only the focus-emphasis-relevant fields are shown; a complete declaration also needs the required fields above. Hovering a control then shows its direct links and mappings brightest, its parent chain softer, 2-hop neighbours medium, the rest of its framework faintly, and crosswalk edges tinted.
 
 Unresolved edge endpoints are dropped and counted. Self-links and parallel edges survive. Directed edge columns retain direction; CSR adjacency includes both traversal directions. Filters compare scalar type exactly (`1`, `"1"`, `true`, null and missing differ). Folder prefixes use path boundaries, not arbitrary string prefixes.
 

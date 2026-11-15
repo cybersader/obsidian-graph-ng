@@ -1,6 +1,6 @@
 import { renderPath, type RenderProjection } from './render-projection';
 import type { Settings } from './settings';
-import { PickGrid, positionTexture, incidentEdges, focusTiers, tierNode, tierEdge, tierLabel, segmentDistance, labelLOD, canvasDetailEdges, resizeDrawingBuffer, LABEL_RATIOS } from './render-data';
+import { PickGrid, positionTexture, incidentEdges, focusTiers, tintedEdge, edgeBucket, tierNode, tierEdge, tierLabel, segmentDistance, labelLOD, canvasDetailEdges, resizeDrawingBuffer, LABEL_RATIOS } from './render-data';
 import { readTheme, type GraphTheme } from './render-theme';
 import { baseRadius, sizedRadius, sizingSettings, type NodeSizingValues } from './node-sizing';
 import { buildLabels, focusLabels, type LabelAtlas } from './render-labels';
@@ -110,6 +110,7 @@ void main() {
  vec3 rgb = mix(color(1).rgb, mix(nodeColor(s).rgb, nodeColor(t).rgb, u), colorMix);
  float alpha = edgeAlpha * (direction > .5 ? mix(.12, 1., u) : 1.);
  if (focus > 0.) alpha = mix(alpha, tier > 200u ? min(1., alpha * 3.) : tier > 0u ? alpha : alpha * dim * .6, focus);
+ if (tier == 254u || tier == 127u) rgb = mix(rgb, color(4).rgb, focus * .5);
  if (gl_InstanceID == edgeHovered) { rgb = color(4).rgb; alpha = min(1., alpha * 3.); }
  tint = vec4(rgb * alpha, alpha);
 }`;
@@ -229,7 +230,7 @@ export class DetailRenderer {
   /** Per-edge focus tier bytes (255 direct, 128 context, 0 rest), uploaded as edge attribute 3. */
   private edgeTier: Uint8Array;
   private tierEdges: number[] = [];
-  private tierPartial = false;
+  private tierPartial = 0;
   private visibleEdges = 0;
   private visibleNodes = 0;
   /** Edge notes (reified edges drawn as nodes): total and render-visible. */
@@ -697,13 +698,13 @@ export class DetailRenderer {
       for (const i of this.near) s[i * 4 + 1] = 0;
       for (const e of this.tierEdges) t[e] = 0;
       this.near = []; this.tierEdges = []; this.focusNode = node; this.rankedLod = -1;
-      this.tierPartial = focusTiers(node, this.edges, this.projection, this.edgeOn, this.filterVisible, s, t, this.near, this.tierEdges);
+      this.tierPartial = focusTiers(node, this.edges, this.projection, this.edgeOn, this.filterVisible, s, t, this.near, this.tierEdges, 65536, this.settings.declaration.groupContext ? this.view.groupCodes : undefined);
       if (this.gl && this.ready && !this.lost) this.uploadTiers();
     }
     this.focusTarget = this.near.length ? 1 : 0; this.focusAt = performance.now();
     if (immediate) this.focusLevel = this.focusTarget;
   }
-  private noteCaption(n: number) { return this.path(n).split('/').pop()!.replace(/\.md$/, '') + (this.tierPartial && n === this.focusNode ? ' (2-hop context truncated)' : ''); }
+  private noteCaption(n: number) { return this.path(n).split('/').pop()!.replace(/\.md$/, '') + (n === this.focusNode ? (this.tierPartial & 1 ? ' (2-hop context truncated)' : '') + (this.tierPartial & 2 ? ' (group context truncated)' : '') : ''); }
   /** Selection drives the persistent focus. Touch and keyboard selections show the card; only its
    * explicit Open button (or Enter on the canvas) opens the note. */
   private selectNote(node: number, card?: boolean) {
@@ -813,9 +814,11 @@ export class DetailRenderer {
     // The edge shader's tier weights: rest, neighbours of neighbours, then direct strokes on top.
     const zoom = this.camera.ratio / this.homeRatio, base = edgeAlpha(s.visuals, this.visibleEdges, zoom, false, this.width, this.height), width = s.edgeSize * zoomFade(s.visuals, this.visibleEdges, zoom, this.width, this.height);
     for (const tier of focus ? [0, 128, 255] : [-1]) {
-      const [alpha, wide] = tierEdge(tier, base, tier < 0 ? 0 : focus, dim); ctx.globalAlpha = alpha; ctx.lineWidth = width * wide; ctx.beginPath(); let any = 0;
-      for (const e of this.canvasEdges) { const a = this.projection.source[e]!, b = this.projection.target[e]!; if (!this.edgeOn[e] || !this.filterVisible[a] || !this.filterVisible[b] || tier >= 0 && this.edgeTier[e] !== tier) continue; ctx.moveTo(x(a), y(a)); ctx.lineTo(x(b), y(b)); any = 1; }
+      const [alpha, wide] = tierEdge(tier, base, tier < 0 ? 0 : focus, dim); ctx.globalAlpha = alpha; ctx.lineWidth = width * wide; ctx.beginPath(); let any = 0; const hue: number[] = [], line = (e: number) => { const a = this.projection.source[e]!, b = this.projection.target[e]!; ctx.moveTo(x(a), y(a)); ctx.lineTo(x(b), y(b)); };
+      for (const e of this.canvasEdges) { const a = this.projection.source[e]!, b = this.projection.target[e]!, t = this.edgeTier[e]!; if (!this.edgeOn[e] || !this.filterVisible[a] || !this.filterVisible[b] || tier >= 0 && edgeBucket(t) !== tier) continue; line(e); any = 1; if (tier >= 0 && tintedEdge(t)) hue.push(e); }
       if (s.visuals.edgeOpacity > 0 && any) ctx.stroke();
+      // Tinted relationship layer: the shader mixes the accent by focus / 2 at the same weight.
+      if (s.visuals.edgeOpacity > 0 && hue.length) { ctx.strokeStyle = this.theme.accent; ctx.globalAlpha = alpha * focus * .5; ctx.beginPath(); hue.forEach(line); ctx.stroke(); ctx.strokeStyle = this.theme.edge; }
     }
     const notes = this.projection.carrierNodes, level = this.carrierLevel();
     // Edge notes first (beneath), then the other nodes.

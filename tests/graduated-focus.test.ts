@@ -24,7 +24,7 @@ afterAll(() => { const dir = new URL('../.workspace/evidence/', import.meta.url)
 
 test('graduated tiers: focus and direct, then neighbours of neighbours, rest untouched', () => {
   const g = graph(5, [[0, 1], [1, 2], [2, 3], [3, 4]]), r = run(g, 0);
-  expect(r.tiers).toEqual([D, D, C, 0, 0]); expect(r.edge).toEqual([D, C, 0, 0]); expect(r.partial).toBe(false);
+  expect(r.tiers).toEqual([D, D, C, 0, 0]); expect(r.edge).toEqual([D, C, 0, 0]); expect(r.partial).toBe(0);
   expect(r.nodes).toEqual([0, 1, 2]); expect(r.edges).toEqual([0, 1]);
   // Only the G byte is written; R/B/A state bytes stay untouched.
   r.state.forEach((v, i) => { if (i % 4 !== 1) expect(v).toBe(0); });
@@ -49,7 +49,7 @@ test('graduated direct crosswalk precedence: edge-note hops are transparent; min
 test('graduated absent metadata: isolated, unset, hidden focus and empty graphs make an empty cloud without throwing', () => {
   const g = graph(3, [[1, 2]]);
   expect(run(g, 0).tiers).toEqual([D, 0, 0]); expect(run(g, 0).edges).toEqual([]);
-  for (const r of [run(g, -1), run(g, 1, { vis: new Uint8Array([1, 0, 1]) })]) { expect(r.nodes).toEqual([]); expect(r.edges).toEqual([]); expect(r.partial).toBe(false); expect(r.tiers).toEqual([0, 0, 0]); }
+  for (const r of [run(g, -1), run(g, 1, { vis: new Uint8Array([1, 0, 1]) })]) { expect(r.nodes).toEqual([]); expect(r.edges).toEqual([]); expect(r.partial).toBe(0); expect(r.tiers).toEqual([0, 0, 0]); }
   expect(run(graph(1, []), 0).tiers).toEqual([D]);
   // Single type, no carrier rows at all: still purely topological.
   const plain = { ...graph(2, [[0, 1]]) }; plain.p = { ...plain.p, carrier: new Uint32Array(1).fill(NONE) }; expect(run(plain, 1).tiers).toEqual([D, D]);
@@ -79,11 +79,11 @@ test('graduated dense hub: hop 1 complete, hop 2 bounded by scanned entries, det
   const pairs: Pair[] = [], hub = 400, leaves = 300; let id = hub + 1;
   for (let i = 1; i <= hub; i++) { pairs.push([0, i]); for (let k = 0; k < leaves; k++) pairs.push([i, id++]); }
   const g = graph(id, pairs), started = performance.now(), r = run(g, 0), ms = performance.now() - started;
-  expect(r.partial).toBe(true); expect(r.tiers.slice(1, hub + 1).every(v => v === D)).toBe(true);
+  expect(r.partial).toBe(1); expect(r.tiers.slice(1, hub + 1).every(v => v === D)).toBe(true);
   const context = r.tiers.filter(v => v === C).length; expect(context).toBeGreaterThan(0); expect(context).toBeLessThanOrEqual(65536);
   expect(r.edges.length).toBeLessThanOrEqual(hub + 65536); expect(run(g, 0)).toEqual(r);
-  const exact = run(g, 0, { max: hub * (leaves + 1) }); expect(exact.partial).toBe(false); expect(exact.tiers.filter(v => v === C).length).toBe(hub * leaves);
-  expect(run(graph(3, [[0, 1], [1, 2]]), 0, { max: 1 }).partial).toBe(true);
+  const exact = run(g, 0, { max: hub * (leaves + 1) }); expect(exact.partial).toBe(0); expect(exact.tiers.filter(v => v === C).length).toBe(hub * leaves);
+  expect(run(graph(3, [[0, 1], [1, 2]]), 0, { max: 1 }).partial).toBe(1);
   measurements.push({ case: 'hub 400 x 300 leaves', entries: g.inc.edges.length, contextNodes: context, touchedEdges: r.edges.length, milliseconds: ms });
 });
 
@@ -139,15 +139,15 @@ test('graduated labels rank focus > direct > 2-hop, then degree, under budget an
   // 0 focus; 1, 2 direct; 3, 4 2-hop. Node 2 has the higher degree.
   const g = graph(5, [[0, 1], [0, 2], [2, 3], [1, 4], [2, 4]]), r = run(g, 0), vis = new Uint8Array(5).fill(1);
   const place = (budget: number, pos: Record<number, number> = {}, cap = 99, v: ArrayLike<number> = vis) => focusLabels(0, r.nodes, r.state, v, g.inc.offsets, labelBox(pos), 50, budget, cap);
-  expect(place(10)).toEqual([[0, 0], [2, 1], [1, 1], [4, 2], [3, 2]]);
+  expect(place(10)).toEqual([[0, 0], [2, 1], [1, 1], [4, 3], [3, 3]]);
   // Budget keeps the highest tiers first.
   expect(place(1)).toEqual([[0, 0]]); expect(place(3)).toEqual([[0, 0], [2, 1], [1, 1]]);
   // Collision: a 2-hop label overlapping the focus loses; a direct label overlapping a 2-hop one wins.
-  expect(place(10, { 3: 10 })).toEqual([[0, 0], [2, 1], [1, 1], [4, 2]]);
-  expect(place(10, { 1: 400, 4: 410 })).toEqual([[0, 0], [2, 1], [1, 1], [3, 2]]);
+  expect(place(10, { 3: 10 })).toEqual([[0, 0], [2, 1], [1, 1], [4, 3]]);
+  expect(place(10, { 1: 400, 4: 410 })).toEqual([[0, 0], [2, 1], [1, 1], [3, 3]]);
   // Candidate cap and filter visibility bound the work; no focus or no cloud places nothing.
   expect(place(10, {}, 2)).toEqual([[0, 0], [2, 1]]);
-  expect(place(10, {}, 99, new Uint8Array([1, 0, 1, 1, 1]))).toEqual([[0, 0], [2, 1], [4, 2], [3, 2]]);
+  expect(place(10, {}, 99, new Uint8Array([1, 0, 1, 1, 1]))).toEqual([[0, 0], [2, 1], [4, 3], [3, 3]]);
   expect(focusLabels(-1, [], r.state, vis, g.inc.offsets, labelBox({}), 50, 10, 99)).toEqual([]);
   // Deterministic and pure: same inputs, same placement, no tier byte written.
   const bytes = [...r.state]; expect(place(10)).toEqual(place(10)); expect([...r.state]).toEqual(bytes);

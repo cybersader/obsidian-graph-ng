@@ -5,11 +5,11 @@ import { LABEL_RATIOS, placeLabels, type LabelBox, type PickGrid } from './rende
 import { yieldTask } from './core/scheduler';
 interface Glyph { x: number; y: number; w: number; advance: number }
 export interface LabelAtlas { canvas: HTMLCanvasElement; levels: Float32Array[]; nodes: Uint32Array[] }
-/** Graduated labels, ranked focus (0) > direct (1) > 2-hop (2), then degree and id; `near` is the
+/** Graduated labels, ranked focus (0) > direct (1) > ancestor (2) > 2-hop (3) > same group (4), then degree and id; `near` is the
  * touched list from `focusTiers`, `state` its tier bytes. Candidates are capped like the atlas and
  * placed with the same budget and collision grid. Runs once per focus or level-of-detail change. */
 export function focusLabels(focus: number, near: readonly number[], state: Uint8Array, visible: ArrayLike<number>, offsets: Uint32Array, box: (node: number, rank: number) => LabelBox, cell: number, budget: number, cap: number) {
-  const rank = (n: number) => n === focus ? 0 : state[n * 4 + 1]! > 200 ? 1 : 2, degree = (n: number) => offsets[n + 1]! - offsets[n]!;
+  const rank = (n: number) => n === focus ? 0 : state[n * 4 + 1]! > 200 ? 1 : 5 - (state[n * 4 + 1]! >> 6), degree = (n: number) => offsets[n + 1]! - offsets[n]!;
   const list = near.filter(n => visible[n]).sort((a, b) => rank(a) - rank(b) || degree(b) - degree(a) || a - b);
   list.length = Math.min(list.length, cap);
   return list.length ? placeLabels(list.map(n => box(n, rank(n))), cell, budget).map(b => [b.node, rank(b.node)] as const) : [];

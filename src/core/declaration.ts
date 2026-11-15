@@ -6,10 +6,14 @@ export const folderPath = (path: FolderPath) => (Array.isArray(path) ? path.join
 export type Predicate = { kind: 'expr'; expr: string } | { kind: 'eq'; key: string; value: Scalar } | { kind: 'in'; key: string; values: Scalar[] } | { kind: 'exists'; key: string } | { kind: 'folder'; prefix: FolderPath };
 /** Property column a predicate reads, if any. Folder predicates read paths only. */
 export const predicateColumn = (p: Predicate): string | string[] | undefined => p.kind === 'expr' ? expressionReferences(p.expr) : p.kind === 'folder' ? undefined : p.key;
-/** Colors are presentation. Layout/cache identity excludes them, so a legend edit never reseeds or relayouts. */
-export const layoutDeclaration = (d: GraphDeclaration): GraphDeclaration => ({ ...d, colors: [] });
+/** Colors and focus emphasis are presentation. Layout/cache identity excludes them, so a legend or
+ * highlight edit never reseeds or relayouts. Absent fields keep historical digest bytes. */
+export const layoutDeclaration = (d: GraphDeclaration): GraphDeclaration => {
+  const { hierarchy: _, groupContext: __, ...rest } = d;
+  return { ...rest, colors: [], edges: d.edges.map(e => { const { highlight: _h, ...x } = e as EdgeDeclaration & { highlight?: unknown }; return x as EdgeDeclaration; }) };
+};
 export type EdgeDeclaration =
-  | { name: string; kind: 'reified'; sourceProperty: string; targetProperty: string; typeProperty?: string; type?: string }
+  | { name: string; kind: 'reified'; sourceProperty: string; targetProperty: string; typeProperty?: string; type?: string; highlight?: 'tint' }
   | { name: string; kind: 'inline'; key: string; type: string }
   | { name: string; kind: 'producer'; producer: string; type: string };
 export type GroupSource = { from: 'expr'; expr: string } | { from: 'key'; key: string } | { from: 'folder'; depth: number; prefix?: FolderPath } | { from: 'derived'; key: string; transform: DerivedTransform };
@@ -28,6 +32,10 @@ export interface GraphDeclaration {
   colors: { name: string; color: string; predicate: Predicate }[];
   /** Folders left out of the graph entirely, before identity: archives, templates, copies. */
   exclude?: FolderPath[];
+  /** Optional focus emphasis: a property whose scalar value(s) name the parent's identity. */
+  hierarchy?: { parentProperty: string };
+  /** Optional focus emphasis: other members of the focus's current group form a faint tier. */
+  groupContext?: boolean;
 }
 export const defaultDeclaration = (producer: string): GraphDeclaration => ({
   version: 2, identity: [], edges: [{ name: 'links', kind: 'producer', producer, type: 'link' }],
@@ -59,7 +67,7 @@ export function validatePredicate(v: unknown): asserts v is Predicate {
   } else throw new Error('Unknown predicate kind');
 }
 export function validateDeclaration(v: unknown): asserts v is GraphDeclaration {
-  record(v); only(v, ['version', 'identity', 'edges', 'groups', 'display', 'columns', 'colors', 'carrierResolvers', 'exclude']);
+  record(v); only(v, ['version', 'identity', 'edges', 'groups', 'display', 'columns', 'colors', 'carrierResolvers', 'exclude', 'hierarchy', 'groupContext']);
   if (v.version !== 2) throw new Error('Declaration version must be 2');
   for (const k of ['identity', 'edges', 'groups', 'columns', 'colors']) if (!Array.isArray(v[k])) throw new Error(`${k} must be an array`);
   for (const i of v.identity as unknown[]) { record(i); only(i, ['key']); text(i.key); }
@@ -67,8 +75,9 @@ export function validateDeclaration(v: unknown): asserts v is GraphDeclaration {
   for (const e of v.edges as unknown[]) {
     record(e); text(e.name); if (names.has(e.name)) throw new Error(`Duplicate edge declaration: ${e.name}`); names.add(e.name);
     if (e.kind === 'reified') {
-      only(e, ['name', 'kind', 'sourceProperty', 'targetProperty', 'typeProperty', 'type']); text(e.sourceProperty); text(e.targetProperty);
+      only(e, ['name', 'kind', 'sourceProperty', 'targetProperty', 'typeProperty', 'type', 'highlight']); text(e.sourceProperty); text(e.targetProperty);
       if (e.typeProperty !== undefined) text(e.typeProperty); if (e.type !== undefined) text(e.type);
+      if (e.highlight !== undefined && e.highlight !== 'tint') throw new Error('Edge highlight must be tint');
     } else if (e.kind === 'inline') { only(e, ['name', 'kind', 'key', 'type']); text(e.key); text(e.type); }
     else if (e.kind === 'producer') { only(e, ['name', 'kind', 'producer', 'type']); text(e.producer); text(e.type); }
     else throw new Error('Unknown edge kind');
@@ -87,6 +96,8 @@ export function validateDeclaration(v: unknown): asserts v is GraphDeclaration {
     const kinds = new Set<string>();
     for (const resolver of v.carrierResolvers) { record(resolver); only(resolver, ['kind', 'key']); text(resolver.kind); text(resolver.key); if (kinds.has(resolver.kind)) throw new Error('Duplicate carrier resolver'); kinds.add(resolver.kind); }
   }
+  if (v.hierarchy !== undefined) { record(v.hierarchy); only(v.hierarchy, ['parentProperty']); text(v.hierarchy.parentProperty); }
+  if (v.groupContext !== undefined && typeof v.groupContext !== 'boolean') throw new Error('groupContext must be boolean');
   if (v.exclude !== undefined) { if (!Array.isArray(v.exclude) || v.exclude.length > 64) throw new Error('exclude must be at most 64 folders'); for (const f of v.exclude) { validateFolderPath(f); if (!folderPath(f as FolderPath)) throw new Error('exclude folders must be nonempty'); } }
   for (const c of v.colors as unknown[]) { record(c); only(c, ['name', 'color', 'predicate']); text(c.name); if (typeof c.color !== 'string' || !/^(?:#[0-9a-f]{6}(?:[0-9a-f]{2})?|var\(--[a-z0-9-]+\))$/i.test(c.color)) throw new Error('Color must be #rrggbb[aa] or var(--name)'); validatePredicate(c.predicate); }
 }

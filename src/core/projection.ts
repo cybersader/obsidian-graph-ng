@@ -27,6 +27,11 @@ export interface Projection {
   quarantined: { path: string; id: string }[];
   /** Per edge rule: endpoints absent, endpoints excluded as duplicates, and relationship notes themselves excluded. */
   dropped?: Record<string, { drawn: number; missing: number; excluded: number; carriers: number }>;
+  /** Declared hierarchy, when bound: per node, the resolved parents in CSR form (self and
+   * unresolved references dropped, duplicates collapsed). Presentation only. */
+  up?: { offsets: Uint32Array; targets: Uint32Array };
+  /** Per edge 1 when its reified rule declares `highlight: 'tint'`; absent when no rule does. */
+  tint?: Uint8Array;
 }
 export const NONE = 0xffffffff;
 const compare = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
@@ -71,11 +76,11 @@ export function buildProjection(input: readonly FactRow[], d: GraphDeclaration):
   });
   // Path fallback is always available, but it must never silently shadow a declared identity.
   paths.forEach((path, i) => { if (references.has(path) && references.get(path) !== i) throw new Error(`Identity conflicts with path: ${path}`); references.set(path, i); });
-  const src: number[] = [], dst: number[] = [], typ: string[] = [], carrier: number[] = [];
+  const src: number[] = [], dst: number[] = [], typ: string[] = [], carrier: number[] = [], tint: number[] = [];
   let unresolved = 0;
-  const edge = (a: number | undefined, b: number | undefined, t: string, c: number) => {
+  const edge = (a: number | undefined, b: number | undefined, t: string, c: number, h = 0) => {
     if (a === undefined || b === undefined) { unresolved++; return; }
-    src.push(a); dst.push(b); typ.push(t); carrier.push(c);
+    src.push(a); dst.push(b); typ.push(t); carrier.push(c); tint.push(h);
   };
   for (const r of rows) for (const e of d.edges) {
     if (e.kind === 'reified' && has(r, e.sourceProperty) && has(r, e.targetProperty)) {
@@ -85,8 +90,9 @@ export function buildProjection(input: readonly FactRow[], d: GraphDeclaration):
         const s = references.get(a), tnode = references.get(b);
         if (s === undefined || tnode === undefined) { unresolved++; miss(e.name, ...(s === undefined ? [a] : []), ...(tnode === undefined ? [b] : [])); continue; }
         tally(e.name).drawn++;
-        if (d.display.reifiedAsNodes) { edge(s, nodeIndex.get(r.path), t, rowIndex.get(r.path)!); edge(nodeIndex.get(r.path), tnode, t, rowIndex.get(r.path)!); }
-        else edge(s, tnode, t, rowIndex.get(r.path)!);
+        const h = +!!e.highlight;
+        if (d.display.reifiedAsNodes) { edge(s, nodeIndex.get(r.path), t, rowIndex.get(r.path)!, h); edge(nodeIndex.get(r.path), tnode, t, rowIndex.get(r.path)!, h); }
+        else edge(s, tnode, t, rowIndex.get(r.path)!, h);
       }
     } else if (e.kind === 'inline' && nodeIndex.has(r.path)) {
       for (const ref of values(r.properties[e.key])) { const t = references.get(ref); if (t === undefined) miss(e.name, ref); else tally(e.name).drawn++; edge(nodeIndex.get(r.path), t, e.type, NONE); }
@@ -116,8 +122,14 @@ export function buildProjection(input: readonly FactRow[], d: GraphDeclaration):
     if (g.from === 'folder') return { ...column(nodes.map(r => folderGroup(r.path, g.depth, g.prefix))), encoded: false };
     return expressionGroup({ paths, identities, columns, offsets, folders } as Projection, lowerGroup(g));
   });
-  const tc = column(typ);
-  return { paths, identities, carrierPaths: rows.map(r => r.path), offsets, targets,
+  const tc = column(typ), key = d.hierarchy?.parentProperty;
+  let up: Projection['up'];
+  if (key) {
+    const lists = nodes.map((r, i) => [...new Set(values(r.properties[key]).map(v => references.get(v)!).filter(t => t !== undefined && t !== i))]), offsets = new Uint32Array(nodes.length + 1);
+    lists.forEach((l, i) => { offsets[i + 1] = offsets[i]! + l.length; });
+    up = { offsets, targets: Uint32Array.from(lists.flat()) };
+  }
+  return { up, tint: tint.some(Boolean) ? Uint8Array.from(tint) : undefined, paths, identities, carrierPaths: rows.map(r => r.path), offsets, targets,
     source: Uint32Array.from(src), target: Uint32Array.from(dst), type: tc.codes, carrier: Uint32Array.from(carrier), carrierNodes: Uint32Array.from(nodes, r => carriers.has(r.path) ? rowIndex.get(r.path)! + 1 : 0), types: tc.values,
     columns, groups, folders, unresolved, quarantined, dropped };
 }

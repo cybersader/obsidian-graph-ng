@@ -13,7 +13,7 @@ export function declaredKeys(d: GraphDeclaration): string[] {
     ...d.groups.flatMap(g => groupColumn(g) ?? []),
     ...d.colors.flatMap(c => predicateColumn(c.predicate) ?? []),
     ...d.edges.flatMap(e => e.kind === 'reified' ? [e.sourceProperty, e.targetProperty, ...(e.typeProperty ? [e.typeProperty] : [])] : e.kind === 'inline' ? [e.key] : []),
-    ...(d.carrierResolvers ?? []).flatMap(r => r.key === '$path' ? [] : [r.key])])].sort();
+    ...(d.carrierResolvers ?? []).flatMap(r => r.key === '$path' ? [] : [r.key]), ...(d.hierarchy ? [d.hierarchy.parentProperty] : [])])].sort();
 }
 export function encodeStrings(strings: readonly string[]): Strings {
   const encoder = new TextEncoder(), offsets = new Uint32Array(strings.length + 1);
