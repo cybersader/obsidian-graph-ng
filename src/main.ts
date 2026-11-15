@@ -890,6 +890,7 @@ export class GraphView extends ItemView {
       this.detailRenderer.onMoreConnections = focus => this.detailRenderer?.showConnections(focus);
       this.detailRenderer.onHub = group => { const key = this.explored?.groupKeys[group]; if (key !== undefined) this.setView({ ...this.view, collapsedGroups: this.view.collapsedGroups.filter(k => k !== key) }, () => this.focusGroup(group)); };
       if (this.pendingCamera) { const c = this.pendingCamera; this.pendingCamera = undefined; this.detailRenderer.flyTo(c.x, c.y, c.ratio); }
+      else this.detailRenderer.fitAll(0);
       if (focus?.projection === this.projection) this.detailRenderer.focusNote(focus.node, focus.lens);
       this.explorePanel?.render();
     } catch (e) { if (renderRevision !== this.renderRevision) return; this.gpu = { available: false, reason: String(e) }; this.showGroups(); this.statusText = [this.statusText, 'GPU unavailable; group fallback active.'].filter(Boolean).join(' '); }

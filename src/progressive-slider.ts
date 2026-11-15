@@ -98,7 +98,7 @@ export function progressiveSlider(parent: HTMLElement, o: SliderOptions) {
   if (o.commit) range.onchange = number.onchange = o.commit;
   range.ontouchstart = e => e.preventDefault();
   range.onpointerdown = e => {
-    const r = range.getBoundingClientRect(); if (range.disabled || e.button > 0 || !r.width) return;
+    const r = range.getBoundingClientRect(); if (drag || range.disabled || e.button > 0 || !r.width) return;
     e.preventDefault(); const t = clamp01((e.clientX - r.left - THUMB / 2) / Math.max(1, r.width - THUMB));
     if (Math.abs(t - pos) * r.width > 10) move(t);
     drag = { id: e.pointerId, x: e.clientX }; range.setPointerCapture(e.pointerId); range.focus(); bubble.hidden = false; fine(1);
@@ -110,7 +110,7 @@ export function progressiveSlider(parent: HTMLElement, o: SliderOptions) {
     scale.style.backgroundPosition = `${Math.round(e.clientX - r.left)}px 0`;
     move(pos + (e.clientX - drag.x) / Math.max(1, r.width - THUMB) * f); drag.x = e.clientX;
   };
-  range.onpointerup = range.onpointercancel = e => { if (!drag || e.pointerId !== drag.id) return; drag = null; bubble.hidden = true; fine(1); o.commit?.(); };
+  range.onpointerup = range.onpointercancel = range.onlostpointercapture = e => { if (!drag || e.pointerId !== drag.id) return; drag = null; bubble.hidden = true; fine(1); o.commit?.(); };
   range.onkeydown = e => { const d = keyStep(e.key, e.shiftKey); if (d === null || range.disabled) return; e.preventDefault(); move(pos + d); o.commit?.(); };
   return { row, range, number, reset };
 }

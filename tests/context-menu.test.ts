@@ -97,3 +97,15 @@ test('release cancels long-press; stale relationship replies never reopen a menu
   await Promise.resolve(); expect(s.menus).toEqual([]);
   s.g.dispose();
 });
+
+test('hub hover updates hints from empty canvas and between hubs, then resets on leave', () => {
+  const { h, input } = surface(), hints: number[] = [];
+  h.pickHub = (x: number, y: number) => y === 300 ? x < 200 ? 0 : 1 : -1;
+  h.hint = (hub: number) => hints.push(hub);
+  input.pointerMove(at(9, 150, 400, 'mouse'));
+  input.pointerMove(at(9, 150, 300, 'mouse')); input.pointerMove(at(9, 250, 300, 'mouse'));
+  input.pointerMove(at(9, 260, 300, 'mouse')); // same hub does not repeat the work
+  expect(hints).toEqual([0, 1]); input.pointerLeave();
+  input.pointerMove(at(9, 250, 300, 'mouse')); expect(hints).toEqual([0, 1, -1, 1]);
+  input.detach({ removeEventListener() {} } as any);
+});

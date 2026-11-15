@@ -49,11 +49,12 @@ afterEach(() => {
   expect(frameCallbacks.size).toBe(0);
   expect(backstops.size).toBe(0);
 });
-let fixtureReducedMotion = false;
+let fixtureReducedMotion = false, rejectStorage = false;
+const rendererStorage = { getItem() { if (rejectStorage) throw new Error('storage denied'); return null; }, setItem() { if (rejectStorage) throw new Error('storage denied'); } };
 const rendererWindow = { devicePixelRatio: 1 };
 const module = { exports: {} as any };
 const obsidian = { ItemView: class {}, Menu: class {}, Plugin: class {}, PluginSettingTab: class {}, Setting: class {}, TFile: class {}, apiVersion: 'synthetic', Notice: class {}, setIcon: (el: any, icon: string) => { el.dataset ??= {}; el.dataset.icon = icon; el.icon = icon; } };
-vm.runInNewContext(source + `\n;module.exports.__renderer=${rendererName};`, { module, exports: module.exports, require: () => obsidian, console, structuredClone, setTimeout: fixtureTimeout, clearTimeout: clearFixtureTimeout, performance, TextEncoder, TextDecoder, MessageChannel, document, window: rendererWindow, devicePixelRatio: 1, getComputedStyle: () => ({ getPropertyValue: () => '' }), matchMedia: (query: string) => ({ matches: query.includes('prefers-reduced-motion') && fixtureReducedMotion, addEventListener() {}, removeEventListener() {} }), ResizeObserver: class { observe() {} disconnect() {} }, requestAnimationFrame: requestFrame, cancelAnimationFrame: cancelFrame }, { filename: 'production-main.js' });
+vm.runInNewContext(source + `\n;module.exports.__renderer=${rendererName};`, { module, exports: module.exports, require: () => obsidian, console, structuredClone, setTimeout: fixtureTimeout, clearTimeout: clearFixtureTimeout, performance, TextEncoder, TextDecoder, MessageChannel, document, localStorage: rendererStorage, window: rendererWindow, devicePixelRatio: 1, getComputedStyle: () => ({ getPropertyValue: () => '' }), matchMedia: (query: string) => ({ matches: query.includes('prefers-reduced-motion') && fixtureReducedMotion, addEventListener() {}, removeEventListener() {} }), ResizeObserver: class { observe() {} disconnect() {} }, requestAnimationFrame: requestFrame, cancelAnimationFrame: cancelFrame }, { filename: 'production-main.js' });
 const GraphPlugin = module.exports.default, GraphView = module.exports.GraphView, Renderer = module.exports.__renderer;
 const mangle = JSON.parse(readFileSync(new URL('../.workspace/evidence/main-mangle-cache.json', import.meta.url), 'utf8'));
 const compiled = (name: string) => { const key = mangle[name]; if (typeof key !== 'string') throw new Error(`Production mapping missing: ${name}`); return key; };
@@ -390,7 +391,9 @@ test('finding connections in production: legend counts and toggles, off-screen p
   v.cameraAnimationMs = 0; r.setCamera(0, 0, .02); frame();
   const shown = pips.filter((p: any) => !p.hidden); expect(shown.length).toBe(1);
   expect(shown[0].attributes['aria-label']).toBe('2 direct connections lower right. Go to the nearest.');
-  shown[0].onclick(); const at = r.screenPoint(1); expect(at.x).toBeCloseTo(400, 6); expect(at.y).toBeCloseTo(300, 6);
+  // The pip centres its note in the room left of the docked card (800 px less the card and its margins).
+  const [right] = r[k('cardInset')](); expect(right).toBeGreaterThan(0);
+  shown[0].onclick(); const at = r.screenPoint(1); expect(at.x).toBeCloseTo((800 - right) / 2, 6); expect(at.y).toBeCloseTo(300, 6);
   v.offscreenPips = false; r.setCamera(0, 0, .02); frame(); expect(pips.every((p: any) => p.hidden)).toBe(true);
   // Minimum highlighted size: at overview zoom a direct connection is pickable within its 7 px floor.
   Object.assign(f.settings, { nodeSize: 1, nodeSizing: { policy: 'predictable', compensation: 0, floor: 1 } });
@@ -1089,4 +1092,98 @@ test('review: a failed Back-to detail attempt consumes pending focus before any 
   view.positions = new Float32Array(6); view.gpu = { available: false, reason: 'synthetic refusal' };
   view.admitDetail = () => false; setFocus();
   await view.showDetails(); expect(view[compiled('pendingFocus')]).toBeUndefined();
+});
+
+test('review: travel, clamped framing and Fit all centre in the unobscured stage', async () => {
+  const f = await graduated([[0, 1], [1, 2]], 3), { r, k } = f;
+  f.settings.visuals.cameraAnimationMs = 0; f.tap(0);
+  r.measureTools = () => 200; r.syncTools();
+  for (const width of [800, 500]) {
+    r[k('width')] = width; r[k('placeOverlay')]();
+    r[k('travel')](1);
+    const [right, bottom] = r[k('cardInset')](), q = r.screenPoint(1);
+    expect(q.x).toBeCloseTo((width - right) / 2, 6); expect(q.y).toBeCloseTo((600 - bottom) / 2, 6);
+    f.settings.cameraMinRatio = 2;
+    r.frame(0, 0, 0, 0, 0, right, bottom);
+    expect(r.camera.ratio).toBe(2);
+    expect((0 - r.centerX) * r.scale + width / 2).toBeCloseTo((width - right) / 2, 6);
+    expect((0 - r.centerY) * r.scale + 300).toBeCloseTo((600 - bottom) / 2, 6);
+  }
+  f.settings.cameraMinRatio = .02; r[k('width')] = 800;
+  r[k('selectNote')](-1); r.fitAll(0);
+  expect((50 - r.centerX) * r.scale + 400).toBeCloseTo(300, 6);
+  expect(r.screenPoint(0).x).toBeGreaterThan(0); expect(r.screenPoint(2).x).toBeLessThan(600);
+  expect(r[k('homeRatio')]).toBe(r.camera.ratio);
+});
+
+test('review: hidden edges cannot be picked, including legend-hidden focus tiers and zero opacity', async () => {
+  const f = await graduated([[0, 1], [1, 2]], 3), { r, k } = f;
+  f.tap(0); r[k('focusLevel')] = 1;
+  const a = r.screenPoint(0), b = r.screenPoint(1), pick = () => r[k('pickEdge')]((a.x + b.x) / 2, (a.y + b.y) / 2);
+  f.settings.visuals.edgeMode = 'focus'; expect(pick()).toBe(0);
+  r[k('tierMask')] = 0; expect(pick()).toBe(-1);
+  // Paths are drawn independently of legend switches.
+  r[k('edgeTier')][0] = 253; expect(pick()).toBe(0);
+  f.settings.visuals.hoverHighlight = false; expect(pick()).toBe(-1);
+  f.settings.visuals.hoverHighlight = true; r[k('focusLevel')] = 0; expect(pick()).toBe(-1);
+  r[k('focusLevel')] = 1; f.settings.visuals.edgeMode = 'off'; expect(pick()).toBe(-1);
+  f.settings.visuals.edgeMode = 'all'; f.settings.visuals.edgeOpacity = 0; expect(pick()).toBe(-1);
+});
+
+test('review: clearing Recent refreshes card navigation and starts the next trip at the open note', async () => {
+  const f = await graduated([[0, 1], [1, 2]], 3), { r, k } = f;
+  f.tap(0); r[k('travel')](1); r[k('placeOverlay')]();
+  const card = r[k('noteCard')], nav = () => card.querySelectorAll('button').filter((b: any) => /^(Back|Forward)$/.test(b.getAttribute('aria-label') ?? ''));
+  expect(nav().map((b: any) => b.disabled)).toEqual([false, true]);
+  const clear = r[k('crumbTrail')].root.querySelectorAll('button').find((b: any) => b.getAttribute('aria-label') === 'Clear recent notes'); clear.click();
+  expect(nav().map((b: any) => b.disabled)).toEqual([true, true]); expect(r.card.history.items).toEqual([1]);
+  r[k('travel')](2); expect(r.card.step(-1)).toBe(true); expect(r.card.node).toBe(1);
+});
+
+test('review: minimap collapse schedules a card-height refresh; stable drawing never remeasures tools', async () => {
+  const f = await graduated([[0, 1]], 2), { r, k } = f;
+  f.tap(0); const card = r[k('noteCard')], mini = r[k('miniMap')]; let measures = 0;
+  r.measureTools = () => { measures++; return 0; }; r.syncTools();
+  r[k('draw')](); expect(card.style.maxHeight).toBe('456px');
+  mini.root.children[1].onclick(); expect(frameCallbacks.size).toBeGreaterThan(0);
+  r[k('draw')](); expect(card.style.maxHeight).toBe('544px');
+  for (let i = 0; i < 3; i++) r[k('draw')](); expect(measures).toBe(1);
+});
+
+test('review: disabled ink budgeting never samples geometry in either renderer path; active geometry stays cached', async () => {
+  const f = await graduated([[0, 1]], 2), { r, k } = f, v = f.settings.visuals;
+  for (const disabled of ['off', 'zero', 'adapt']) {
+    v.edgeMode = disabled === 'off' ? 'off' : 'all'; v.edgeOpacity = disabled === 'zero' ? 0 : .4; v.zoomAdapt = disabled !== 'adapt';
+    r[k('ink')] = undefined; r[k('drawCanvas')](); expect(r[k('ink')]).toBeUndefined();
+    expect([...r[k('edgeQuiet')](1, false)]).toEqual([1, Infinity]); expect(r[k('ink')]).toBeUndefined();
+  }
+  v.zoomAdapt = true; r[k('drawCanvas')](); const ink = r[k('ink')]; expect(ink).toBeDefined();
+  r.setCamera(.3, .4, .5); r[k('drawCanvas')](); expect(r[k('ink')]).toBe(ink);
+  r.setView(new Uint8Array([1, 0]), {}); r[k('drawCanvas')](); expect(r[k('ink')]).not.toBe(ink);
+});
+
+test('review: filter changes remove stale hover and minimap focus; hidden-type edges lose their hint', async () => {
+  const f = await graduated([[0, 1], [1, 2]], 3), { r, k } = f;
+  f.tap(0); f.hover(2); expect(r.hovered).toBe(2);
+  r.setView(new Uint8Array([0, 1, 0]), {}); r[k('placeOverlay')]();
+  expect(r.hovered).toBe(-1); expect(r[k('hoverLabel')].textContent).toBe('');
+  expect(r[k('miniMap')][k('miniLast')].focus).toBe(-1);
+  const all = new Uint8Array([1, 1, 1]); r.setView(all, {});
+  const a = r.screenPoint(0), b = r.screenPoint(1);
+  f.hover({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }); expect(r[k('hoveredEdge')]).toBe(0);
+  r.setView(all, { typeHidden: new Uint8Array([1]) });
+  expect(r[k('hoveredEdge')]).toBe(-1); expect(r.container.title).toBe('');
+  r.setView(all, {}); expect(r[k('hoveredEdge')]).toBe(0);
+  f.settings.visuals.edgeOpacity = 0; r.refreshVisuals(); expect(r[k('hoveredEdge')]).toBe(-1);
+});
+
+test('review: denied minimap storage never prevents view creation, collapse or disposal', async () => {
+  rejectStorage = true;
+  try {
+    const f = await graduated([[0, 1]], 2), { r, k } = f, mini = r[k('miniMap')];
+    expect(mini.folded).toBe(false); expect(() => mini.root.children[1].onclick()).not.toThrow();
+    expect(mini.folded).toBe(true); expect(() => mini.root.children[1].onclick()).not.toThrow();
+    expect(mini.folded).toBe(false); r.dispose();
+    expect(mini.root.listeners.has('keydown')).toBe(false); expect(r.canvas.listeners.size).toBe(0);
+  } finally { rejectStorage = false; }
 });

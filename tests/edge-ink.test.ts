@@ -86,3 +86,19 @@ test('edge mode setting: three values, validated, defaulted for old settings', (
   expect(upgradeSettings({ ...old, visuals: { ...old.visuals, edgeMode: 'focus' } }, 'links').visuals.edgeMode).toBe('focus');
   expect(() => upgradeSettings({ ...old, visuals: { ...old.visuals, edgeMode: 'some' } }, 'links')).toThrow();
 });
+
+test('edge dither rounds premultiplied RGBA together: zero stays zero, no clamped dark-line bias', () => {
+  const fragment = source.match(/const solidFragment = glsl`([\s\S]*?)`;/)![1]!;
+  // Evaluate the actual shader expression for each component (GLSL floor is componentwise).
+  const expression = fragment.match(/outputColor = (.*);/)![1]!.replace(/1023u/g, '1023');
+  const quantize = new Function('tint', 'h', 'floor', 'float', `return ${expression}`) as (v: number, h: number, f: typeof Math.floor, cast: NumberConstructor) => number;
+  for (const alpha of [0, .00001, .0005, .003, .01, .4, 1]) {
+    const tint = [.05 * alpha, .4 * alpha, alpha, alpha], sum = [0, 0, 0, 0];
+    for (let h = 0; h < 1024; h++) {
+      const q = tint.map(v => quantize(v, h, Math.floor, Number));
+      expect(q.every(v => v >= 0 && v <= q[3]!)).toBe(true);
+      q.forEach((v, i) => sum[i]! += v);
+    }
+    sum.forEach((v, i) => expect(Math.abs(v / 1024 - tint[i]!)).toBeLessThanOrEqual(1 / (2048 * 255) + 1e-12));
+  }
+});

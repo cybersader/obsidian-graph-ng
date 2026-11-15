@@ -79,13 +79,13 @@ export class Minimap {
   private miniWanted: unknown[] = [];
   private densityVersion = 0;
   private miniTimer?: ReturnType<typeof setTimeout>;
-  constructor(parent: HTMLElement, private miniFrame: MiniFrame, private panCamera: (x: number, y: number) => void, private fitCamera: () => void) {
+  constructor(parent: HTMLElement, private miniFrame: MiniFrame, private panCamera: (x: number, y: number) => void, private fitCamera: () => void, private miniChanged = () => {}) {
     const make = (tag: string, cls = '') => Object.assign(document.createElement(tag), { className: cls });
     this.root = parent.appendChild(make('div', 'graph-ng-minimap')); this.root.hidden = true; this.root.tabIndex = 0;
     this.root.setAttribute('role', 'group'); this.root.setAttribute('aria-label', 'Minimap. Arrow keys pan, Home fits all.');
     this.miniCanvas = this.root.appendChild(make('canvas') as HTMLCanvasElement); this.miniCanvas.setAttribute('aria-hidden', 'true');
     this.miniToggle = this.root.appendChild(make('button', 'clickable-icon graph-ng-minimap-toggle'));
-    this.miniToggle.onclick = () => { this.miniFolded = !this.miniFolded; try { globalThis.localStorage?.setItem(STORE, this.miniFolded ? '1' : '0'); } catch { /* not persisted */ } this.paintToggle(); this.miniDrawn = []; if (this.miniLast) this.update(this.miniLast); };
+    this.miniToggle.onclick = () => { this.miniFolded = !this.miniFolded; try { globalThis.localStorage?.setItem(STORE, this.miniFolded ? '1' : '0'); } catch { /* not persisted */ } this.paintToggle(); this.miniDrawn = []; this.miniChanged(); if (this.miniLast) this.update(this.miniLast); };
     this.densityCanvas = make('canvas') as HTMLCanvasElement;
     this.miniCanvas.width = this.densityCanvas.width = MINIMAP_W; this.miniCanvas.height = this.densityCanvas.height = MINIMAP_H;
     this.fitting = miniFit(miniFrame, MINIMAP_W, MINIMAP_H); this.miniShown = [miniFrame, this.fitting];
@@ -97,6 +97,8 @@ export class Minimap {
     this.root.addEventListener('keydown', this.miniKey);
     this.paintToggle();
   }
+  /** Collapsed to its corner button (the card then only keeps clear of the button). */
+  get folded() { return this.miniFolded; }
   private paintToggle() {
     const label = this.miniFolded ? 'Show minimap' : 'Hide minimap';
     setIcon(this.miniToggle, this.miniFolded ? 'map' : 'minimize-2'); this.miniToggle.setAttribute('aria-label', label); this.miniToggle.title = label;

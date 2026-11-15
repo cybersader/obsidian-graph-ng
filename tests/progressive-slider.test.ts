@@ -90,3 +90,15 @@ test('integer curves only produce whole numbers', async () => {
   const { toValue } = await import('../src/progressive-slider');
   for (let t = 0; t <= 1; t += 0.037) expect(Number.isInteger(toValue({ min: 1, max: 1000, log: true, int: true }, t))).toBe(true);
 });
+
+test('fine drag ends on lost capture and ignores a second pointer without trapping range input', () => {
+  const m = mount('0.25'), ev = (id: number, x = 100, y = 16) => ({ pointerId: id, clientX: x, clientY: y, button: 0, preventDefault() {} });
+  m.range.onpointerdown(ev(1)); m.range.onpointermove(ev(1, 146, 200));
+  const value = m.number.value; expect(m.mode.hidden).toBe(false);
+  m.range.onpointerdown(ev(2, 192)); expect(m.number.value).toBe(value);
+  m.range.onlostpointercapture(ev(2)); expect(m.bubble.hidden).toBe(false); expect(m.commits()).toBe(0);
+  m.range.onlostpointercapture(ev(1)); expect(m.bubble.hidden).toBe(true); expect(m.track.classes.has('is-fine')).toBe(false); expect(m.commits()).toBe(1);
+  m.range.onpointerup(ev(1)); expect(m.commits()).toBe(1);
+  m.range.value = '1000'; m.range.oninput(); expect(m.number.value).toBe('1');
+  m.range.onpointermove(ev(1, 0)); expect(m.number.value).toBe('1');
+});

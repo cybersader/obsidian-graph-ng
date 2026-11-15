@@ -170,13 +170,13 @@ void main() {
  if (gl_InstanceID == edgeHovered) { rgb = color(4).rgb; alpha = min(1., max(alpha, edgeAlpha) * 3.); }
  tint = vec4(rgb * alpha, alpha);
 }`;
-// Faint lines add well under one 8-bit step each. A per-line, per-pixel ±½-step dither makes the rounding
-// unbiased, so the accumulated web shows the intended ink instead of vanishing or rounding up into haze.
+// Stochastic rounding shares one threshold across premultiplied RGBA: zero stays zero and
+// RGB never exceeds alpha. Adding signed noise to RGB alone clips dark lines into biased light.
 const solidFragment = glsl`#version 300 es
 precision highp float; precision highp int; in vec4 tint; flat in uint seed; out vec4 outputColor;
 void main() {
  uvec2 p = uvec2(gl_FragCoord.xy); uint h = p.x * 1973u + p.y * 9277u + seed * 26699u; h = (h ^ (h >> 16)) * 73244475u; h ^= h >> 16;
- outputColor = vec4(tint.rgb + (float(h & 1023u) / 1023. - .5) / 255., tint.a);
+ outputColor = floor(tint * 255. + (float(h & 1023u) + .5) / 1024.) / 255.;
 }`;
 const labelVertex = common + glsl`
 layout(location=0) in vec4 a;
@@ -420,7 +420,7 @@ export class DetailRenderer {
     this.cueLine = div('graph-ng-cue-line'); this.cueRing = div('graph-ng-cue'); this.cueLine.hidden = this.cueRing.hidden = true;
     const top = div('graph-ng-top');
     this.isolationBar = top.appendChild(Object.assign(document.createElement('div'), { className: 'graph-ng-isolation' }));
-    this.miniMap = new Minimap(this.overlay, this.cameraFrame, (x, y) => this.setCamera(x, y, this.camera.ratio), () => this.fitAll()); this.limitChip = zoomChip(this.overlay, () => this.onZoomOut());
+    this.miniMap = new Minimap(this.overlay, this.cameraFrame, (x, y) => this.setCamera(x, y, this.camera.ratio), () => this.fitAll(), () => this.refresh()); this.limitChip = zoomChip(this.overlay, () => this.onZoomOut());
     this.noteCard = div('graph-ng-card'); this.card = new ConnectionCard(this.noteCard, this.cardHost());
     const input = this.input = new Interaction(this.controls());
     ({ pointerDown: this.pointerDown, pointerMove: this.pointerMove, pointerUp: this.pointerUp, pointerLeave: this.pointerLeave, keyDown: this.keyDown } = input);
@@ -451,8 +451,8 @@ export class DetailRenderer {
   setView(filterVisible: Uint8Array, view: RenderView, upload = true) {
     this.baseVisible = filterVisible; this.applyView(this.isolationMask(filterVisible, view), view, upload); this.showIsolation();
   }
-  /** A different view (a saved view opened): the visited-notes trail starts over. Filtering only prunes it. */
-  clearTrail() { this.card.history.clear(); this.refresh(); }
+  /** Clear the visit history; an open card stays as its only entry and drops its stale Back/Forward. */
+  clearTrail() { const n = this.card.node; this.card.history.clear(); if (n >= 0) { this.card.history.visit(n); this.card.render(); } this.refresh(); }
   private applyView(filterVisible: Uint8Array, view: RenderView, upload = true) {
     const started = performance.now(), n = filterVisible.length, p = this.projection;
     // Software detail stays inside both refusal budgets: refuse before any state changes, never truncate.
@@ -476,6 +476,7 @@ export class DetailRenderer {
     this.recolor(); this.choosePolicy(); this.ink = undefined;
     if (this.lensAnchor >= 0) { if (!render[this.lensAnchor]) this.setLens(-1); this.rebuildLens(); }
     this.updateSizingRange();
+    this.input?.replayHover();
     this.timings.view = performance.now() - started;
     if (!upload) return;
     if (this.gl && this.ready && !this.lost) this.uploadView();
@@ -726,7 +727,7 @@ export class DetailRenderer {
     this.labelCarrierSize = this.settings.visuals.carrierSize;
     const rebuildCarrier = carrierChanged && this.sizingSettings().nodeSizing?.policy === 'predictable';
     if (rebuildCarrier) this.queueSizingLabels();
-    this.uploadSizes(); this.recolor(); this.choosePolicy(); if (this.ready) this.emphasize(true);
+    this.uploadSizes(); this.recolor(); this.choosePolicy(); if (this.ready) { this.emphasize(true); this.input.replayHover(); }
     if (this.lensAnchor >= 0) this.rebuildLens();
     if (this.gl && this.ready && !this.lost) this.uploadView();
     if (labels && !rebuildCarrier && this.ready) void this.prepareLabels(() => !this.disposed).catch(() => {});
@@ -795,9 +796,15 @@ export class DetailRenderer {
    * right and bottom inset (the docked card or bottom sheet). */
   frame(minX: number, minY: number, maxX: number, maxY: number, ms?: number, right = 0, bottom = 0): number {
     const w = Math.max(maxX - minX, this.cameraFrame.width * .02), h = Math.max(maxY - minY, this.cameraFrame.height * .02);
-    const ratio = Math.max(w * 1.25 * this.fit / Math.max(1, this.width - right), h * 1.25 * this.fit / Math.max(1, this.height - bottom)), shift = ratio / this.fit / 2;
-    this.flyTo(((minX + maxX) / 2 + right * shift - this.cameraFrame.minX) / this.cameraFrame.width, ((minY + maxY) / 2 + bottom * shift - this.cameraFrame.minY) / this.cameraFrame.height, ratio, ms);
+    const ratio = Math.max(w * 1.25 * this.fit / Math.max(1, this.width - right), h * 1.25 * this.fit / Math.max(1, this.height - bottom));
+    this.centreOn((minX + maxX) / 2, (minY + maxY) / 2, ratio, ms, right, bottom);
     return ratio;
+  }
+  /** Fly so world point (x, y) sits mid-view in the room left of a `right` and above a `bottom` inset
+   * (the docked card, bottom sheet or tools panel). The shift uses the ratio the camera will reach. */
+  private centreOn(x: number, y: number, ratio: number, ms?: number, right = 0, bottom = 0) {
+    const f = this.cameraFrame, shift = this.clampRatio(ratio) / this.fit / 2;
+    this.flyTo((x + right * shift - f.minX) / f.width, (y + bottom * shift - f.minY) / f.height, ratio, ms);
   }
   frameGroup(group: number, ms?: number) {
     const codes = this.view.groupCodes; if (!codes) return;
@@ -814,7 +821,7 @@ export class DetailRenderer {
     if (!xs.length) { this.homeRatio = 1; this.flyTo(.5, .5, 1, ms); return; }
     xs.sort((a, b) => a - b); ys.sort((a, b) => a - b);
     const q = (a: number[], f: number) => a[Math.min(a.length - 1, Math.floor(a.length * f))]!, t = xs.length < 8 ? 0 : .01;
-    this.homeRatio = this.clampRatio(this.frame(q(xs, t), q(ys, t), q(xs, 1 - t), q(ys, 1 - t), ms));
+    this.homeRatio = this.clampRatio(this.frame(q(xs, t), q(ys, t), q(xs, 1 - t), q(ys, 1 - t), ms, ...this.cardInset()));
   }
   /** Test/host seam; not a second graph or renderer object model. */
   path(id: number) { return renderPath(this.projection, id); }
@@ -957,10 +964,10 @@ export class DetailRenderer {
     const w = this.worldPoint(x, y), radius = this.grid.cell, p = this.projection, mode = this.settings.visuals.edgeMode;
     let best = -1, distance = this.settings.groupEdgeHitRadius / this.scale, budget = 32768;
     // Lines hidden by the Edges mode are not pickable.
-    if (mode === 'off') return -1;
+    if (mode === 'off' || !this.settings.visuals.edgeOpacity || mode === 'focus' && (!this.settings.visuals.hoverHighlight || !this.focusLevel)) return -1;
     // Deliberately budgeted incident-edge picking, not an O(m) all-segment scan or GPU readback.
     const visit = (node: number) => {
-      for (let j = this.edges.offsets[node]!; j < this.edges.offsets[node + 1]! && budget-- > 0; j++) { const e = this.edges.edges[j]!, a = p.source[e]!, b = p.target[e]!; if (!this.edgeDrawn(e) || mode === 'focus' && !this.edgeTier[e]) continue;
+      for (let j = this.edges.offsets[node]!; j < this.edges.offsets[node + 1]! && budget-- > 0; j++) { const e = this.edges.edges[j]!, a = p.source[e]!, b = p.target[e]!; if (!this.edgeDrawn(e) || mode === 'focus' && this.edgeTier[e] !== PATH_EDGE && !shownEdgeTier(this.edgeTier[e]!, this.tierMask)) continue;
         const d = segmentDistance(w.x, w.y, this.renderCoordinate(a, 0), this.renderCoordinate(a, 1), this.renderCoordinate(b, 0), this.renderCoordinate(b, 1)); if (d < distance) { best = e; distance = d; }
       }
     };
@@ -976,6 +983,7 @@ export class DetailRenderer {
   /** Context-line quieting for this frame: [ink-budget alpha cap, long-line fade length in CSS px]. */
   private edgeQuiet(width: number, union: boolean) {
     const v = this.settings.visuals, edges = this.visibleEdges;
+    if (!v.zoomAdapt || !v.edgeOpacity || v.edgeMode === 'off') return [1, Infinity] as const;
     if (this.ink?.display !== this.display) this.ink = { ...edgeInk(this.display, this.projection.source, this.projection.target, this.edgeDrawn), display: this.display };
     const layers = overdraw(this.ink, edges, width, this.scale);
     return [(union ? unionAlpha : inkAlpha)(v, layers), fadeLength(v, this.ink, this.scale, layers)] as const;
@@ -1080,7 +1088,7 @@ export class DetailRenderer {
     if (this.isolation && this.isolation.node !== n) this.isolate(n, this.isolation.hops, false);
     // Isolation may close the old lens while changing masks; preserve the travel intent.
     if (lensed && this.lensWanted !== n) this.setLens(n);
-    const f = this.cameraFrame; this.flyTo((this.display[n * 2]! - f.minX) / f.width, (this.display[n * 2 + 1]! - f.minY) / f.height, Math.min(this.camera.ratio, this.homeRatio * .5));
+    this.centreOn(this.display[n * 2]!, this.display[n * 2 + 1]!, Math.min(this.camera.ratio, this.homeRatio * .5), undefined, ...this.cardInset());
   }
   /** Temporary "Show only connections" view: the focus plus direct connections (hops 2 adds
    * neighbours of neighbours). A negative node returns to the full graph. */
@@ -1289,7 +1297,7 @@ export class DetailRenderer {
     this.placePath(radius, focus);
     this.limitChip.hidden = !(this.holdsFocus() && atZoomLimit(this.camera.ratio, s.lodZoomRatio));
     this.crumbTrail.update(v.breadcrumb, this.card.history);
-    this.miniMap.update({ on: v.minimap && this.width >= MINIMAP_MIN_CANVAS, positions: this.display, visible: this.visible, cx: this.camera.x, cy: this.camera.y, worldW: this.width / this.scale, worldH: this.height / this.scale, focus: this.focusNode, directs: this.directs, ink: this.theme.text, accent: this.theme.accent });
+    this.miniMap.update({ on: v.minimap && this.width >= MINIMAP_MIN_CANVAS, positions: this.display, visible: this.visible, cx: this.camera.x, cy: this.camera.y, worldW: this.width / this.scale, worldH: this.height / this.scale, focus: this.visible[this.focusNode] ? this.focusNode : -1, directs: this.directs, ink: this.theme.text, accent: this.theme.accent });
     // Greedy vertical nudge keeps coincident hub labels legible (hubs are bounded).
     const placed: [number, number, number][] = [];
     this.hubLabels.forEach((el, i) => {
@@ -1314,7 +1322,7 @@ export class DetailRenderer {
   /** Keep the zoom; centre the note. */
   private panTo(n: number) {
     if (n < 0 || !this.visible[n]) return;
-    this.flyTo((this.renderCoordinate(n, 0) - this.cameraFrame.minX) / this.cameraFrame.width, (this.renderCoordinate(n, 1) - this.cameraFrame.minY) / this.cameraFrame.height, this.camera.ratio);
+    this.centreOn(this.renderCoordinate(n, 0), this.renderCoordinate(n, 1), this.camera.ratio, undefined, ...this.cardInset());
   }
   /** One expanding ring from the focus to its farthest direct connection (world reach, O(degree)). */
   private startRipple(n: number) {
@@ -1357,7 +1365,7 @@ export class DetailRenderer {
     if (this.card.node < 0 && !this.selectedEdges.length && !this.pathView) { this.cardRect = [0, 0, 0, 0]; this.cueRing.hidden = this.cueLine.hidden = true; return; }
     // The card stops above the minimap unless the tools panel already covers the minimap's column.
     const t = this.toolsInset, sheet = sheetCard(w, t), cls = 'graph-ng-card' + (sheet ? ' graph-ng-sheet' : ''), mini = this.settings.visuals.minimap && w >= MINIMAP_MIN_CANVAS && t < MINIMAP_W + 8;
-    const room = `${Math.max(120, h - 16 - (mini ? MINIMAP_H + 8 : 0))}px`, across = sheet && t ? `${w - t}px` : '';
+    const room = `${Math.max(120, h - 16 - (mini ? (this.miniMap.folded ? 32 : MINIMAP_H) + 8 : 0))}px`, across = sheet && t ? `${w - t}px` : '';
     if (c.className !== cls || !sheet && c.style.maxHeight !== room || c.style.width !== across) { c.className = cls; c.style.maxHeight = sheet ? '' : room; c.style.width = across; this.card.size = undefined; }
     const [cw, ch] = this.card.size ??= [c.offsetWidth || 320, c.offsetHeight || 240], rect = this.cardRect = dockCard(w, h, cw, ch, 8, t);
     c.style.transform = sheet ? '' : `translate(${rect[0]}px, ${rect[1]}px)`;

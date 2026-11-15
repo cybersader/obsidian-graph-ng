@@ -165,6 +165,7 @@ export class Interaction {
   private downX = 0;
   private downY = 0;
   private lastPointer?: { clientX: number; clientY: number };
+  private hoverHub = -1;
   /** Context menu and touch long-press (src/context-menu.ts). */
   readonly gestures: Gestures;
   constructor(private host: RendererControls, private registry = actions) { this.gestures = new Gestures(host, registry); }
@@ -199,8 +200,9 @@ export class Interaction {
     const rect = h.canvas.getBoundingClientRect(), x = e.clientX - rect.left, y = e.clientY - rect.top;
     const hub = h.pickHub(x, y), node = hub >= 0 ? -1 : h.pick(x, y), edge = node < 0 && hub < 0 ? h.pickEdge(x, y) : -1;
     // Hover is a light preview only: a ring and the name. Only a click moves the highlight and card.
-    if (node === h.hovered && edge === h.hoveredEdge) return;
-    h.setHover(node, edge); h.hint(hub, node, edge, true);
+    // A collapsed hub is neither a node nor an edge, so it is compared separately for its tooltip and cursor.
+    if (node === h.hovered && edge === h.hoveredEdge && hub === this.hoverHub) return;
+    this.hoverHub = hub; h.setHover(node, edge); h.hint(hub, node, edge, true);
   };
   pointerUp = (e: PointerEvent) => {
     const h = this.host; if (!h.live) return;
@@ -231,7 +233,7 @@ export class Interaction {
   pointerLeave = (e?: PointerEvent) => {
     const h = this.host, next = e?.relatedTarget;
     if (next && h.owns(next)) return;
-    this.lastPointer = undefined; if (!this.pointers.size) { h.setHover(-1, -1); h.hint(-1, -1, -1, false); }
+    this.lastPointer = undefined; if (!this.pointers.size) { this.hoverHub = -1; h.setHover(-1, -1); h.hint(-1, -1, -1, false); }
   };
   wheel = (e: WheelEvent) => {
     e.preventDefault(); const h = this.host; if (!h.live) return;
