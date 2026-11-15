@@ -453,6 +453,18 @@ Highlighting shows where the connections are; the connection card makes them fin
 
 **Click opens notes directly (skip the connection card)** (`visuals.clickOpens`, Appearance, off by default) restores click-to-open. Lookups use the incident-edge index and cost O(degree); nothing is recomputed per frame. The card, ring and leader line are DOM overlays, the same on WebGL and Canvas. Evidence: `tests/connection-card.test.ts` and the compiled-renderer card tests in `tests/physics-transaction.test.ts`; native layout and screen-reader acceptance are pending.
 
+### Find a note (unreleased)
+
+Press **/** or **Ctrl/Cmd+K** over the note graph to open a search box. It finds a note and takes you to it without filtering the rest of the graph away.
+
+- **Results:** up to 20 notes the current view can show. Names that start with the text come first, then names that contain it, then notes whose identity contains it. Each row shows the name, its connection count and its path.
+- **Up/Down:** rings the highlighted note where it is. The camera does not move.
+- **Enter:** flies to the note (instantly under reduced motion), selects it and opens its connection card. Clicking a row does the same.
+- **Shift+Enter:** applies the text as the ordinary search filter, as the toolbar search does.
+- **Esc:** closes the box. It closes before the connection card does.
+
+Matching runs in the worker over the same cached name-and-identity text as the search filter, once per pause in typing (120 ms), in chunks of 4,096 notes that a newer query cancels. Only note indices come back; identities stay in the worker. Nothing runs per frame. Aggregate graphs have no note search. Evidence: `tests/search.test.ts` and the worker test in `tests/pipeline.test.ts`; native keyboard and screen-reader acceptance are pending.
+
 ### Resolution-change candidate (unverified)
 
 The next detail paint reconciles a changed device-pixel ratio even when the CSS box did not resize. This preserves CSS geometry, semantic colors and layout; it does not establish the cause of scale-dependent color shifts or guarantee all-scale crispness. The optional `probe:zoom` local synthetic harness compares fixed coordinates at far/small-step/mid/near zoom on actual WebGL and bounded Canvas with DPR 1→2, records backend/backing resolution and screenshots, and requires separate runtime authorization. Source authoring is not execution or native/live-tab evidence.

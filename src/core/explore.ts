@@ -118,10 +118,39 @@ export interface ExploreResult {
 }
 export interface ExploreLimits { facetValues: number }
 const lowered = new WeakMap<Projection, string[]>();
+/** The text note search matches, lower-cased: the file name (no folder or .md), NUL, then the identity. */
+export const searchKey = (path: string, identity: string) => `${path.slice(path.lastIndexOf('/') + 1).replace(/\.md$/i, '')}\u0000${identity}`.toLowerCase();
 function searchText(p: Projection) {
   let text = lowered.get(p);
-  if (!text) { text = p.paths.map((path, i) => `${path.slice(path.lastIndexOf('/') + 1).replace(/\.md$/i, '')}\u0000${p.identities[i]}`.toLowerCase()); lowered.set(p, text); }
+  if (!text) { text = p.paths.map((path, i) => searchKey(path, p.identities[i]!)); lowered.set(p, text); }
   return text;
+}
+/** Match class of a `searchKey` text for a lower-cased query: 0 name prefix, 1 name substring,
+ * 2 identity only, -1 no match. */
+export function matchRank(text: string, query: string) {
+  const at = query ? text.indexOf(query) : -1;
+  return at < 0 ? -1 : at === 0 ? 0 : at < text.indexOf('\u0000') ? 1 : 2;
+}
+export interface SearchHit { node: number; rank: number; length: number }
+/** Merge notes [from, to) into `best`, a sorted list of at most `limit` hits: match class, then
+ * shorter name, then note order. Callers chunk the range to bound each step. */
+export function rankMatches(text: (i: number) => string, query: string, from: number, to: number, best: SearchHit[], limit = 20, keep: (i: number) => boolean = () => true) {
+  for (let i = from; i < to; i++) {
+    if (!keep(i)) continue;
+    const t = text(i), rank = matchRank(t, query); if (rank < 0) continue;
+    const length = t.indexOf('\u0000'), worse = (h: SearchHit) => h.rank > rank || h.rank === rank && h.length > length;
+    let at = best.length; while (at > 0 && worse(best[at - 1]!)) at--;
+    if (at < limit) { best.splice(at, 0, { node: i, rank, length }); if (best.length > limit) best.pop(); }
+  }
+  return best;
+}
+/** Find-a-note: up to `limit` notes kept by `keep`, in rank order, over the cached search text. Yields
+ * between chunks of `chunk` notes so `cooperative` can bound, cancel and interleave the work. */
+export function* searchSteps(p: Projection, query: string, keep: Uint8Array, limit = 20, chunk = 4096): Generator<void, SearchHit[]> {
+  const text = searchText(p), q = query.trim().toLowerCase().replace(/\0/g, '').slice(0, VIEW_LIMITS.query), best: SearchHit[] = [];
+  if (keep.length !== text.length) throw new Error('SEARCH_MASK');
+  for (let i = 0; q && i < text.length; i += chunk) { if (i) yield; rankMatches(j => text[j]!, q, i, Math.min(text.length, i + chunk), best, Math.min(limit, 50), j => !!keep[j]); }
+  return best;
 }
 /** Pure, worker-side compilation of a view to typed masks and bounded summaries.
  * Filters are ANDed columnar predicates; hidden groups/colors/types only hide. */

@@ -20,8 +20,11 @@ export type PipelineRequest =
   | { kind: 'members'; group: string; view: number }
   | { kind: 'expression-count'; expr: string; context: 'filter' | 'group'; budgetMs?: number }
   | { kind: 'explore'; view: ExploreView; colors?: GraphDeclaration['colors']; facetValues: number; budgetMs?: number }
+  | { kind: 'search'; query: string; visible: Uint8Array; budgetMs?: number }
   | { kind: 'contributions'; pair: string; offset: number; count: number; view: number }
   | { kind: 'relationships'; edges: number[] };
+/** Cancellable, latest-wins evaluations: a newer request of the same kind supersedes the older. */
+export const evaluation = (r: { kind: string }): r is Extract<PipelineRequest, { kind: 'expression-count' | 'explore' | 'search' }> => r.kind === 'expression-count' || r.kind === 'explore' || r.kind === 'search';
 export interface ProjectResult { invalidSaved?: GenerationMeta; meta: GenerationMeta; nodes: number; edges: number; unresolved: number; quarantined: { path: string; id: string }[]; dropped?: Record<string, EdgeRuleCounts> }
 /** Per edge rule: drawn relationships and those dropped (missing target, duplicate-ID endpoint, excluded relationship notes). */
 export interface EdgeRuleCounts { drawn: number; missing: number; excluded: number; carriers: number }
@@ -69,12 +72,12 @@ export class WorkerPipeline {
   request<T>(revision: number, request: PipelineRequest): Promise<T> {
     this.cancelEvaluation(request.kind);
     if (this.closed) return Promise.reject(new Error('Worker pipeline closed'));
-    if (request.kind === 'expression-count' || request.kind === 'explore') this.pending = this.pending.filter(p => { if (p.request.kind !== request.kind) return true; p.reject(new Error('Expression superseded')); return false; });
+    if (evaluation(request)) this.pending = this.pending.filter(p => { if (p.request.kind !== request.kind) return true; p.reject(new Error('Expression superseded')); return false; });
     return new Promise((resolve, reject) => { this.pending.push({ id: ++this.next, revision, request, resolve, reject }); this.dispatch(); });
   }
   /** Bypass the serialized RPC queue only to stop cooperative expression work. */
   cancelEvaluation(kind: PipelineRequest['kind']) {
-    if (this.active?.request.kind === kind && (this.active.request.kind === 'expression-count' || this.active.request.kind === 'explore')) {
+    if (this.active?.request.kind === kind && evaluation(this.active.request)) {
       try { this.worker.postMessage({ kind: 'cancel-evaluation', id: this.active.id }, []); }
       catch (error) { this.fail(error instanceof Error ? error : new Error(String(error))); }
     }
@@ -84,7 +87,7 @@ export class WorkerPipeline {
     const p = this.active = this.pending.shift()!;
     // A separate startup/dispatch watchdog covers a worker that never acknowledges.
     p.timer = setTimeout(() => this.fail(new Error('Graph worker did not start processing')), this.timeoutMs());
-    try { this.worker.postMessage({ id: p.id, revision: p.revision, ...p.request, ...((p.request.kind === 'expression-count' || p.request.kind === 'explore') ? { budgetMs: p.request.budgetMs ?? this.timeoutMs() * .9 } : {}) }, transferables(p.request)); }
+    try { this.worker.postMessage({ id: p.id, revision: p.revision, ...p.request, ...(evaluation(p.request) ? { budgetMs: p.request.budgetMs ?? this.timeoutMs() * .9 } : {}) }, transferables(p.request)); }
     catch (error) { this.fail(error instanceof Error ? error : new Error(String(error))); }
   }
   private rejectAll(error: Error) {

@@ -225,3 +225,17 @@
 
 .graph-ng-lens-toggle { min-height: 32px; min-width: 32px; }
 .graph-ng-lens-toggle[aria-pressed="true"] { background: var(--interactive-accent); color: var(--text-on-accent); }
+/* Find a note (/ or Ctrl/Cmd+K): ranked matches over the graph; the ring previews without moving the camera. */
+.graph-ng-find { position:absolute; top:8px; left:50%; transform:translateX(-50%); z-index:3; width:min(420px, calc(100% - 16px)); display:flex; flex-direction:column; gap:4px; padding:6px; font-size:var(--font-ui-small); color:var(--text-normal); background:var(--background-primary); border:1px solid var(--background-modifier-border); border-radius:var(--radius-m, 8px); box-shadow:var(--shadow-s); }
+.graph-ng-find[hidden], .graph-ng-find-ring[hidden] { display:none; }
+.graph-ng-find-input { width:100%; min-height:32px; }
+.graph-ng-find-list { max-height:min(360px, 50vh); overflow-y:auto; }
+.graph-ng-find-row { display:grid; grid-template-columns:1fr auto; column-gap:8px; min-height:32px; padding:3px 6px; border-radius:var(--radius-s, 4px); cursor:pointer; }
+.graph-ng-find-row:hover, .graph-ng-find-row[aria-selected="true"] { background:var(--background-modifier-hover); }
+.graph-ng-find-row[aria-selected="true"] { outline:2px solid var(--interactive-accent); outline-offset:-2px; }
+.graph-ng-find-name { font-weight:var(--font-semibold, 600); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.graph-ng-find-count { grid-row:span 2; align-self:center; color:var(--text-muted); white-space:nowrap; }
+.graph-ng-find-path { color:var(--text-muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.graph-ng-find-status:empty { display:none; }
+.graph-ng-find-status, .graph-ng-find-keys { color:var(--text-muted); padding:0 6px; }
+.graph-ng-find-ring { position:absolute; left:0; top:0; z-index:2; width:32px; height:32px; border:3px solid var(--interactive-accent); border-radius:50%; pointer-events:none; }

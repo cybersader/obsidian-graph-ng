@@ -21,6 +21,7 @@ import { groupPages, page } from './core/group-page';
 import { ContributionPage, type ContributionContext } from './contribution-page';
 import { informationAlerts, renderInformation, type InformationReport } from './graph-information';
 import { canonicalExplore, loadSettings, settingsForSave, validateSettings, type Settings } from './settings';
+import { searchable } from './search';
 import { DetailRenderer, GroupRenderer, gpuStatus, type Renderer, type RenderView } from './renderer';
 declare const __LAYOUT_WORKER_SOURCE__: string;
 /** One message/check serves each boundary without dropping phase information. */
@@ -312,6 +313,11 @@ export class GraphView extends ItemView {
     this.toolbar = this.contentEl.createDiv({ cls: 'graph-ng-toolbar' });
     this.body = this.contentEl.createDiv({ cls: 'graph-ng-body' });
     this.stage = this.body.createDiv({ cls: 'graph-ng-stage' });
+    searchable(this.stage, {
+      projection: () => this.contentEl.dataset.mode === 'nodes' ? this.projection : undefined,
+      rank: (query, visible) => this.detailGeneration === this.activeRevision ? this.plugin.pipeline.request<number[]>(this.activeRevision, { kind: 'search', query, visible }) : Promise.resolve([]),
+      filter: query => this.setView({ ...this.view, query }),
+    });
     this.statusSummary = this.body.createEl('button', { cls: 'graph-ng-summary', attr: { 'aria-live': 'polite', 'aria-label': 'Open graph information' } });
     this.statusSummary.hidden = true; this.statusSummary.onclick = () => this.explorePanel?.show('information', this.statusSummary);
     this.status = this.body.createDiv({ cls: 'graph-ng-status' });

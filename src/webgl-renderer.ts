@@ -1337,6 +1337,7 @@ export class DetailRenderer {
       cardStep: step => this.card.step(step),
       isolate: n => this.isolate(n),
       focusCanvas: () => this.canvas.focus(),
+      flyToNote: n => this.travel(n),
     };
   }
   private contextLost = (e: Event) => {

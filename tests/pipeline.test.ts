@@ -295,6 +295,25 @@ test('render-only detail transfers packed paths without facts, identities or mem
     expect((await p.request<LayoutResult>(1, { kind: 'layout' })).positions.length).toBe(4);
   } finally { p.dispose(); }
 });
+test('find-a-note ranks in the worker over names and identities, returning only note indices', async () => {
+  const { renderPath } = await import('../src/render-projection');
+  const p = pipeline(), d = { ...declaration, identity: [{ key: 'uid' }] };
+  try {
+    await p.request(1, { kind: 'configure', config: { ...config, declaration: d } });
+    const rows = [{ path: 'N/Alpha.md', properties: { uid: 'X-1' } }, { path: 'N/Beta.md', properties: { uid: 'ALPHA-9' } }, { path: 'N/Zalpha.md', properties: { uid: 'z' } }, { path: 'N/Gamma.md', properties: { uid: 'g' } }];
+    await p.request(1, { kind: 'rows', reset: true, columns: packRows(rows, d) });
+    await p.request(1, { kind: 'project' });
+    const order = (await p.request<DetailResult>(1, { kind: 'detail' })).projection, at = (path: string) => [0, 1, 2, 3].find(i => renderPath(order, i) === path)!;
+    const all = new Uint8Array(4).fill(1);
+    expect(await p.request<number[]>(1, { kind: 'search', query: 'Alpha', visible: all.slice() })).toEqual(['N/Alpha.md', 'N/Zalpha.md', 'N/Beta.md'].map(at));
+    const some = all.slice(); some[at('N/Alpha.md')] = 0;
+    expect(await p.request<number[]>(1, { kind: 'search', query: 'alpha', visible: some })).toEqual(['N/Zalpha.md', 'N/Beta.md'].map(at));
+    // Settle explicitly: awaiting these through `expect(...).rejects` stalled the worker reply under Bun.
+    const failure = (q: Promise<unknown>) => q.then(() => '', e => String(e));
+    expect(await failure(p.request(1, { kind: 'search', query: 'a', visible: new Uint8Array(1) }))).toContain('SEARCH_MASK');
+    expect(await failure(p.request(2, { kind: 'search', query: 'a', visible: all.slice() }))).toContain('Projection generation changed');
+  } finally { p.dispose(); }
+});
 test('worker GPU probe exposes unsupported OffscreenCanvas without fabricating availability', async () => {
   const p = pipeline(); try { expect(await p.request(1, { kind: 'gpu' })).toBeUndefined(); } finally { p.dispose(); }
 });

@@ -60,6 +60,8 @@ export interface RendererControls {
   /** "Only connections" around a note; -1 returns to the full graph. */
   isolate(node: number): void;
   focusCanvas(): void;
+  /** Go to a note as the card's Go to does: select it with its card and fly the camera there. */
+  flyToNote(node: number): void;
 }
 
 export interface ActionContext {

@@ -22,6 +22,10 @@ Packed paths exchange JavaScript heap objects for explicitly measured ArrayBuffe
 
 The final GPU-resize approach flushes a public WebGL2 fence and asynchronously polls clientWaitSync with flags/timeouts both zero, under existing shaderPollMs/workerTimeoutMs budgets. Both pre-upload and final pre-ready reconciliations wait for GPU completion. Every created fence is deleted on completion, failure, lost/disposed cancellation or timeout; initialization failure retains the existing group fallback. This removed a reproduced 230 ms drawing-buffer task in the targeted actual-native rerun (309.1 ms first groups; heap about 10.9 MiB). Driver allocation remains non-preemptible.
 
+## Find a note (2026-11-15 addendum)
+
+Find-and-fly search keeps this boundary: the main realm sends a query and a copied mask of notes it can show; the worker ranks over its existing cached name-and-identity search text in cooperative, cancellable chunks and returns at most 20 note indices. Identities are not added to the render columns. The main realm renders rows from packed paths and its own edge columns.
+
 ## Local results
 
 Native large first groups are 320.0/350.1 ms hardware/software, down from 535.3/589.5 ms in the same baseline profile. Browser main JS heap is 10.97/10.94 MiB semantic/literal, excluding separately reported backing storage. Recorded 62–70 ms detail tasks remain a miss, with ownership left unattributed unless the exact retained CPU profile supports it; software-open 51–63 ms events exceed the 50 ms target, have only program/incomplete samples and remain UNATTRIBUTED. Independent SHIP-WITH-FIXES review led to upload-window and stale-lookup regressions; see the benchmark record for final commands, run paths and remaining lanes.

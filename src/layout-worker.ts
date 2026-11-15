@@ -13,8 +13,8 @@ import { generationKey } from './core/generation';
 import { warmLayout, validSavedLayout } from './core/incremental';
 import { CACHE_FORMAT, decodeLayout, encodeLayout, type BinaryLayout, type GenerationMeta } from './core/binary-layout';
 import { edgeHashes, hashEdge, edgeHashSet } from './core/edge-hash';
-import { LAYOUT_PRODUCER, type PipelineRequest, type PipelineConfig } from './pipeline';
-import { emptyView, explore, groupColumn, withoutTypes, type ExploreResult, type ExploreView } from './core/explore';
+import { LAYOUT_PRODUCER, evaluation, type PipelineRequest, type PipelineConfig } from './pipeline';
+import { emptyView, explore, groupColumn, searchSteps, withoutTypes, type ExploreResult, type ExploreView } from './core/explore';
 const rows = new Map<string, FactRow>();
 let config: PipelineConfig, meta: GenerationMeta, projection: Projection, visible: Uint8Array;
 let contracted: ReturnType<typeof contractGroups>, positions: Float32Array | undefined, saved: BinaryLayout | undefined;
@@ -159,6 +159,11 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       const result = applyView(r.view, prepared);
       return structuredClone({ explore: result, colors, groups: groupSummary(contracted.projection), view: viewGeneration });
     }
+    case 'search': {
+      // Ranked find-a-note over the cached search text; only note indices leave the worker.
+      if (revision !== projectionRevision) throw new Error('Projection generation changed');
+      return (await cooperative(searchSteps(projection, String(r.query), r.visible), control)).map(h => h.node);
+    }
     case 'expression-count': {
       if (revision !== projectionRevision) throw new Error('Projection generation changed');
       const ast = checked(r.expr, r.context);
@@ -196,10 +201,10 @@ self.onmessage = (event: MessageEvent<PipelineRequest & { id: number; revision: 
   // Backwards-compatible deterministic layout protocol used by existing harness consumers.
   if (event.data.input) { const start = performance.now(); try { const p = runLayout(event.data.input, event.data.options); self.postMessage({ positions: p, milliseconds: performance.now() - start }, { transfer: [p.buffer] }); } catch (error) { self.postMessage({ error: String(error) }); } return; }
   const r = event.data;
-  if (r.kind === 'expression-count' || r.kind === 'explore') { const old = evaluations.get(r.kind); if (old !== undefined) cancelled.add(old); evaluations.set(r.kind, r.id); }
+  if (evaluation(r)) { const old = evaluations.get(r.kind); if (old !== undefined) cancelled.add(old); evaluations.set(r.kind, r.id); }
   queue = queue.then(async () => {
     self.postMessage({ kind: 'started', id: r.id, revision: r.revision });
-    try { const result = await handle(r, r.revision, { cancelled: () => cancelled.has(r.id), budgetMs: (r.kind === 'expression-count' || r.kind === 'explore') ? r.budgetMs ?? 120000 : 120000 }); self.postMessage({ id: r.id, revision: r.revision, result }, { transfer: transferables(result) }); }
+    try { const result = await handle(r, r.revision, { cancelled: () => cancelled.has(r.id), budgetMs: evaluation(r) ? r.budgetMs ?? 120000 : 120000 }); self.postMessage({ id: r.id, revision: r.revision, result }, { transfer: transferables(result) }); }
     catch (error) { self.postMessage({ id: r.id, revision: r.revision, error: String(error) }); }
     finally { cancelled.delete(r.id); if (evaluations.get(r.kind) === r.id) evaluations.delete(r.kind); }
   });
