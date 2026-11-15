@@ -105,7 +105,7 @@ void main() {
  if (lift > 0. && radius < 2. * lift) radius = lift + radius * radius / (4. * lift);
  // Hover pulse: only the hovered note grows (to at least the tier floor) and rings.
  if (id == hovered) { radius = max(radius * pulse.x, minSize * (pulse.x - 1.) / .6); ring = max(ring, pulse.y); spread = max(spread, 1.4); }
- bands = note ? vec2(0.) : rings * focus * vec2(!ego && st.g > .9 ? 1. : 0., ego ? 1. : 0.); if (bands.x > 0.) spread = max(spread, 1.32);
+ bands = note ? vec2(0.) : focus * vec2(rings > .9 && !ego && st.g > .9 ? 1. : 0., rings > 0. && ego ? 1. : 0.); if (bands.x > 0.) spread = max(spread, 1.32);
  ink = color(3).rgb;
  local = corners[gl_VertexID] * spread;
  gl_Position = st.r < .5 || st.b > .5 || note != (layer == 0) || k < .004 ? offscreen : clip(point(id) + local * radius);
@@ -247,6 +247,8 @@ export class DetailRenderer {
   /** Host seams for the connection card: open in a reused, new-tab or split leaf, and copy a wikilink. */
   openNote?: (path: string, mode: 'reuse' | 'tab' | 'split') => void;
   copyLink?: (path: string) => void;
+  /** Public-cache presentation title. Never changes paths, identity or projection columns. */
+  noteTitle?: (path: string) => string;
   /** Host seam for the context menu (src/context-menu.ts `obsidianMenu`). */
   showMenu?: MenuPresenter;
   private edgeAnchor = -1;
@@ -834,7 +836,7 @@ export class DetailRenderer {
   /** Temporary view state, deliberately not saved to named views or physics/layout state. */
   get lensNode() { return this.lensWanted; }
   private lensChanged() { this.card.syncLens(); this.onLensChange?.(); }
-  /** Host seam for "+N more": open the focus's card with its whole Connections list and move keyboard focus into it. */
+  /** Host seam for "+N more": open the declared-group navigator and focus its filter, without moving the camera. */
   showConnections(n: number) {
     if (!(n >= 0 && n < this.visible.length && this.filterVisible[n])) return;
     if (this.selected !== n || this.card.node !== n) this.selectNote(n, true);
@@ -1035,9 +1037,10 @@ export class DetailRenderer {
     const p = this.projection, on = (e: number) => !!this.edgeOn[e];
     return {
       name: n => this.name(n),
+      title: n => this.noteTitle?.(this.path(n)) ?? '',
+      group: n => { const key = this.view.groupCodes?.[n] ?? -1; return { key, label: this.view.groupLabels?.[key] ?? 'Ungrouped' }; },
       color: n => { const c = this.colorBytes, k = n * 4; return `rgb(${c[k]},${c[k + 1]},${c[k + 2]})`; },
       groups: n => { const names = new Map<number, string>(), name = (m: number) => names.get(m) ?? names.set(m, this.name(m)).get(m)!; return connectionGroups(n, this.edges, p, on, this.baseVisible, byInterest(this.interestOf(n), (a, b) => name(a).localeCompare(name(b)))); },
-      secondHop: n => reach(n, this.edges, p, on, this.baseVisible, 2),
       isolated: () => !!this.isolation,
       lensed: n => this.lensWanted >= 0 && this.lensWanted === n,
       act: (a, n) => this.cardAction(a, n),
@@ -1242,7 +1245,7 @@ export class DetailRenderer {
       gl.uniform2f(u.center!, this.centerX, this.centerY); gl.uniform2f(u.viewport!, this.width, this.height); gl.uniform1f(u.scale!, this.scale); gl.uniform1f(u.nodeSize!, nodeSize); gl.uniform1f(u.edgeSize!, edgeWidth); gl.uniform1i(u.hovered!, this.hoverFx.n); gl.uniform2f(u.pulse!, this.fx[0]!, this.fx[1]!); gl.uniform1i(u.selected!, this.selected); gl.uniform1i(u.focusNode!, this.focusNode); gl.uniform1i(u.edgeHovered!, this.hoveredEdge);
       gl.uniform1f(u.focus!, focus); gl.uniform1f(u.dim!, v.dimOpacity); gl.uniform1f(u.glow!, layer ? policy.glow : 0);
       gl.uniform1f(u.carrierAlpha!, notes.alpha); gl.uniform1f(u.carrierFold!, notes.visibility); gl.uniform1f(u.carrierSize!, v.carrierSize); gl.uniform1i(u.layer!, layer);
-      gl.uniform1i(u.tierMask!, this.tierMask); gl.uniform1f(u.minSize!, v.tierMinSize); gl.uniform1f(u.rings!, v.tierRings ? 1 : 0); gl.uniform1f(u.strong!, v.focusEdges ? 1 : 0);
+      gl.uniform1i(u.tierMask!, this.tierMask); gl.uniform1f(u.minSize!, v.tierMinSize); gl.uniform1f(u.rings!, v.tierRings ? (this.directs.length > 50 ? .5 : 1) : 0); gl.uniform1f(u.strong!, v.focusEdges && this.directs.length <= 50 ? 1 : 0);
       gl.uniform1i(u.segments!, policy.segments); gl.uniform1f(u.curvature!, policy.curves ? v.curvature : 0); gl.uniform1f(u.edgeAlpha!, alpha); gl.uniform1f(u.direction!, v.edgeDirection ? 1 : 0); gl.uniform1f(u.colorMix!, v.edgeColorMix); gl.uniform1f(u.inkAlpha!, ink); gl.uniform1f(u.fadeLength!, Math.min(reach, 1e9)); gl.uniform1f(u.focusOnly!, v.edgeMode === 'focus' ? 1 : 0);
       gl.uniform1f(u.labelAlpha!, fade.alpha); gl.uniform1f(u.labelCut!, fade.cut); gl.uniform3f(u.outline!, p[8]! / 255, p[9]! / 255, p[10]! / 255); gl.uniform2f(u.texel!, 1 / 2048, 1 / 2048); gl.uniform1f(u.discAlpha!, hub ? 1 : haloAlpha); gl.uniform1f(u.hub!, hub);
       gl.bindVertexArray(vaoIndex < 0 ? this.labelVaos[lod]! : this.vaos[vaoIndex]!);
@@ -1280,7 +1283,7 @@ export class DetailRenderer {
       const { list, direct } = rankFocus(ego, this.near, this.stateBytes, this.visible, this.projection.offsets, budget * s.labelCandidateMultiplier, this.projection.carrierNodes, ego >= 0 ? this.interestOf(ego) : undefined);
       const items = list.map(([n, rank]) => { m.font = tierFont(rank, s.labelSize, tier, this.theme.font); const h = tierType(rank, s.labelSize, tier).size * 1.5 + 4; return { node: n, rank, x: this.renderCoordinate(n, 0, 1) * k, y: this.renderCoordinate(n, 1, 1) * k, r: radius(n), w: m.measureText(text(n, rank)).width + pad, h }; });
       m.font = tierFont(1, s.labelSize, tier, this.theme.font);
-      const layout = radialLabels(items, budget, DIRECT_LABELS, ego >= 0 ? direct : 0, m.measureText(`+${direct} more`).width + 24, 32);
+      const layout = radialLabels(direct > 50 ? items.filter(it => it.rank <= 1) : items, budget, direct > 50 ? 6 : DIRECT_LABELS, ego >= 0 ? direct : 0, m.measureText(`+${direct} more`).width + 24, 32);
       this.ranked = layout.slots.filter(x => x.node !== ego); this.moreAt = layout.more;
       this.rankedKey = [lod, this.display, this.fit, this.width, this.height, this.lensRevision];
       this.overlay.className = 'graph-ng-overlay' + (v.labelPlates ? ' graph-ng-plates' : '');
@@ -1395,7 +1398,7 @@ export class DetailRenderer {
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0); ctx.fillStyle = this.theme.background; ctx.fillRect(0, 0, this.width, this.height); ctx.strokeStyle = this.theme.edge; ctx.lineWidth = s.edgeSize;
     // The edge shader's tier weights: rest, neighbours of neighbours, then direct strokes on top.
     const zoom = this.camera.ratio / this.homeRatio, base = edgeAlpha(s.visuals, this.visibleEdges, zoom, false, this.width, this.height), width = s.edgeSize * zoomFade(s.visuals, this.visibleEdges, zoom, this.width, this.height);
-    const mask = this.tierMask, strong = s.visuals.focusEdges, ep = this.theme.palette, mode = s.visuals.edgeMode, [ink, reach] = this.edgeQuiet(width, true), quiet = base > 0 ? Math.min(1, ink / base) : 1;
+    const mask = this.tierMask, strong = s.visuals.focusEdges && this.directs.length <= 50, ep = this.theme.palette, mode = s.visuals.edgeMode, [ink, reach] = this.edgeQuiet(width, true), quiet = base > 0 ? Math.min(1, ink / base) : 1;
     // The shader's ink budget and long-line fade (halving steps of fade / length) for context lines; "Focus only" keeps the tiers.
     for (const tier of mode === 'off' ? [] : focus ? mode === 'focus' ? [128, 255] : [0, 128, 255] : mode === 'focus' ? [] : [-1]) {
       let [alpha, wide] = tierEdge(tier, base * (tier > 0 ? quiet + (1 - quiet) * focus : quiet) * (mode === 'focus' ? focus : 1), tier < 0 ? 0 : focus, dim);
@@ -1427,7 +1430,7 @@ export class DetailRenderer {
       // The shader's outer ring band (1.1–1.34 radii) as one stroke.
       if (ring) { ctx.globalAlpha = a * ring; ctx.lineWidth = r * .2; ctx.beginPath(); ctx.arc(x(n), y(n), r * 1.22, 0, Math.PI * 2); ctx.stroke(); }
       // Contrast rings in the text colour: direct band 1.07–1.25, focus outer band 1.49–1.65 radii.
-      const band = !layer && s.visuals.tierRings && focus ? (ego ? 1.57 : shown > .9 ? 1.16 : 0) : 0;
+      const band = !layer && s.visuals.tierRings && focus ? (ego ? 1.57 : shown > .9 && this.directs.length <= 50 ? 1.16 : 0) : 0;
       if (band) { ctx.globalAlpha = a * fade * focus; ctx.strokeStyle = this.theme.text; ctx.lineWidth = r * (ego ? .16 : .18); ctx.beginPath(); ctx.arc(x(n), y(n), r * band, 0, Math.PI * 2); ctx.stroke(); }
     }
     ctx.globalAlpha = 1;

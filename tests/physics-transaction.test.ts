@@ -468,9 +468,10 @@ test('graduated production touch tap selects with a text-only connection card an
   const f = await graduated([[0, 1], [1, 2], [2, 3]]), { r, k } = f, card = () => r[k('noteCard')];
   f.tap(1, 'touch'); expect(f.opened).toEqual([]); expect(r.selected).toBe(1); expect(f.actual()).toEqual(f.expected(1));
   const open = control(card(), 'Open'); expect(card().textContent).toContain('2 direct connections'); expect(open.attributes['aria-label']).toBe('Open 1');
-  // Count chips: each number is its own tabular count element; the tier legend counts share the class.
-  const chips = card().children.find((c: any) => c.className === 'graph-ng-card-chips').children;
-  expect(chips.map((c: any) => [c.children[0].className, c.children[0].textContent])).toEqual([['graph-ng-count', '2'], ['graph-ng-count', '1']]);
+  // No duplicated count chips: each section count is the shared tabular count element, as are the tier legend counts.
+  expect(card().querySelectorAll('div').some((c: any) => c.className === 'graph-ng-card-chips')).toBe(false);
+  const section = card().querySelectorAll('button').find((b: any) => b.className === 'graph-ng-connection-group');
+  expect(section.children.map((c: any) => [c.className, c.textContent]).at(-1)).toEqual(['graph-ng-count', '2']);
   expect(r[k('legendCounts')].every((c: any) => c.className === 'graph-ng-count')).toBe(true);
   open.click(); expect(f.opened).toEqual([1]);
   f.tap(2, 'touch'); expect(f.opened).toEqual([1]); expect(control(card(), 'Open').attributes['aria-label']).toBe('Open 2'); expect(f.actual()).toEqual(f.expected(2));
@@ -504,9 +505,9 @@ test('connection card: grouped rows travel, history goes back and forward, keys 
   const rows = () => card().querySelectorAll('button').filter((b: any) => b.className === 'graph-ng-connection');
   const cardKey = (key: string, target: any, altKey = false) => { let prevented = false; card().onkeydown({ key, altKey, target, preventDefault: () => { prevented = true; }, stopPropagation() {} }); return prevented; };
   f.tap(1); expect(r.selected).toBe(1); expect(f.opened).toEqual([]);
-  expect(card().textContent).toContain('2 direct connections'); expect(card().textContent).toContain('2 neighbours of neighbours'); expect(card().textContent).not.toContain('·');
+  expect(card().textContent).toContain('2 direct connections'); expect(card().textContent).not.toContain('neighbours of neighbours'); expect(card().textContent).not.toContain('·');
   // Equal-size groups: outgoing first. Rows are text-only names with a swatch.
-  expect(rows().map((b: any) => b.textContent)).toEqual(['2', '0']); expect(rows()[1].attributes['aria-label']).toBe('Go to 0 (incoming)');
+  expect(rows().map((b: any) => b.textContent)).toEqual(['2→ link', '0← link']); expect(rows()[1].attributes['aria-label']).toBe('Go to 0: ← link');
   expect(control(card(), 'Back').disabled).toBe(true); expect(card().textContent).not.toContain('Close');
   // Hover/focus a row: ring and leader line to that note; leaving clears.
   rows()[0].onmouseenter(); r[k('placeOverlay')](); expect(r[k('cueRing')].hidden).toBe(false); expect(r[k('cueLine')].style.transform).toContain('rotate(');
@@ -535,7 +536,7 @@ test('connection card actions: open modes, copy link, focus here, and Show only 
   control(bar(), 'Neighbours of neighbours').click(); expect([...r[k('filterVisible')]]).toEqual([1, 1, 1, 0, 1]); expect(r.selected).toBe(0);
   // The list still offers every connection; travel re-centres the temporary view.
   control(bar(), 'Neighbours of neighbours').click(); expect([...r[k('filterVisible')]]).toEqual([1, 1, 0, 0, 1]);
-  card().querySelectorAll('button').find((b: any) => b.textContent === '1').click(); expect(r.selected).toBe(1); expect([...r[k('filterVisible')]]).toEqual([1, 1, 1, 0, 0]);
+  card().querySelectorAll('button').find((b: any) => b.attributes['aria-label']?.startsWith('Go to 1:')).click(); expect(r.selected).toBe(1); expect([...r[k('filterVisible')]]).toEqual([1, 1, 1, 0, 0]);
   // A host view change keeps the temporary view over the new filter; Back to full graph restores it.
   r.setView(new Uint8Array([1, 1, 0, 1, 1]), {}); expect([...r[k('filterVisible')]]).toEqual([1, 1, 0, 0, 0]);
   control(bar(), 'Back to full graph').click(); expect([...r[k('filterVisible')]]).toEqual([1, 1, 0, 1, 1]); expect(bar().textContent).toBe('');
@@ -543,11 +544,13 @@ test('connection card actions: open modes, copy link, focus here, and Show only 
   control(card(), 'Only connections').click(); r[k('keyDown')]({ key: 'Escape', target: r.canvas, preventDefault() {} }); expect(bar().textContent).not.toBe('');
   r[k('keyDown')]({ key: 'Escape', target: r.canvas, preventDefault() {} }); expect(bar().textContent).toBe(''); expect([...r[k('filterVisible')]]).toEqual([1, 1, 0, 1, 1]);
 });
-test('connection card lists the first 50 connections, then Show all', async () => {
+test('hub navigator auto-opens a lone section, collapses on demand and pages each group by 50', async () => {
   const pairs: [number, number][] = Array.from({ length: 60 }, (_, i) => [0, i + 1]);
   const f = await graduated(pairs, 61), { r, k } = f, card = () => r[k('noteCard')], rows = () => card().querySelectorAll('button').filter((b: any) => b.className === 'graph-ng-connection');
-  f.tap(0, 'touch'); expect(rows().length).toBe(50); expect(card().textContent).toContain('60 direct connections');
-  control(card(), 'Show all (60)').click(); expect(rows().length).toBe(60);
+  f.tap(0, 'touch'); expect(card().textContent).toContain('60 direct connections'); expect(rows().length).toBe(50);
+  control(card(), 'Ungrouped, 60 connections').click(); expect(rows().length).toBe(0);
+  control(card(), 'Ungrouped, 60 connections').click(); expect(rows().length).toBe(50);
+  control(card(), 'Show 10 more').click(); expect(rows().length).toBe(60);
 });
 // Relationship picking through the compiled renderer (Canvas fixture). Clicks and taps on lines select only.
 async function relationships() {
@@ -707,16 +710,20 @@ test('lens production layout adoption and rollback retain a coherent overlay wit
 
 // Wave-3 wiring through the compiled renderer (Canvas fixture, synthetic DOM): labels "+N more" ->
 // card, card Lens action, lens-displaced overlays/picking and the Escape/L/Alt+arrow key layers.
-test('wiring: "+N more" opens the connection card Connections list with Show all expanded', async () => {
+test('wiring: "+N more" opens a bounded group list and focuses its filter without travelling', async () => {
   const f = await graduated(Array.from({ length: 60 }, (_, i) => [0, i + 1] as [number, number]), 61), { r, k } = f, card = () => r[k('noteCard')];
   const rows = () => card().querySelectorAll('button').filter((b: any) => b.className === 'graph-ng-connection');
   expect(readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8')).toContain('onMoreConnections = focus => this.detailRenderer?.showConnections(focus)');
   r.onMoreConnections = (n: number) => r.showConnections(n); // the main.ts hook
-  f.tap(0); r[k('focusLevel')] = 1; r[k('placeOverlay')](); expect(rows().length).toBe(50);
+  // Two declared groups (55 and 5), so the hub starts as a collapsed overview.
+  r.setView(new Uint8Array(61).fill(1), { groupCodes: Uint32Array.from({ length: 61 }, (_, i) => i > 55 ? 1 : 0), groupLabels: ['Alpha', 'Beta'] });
+  f.tap(0); r[k('focusLevel')] = 1; r[k('placeOverlay')](); expect(rows().length).toBe(0);
+  const camera = { ...r.camera }, positions = r.positions;
   const more = r[k('moreButton')]; expect(more.hidden).toBe(false); more.click();
-  expect(r.selected).toBe(0); expect(rows().length).toBe(60); expect(card().textContent).not.toContain('Show all'); expect((ControlElement as any).active).toBe(rows()[0]);
+  expect(r.selected).toBe(0); expect(rows().length).toBe(50); expect(card().textContent).not.toContain('Show all'); expect((ControlElement as any).active).toBe(card().querySelector('input'));
+  expect(r.camera).toEqual(camera); expect(r.positions).toBe(positions);
   // From no selection the hook selects the focus and opens its card; a hidden note is ignored.
-  f.tap(EMPTY); expect(card().textContent).toBe(''); r.showConnections(0); expect(r.selected).toBe(0); expect(rows().length).toBe(60);
+  f.tap(EMPTY); expect(card().textContent).toBe(''); r.showConnections(0); expect(r.selected).toBe(0); expect(rows().length).toBe(50);
   r.showConnections(-1); r.showConnections(99); expect(r.selected).toBe(0);
 });
 test('wiring: card Lens action, lens-displaced picking/arrows/cue/labels, and Escape, L and Alt+arrow layers', async () => {
@@ -737,7 +744,7 @@ test('wiring: card Lens action, lens-displaced picking/arrows/cue/labels, and Es
     r[k('placeOverlay')](); const directs = r[k('directs')], xy = r[k('pipXY')];
     directs.forEach((n: number, i: number) => { const q = r.screenPoint(n); expect([xy[i * 2], xy[i * 2 + 1]]).toEqual([q.x, q.y]); });
     expect(r[k('rankedKey')][5]).toBe(r[k('lensRevision')]);
-    const row = rows().find((b: any) => b.textContent === '1'); row.onmouseenter(); r[k('placeOverlay')]();
+    const row = rows().find((b: any) => b.attributes['aria-label']?.startsWith('Go to 1:')); row.onmouseenter(); r[k('placeOverlay')]();
     expect(r[k('cueRing')].style.transform).toContain(`translate(${Math.round(pulled.x)}px, ${Math.round(pulled.y)}px)`);
     // Travel moves the lens with the card; Alt+Left in the card goes back (and the lens follows).
     row.click(); expect(r.selected).toBe(1); expect(r.lensNode).toBe(1); expect(r[k('lensAnchor')]).toBe(1); expect(control(card(), 'Lens').attributes['aria-pressed']).toBe('true');
@@ -875,7 +882,7 @@ test('focus model: hover never retiers or opens the card; a click commits a stic
   // There is no lock anymore: no K binding, no card chip.
   expect(key('k')).toBe(false); expect(card().textContent).not.toContain('Lock'); expect(r.canvas.getAttribute('aria-label')).not.toContain('K ');
   f.tap(2); expect(f.actual()).toEqual(f.expected(2));
-  card().querySelectorAll('button').find((b: any) => b.className === 'graph-ng-connection' && b.textContent === '3').click(); expect(f.actual()).toEqual(f.expected(3));
+  card().querySelectorAll('button').find((b: any) => b.className === 'graph-ng-connection' && b.attributes['aria-label']?.startsWith('Go to 3:')).click(); expect(f.actual()).toEqual(f.expected(3));
   control(card(), 'Back').click(); expect(f.actual()).toEqual(f.expected(2));
   expect(key('Escape')).toBe(true); expect(f.actual()).toEqual(none);
   f.tap(1); f.tap(EMPTY); expect(f.actual()).toEqual(none);
@@ -993,7 +1000,7 @@ test('orientation: wheel and pinch zoom-out clamp with a brief Group overview ch
   r[k('pointerMove')]({ pointerId: 2, clientX: 310, clientY: 300 }); expect(r.camera.ratio).toBeCloseTo(limit); expect(overviews).toBe(1);
   r[k('pointerUp')]({ pointerId: 2, clientX: 310, clientY: 300 }); r[k('pointerUp')]({ pointerId: 1, clientX: 300, clientY: 300 });
   // The card history drives the breadcrumb; a chip travels back.
-  const row = (name: string) => r[k('noteCard')].querySelectorAll('button').find((b: any) => b.textContent === name);
+  const row = (name: string) => r[k('noteCard')].querySelectorAll('button').find((b: any) => b.attributes['aria-label']?.startsWith(`Go to ${name}:`));
   r.setCamera(.5, .5, 1); row('1').click(); row('2').click(); r[k('placeOverlay')]();
   const chipEls = () => crumbs.querySelectorAll('button').filter((b: any) => b.className === 'graph-ng-crumb');
   expect(crumbs.hidden).toBe(false); expect(chipEls().map((b: any) => [b.textContent, b.getAttribute('aria-current')])).toEqual([['0', null], ['1', null], ['2', 'location']]);
@@ -1023,7 +1030,7 @@ test('wave-4 wiring: Find path to… in the menu; Escape clears path, card, lens
   r[k('showMenu')] = (entries: any[]) => menus.push({ ids: entries.map(e => e.id), run: id => entries.find(e => e.id === id).run() });
   const esc = () => r[k('keyDown')]({ key: 'Escape', target: r.canvas, preventDefault() {} });
   const chips = () => { r[k('placeOverlay')](); return crumbs.hidden ? [] : crumbs.querySelectorAll('button').filter((b: any) => b.className === 'graph-ng-crumb').map((b: any) => b.textContent); };
-  const row = (name: string) => card().querySelectorAll('button').find((b: any) => b.textContent === name);
+  const row = (name: string) => card().querySelectorAll('button').find((b: any) => b.attributes['aria-label']?.startsWith(`Go to ${name}:`));
   // Right-click a second note with a selection: the registry menu offers the path.
   f.tap(0); const q = r.screenPoint(3); r.input.contextMenu({ clientX: q.x, clientY: q.y, preventDefault() {} }); await Bun.sleep(0);
   expect(menus[0]!.ids).toContain('find-path'); menus[0]!.run('find-path');
@@ -1217,4 +1224,48 @@ test('hover pulse: only the hovered note grows and rings, the graph is untouched
     fixtureReducedMotion = true; f.hover(3); draw(); expect(r[k('fx')]).toEqual([1.6, .5]); expect(frameCallbacks.size).toBe(0);
     r[k('pointerLeave')](); draw(); expect(fx().n).toBe(-1); expect(frameCallbacks.size).toBe(0);
   } finally { ctx.arc = arc; fixtureReducedMotion = false; }
+});
+
+test('navigator filters cached titles and declared groups without graph motion, catches text keys, and resets on travel', async () => {
+  const f = await graduated(Array.from({ length: 221 }, (_, i) => [0, i + 1] as [number, number]), 222), { r, k } = f;
+  let titles = 0; r.noteTitle = (path: string) => { titles++; return Number(path.replace('.md', '')) % 2 ? '<b>Recovery check</b>' : 'Access review'; };
+  r.setView(new Uint8Array(222).fill(1), { groupCodes: Uint32Array.from({ length: 222 }, (_, n) => n % 3), groupLabels: ['Atlas', 'Beacon', 'Cedar'] });
+  f.tap(0); const card = r[k('noteCard')], input = card.querySelector('input'), rows = () => card.querySelectorAll('button').filter((b: any) => b.className === 'graph-ng-connection');
+  expect(rows().length).toBe(0); expect(card.textContent).toContain('221 direct connections in 3 groups');
+  const camera = { ...r.camera }, positions = r.positions, tiers = f.actual(), lookups = titles;
+  input.value = 'beacon RECOVERY'; input.oninput(); expect(card.querySelector('input')).toBe(input);
+  expect(rows().length).toBe(37); expect(card.textContent).toContain('37 of 221 connections'); expect(card.querySelectorAll('b').length).toBe(0);
+  expect(rows().every((row: any) => row.textContent.includes('<b>Recovery check</b>'))).toBe(true);
+  expect(titles).toBe(lookups); expect(r.camera).toEqual(camera); expect(r.positions).toBe(positions); expect(r.selected).toBe(0); expect(f.actual()).toEqual(tiers);
+  // Typing must not invoke graph shortcuts or suppress native input behavior.
+  for (const key of ['l', 'r', 'Home', 'ArrowLeft', 'Enter']) {
+    let prevented = false; card.onkeydown({ key, target: input, preventDefault() { prevented = true; }, stopPropagation() {} }); expect(prevented).toBe(false);
+    expect(r.lensNode).toBe(-1); expect(r.selected).toBe(0);
+  }
+  input.value = 'no such title'; input.oninput(); expect(rows().length).toBe(0); expect(card.textContent).toContain('No matching connections');
+  card.onkeydown({ key: 'Escape', target: input, preventDefault() {}, stopPropagation() {} }); expect(r.selected).toBe(0); expect(input.value).toBe('');
+  input.value = 'beacon recovery'; input.oninput(); rows()[0].click(); expect(r.selected).not.toBe(0); expect(card.querySelector('input').value).toBe('');
+});
+
+test('large hub labels are a six-note preview while the full topology remains available', async () => {
+  const f = await graduated(Array.from({ length: 221 }, (_, i) => [0, i + 1] as [number, number]), 222), { r, k } = f;
+  f.tap(0); r[k('focusLevel')] = 1; r[k('placeOverlay')]();
+  expect(r[k('directs')].length).toBe(221);
+  expect(r[k('ranked')].filter((slot: any) => slot.rank === 1).length).toBeLessThanOrEqual(6);
+  expect(r[k('ranked')].every((slot: any) => slot.rank === 1)).toBe(true);
+  expect(r[k('moreButton')].textContent).toMatch(/^\+21[5-9] more$|^\+22[01] more$/);
+  expect(f.actual()).toEqual(f.expected(0));
+});
+
+test('navigator bounds group headers, searches beyond the page, and preserves collapsed state on refresh', async () => {
+  const f = await graduated(Array.from({ length: 150 }, (_, i) => [0, i + 1] as [number, number]), 151), { r, k } = f;
+  r.setView(new Uint8Array(151).fill(1), { groupCodes: Uint32Array.from({ length: 151 }, (_, n) => n), groupLabels: Array.from({ length: 151 }, (_, n) => `Group ${String(n).padStart(3, '0')}`) });
+  f.tap(0); const card = r[k('noteCard')], groups = () => card.querySelectorAll('button').filter((b: any) => b.className === 'graph-ng-connection-group');
+  expect(groups().length).toBe(100); control(card, 'Show more groups').click(); expect(groups().length).toBe(150);
+  const input = card.querySelector('input'); input.value = 'Group 150'; input.oninput(); expect(groups().length).toBe(1); expect(groups()[0].textContent).toContain('Group 150');
+  input.value = ''; input.oninput(); expect(groups().length).toBe(100); expect(groups()[0].attributes['aria-expanded']).toBe('false');
+  // A small neighbourhood initially expands, but an explicit collapse survives a same-note refresh.
+  r[k('focusNote')](1); const section = card.querySelectorAll('button').find((b: any) => b.className === 'graph-ng-connection-group');
+  expect(section.attributes['aria-expanded']).toBe('true'); section.click(); r.card.show(1);
+  expect(card.querySelectorAll('button').find((b: any) => b.className === 'graph-ng-connection-group').attributes['aria-expanded']).toBe('false');
 });

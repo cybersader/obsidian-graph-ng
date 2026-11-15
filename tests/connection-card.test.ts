@@ -1,5 +1,5 @@
 import { test, expect } from 'bun:test';
-import { connectionGroups, reach, NavHistory, dockCard, sheetCard, DOCK_ROOM, SHEET_WIDTH } from '../src/connection-card';
+import { connectionGroups, navigatorSections, filterConnections, reach, NavHistory, dockCard, sheetCard, DOCK_ROOM, SHEET_WIDTH } from '../src/connection-card';
 import { incidentEdges } from '../src/render-data';
 
 // Synthetic graph. Types: 0 'cites', 1 'part of'. Node 9 is a relationship-note dot owned by row 0
@@ -81,4 +81,32 @@ test('history pruning preserves the current stop and both branches while droppin
   h.go(-2); h.retain(n => n !== 1 && n !== 3);
   expect(h.items).toEqual([0, 2, 4]); expect(h.at).toBe(1); expect(h.go(-1)).toBe(0); expect(h.go(2)).toBe(4);
   h.retain(() => false); expect(h.items).toEqual([]); expect(h.at).toBe(-1);
+});
+
+
+test('navigator deduplicates notes across relationships and preserves declared group keys, not guessed names', () => {
+  const grouped = navigatorSections([
+    { type: 'supports', out: true, nodes: [1, 2, 3] },
+    { type: 'supports', out: false, nodes: [1] },
+    { type: 'related', out: true, nodes: [1, 4] },
+  ], { name: n => `ID-${n}`, title: n => n === 1 ? '<b>Recovery checks</b>' : '', group: n => ({ key: n % 2, label: 'Same label' }) });
+  expect(grouped.map(g => [g.key, g.entries.length])).toEqual([[0, 2], [1, 2]]);
+  const row = grouped[1]!.entries[0]!;
+  expect(row.title).toBe('<b>Recovery checks</b>'); expect(row.name).toBe('ID-1');
+  expect(row.relations).toEqual(['→ supports', '← supports', '→ related']);
+  expect(grouped[0]!.entries[0]!.title).toBe('ID-2');
+  expect(filterConnections(grouped, 'same RECOVERY id-1 related').flatMap(g => g.entries).map(r => r.node)).toEqual([1]);
+  expect(filterConnections(grouped, 'no match')).toEqual([]);
+  expect(filterConnections(grouped, '   ').flatMap(g => g.entries).length).toBe(4);
+});
+
+test('navigator fallback, bounded title and hub filtering only resolve metadata once per connected note', () => {
+  let lookups = 0;
+  const sections = navigatorSections([{ type: 'maps', out: true, nodes: Array.from({ length: 221 }, (_, i) => i + 1) }], {
+    name: n => `ID-${n}`, title: n => { lookups++; return n === 1 ? 'x'.repeat(400) : n % 2 ? 'Access review' : 'Recovery check'; },
+  });
+  expect(sections[0]!.label).toBe('Ungrouped'); expect(sections[0]!.entries[0]!.title.length).toBe(256);
+  expect(filterConnections(sections, 'recovery').flatMap(g => g.entries).length).toBe(110);
+  expect(filterConnections(sections, 'ID-221').flatMap(g => g.entries).map(r => r.node)).toEqual([221]);
+  expect(lookups).toBe(221);
 });

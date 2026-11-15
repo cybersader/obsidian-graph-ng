@@ -895,6 +895,10 @@ export class GraphView extends ItemView {
       this.detailRenderer.openPath = path => this.openPath(path);
       this.detailRenderer.openNote = (path, mode) => this.openNote(path, mode);
       this.detailRenderer.copyLink = path => this.copyLink(path);
+      this.detailRenderer.noteTitle = path => {
+        const title: unknown = this.app.metadataCache.getCache(path)?.frontmatter?.title;
+        return typeof title === 'string' ? title.slice(0, 256) : '';
+      };
       this.detailRenderer.measureTools = () => this.toolsOverlap(); this.detailRenderer.syncTools?.();
       this.detailRenderer.showMenu = obsidianMenu(this.app, Menu, path => { const f = this.app.vault.getAbstractFileByPath(path); return f instanceof TFile ? f : null; }, this.leaf);
       this.detailRenderer.onSizingChange = () => { this.explorePanel?.updateSizingReadout(); this.explorePanel?.updateLensControl(); };
