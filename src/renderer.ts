@@ -1,4 +1,5 @@
 import { probeGpu } from './gpu-probe';
+import { edgeAlpha } from './render-effects';
 import type { GroupProjection } from './core/group-projection';
 import type { Settings } from './settings';
 import { readTheme } from './render-theme';
@@ -51,7 +52,7 @@ export class GroupRenderer implements Renderer {
     if (!w || !h) return;
     const dpr = window.devicePixelRatio || 1;
     this.canvas.width = w * dpr; this.canvas.height = h * dpr; this.canvas.style.width = `${w}px`; this.canvas.style.height = `${h}px`;
-    const ctx = this.canvas.getContext('2d'); if (!ctx) { this.container.textContent = 'Canvas unavailable. Use the group list below.'; return; }
+    const ctx = this.canvas.getContext('2d'); if (!ctx) { this.container.textContent = 'Canvas unavailable. Use View → Browse groups & members.'; return; }
     ctx.scale(dpr, dpr); ctx.fillStyle = this.s.backgroundColor; ctx.fillRect(0, 0, w, h);
     this.nodes.clear(); this.edges = []; this.radii.clear();
     // Area-proportional radii within [0.65, 1.15] of the configured radius keep hit targets and labels stable.
@@ -75,7 +76,7 @@ export class GroupRenderer implements Renderer {
       for (let j = 0; j <= this.s.groupCurveSamples; j++) { const t = j / this.s.groupCurveSamples; const p = edge.a === edge.b ? { x: a.x + Math.sin(t * Math.PI * 2) * this.s.groupRadius * this.s.groupLoopScale, y: a.y - this.s.groupRadius + (Math.cos(t * Math.PI * 2) - 1) * this.s.groupRadius } : { x: (1 - t) ** 2 * a.x + 2 * (1 - t) * t * cx + t * t * b.x, y: (1 - t) ** 2 * a.y + 2 * (1 - t) * t * cy + t * t * b.y }; points.push(p); if (!j) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); }
       // Endpoint-tinted, translucent relationship ribbons; counts stay in the label pass.
       const gradient = ctx.createLinearGradient(a.x, a.y, b.x, b.y); gradient.addColorStop(0, fills.get(edge.a)!); gradient.addColorStop(1, fills.get(edge.b)!);
-      ctx.globalAlpha = .55; ctx.strokeStyle = this.s.visuals.edgeColorMix > 0 ? gradient : this.s.edgeColor; ctx.lineWidth = this.s.edgeWidthScale * Math.max(1, Math.log2(weight + 1)); ctx.lineCap = 'round'; ctx.stroke(); ctx.globalAlpha = 1;
+      ctx.globalAlpha = edgeAlpha(this.s.visuals, this.p.groupEdges.length, 1, false); ctx.strokeStyle = this.s.visuals.edgeColorMix > 0 ? gradient : this.s.edgeColor; ctx.lineWidth = this.s.edgeWidthScale * Math.max(1, Math.log2(weight + 1)); ctx.lineCap = 'round'; if (this.s.visuals.edgeOpacity > 0) ctx.stroke(); ctx.globalAlpha = 1;
       ctx.font = `${this.s.labelSize}px sans-serif`; ctx.textAlign = 'center';
       const label = weight.toLocaleString(), textWidth = ctx.measureText(label).width;
       const candidates = [0.5, 0.35, 0.65, 0.2, 0.8].map(t => points[Math.floor(this.s.groupCurveSamples * t)]!);
@@ -88,7 +89,7 @@ export class GroupRenderer implements Renderer {
     }
     // Labels are a separate final pass, so later paths cannot strike through earlier counts.
     ctx.font = `${this.s.labelSize}px sans-serif`; ctx.textAlign = 'center';
-    for (const label of edgeLabels) {
+    for (const label of this.s.visuals.edgeOpacity > 0 ? edgeLabels : []) {
       ctx.fillStyle = this.s.backgroundColor; ctx.fillRect(label.box.x, label.box.y, label.box.w, label.box.h);
       ctx.fillStyle = this.s.textColor; ctx.fillText(label.text, label.x, label.box.y + this.s.labelSize);
     }

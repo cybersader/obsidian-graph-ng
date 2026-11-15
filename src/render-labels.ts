@@ -1,3 +1,4 @@
+import { degreeSizes } from './render-effects';
 import { renderPath, type RenderProjection } from './render-projection';
 import type { Settings } from './settings';
 import { LABEL_RATIOS, placeLabels, type LabelBox, type PickGrid } from './render-data';
@@ -5,7 +6,7 @@ import { yieldTask } from './core/scheduler';
 interface Glyph { x: number; y: number; w: number; advance: number }
 export interface LabelAtlas { canvas: HTMLCanvasElement; levels: Float32Array[]; nodes: Uint32Array[] }
 /** Rasterize codepoints once, then place bounded lists at each LOD. No per-frame text work. */
-export async function buildLabels(p: RenderProjection, grid: PickGrid, s: Settings, width: number, height: number, font: string, current: () => boolean, visible = grid.visible): Promise<LabelAtlas> {
+export async function buildLabels(p: RenderProjection, grid: Pick<PickGrid, 'positions' | 'visible' | 'minX' | 'minY' | 'width' | 'height'>, s: Settings, width: number, height: number, font: string, current: () => boolean, visible = grid.visible): Promise<LabelAtlas> {
   const canvas = document.createElement('canvas'); canvas.width = canvas.height = 2048;
   const ctx = canvas.getContext('2d')!;
   const fontSize = Math.min(48, s.labelSize), line = Math.ceil(fontSize * 1.5) + 4, scale = s.labelSize / fontSize;
@@ -31,15 +32,17 @@ export async function buildLabels(p: RenderProjection, grid: PickGrid, s: Settin
     strings.set(node, text); widths.set(node, w);
     if (i % 128 === 0) { await yieldTask(); if (!current()) throw new Error('Renderer superseded'); }
   }
+  const predictable = s.nodeSizing.policy === 'predictable', sizes = predictable ? degreeSizes(p.offsets, s.visuals.degreeSizing) : undefined;
+  const multiplier = (node: number) => sizes ? sizes[node]! * (p.carrierNodes[node] ? s.visuals.carrierSize : 1) : 0;
   const fit = Math.min(width / (grid.width * 1.1), height / (grid.height * 1.1));
   const levels: Float32Array[] = [], nodes: Uint32Array[] = [];
   for (const ratio of LABEL_RATIOS) {
-    const boxes: LabelBox[] = candidates.map(node => ({ node, x: (grid.positions[node * 2]! - grid.minX) * fit / ratio + s.nodeSize + 4, y: (grid.positions[node * 2 + 1]! - grid.minY) * fit / ratio - s.labelSize / 2, w: widths.get(node)! + 4, h: s.labelSize * 1.5 + 4 }));
+    const boxes: LabelBox[] = candidates.map(node => ({ node, x: (grid.positions[node * 2]! - grid.minX) * fit / ratio + (predictable ? s.nodeSize * multiplier(node) : s.nodeSize) + 4, y: (grid.positions[node * 2 + 1]! - grid.minY) * fit / ratio - s.labelSize / 2, w: widths.get(node)! + 4, h: s.labelSize * 1.5 + 4 }));
     const placed = placeLabels(boxes, s.labelGridCellSize, budget), data: number[] = [];
     // Importance is degree rank among placed labels; the shader fades the least important first.
     placed.forEach((box, rank) => {
-      let offset = s.nodeSize + 2; const importance = 1 - rank / Math.max(1, placed.length);
-      for (const c of strings.get(box.node)!) { const g = glyph(c); data.push(box.node, offset, -s.labelSize / 2 - 2, g.w * scale, line * scale, g.x / 2048, g.y / 2048, g.w / 2048, line / 2048, importance); offset += g.advance * scale; }
+      let offset = (predictable ? 0 : s.nodeSize) + 2; const importance = 1 - rank / Math.max(1, placed.length);
+      for (const c of strings.get(box.node)!) { const g = glyph(c); data.push(box.node, offset, -s.labelSize / 2 - 2, g.w * scale, line * scale, g.x / 2048, g.y / 2048, g.w / 2048, line / 2048, importance, multiplier(box.node)); offset += g.advance * scale; }
     });
     levels.push(new Float32Array(data)); nodes.push(Uint32Array.from(placed, b => b.node));
     await yieldTask(); if (!current()) throw new Error('Renderer superseded');

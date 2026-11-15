@@ -5,10 +5,21 @@ export class ControlElement {
   attributes: Record<string, string> = {};
   classes = new Set<string>();
   parent?: ControlElement;
-  textContent = '';
+  private text = '';
+  get textContent(): string { return this.text + this.children.map(child => child.textContent).join(''); }
+  set textContent(value: string) { this.empty(); this.text = value; }
   hidden = false;
+  scrollTop = 0;
+  style: Record<string, string> = {};
+  type = '';
+  contains(node: unknown): boolean { return node === this || this.children.some(child => child.contains(node)); }
+  appendChild(node: ControlElement) { node.remove(); node.parent = this; this.children.push(node); return node; }
+  append(...nodes: ControlElement[]) { nodes.forEach(node => this.appendChild(node)); }
   disabled = false;
   value = '';
+  selectionStart: number | null = null;
+  selectionEnd: number | null = null;
+  setSelectionRange(start: number | null, end: number | null) { this.selectionStart = start; this.selectionEnd = end; }
   id = '';
   dataset: Record<string, string> = {};
   onclick?: () => void;
@@ -23,17 +34,18 @@ export class ControlElement {
   }
   createDiv(options?: any) { return this.createEl('div', options); }
   createSpan(options?: any) { return this.createEl('span', options); }
-  setAttribute(key: string, value: string) { this.attributes[key] = value; if (key === 'id') this.id = value; }
+  setAttribute(key: string, value: string) { this.attributes[key] = value; if (key === 'id') this.id = value; if (key === 'type') this.type = value; }
   getAttribute(key: string) { return this.attributes[key] ?? null; }
   addClass(cls: string) { this.classes.add(cls); }
   toggleClass(cls: string, on: boolean) { if (on) this.classes.add(cls); else this.classes.delete(cls); }
-  empty() { this.children = []; }
+  empty() { this.text = ''; this.children.forEach(child => { child.parent = undefined; }); this.children = []; }
   remove() { if (this.parent) this.parent.children = this.parent.children.filter(child => child !== this); }
-  focus() { ControlElement.active = this; }
+  onblur?: () => void;
+  focus() { if (this.disabled) return; if (ControlElement.active !== this) ControlElement.active?.onblur?.(); ControlElement.active = this; }
   click() { if (!this.disabled) this.onclick?.(); }
   querySelectorAll(selector: string): ControlElement[] {
     const all = this.children.flatMap(child => [child, ...child.querySelectorAll('*')]);
-    return selector === '*' ? all : all.filter(child => selector.startsWith('.') ? child.classes.has(selector.slice(1)) : child.tagName.toLowerCase() === selector);
+    return selector === '*' ? all : all.filter(child => selector.split(',').some(s => s.startsWith('.') ? child.classes.has(s.slice(1)) : child.tagName.toLowerCase() === s));
   }
   querySelector(selector: string) { return this.querySelectorAll(selector)[0]; }
 }

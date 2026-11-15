@@ -17,21 +17,13 @@ function controlsFixture(panelOpen = true) {
   return { root, panel, settings, persisted: () => persisted, view: () => view };
 }
 
-test('whole-panel native toggle hides counts and body, associates its target, persists and reopens', () => {
-  for (const open of [true, false]) {
-    const f = controlsFixture(open), toggle = control(f.root, open ? 'Hide controls' : 'Show controls');
-    expect(toggle.tagName).toBe('BUTTON');
-    expect(toggle.getAttribute('aria-controls')).toBe(f.panel.body.id);
-    const check = (expanded: boolean) => {
-      expect(toggle.getAttribute('aria-expanded')).toBe(String(expanded));
-      for (const part of ['counts', 'search', 'alert', 'body']) expect(f.panel[part].hidden).toBe(!expanded);
-      expect(toggle.hidden).toBe(false);
-    };
-    check(open); toggle.focus(); toggle.click(); check(!open);
-    expect(f.settings.explore.panelOpen).toBe(!open); expect(f.persisted()).toBe(1);
-    expect(ControlElement.active).toBe(toggle);
-    toggle.click(); check(open); expect(f.persisted()).toBe(2); f.panel.dispose();
-  }
+test('persistent toolbar opens one overlay, keeps search visible and returns focus', () => {
+  const f = controlsFixture(false), filters = control(f.root, 'Filters');
+  filters.focus(); filters.click(); expect(f.panel.root.hidden).toBe(false); expect(f.panel.search.hidden).toBe(false);
+  expect(filters.getAttribute('aria-controls')).toBe(f.panel.root.id); expect(filters.getAttribute('aria-expanded')).toBe('true');
+  control(f.root, 'Layout').click(); expect(filters.getAttribute('aria-expanded')).toBe('false');
+  control(f.root, 'Close').click(); expect(f.panel.root.hidden).toBe(true); expect(ControlElement.active).toBe(control(f.root, 'Layout'));
+  expect(f.settings.explore.panelOpen).toBe(false); expect(f.persisted()).toBe(3); f.panel.dispose();
 });
 
 test('filter text is non-destructive, removal is distinct and focused, expression editing is retained', () => {
@@ -57,33 +49,28 @@ test('filter text is non-destructive, removal is distinct and focused, expressio
   f.panel.dispose();
 });
 
-test('status Details retains diagnostics and native disclosure; concise status keeps partial and pending warnings', async () => {
+test('graph information retains full diagnostics while healthy summary stays quiet', async () => {
   const { GraphView } = await import('../src/main');
   const view: any = Object.create(GraphView.prototype), root = new ControlElement(), render = ExplorePanel.prototype.render;
-  Object.assign(view, { contentEl: root, view: { query: '' }, closed: false,
-    plugin: { settings: { explore: { panelOpen: false, legendPageSize: 20 } }, subscribe: () => () => {} },
+  const persistedPanelStates: boolean[] = [];
+  Object.assign(view, { contentEl: root, view: { query: '' }, closed: false, provisional: true,
+    plugin: { settings: { explore: { panelOpen: false, legendPageSize: 20 } }, subscribe: () => () => {},
+      saveSoon() { persistedPanelStates.push(view.plugin.settings.explore.panelOpen); } },
     app: { workspace: { on() {} } }, registerEvent() {}, async refresh() {} });
   ExplorePanel.prototype.render = function () {};
   try { await view.onOpen(); } finally { ExplorePanel.prototype.render = render; }
-  const details = root.querySelector('details')!;
-  expect(details.querySelector('summary')!.textContent).toBe('Details');
-  const text = '63,384 nodes · 9,265 edges · 5829/63384 properties available; links pending (partial · filters and members provisional) · 0 unresolved · worker 6968 ms · total 7707 ms';
-  view.statusText = text;
-  expect(view.status.textContent).toBe(text);
-  expect(view.statusSummary.getAttribute('role')).toBe('status');
-  expect(view.statusSummary.textContent).toContain('links pending (partial · filters and members provisional)');
-  expect(view.statusSummary.textContent).not.toMatch(/63,384|5829|worker|7707/);
-  expect(details.children).toContain(view.status);
-  // Updates must not replace the native disclosure or its open state.
-  (details as any).open = true;
-  view.statusText += ' · GPU unavailable; group fallback active';
-  expect((details as any).open).toBe(true); expect(view.statusSummary.textContent).toContain('GPU unavailable');
-  view.statusText = 'Graph NG: synthetic failure'; expect(view.statusSummary.textContent).toBe(view.status.textContent);
-  view.statusText = text; Object.assign(view, { groupGraph: {}, detailGeneration: 1, activeRevision: 1 });
-  view.plugin.adapter = { factsComplete: () => false }; view.promoteProperties(); expect(view.statusSummary.textContent).toContain('partial');
-  view.plugin.adapter.factsComplete = () => true; view.promoteProperties();
-  expect(view.status.textContent).toContain('verified'); expect(view.statusSummary.textContent).not.toContain('partial');
-  expect(view.statusSummary.textContent).toContain('links pending'); view.explorePanel.dispose();
+  view.explorePanel.render = () => {};
+  const text = '10 nodes · links pending (partial · filters and members provisional) · 0 unresolved';
+  view.statusText = text; expect(view.status.textContent).toBe(text); expect(view.statusSummary.hidden).toBe(false);
+  expect(view.statusSummary.title).toBe(text); expect(view.status.parent).toBe(view.explorePanel.root);
+  expect(persistedPanelStates).toEqual([]);
+  view.statusSummary.click(); expect(view.status.hidden).toBe(false); const status = view.status;
+  expect(persistedPanelStates).toEqual([true]);
+  view.explorePanel.close(); expect(persistedPanelStates).toEqual([true, false]);
+  expect(ControlElement.active).toBe(view.statusSummary);
+  view.provisional = false; view.contentEl.dataset.state = 'ready'; view.statusText = '10 nodes · verified · 0 unresolved'; expect(view.statusSummary.hidden).toBe(true); expect(view.status).toBe(status);
+  view.contentEl.dataset.state = 'error'; view.statusText = 'Graph NG: synthetic failure'; expect(view.statusSummary.hidden).toBe(false); expect(view.status.textContent).toContain('failure');
+  view.explorePanel.dispose();
 });
 
 test('public property source changes refresh deferred facts, reject old epochs, and unregister without disposing provider', async () => {
@@ -228,7 +215,7 @@ test('late upload-window resize is reconciled before first draw and restoration'
     let resized = false;
     Object.assign(r, {
       container, canvas: { width: 0, height: 0, style: {} }, ready: false, lost: false, disposed: false,
-      width: 0, height: 0, dpr: 1, timings: {}, grid: { width: 1, height: 1 }, refresh() {},
+      width: 0, height: 0, dpr: 1, timings: {}, grid: { width: 1, height: 1 }, cameraFrame: { minX: 0, minY: 0, width: 1, height: 1 }, refresh() {},
       settings: { workerTimeoutMs: 1000, shaderPollMs: 1 },
       positions: new Float32Array([0, 0]), visible: new Uint8Array([1]), colorIds: new Uint32Array([0]),
       projection: { source: new Uint32Array(), target: new Uint32Array() }, theme: { palette: new Uint8Array(1024) },

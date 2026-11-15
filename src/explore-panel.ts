@@ -1,3 +1,8 @@
+import { folderPredicate, folderView } from './saved-views';
+import { setIcon } from 'obsidian';
+import { sizingValues, sizingSettings, MAX_NODE_RADIUS, type NodeSizingValues } from './node-sizing';
+import { DEFAULT_LAYOUT } from './core/layout-options';
+import { physicsSettings, type PhysicsValues } from './physics-controls';
 import { editAsExpression, builderPredicate, checked } from './core/expr/engine';
 import { validate } from './core/expr/syntax';
 import { suggestions } from './core/expr/autocomplete';
@@ -8,6 +13,11 @@ import type { Settings, Visuals } from './settings';
 /** The view owns the worker, renderer and persistence; the panel only edits state. */
 export interface PanelHost {
   settings(): Settings;
+  information?: HTMLElement;
+  members?: HTMLElement;
+  scope?(): string;
+  scoped?(): boolean;
+  presentation?(mode: string): void;
   preview(expr: string, context: 'filter' | 'group'): Promise<{ matched: number; total: number; groups?: number }>;
   result(): ExploreResult | undefined;
   mode(): string;
@@ -15,6 +25,9 @@ export interface PanelHost {
   /** Edge notes (reified edges drawn as nodes) in the detail view; 0 otherwise. */
   carriers(): number;
   setView(view: ExploreView, after?: () => void): void;
+  commitSavedView?(saved: SavedView | null, expected: SavedView | null): Promise<void>;
+  savedViewIssue?(saved: SavedView): string;
+  openSavedView?(saved: SavedView): Promise<void>;
   setColors(colors: GraphDeclaration['colors']): Promise<void>;
   visualsChanged(labels: boolean): void;
   groupColor(code: number): string;
@@ -23,73 +36,176 @@ export interface PanelHost {
   camera(): ViewCamera | null;
   restoreCamera(camera: ViewCamera): void;
   persist(): void;
+  applyLayout(values: PhysicsValues): Promise<void>;
+  previewSizing?(values: NodeSizingValues | null): void;
+  applySizing?(values: NodeSizingValues): Promise<void>;
+  sizingReadout?(): string;
 }
-type Section = 'filters' | 'groups' | 'colors' | 'edges' | 'display' | 'views';
-const SECTIONS: [Section, string][] = [['filters', 'Filters'], ['groups', 'Groups'], ['colors', 'Color rules'], ['edges', 'Relationships'], ['display', 'Display'], ['views', 'Saved views']];
+type Section = 'filters' | 'groups' | 'colors' | 'edges' | 'display' | 'views' | 'physics';
+type Tool = 'views' | 'filters' | 'appearance' | 'layout' | 'information' | 'members';
+const TOOLS: [Tool, string, string][] = [['views', 'Saved views', 'bookmark'], ['filters', 'Filters', 'list-filter'], ['appearance', 'Appearance', 'palette'], ['layout', 'Layout', 'move'], ['information', 'Graph information', 'info']];
+function toolButton(host: HTMLElement, text: string, icon: string) {
+  const button = host.createEl('button', { cls: 'graph-ng-tool', attr: { 'aria-label': text, title: text } });
+  setIcon(button, icon); button.createSpan({ cls: 'graph-ng-tool-label', text });
+  return button;
+}
+const SECTIONS: Record<string, [Section, string][]> = { views: [['views', 'Saved views']], filters: [['filters', 'Filters'], ['groups', 'Grouping'], ['edges', 'Relationships']], appearance: [['display', 'Appearance'], ['colors', 'Color rules']], layout: [['physics', 'Layout']] };
+const PHYSICS_FIELDS: [keyof PhysicsValues, string, string][] = [
+      ['scalingRatio', 'Spread nodes', 'Positive finite values; more repulsion, not target distance.'],
+      ['gravity', 'Pull toward center (gravity)', 'Stronger pull can compress structure. Zero is valid.'],
+      ['slowDown', 'Layout step slowdown (advanced)', 'Positive finite values; higher means smaller iteration steps, not damping or animation speed.'],
+    ];
 let expressionPanelId = 0;
 const parseRaw = (raw: string): Scalar => { try { const v: unknown = JSON.parse(raw); return v === null || ['string', 'number', 'boolean'].includes(typeof v) ? v as Scalar : raw; } catch { return raw; } };
-/** Collapsible in-view controls styled only with host CSS variables. */
+/** One nonmodal overlay; opening tools never changes the canvas rectangle or graph. */
 export class ExplorePanel {
   readonly root: HTMLElement;
   private expressionPanelId = ++expressionPanelId;
+  private viewDraft?: { saved: SavedView; folder?: string; configuration: string };
+  private viewCollision?: SavedView;
+  private viewSaved?: SavedView;
+  private viewMessage = '';
+  private viewBusy = false;
+  private openRequest = 0;
+  private physicsDraft?: Record<keyof PhysicsValues, string>;
+  private sizingDraft?: Record<keyof NodeSizingValues, string>;
+  private sizingMessage = '';
+  private sizingBusy = false;
+  private sizingOutput?: HTMLElement;
+  private physicsError = '';
+  private physicsBusy = false;
+  private disposed = false;
   private drafts = new Map<string, string>();
   private expressionTimers = new Set<ReturnType<typeof setTimeout>>();
   private counts: HTMLElement;
-  private search: HTMLInputElement;
+  private search!: HTMLInputElement;
   private body: HTMLElement;
   private alert: HTMLElement;
-  private open = new Set<Section>(['filters', 'groups']);
+  private invalid: HTMLElement;
+  private feedback: HTMLElement;
+  private tool: Tool = 'views';
+  private opener?: HTMLElement;
+  private title: HTMLElement;
+  private closeButton: HTMLButtonElement;
+  private toolbar: HTMLElement;
+  private buttons = new Map<Tool, HTMLButtonElement>();
+  private representations = new Map<string, HTMLButtonElement>();
+  private workspaceButton: HTMLButtonElement;
+  private sizingPreview = false;
+  private guards: (() => void)[] = [];
   private groupLimit: number;
   private searchTimer: ReturnType<typeof setTimeout> | undefined;
   private get settings() { return this.host.settings(); }
-  constructor(parent: HTMLElement, private host: PanelHost, private view: ExploreView) {
-    const s = host.settings();
-    this.groupLimit = s.explore.legendPageSize;
-    this.root = parent.createDiv({ cls: 'graph-ng-explore', attr: { role: 'region', 'aria-label': 'Graph controls' } });
+  constructor(parent: HTMLElement, private host: PanelHost, private view: ExploreView, toolbar?: HTMLElement) {
+    const s = host.settings(); this.groupLimit = s.explore.legendPageSize;
+    this.toolbar = toolbar ?? parent.createDiv({ cls: 'graph-ng-toolbar' });
+    this.root = parent.createDiv({ cls: 'graph-ng-explore', attr: { role: 'region', 'aria-label': 'Graph tools', id: `graph-ng-controls-${this.expressionPanelId}` } });
     const head = this.root.createDiv({ cls: 'graph-ng-explore-head' });
-    const toggle = head.createEl('button', { cls: 'graph-ng-explore-toggle', attr: { 'aria-controls': `graph-ng-controls-${this.expressionPanelId}` } });
-    toggle.onclick = () => { const st = this.settings; st.explore.panelOpen = !st.explore.panelOpen; this.host.persist(); this.layout(); };
-    this.counts = head.createDiv({ cls: 'graph-ng-explore-counts', attr: { role: 'status', 'aria-live': 'polite' } });
-    this.search = this.root.createEl('input', { cls: 'graph-ng-explore-search', attr: { type: 'search', placeholder: 'Search notes…', 'aria-label': 'Search note names and identities', spellcheck: 'false' } });
-    this.search.maxLength = VIEW_LIMITS.query; this.search.value = view.query;
+    this.title = head.createEl('h3', { text: 'Views' });
+    this.closeButton = head.createEl('button', { text: 'Close', attr: { 'aria-label': 'Close graph tools' } });
+    this.closeButton.onclick = () => this.close();
+    this.closeButton.onblur = () => { this.saveFocus = false; };
+    this.root.onkeydown = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); this.close(); } };
+    this.counts = this.root.createDiv({ cls: 'graph-ng-explore-counts' });
     this.alert = this.root.createDiv({ cls: 'graph-ng-explore-error', attr: { role: 'alert' } });
-    this.search.oninput = () => { clearTimeout(this.searchTimer); this.searchTimer = setTimeout(() => this.update({ query: this.search.value }), 160); };
-    this.body = this.root.createDiv({ cls: 'graph-ng-explore-body', attr: { id: `graph-ng-controls-${this.expressionPanelId}` } });
-    this.layout();
+    // Panel validation and view-operation feedback are separate messages; neither erases the other.
+    this.invalid = this.alert.createDiv(); this.feedback = this.alert.createDiv();
+    this.body = this.root.createDiv({ cls: 'graph-ng-explore-body' });
+    const representations = this.toolbar.createDiv({ cls: 'graph-ng-representations', attr: { role: 'group', 'aria-label': 'Graph representation and scope' } });
+    for (const [mode, label, icon] of [['nodes', 'Notes', 'file-text'], ['groups', 'Group overview', 'network']]) {
+      const button = toolButton(representations, label!, icon!); this.representations.set(mode!, button);
+      button.onclick = () => this.host.presentation?.(mode!);
+    }
+    const members = toolButton(representations, 'Members', 'list'); this.buttons.set('members', members); members.setAttribute('aria-controls', this.root.id); members.onclick = () => this.show('members', members);
+    this.workspaceButton = toolButton(representations, 'Workspace scope', 'expand');
+    this.workspaceButton.title = 'Leave the selected group; keep search and filters';
+    this.workspaceButton.onclick = () => this.host.presentation?.('workspace');
+    for (const [tool, text, icon] of TOOLS) {
+      const button = toolButton(this.toolbar, text, icon); button.setAttribute('aria-controls', this.root.id); button.setAttribute('aria-expanded', 'false');
+      this.buttons.set(tool, button); button.onclick = () => this.root.hidden || this.tool !== tool ? this.show(tool, button) : this.close();
+      if (tool === 'views') {
+        this.search = this.toolbar.createEl('input', { cls: 'graph-ng-explore-search', attr: { type: 'search', placeholder: 'Search notes…', 'aria-label': 'Search note names and identities', spellcheck: 'false' } });
+        this.search.maxLength = VIEW_LIMITS.query; this.search.value = view.query;
+        this.search.oninput = () => { clearTimeout(this.searchTimer); if (this.settings.projectionFile) return; this.searchTimer = setTimeout(() => { if (!this.disposed && !this.settings.projectionFile) this.update({ query: this.search.value }); }, 160); };
+      }
+    }
+    if (host.information) this.root.appendChild(host.information);
+    if (host.members) this.root.appendChild(host.members);
+    this.root.hidden = !s.explore.panelOpen; this.search = this.search!; this.layout();
   }
-  dispose() { this.expressionTimers.forEach(clearTimeout); clearTimeout(this.searchTimer); this.root.remove(); }
+  show(tool: Tool, opener: HTMLElement | undefined = this.buttons.get(tool)) {
+    this.saveFocus = false;
+    if (this.tool === 'appearance' && tool !== this.tool) this.endPreview();
+    if (this.tool === 'views' && tool !== this.tool && !this.viewBusy) { this.viewDraft = undefined; this.viewCollision = undefined; }
+    this.tool = tool; this.opener = opener ?? this.buttons.get('views'); this.root.hidden = false;
+    this.settings.explore.panelOpen = true; this.host.persist(); this.layout(); this.closeButton.focus({ preventScroll: true });
+  }
+  close() {
+    this.saveFocus = false;
+    this.endPreview(); if (!this.viewBusy) { this.viewDraft = undefined; this.viewCollision = undefined; } this.root.hidden = true; this.settings.explore.panelOpen = false; this.host.persist(); this.layout();
+    this.opener?.focus({ preventScroll: true });
+  }
+  private endPreview() {
+    // Submitted sizing transactions retain their existing generation/acknowledgement contract.
+    if (this.sizingPreview && !this.sizingBusy) { this.host.previewSizing?.(null); this.sizingPreview = false; this.sizingMessage = 'Preview ended · draft not saved'; }
+  }
+  dispose() { this.host.previewSizing?.(null); this.disposed = true; this.expressionTimers.forEach(clearTimeout); clearTimeout(this.searchTimer); this.root.remove(); }
   setState(view: ExploreView) { this.view = view; if (document.activeElement !== this.search) this.search.value = view.query; this.render(); }
+  operation(message: string, retry?: () => void) {
+    this.feedback.textContent = message;
+    if (!retry) return;
+    const button = this.feedback.createEl('button', { text: 'Retry view' });
+    // Re-issuing replaces this button; keep keyboard focus on a stable, enabled control.
+    button.onclick = () => { if (document.activeElement === button) this.closeButton.focus({ preventScroll: true }); retry(); };
+  }
   /** A view that would fail settings validation is never applied or persisted. */
   private update(patch: Partial<ExploreView>, after?: () => void) {
     const next = { ...this.view, ...patch };
-    try { validateView(next); } catch (e) { this.alert.textContent = `Not applied: ${e instanceof Error ? e.message : String(e)}`; return; }
-    this.alert.textContent = ''; this.view = next; this.host.setView(this.view, after); this.render();
+    try { validateView(next); } catch (e) { this.invalid.textContent = `Not applied: ${e instanceof Error ? e.message : String(e)}`; return; }
+    this.invalid.textContent = ''; this.view = next; this.host.setView(this.view, after); this.render();
   }
   private layout() {
-    const open = this.settings.explore.panelOpen, toggle = this.root.querySelector('.graph-ng-explore-toggle')!;
-    this.root.toggleClass('is-collapsed', !open); toggle.setAttribute('aria-expanded', String(open)); toggle.textContent = open ? 'Hide controls' : 'Show controls';
-    this.counts.hidden = this.alert.hidden = this.search.hidden = this.body.hidden = !open; this.render();
+    this.title.textContent = this.tool === 'members' ? 'Groups & members' : this.tool === 'views' ? 'Saved views' : TOOLS.find(([tool]) => tool === this.tool)![1];
+    for (const [tool, button] of this.buttons) button.setAttribute('aria-expanded', String(!this.root.hidden && tool === this.tool));
+    if (this.host.information) this.host.information.hidden = this.root.hidden || this.tool !== 'information';
+    if (this.host.members) {
+      this.host.members.hidden = this.root.hidden || this.tool !== 'members';
+      if (this.tool === 'members' && !this.host.members.children.length) {
+        this.note(this.host.members, 'Select a group to browse its available members.');
+        this.host.members.createEl('button', { text: 'Group overview' }).onclick = () => this.host.presentation?.('groups');
+      }
+    }
+    this.body.hidden = this.root.hidden || this.tool === 'information' || this.tool === 'members'; this.render();
   }
   render() {
     const external = Boolean(this.settings.projectionFile), r = external ? undefined : this.host.result();
+    this.search.disabled = external;
+    this.search.title = external ? 'Note search is unavailable in aggregate graphs.' : 'Search note names and identities';
+    this.search.setAttribute('aria-label', this.search.title);
+    if (external) { clearTimeout(this.searchTimer); this.search.value = this.view.query; }
     this.counts.textContent = external ? 'External aggregate' : r ? `${r.visible.reduce((n, v) => n + v, 0).toLocaleString()} of ${r.nodes.toLocaleString()} nodes · ${r.visibleEdges.toLocaleString()} of ${r.edges.toLocaleString()} edges` : 'Waiting for projection…';
+    this.counts.textContent = `${this.host.scope?.() ?? 'Current graph'} · ${this.counts.textContent}`;
+    const named = this.settings.explore.savedViews.find(s => canonical(s.view) === canonical(this.settings.explore.view));
+    this.buttons.get('views')!.title = named ? `Saved views · requested: ${named.name}` : 'Saved views · requested settings';
+    this.buttons.get('filters')!.querySelector('.graph-ng-tool-label')!.textContent = `Filters${this.view.filters.length ? ` (${this.view.filters.length})` : ''}`;
+    for (const [mode, button] of this.representations) button.setAttribute('aria-pressed', String(this.host.mode() === mode));
+    this.workspaceButton.disabled = !this.host.scoped?.();
     if (this.body.hidden) return;
-    // Re-render rebuilds controls; keep keyboard focus on the same control (by accessible name).
+    // Re-render rebuilds controls; changing labels use a stable action identity.
     const active = document.activeElement instanceof HTMLElement && this.body.contains(document.activeElement) ? document.activeElement : null;
     const selection = active instanceof HTMLInputElement ? [active.selectionStart, active.selectionEnd] as const : undefined;
-    const name = (e: HTMLElement) => `${e.tagName}|${e.getAttribute('aria-label') ?? e.textContent}`, focusName = active ? name(active) : '';
+    const name = (e: HTMLElement) => `${e.tagName}|${e.getAttribute('aria-label') ?? e.textContent}`, focusName = active ? name(active) : '', focusKey = active?.getAttribute('data-focus-key');
     this.expressionTimers.forEach(clearTimeout); this.expressionTimers.clear();
-    const scroll = this.body.scrollTop; this.body.empty();
-    for (const [id, title] of SECTIONS) {
-      const details = this.body.createEl('details', { cls: `graph-ng-explore-section graph-ng-explore-${id}` });
-      details.open = this.open.has(id); details.ontoggle = () => { if (details.open) this.open.add(id); else this.open.delete(id); };
-      details.createEl('summary', { text: title });
-      const content = details.createDiv();
-      if (!r && id !== 'display' && id !== 'views') { this.note(content, external ? 'External aggregate has no note rows to filter or regroup.' : 'Awaiting projection.'); continue; }
+    const scroll = this.body.scrollTop; this.body.empty(); this.guards = [];
+    for (const [id, title] of SECTIONS[this.tool] ?? []) {
+      const section = this.body.createEl('section', { cls: `graph-ng-explore-section graph-ng-explore-${id}` });
+      section.createEl('h4', { text: title });
+      const content = section.createDiv();
+      if (!r && id !== 'display' && id !== 'views' && id !== 'physics') { this.note(content, external ? 'External aggregate has no note rows to filter or regroup.' : 'Awaiting projection.'); continue; }
       this[id](content, r!);
     }
     this.body.scrollTop = scroll;
-    if (focusName) { const replacement = [...this.body.querySelectorAll<HTMLElement>('button,input,select,summary')].find(e => name(e) === focusName); replacement?.focus(); if (replacement instanceof HTMLInputElement && selection && replacement.type === 'text') replacement.setSelectionRange(selection[0], selection[1]); }
+    if (focusName) { const replacement = [...this.body.querySelectorAll<HTMLElement>('button,input,select,summary')].find(e => !(e as HTMLButtonElement).disabled && (focusKey != null ? e.getAttribute('data-focus-key') === focusKey : name(e) === focusName)); replacement?.focus({ preventScroll: true }); if (replacement instanceof HTMLInputElement && selection && replacement.type === 'text') replacement.setSelectionRange(selection[0], selection[1]); }
   }
   private note(host: HTMLElement, text: string) { return host.createDiv({ cls: 'graph-ng-explore-note', text }); }
   /** One bounded text editor serves filters, colours and custom group values. */
@@ -162,7 +278,7 @@ export class ExplorePanel {
     add.onclick = () => {
       try {
         const key = property.value.slice(2); let p: Predicate;
-        if (property.value === 'folder') p = { kind: 'folder', prefix: folder.value.trim().replace(/^\/+|\/+$/g, '').split('/').filter(Boolean) };
+        if (property.value === 'folder') p = folderPredicate(folder.value);
         else if (op.value === 'exists') p = { kind: 'exists', key };
         else if (op.value === 'in') p = { kind: 'in', key, values: [...values.selectedOptions].map(o => parseRaw(o.value)) };
         else { if (!values.value) throw new Error('Choose a value'); p = { kind: 'eq', key, value: parseRaw(values.value) }; }
@@ -179,7 +295,7 @@ export class ExplorePanel {
     for (const f of r.facets) if (!d.groups.some(g => g.from === 'key' && g.key === f.key)) options.push([`Property: ${f.key}`, { from: 'key', key: f.key }]);
     for (let depth = 1; depth <= 4; depth++) if (!d.groups.some(g => g.from === 'folder' && g.depth === depth && g.prefix === undefined)) options.push([`Folder depth ${depth}`, { from: 'folder', depth }]);
     options.forEach(([label, g], i) => { const o = select.createEl('option', { value: String(i), text: label }); o.selected = canonical(g) === canonical(this.view.group); });
-    if ((this.view.group?.from === 'derived' || this.view.group?.from === 'expr') && !options.some(([, g]) => canonical(g) === canonical(this.view.group))) { options.push([groupLabel(this.view.group), this.view.group]); select.createEl('option', { value: String(options.length - 1), text: options.at(-1)![0] }).selected = true; }
+    if (this.view.group && !options.some(([, g]) => canonical(g) === canonical(this.view.group))) { options.push([groupLabel(this.view.group), this.view.group]); select.createEl('option', { value: String(options.length - 1), text: options.at(-1)![0] }).selected = true; }
     select.onchange = () => this.update({ group: options[Number(select.value)]![1], hiddenGroups: [], collapsedGroups: [] });
     this.derivedForm(host, r);
     this.expressionField(host, r, 'Group expression', 'group', expr => this.update({ group: { from: 'expr', expr }, hiddenGroups: [], collapsedGroups: [] }));
@@ -211,7 +327,7 @@ export class ExplorePanel {
       name.onclick = () => this.host.focusGroup(i);
       item.createSpan({ cls: 'graph-ng-legend-count', text: r.groupVisible[i] === r.groupTotals[i] ? r.groupTotals[i]!.toLocaleString() : `${r.groupVisible[i]!.toLocaleString()}/${r.groupTotals[i]!.toLocaleString()}` });
       if (nodes) {
-        const fold = item.createEl('button', { cls: 'graph-ng-fold clickable-icon', text: collapsed.has(key) ? '⊕' : '⊖', attr: { 'aria-label': `${collapsed.has(key) ? 'Expand' : 'Collapse'} ${label}`, 'aria-pressed': String(collapsed.has(key)) } }); fold.disabled = !storable && !collapsed.has(key);
+        const fold = item.createEl('button', { cls: 'graph-ng-fold clickable-icon', text: collapsed.has(key) ? '⊕' : '⊖', attr: { 'data-focus-key': `group-fold:${key}`, 'aria-label': `${collapsed.has(key) ? 'Expand' : 'Collapse'} ${label}`, 'aria-pressed': String(collapsed.has(key)) } }); fold.disabled = !storable && !collapsed.has(key);
         fold.onclick = () => this.update({ collapsedGroups: collapsed.has(key) ? this.view.collapsedGroups.filter(k => k !== key) : [...this.view.collapsedGroups, key] }, collapsed.has(key) ? () => this.host.focusGroup(i) : undefined);
       }
     }
@@ -278,56 +394,234 @@ export class ExplorePanel {
     this.flag(host, 'edgeDirection', 'Show direction (fade from source to target)');
   }
   private flag(host: HTMLElement, key: { [K in keyof Visuals]: Visuals[K] extends boolean ? K : never }[keyof Visuals], label: string, labels = false) {
-    const row = host.createEl('label', { cls: 'graph-ng-row' }), box = row.createEl('input', { attr: { type: 'checkbox' } });
+    const row = host.createEl('label', { cls: 'graph-ng-row' }), box = row.createEl('input', { attr: { type: 'checkbox', 'aria-label': label } });
     box.checked = this.settings.visuals[key]; row.createSpan({ text: label });
-    box.onchange = () => { this.settings.visuals[key] = box.checked; this.host.visualsChanged(labels); };
+    box.onchange = () => { this.settings.visuals[key] = box.checked; this.host.visualsChanged(labels); this.guards.forEach(update => update()); };
   }
   private slider(host: HTMLElement, label: string, min: number, max: number, step: number, get: () => number, set: (v: number) => void, labels = false) {
-    const row = host.createEl('label', { cls: 'graph-ng-slider' }); row.createSpan({ text: label });
-    const input = row.createEl('input', { attr: { type: 'range', min: String(min), max: String(max), step: String(step) } }), value = row.createSpan({ cls: 'graph-ng-legend-count' });
-    input.value = String(get()); value.textContent = input.value;
-    input.oninput = () => { set(Number(input.value)); value.textContent = input.value; this.host.visualsChanged(false); };
-    if (labels) input.onchange = () => this.host.visualsChanged(true);
+    const row = host.createDiv({ cls: 'graph-ng-slider' }); row.createSpan({ text: label });
+    const number = row.createEl('input', { attr: { type: 'number', min: String(min), max: String(max), step: 'any', 'aria-label': label } });
+    const input = row.createEl('input', { attr: { type: 'range', min: String(min), max: String(max), step: String(step), 'aria-label': `${label} slider` } });
+    number.value = input.value = String(get()); number.title = `${min}–${max}; exact values accepted`;
+    const apply = (value: string) => {
+      const n = value.trim() ? Number(value) : NaN, valid = Number.isFinite(n) && n >= min && n <= max;
+      number.setAttribute('aria-invalid', String(!valid)); if (!valid) return;
+      set(n); this.host.visualsChanged(false); this.guards.forEach(update => update());
+    };
+    number.oninput = () => { input.value = number.value; apply(number.value); };
+    input.oninput = () => { number.value = input.value; apply(input.value); };
+    if (labels) number.onchange = input.onchange = () => this.host.visualsChanged(true);
+  }
+  private guard(host: HTMLElement, effect: string) {
+    const box = host.createEl('details', { cls: 'graph-ng-guard' });
+    const summary = box.createEl('summary'), reason = box.createDiv();
+    const update = () => { const reasons = this.host.policy().filter(r => r.includes(effect) || r.includes('software renderer')); box.hidden = !reasons.length; summary.textContent = `${effect[0]!.toUpperCase() + effect.slice(1)} ${reasons.some(r => r.includes('limited')) ? 'limited' : 'off'} · performance guard`; reason.textContent = reasons.join('; '); };
+    this.guards.push(update); update();
+  }
+  private physics(host: HTMLElement) {
+    const fields = PHYSICS_FIELDS, draft = this.physicsDraft ??= Object.fromEntries(fields.map(([key]) => [key, String(this.settings.layout.force[key])])) as Record<keyof PhysicsValues, string>;
+    this.note(host, 'Edit drafts, then Apply and recompute. Fit graph is separate.');
+    for (const [key, title, help] of fields) {
+      const label = host.createEl('label', { cls: 'graph-ng-physics-field' });
+      label.createSpan({ text: title });
+      const input = label.createEl('input', { attr: { type: 'number', step: 'any', 'aria-label': title } });
+      if (key === 'gravity') input.min = '0';
+      input.value = draft[key]; input.disabled = this.physicsBusy;
+      input.oninput = () => { draft[key] = input.value; };
+      this.note(host, help);
+    }
+    host.createDiv({ cls: 'graph-ng-explore-error', text: this.physicsError, attr: { role: 'alert' } });
+    const actions = host.createDiv({ cls: 'graph-ng-form' });
+    const reset = actions.createEl('button', { text: 'Reset layout values' });
+    reset.disabled = this.physicsBusy;
+    reset.onclick = () => { for (const [key] of fields) draft[key] = String(DEFAULT_LAYOUT.force[key]); this.physicsError = ''; this.render(); };
+    const apply = actions.createEl('button', { text: this.physicsBusy ? 'Recomputing…' : 'Apply and recompute', cls: 'mod-cta' });
+    apply.disabled = this.physicsBusy;
+    apply.onclick = async () => {
+      if (this.physicsBusy || this.disposed) return;
+      try {
+        const values = Object.fromEntries(fields.map(([key]) => [key, draft[key].trim() ? Number(draft[key]) : NaN])) as PhysicsValues;
+        physicsSettings(this.settings, values);
+        this.physicsBusy = true; this.physicsError = ''; this.render();
+        await this.host.applyLayout(values);
+      } catch (e) { this.physicsError = `Not applied: ${e instanceof Error ? e.message : String(e)}`; }
+      finally { this.physicsBusy = false; if (!this.disposed) this.render(); }
+    };
+  }
+  updateSizingReadout() { if (this.sizingOutput) this.sizingOutput.textContent = this.host.sizingReadout?.() ?? 'Open a node graph to inspect actual radii.'; }
+  private nodes(host: HTMLElement) {
+    const group = host.createDiv({ cls: 'graph-ng-nodes' }); group.createEl('h4', { text: 'Nodes' });
+    const current = sizingValues(this.settings);
+    const draft = this.sizingDraft ??= { radius: String(current.radius), prominence: String(current.prominence), compensation: String(current.compensation * 100), floor: String(current.floor * 100) };
+    this.note(group, this.settings.nodeSizing?.policy !== 'predictable' ? 'Legacy sizing · Apply adopts predictable sizing.' : 'Predictable sizing · saved in plugin settings.');
+    const fields: [keyof NodeSizingValues, string, string, number, number, number][] = [
+      ['radius', 'Base node radius', 'CSS px', .01, 20, .01], ['prominence', 'Maximum degree prominence', '× radius', 1, 9, .1],
+      ['compensation', 'Density compensation', '%', 0, 100, 1], ['floor', 'Minimum retained size', '% > 0', .1, 100, .1],
+    ];
+    const inputs: HTMLInputElement[] = [];
+    const message = group.createDiv({ cls: 'graph-ng-explore-note', attr: { role: 'status', 'aria-live': 'polite' } }); message.textContent = this.sizingMessage;
+    for (const [key, title, unit, min, max, step] of fields) {
+      const row = group.createEl('label', { cls: 'graph-ng-sizing-row' }); row.createSpan({ text: title });
+      const number = row.createEl('input', { attr: { type: 'number', step: 'any', 'aria-label': title } }); number.value = draft[key]; number.disabled = this.sizingBusy; inputs.push(number); number.min = key === 'prominence' ? '1' : '0'; number.max = String(key === 'radius' ? MAX_NODE_RADIUS : key === 'prominence' ? 9 : 100);
+      row.createSpan({ text: unit });
+      const slider = row.createEl('input', { attr: { type: 'range', min: String(min), max: String(max), step: String(step), 'aria-label': `${title} slider` } }); slider.value = draft[key]; slider.disabled = this.sizingBusy;
+      const changed = (value: string) => { draft[key] = value; this.sizingPreview = false; this.host.previewSizing?.(null); this.sizingMessage = message.textContent = 'Draft · not previewed or saved'; this.updateSizingReadout(); };
+      number.oninput = () => { changed(number.value); slider.value = number.value; };
+      slider.oninput = () => { number.value = slider.value; changed(slider.value); };
+    }
+    const help = group.createEl('details'); help.createEl('summary', { text: 'Sizing, density & brightness' });
+    this.note(help, `Radius slider: 0.01–20 CSS px; type custom values up to ${MAX_NODE_RADIUS}. Degree counts incident edges, not hierarchy. Density shrinks marks, not spacing. Highlights add 2 px; glow, halos and overlapping edges can still brighten a core.`);
+    this.sizingOutput = group.createDiv({ cls: 'graph-ng-explore-note' }); this.updateSizingReadout();
+    const values = () => {
+      const parsed = Object.fromEntries(Object.entries(draft).map(([key, value]) => [key, value.trim() ? Number(value) : NaN])) as unknown as NodeSizingValues;
+      parsed.compensation /= 100; parsed.floor /= 100; sizingSettings(this.settings, parsed); return parsed;
+    };
+    const actions = group.createDiv({ cls: 'graph-ng-form' });
+    const preview = actions.createEl('button', { text: 'Preview sizing' }); preview.disabled = this.sizingBusy || !this.host.previewSizing;
+    preview.onclick = () => { try { this.host.previewSizing?.(values()); this.sizingPreview = true; this.sizingMessage = 'Preview · unsaved'; } catch (e) { this.host.previewSizing?.(null); this.sizingMessage = `Not previewed: ${String(e)}`; } message.textContent = this.sizingMessage; this.updateSizingReadout(); };
+    const apply = actions.createEl('button', { text: this.sizingBusy ? 'Saving…' : 'Apply and save sizing' }); apply.disabled = this.sizingBusy || !this.host.applySizing;
+    apply.onclick = async () => {
+      if (this.sizingBusy || this.disposed) return;
+      try { const v = values(); this.sizingBusy = true; this.render(); await this.host.applySizing!(v); this.sizingDraft = undefined; this.sizingPreview = false; this.sizingMessage = 'Saved'; }
+      catch (e) { this.host.previewSizing?.(null); this.sizingMessage = `Not saved: ${String(e)}. Preview cleared.`; }
+      finally { this.sizingBusy = false; if (!this.disposed) this.render(); }
+    };
+    const cancel = actions.createEl('button', { text: 'Restore saved sizing' }); cancel.disabled = this.sizingBusy;
+    cancel.onclick = () => { this.host.previewSizing?.(null); this.sizingDraft = undefined; this.sizingPreview = false; this.sizingMessage = 'Saved sizing restored'; this.render(); };
   }
   private display(host: HTMLElement) {
     const s = this.settings, v = s.visuals;
-    this.slider(host, 'Node size', 1, 10, .5, () => s.nodeSize, x => { s.nodeSize = x; });
-    this.slider(host, 'Size by degree', 0, 4, .1, () => v.degreeSizing, x => { v.degreeSizing = x; });
+    type NumericVisual = { [K in keyof Visuals]: Visuals[K] extends number ? K : never }[keyof Visuals];
+    const slider = (key: NumericVisual, label: string, min: number, max: number, step: number) =>
+      this.slider(host, label, min, max, step, () => v[key], value => { v[key] = value; });
+    this.nodes(host);
+    this.note(host, 'Closing ends a preview; drafts stay here. Live controls below save automatically in plugin settings, not named views.');
+    host.createEl('h4', { text: 'Live appearance defaults' });
     this.slider(host, 'Label density', .25, 3, .25, () => s.labelDensity, x => { s.labelDensity = x; }, true);
-    this.slider(host, 'Edge opacity', 0, 1, .05, () => v.edgeOpacity, x => { v.edgeOpacity = x; });
-    this.slider(host, 'Edge color blend', 0, 1, .05, () => v.edgeColorMix, x => { v.edgeColorMix = x; });
-    this.slider(host, 'Glow', 0, 1, .05, () => v.glow, x => { v.glow = x; });
-    this.slider(host, 'Curvature', 0, .5, .02, () => v.curvature, x => { v.curvature = x; });
+    slider('edgeOpacity', 'Edge opacity (0–1)', 0, 1, .001);
+    slider('edgeColorMix', 'Edge color blend', 0, 1, .05);
+    slider('glow', 'Glow', 0, 1, .001);
+    this.guard(host, 'glow');
+    slider('curvature', 'Curvature', 0, .5, .02);
     this.flag(host, 'curvedEdges', 'Curved edges');
+    this.guard(host, 'curves');
     this.flag(host, 'groupHalos', 'Group halos at mid zoom');
+    this.guard(host, 'halos');
     this.flag(host, 'autoPalette', 'Color by group when no rule matches');
-    this.flag(host, 'hoverHighlight', 'Highlight neighbors on hover');
+    this.flag(host, 'hoverHighlight', 'Graduated connections on hover or selection');
+    this.note(host, 'Direct connections brightest, then 2-hop neighbours; the rest fades. Ancestor or framework levels need declared structural relationships; none are inferred.');
     this.flag(host, 'labelFade', 'Fade labels by zoom and importance', true);
     if (this.host.carriers()) {
-      this.slider(host, 'Edge-note opacity', 0, 1, .05, () => v.carrierOpacity, x => { v.carrierOpacity = x; });
-      this.slider(host, 'Edge-note size', .2, 2, .1, () => v.carrierSize, x => { v.carrierSize = x; });
+      slider('carrierOpacity', 'Edge-note opacity', 0, 1, .001);
+      slider('carrierSize', 'Edge-note size', .001, 4, .001);
       this.flag(host, 'carrierTint', 'Color edge notes by their endpoints');
       this.flag(host, 'carrierLod', 'Fold edge notes into edges when zoomed out');
     }
-    for (const reason of this.host.policy()) this.note(host, `Performance guard: ${reason}.`);
+    this.note(host, 'Edge opacity 0 hides all edges, including highlights. Relationships remain available in Filters and group lists.');
     host.createEl('button', { text: 'Fit graph' }).onclick = () => this.host.fit();
   }
-  private views(host: HTMLElement) {
-    const s = this.settings, form = host.createDiv({ cls: 'graph-ng-form' });
-    const name = form.createEl('input', { attr: { type: 'text', placeholder: 'View name', 'aria-label': 'Saved view name', maxlength: String(VIEW_LIMITS.viewName) } }), error = host.createDiv({ cls: 'graph-ng-explore-error', attr: { role: 'alert' } });
-    const save = form.createEl('button', { text: 'Save view', cls: 'mod-cta' });
-    if (s.explore.savedViews.length >= VIEW_LIMITS.savedViews) this.note(host, `Limit: ${VIEW_LIMITS.savedViews} saved views. Delete one or reuse a name.`);
-    save.onclick = () => {
-      const label = name.value.trim(); if (!label) { error.textContent = 'Name the view'; return; }
-      const saved: SavedView = { name: label, view: structuredClone(this.view), camera: this.host.camera() }, next = [...s.explore.savedViews.filter(v => v.name !== label), saved];
-      try { validateSaved(next); } catch (e) { error.textContent = e instanceof Error ? e.message : String(e); return; }
-      s.explore.savedViews = next; this.host.persist(); this.render();
-    };
-    for (const saved of s.explore.savedViews) {
-      const item = host.createDiv({ cls: 'graph-ng-legend-row' });
-      item.createSpan({ cls: 'graph-ng-legend-name', text: saved.name, attr: { title: `${saved.view.filters.length} filters${saved.view.group ? ` · ${groupLabel(saved.view.group)}` : ''}${saved.camera ? ' · camera' : ''}` } });
-      item.createEl('button', { text: 'Apply', attr: { 'aria-label': `Apply view ${saved.name}` } }).onclick = () => { this.update(structuredClone(saved.view), saved.camera ? () => this.host.restoreCamera(saved.camera!) : undefined); this.search.value = saved.view.query; };
-      item.createEl('button', { cls: 'clickable-icon', text: '×', attr: { 'aria-label': `Delete view ${saved.name}` } }).onclick = () => { s.explore.savedViews = s.explore.savedViews.filter(v => v !== saved); this.host.persist(); this.render(); };
+  private viewDefinition(saved: SavedView) {
+    const v = saved.view;
+    return `Search: ${v.query || '(none)'} · Filters: ${v.filters.map(describePredicate).join('; ') || '(none)'} · Grouping: ${v.group ? groupLabel(v.group) : 'Current declared default'} · Hidden groups: ${v.hiddenGroups.join(', ') || '(none)'} · Collapsed: ${v.collapsedGroups.join(', ') || '(none)'} · Hidden colors: ${v.hiddenColors.join(', ') || '(none)'} · Hidden relationships: ${v.hiddenTypes.join(', ') || '(none)'} · Camera: ${saved.camera ? 'Saved camera applies in Notes' : 'Keep current camera when opened'}`;
+  }
+  private viewConfiguration() { return canonical([this.settings.declaration, this.settings.groupLevel, this.settings.projectionFile]); }
+  private saveFocus = false;
+  private async saveViewDraft(expected: SavedView | null) {
+    const draft = this.viewDraft; if (!draft || this.viewBusy) return;
+    try {
+      if (draft.configuration !== this.viewConfiguration()) { draft.configuration = this.viewConfiguration(); this.viewCollision = undefined; throw new Error('Graph configuration changed. Review this view again.'); }
+      const saved = draft.folder === undefined ? structuredClone(draft.saved) : folderView(draft.folder, draft.saved.name);
+      saved.name = saved.name.trim(); validateSaved([saved]);
+      this.saveFocus = !this.root.hidden && this.tool === 'views' && this.body.contains(document.activeElement);
+      if (this.saveFocus) this.closeButton.focus({ preventScroll: true });
+      this.viewBusy = true; this.viewMessage = 'Saving…'; this.render();
+      await this.host.commitSavedView!(saved, expected);
+      this.viewDraft = undefined; this.viewCollision = undefined; this.viewSaved = saved;
+      this.viewMessage = `Saved ‘${saved.name}’. Current graph unchanged.`;
+    } catch (error) { this.viewMessage = `View was not saved: ${String(error)}`; }
+    finally {
+      this.viewBusy = false;
+      if (!this.disposed) {
+        this.render();
+        if (this.saveFocus && !this.root.hidden && this.tool === 'views' && document.activeElement === this.closeButton) {
+          [...this.body.querySelectorAll<HTMLButtonElement>('button')].find(button => !button.disabled)?.focus({ preventScroll: true });
+        }
+      }
+      this.saveFocus = false;
     }
+  }
+  private viewOpen(host: HTMLElement, saved: SavedView) {
+    const issue = this.host.savedViewIssue?.(saved) ?? '';
+    if (issue) this.note(host, issue);
+    const open = host.createEl('button', { text: 'Open', attr: { 'aria-label': `Open view ${saved.name}` } }); open.disabled = Boolean(issue);
+    open.onclick = async () => {
+      const request = ++this.openRequest;
+      this.viewMessage = `Opening ‘${saved.name}’… Requested view; displayed graph may still show the previous result.`; this.render();
+      try { await this.host.openSavedView!(saved); if (request === this.openRequest) this.viewMessage = `Opened ‘${saved.name}’.${saved.camera && this.host.mode() !== 'nodes' ? ' Saved camera applies in Notes.' : ''}`; }
+      catch (error) { if (request === this.openRequest) this.viewMessage = `Could not finish opening ‘${saved.name}’: ${String(error)}. Displayed graph may still show the previous result.`; }
+      if (!this.disposed) this.render();
+    };
+  }
+  private views(host: HTMLElement) {
+    host.createDiv({ text: this.viewMessage, attr: { role: 'status', 'aria-live': 'polite' } });
+    this.note(host, 'Views live in plugin settings, not view files. Saves filters, grouping and camera. Appearance, layout, representation and selected-group scope are not included.');
+    const back = () => { this.viewDraft = undefined; this.viewCollision = undefined; this.viewSaved = undefined; this.viewMessage = ''; this.render(); this.body.querySelector<HTMLButtonElement>('button')?.focus(); };
+    const draft = this.viewDraft;
+    if (draft) {
+      host.createEl('h4', { text: 'Prepare view' });
+      const form = host.createDiv({ cls: 'graph-ng-form' });
+      const name = form.createEl('input', { attr: { type: 'text', 'aria-label': 'Saved view name', placeholder: 'View name', maxlength: String(VIEW_LIMITS.viewName) } }); name.value = draft.saved.name; name.disabled = this.viewBusy;
+      name.oninput = () => { draft.saved.name = name.value; this.viewCollision = undefined; this.render(); };
+      let folder: HTMLInputElement | undefined;
+      if (draft.folder !== undefined) {
+        folder = form.createEl('input', { attr: { type: 'text', 'aria-label': 'Folder prefix', placeholder: 'Folder/Subfolder' } }); folder.value = draft.folder; folder.disabled = this.viewBusy;
+        folder.oninput = () => {
+          if (!draft.saved.name || draft.saved.name === `${draft.folder} — focus`) draft.saved.name = `${folder!.value} — focus`;
+          draft.folder = folder!.value; this.viewCollision = undefined; this.render();
+        };
+      }
+      this.note(host, 'Definition preview');
+      try { this.note(host, this.viewDefinition(draft.folder === undefined ? draft.saved : folderView(draft.folder, draft.saved.name))); }
+      catch (error) { this.note(host, String(error)); }
+      this.note(host, 'Uses current appearance, layout and relationship declarations. Replaces current search, filters and hidden-item choices when opened. Matches are checked when opened.');
+      const save = host.createEl('button', { text: 'Save view', cls: 'mod-cta' }); save.disabled = this.viewBusy;
+      save.onclick = () => {
+        const target = this.settings.explore.savedViews.find(v => v.name === draft.saved.name.trim());
+        if (target) { this.viewCollision = structuredClone(target); this.render(); } else void this.saveViewDraft(null);
+      };
+      if (this.viewCollision) {
+        this.note(host, `A view named ‘${this.viewCollision.name}’ already exists.`);
+        const expected = this.viewCollision;
+        const replace = host.createEl('button', { text: 'Replace existing view' }); replace.disabled = this.viewBusy; replace.onclick = () => { void this.saveViewDraft(expected); };
+        const keep = host.createEl('button', { text: 'Keep editing' }); keep.disabled = this.viewBusy; keep.onclick = () => { this.viewCollision = undefined; this.render(); };
+      }
+      const cancel = host.createEl('button', { text: 'Cancel' }); cancel.disabled = this.viewBusy; cancel.onclick = back;
+      return;
+    }
+    if (this.viewSaved) { this.viewOpen(host, this.viewSaved); host.createEl('button', { text: 'Back to views' }).onclick = back; return; }
+    const s = this.settings;
+    if (!s.explore.savedViews.length) this.note(host, 'No saved views here yet. Start below, or save the view you are exploring.');
+    for (const saved of s.explore.savedViews) {
+      const item = host.createDiv({ cls: 'graph-ng-saved-record' });
+      item.createEl('strong', { cls: 'graph-ng-saved-name', text: saved.name }); this.note(item, this.viewDefinition(saved));
+      const actions = item.createDiv({ cls: 'graph-ng-row' });
+      this.viewOpen(actions, saved);
+      const remove = actions.createEl('button', { text: 'Delete', attr: { 'aria-label': `Delete view ${saved.name}` } }); remove.disabled = this.viewBusy;
+      remove.onclick = async () => {
+        this.viewBusy = true; this.viewMessage = 'Saving…'; this.render();
+        try { await this.host.commitSavedView!(null, saved); this.viewMessage = `Deleted ‘${saved.name}’. Current graph unchanged.`; }
+        catch (error) { this.viewMessage = `View was not deleted: ${String(error)}`; }
+        finally { this.viewBusy = false; if (!this.disposed) this.render(); }
+      };
+    }
+    const prepare = (folder?: string) => {
+      this.viewSaved = undefined; this.viewMessage = ''; this.viewCollision = undefined;
+      this.viewDraft = { saved: { name: '', view: structuredClone(this.view), camera: this.host.camera() }, folder, configuration: this.viewConfiguration() }; this.render();
+      this.body.querySelector<HTMLInputElement>('input')?.focus();
+    };
+    const current = host.createEl('button', { text: 'Save current view…' }); current.disabled = this.viewBusy; current.onclick = () => prepare();
+    host.createEl('h4', { text: 'Starting points' });
+    this.note(host, 'Focus on a folder — explore one area using the current graph’s relationships.');
+    const start = host.createEl('button', { text: 'Prepare', attr: { 'aria-label': 'Prepare Focus on a folder' } }); start.disabled = this.viewBusy; start.onclick = () => prepare('');
   }
 }

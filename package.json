@@ -1,6 +1,6 @@
 {
   "name": "obsidian-graph-ng",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Ontology-neutral, declared graph projections for Obsidian",
   "author": "cybersader",
   "license": "MIT",
@@ -8,7 +8,7 @@
   "main": "main.js",
   "scripts": {
     "build": "tsc --noEmit && node esbuild.config.mjs",
-    "test": "bun test tests/core.test.ts tests/adapter.test.ts tests/gates.test.ts tests/pipeline.test.ts tests/declaration-v2.test.ts tests/renderer.test.ts tests/view-lifecycle.test.ts tests/contribution-page.test.ts tests/layout.test.ts tests/explore.test.ts tests/expr.test.ts",
+    "test": "bun test tests/saved-views.test.ts tests/density-overdraw.test.ts tests/graduated-focus.test.ts tests/graph-tools.test.ts tests/node-sizing.test.ts tests/physics-transaction.test.ts tests/physics-controls.test.ts tests/core.test.ts tests/adapter.test.ts tests/gates.test.ts tests/pipeline.test.ts tests/declaration-v2.test.ts tests/renderer.test.ts tests/view-lifecycle.test.ts tests/contribution-page.test.ts tests/layout.test.ts tests/explore.test.ts tests/expr.test.ts",
     "fixture": "bun scripts/generate.ts",
     "bench": "bun scripts/benchmark.ts",
     "project": "bun scripts/project.ts",
@@ -22,7 +22,8 @@
     "release:verify": "node scripts/verify-release.mjs",
     "bench:layout": "bun scripts/layout-benchmark.ts",
     "bench:expressions": "bun scripts/expression-benchmark.ts",
-    "docs:expressions": "bun scripts/expression-reference.ts"
+    "docs:expressions": "bun scripts/expression-reference.ts",
+    "probe:zoom": "bun scripts/zoom-stability-probe.ts"
   },
   "dependencies": {},
   "devDependencies": {

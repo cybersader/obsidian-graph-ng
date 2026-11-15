@@ -63,7 +63,7 @@ export function degreeSizes(offsets: Uint32Array, scale: number, out: Float32Arr
   for (let i = 0; i < out.length; i++) out[i] = 1 + scale * Math.log2(1 + offsets[i + 1]! - offsets[i]!) / norm;
   return out;
 }
-export interface EffectPolicy { glow: number; curves: boolean; segments: number; halos: boolean; additive: boolean; reasons: string[] }
+export interface EffectPolicy { glow: number; curves: boolean; segments: number; halos: boolean; dark: boolean; reasons: string[] }
 /** Cost-aware fallback: every effect has a configurable ceiling and a software rule. */
 export function effectPolicy(v: Visuals, nodes: number, edges: number, groups: number, software: boolean, dark: boolean): EffectPolicy {
   const reasons: string[] = [], soft = software && !v.softwareEffects;
@@ -72,16 +72,17 @@ export function effectPolicy(v: Visuals, nodes: number, edges: number, groups: n
   if (glow > 0 && nodes > v.glowMaxNodes) { glow = 0; reasons.push(`glow off above ${v.glowMaxNodes.toLocaleString()} nodes`); }
   if (curves && edges > v.curvesMaxEdges) { curves = false; reasons.push(`curves off above ${v.curvesMaxEdges.toLocaleString()} edges`); }
   if (halos && groups > v.halosMaxGroups) reasons.push(`halos limited to the ${v.halosMaxGroups.toLocaleString()} largest groups`);
-  return { glow, curves, segments: curves ? v.curveSegments : 1, halos: halos && v.halosMaxGroups > 0, additive: dark, reasons };
+  return { glow, curves, segments: curves ? v.curveSegments : 1, halos: halos && v.halosMaxGroups > 0, dark, reasons };
 }
 /** Density thinning in (0, 1]: sqrt(reference / count); a reference of 0 disables it. */
 export const thinning = (reference: number, count: number) => reference > 0 ? Math.min(1, Math.sqrt(reference / Math.max(1, count))) : 1;
 /** Edge alpha falls with visible density and rises when zoomed in past the home
- * (fit) framing; additive blending gets a lower per-edge ceiling so dense cores
- * glow without saturating to white. `zoom` is camera ratio / home ratio. */
-export function edgeAlpha(v: Visuals, visibleEdges: number, zoom: number, additive: boolean): number {
+ * (fit) framing. Dark-theme artistic attenuation is independent of compositing.
+ * Per-edge caps cannot bound accumulated light; fragments must conserve coverage.
+ * `zoom` is camera ratio / home ratio. */
+export function edgeAlpha(v: Visuals, visibleEdges: number, zoom: number, dark: boolean): number {
   const density = thinning(v.edgeDensityReference, visibleEdges), boost = Math.min(3, Math.max(1, 1 / Math.sqrt(Math.max(zoom, 1e-6))));
-  return additive ? Math.min(.5, Math.max(.02, v.edgeOpacity * .45 * density * boost)) : Math.min(1, Math.max(.05, v.edgeOpacity * 1.25 * density * boost));
+  return dark ? Math.min(.5, v.edgeOpacity * .45 * density * boost) : Math.min(1, v.edgeOpacity * 1.25 * density * boost);
 }
 /** Zoom-dependent label opacity and importance cut within the current label LOD band. */
 export function labelFade(nodeSize: number, threshold: number, ratio: number, ratios: readonly number[], fade: boolean): { alpha: number; cut: number } {

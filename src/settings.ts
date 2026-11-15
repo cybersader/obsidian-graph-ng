@@ -1,3 +1,4 @@
+import { legacySizing, validateNodeSizing, validateNodeRadius, type NodeSizingPolicy } from './node-sizing';
 import { DEFAULT_LAYOUT, validateLayout, type LayoutOptions } from './core/layout-options';
 import { defaultDeclaration, migrateDeclaration, validateDeclaration, type GraphDeclaration } from './core/declaration';
 import { canonicalView, emptyView, validateSaved, validateView, type ExploreView, type SavedView } from './core/explore';
@@ -153,6 +154,7 @@ export interface Settings {
   lodZoomRatio: number;
   groupLevel: number;
   nodeSize: number;
+  nodeSizing: NodeSizingPolicy;
   edgeSize: number;
   labelSize: number;
   groupRadius: number;
@@ -187,7 +189,7 @@ export function defaults(producer: string): Settings {
     labelCandidateMultiplier: 32, frameBackstopMs: 32, shaderPollMs: 8, contextRestoreTimeoutMs: 5000, cameraMinRatio: .02, cameraMaxRatio: 8,
     ingest: { chunkRows: 2000, budgetMs: 8 }, cache: { directory: '', chunkBytes: 1048576, maxGenerationBytes: 268435456, retainedArtifacts: 8, maxRetainedBytes: 268435456 }, maxProjectionBytes: 67108864, maxSettingsBytes: 16777216,
     declaration: defaultDeclaration(producer), layout: structuredClone(DEFAULT_LAYOUT), debounceMs: 5000,
-    workerTimeoutMs: 120000, workerRestarts: 2, streamEveryIterations: 5, lodZoomRatio: 1.8, groupLevel: 0, nodeSize: 3, edgeSize: 0.5, labelSize: 13,
+    workerTimeoutMs: 120000, workerRestarts: 2, streamEveryIterations: 5, lodZoomRatio: 1.8, groupLevel: 0, nodeSize: 3, nodeSizing: legacySizing(), edgeSize: 0.5, labelSize: 13,
     groupRadius: 26, groupCurveDivisor: 5, groupEdgeHitRadius: 6, groupCurveSamples: 32, groupLoopScale: 1.5, groupRingPadding: 56, labelDensity: 1, labelGridCellSize: 100, labelRenderedSizeThreshold: 6, edgeWidthScale: 0.8, listPageSize: 100,
     backgroundColor: '#141b26', nodeColor: '#7fc8e7', edgeColor: '#43566e', groupColor: '#7fc8e7', textColor: '#edf4ff',
     persistLayout: true, cachedDeclarations: 1, projectionFile: '', groupCanvasPageSize: 6,
@@ -198,6 +200,8 @@ export function defaults(producer: string): Settings {
 export function validateSettings(v: unknown): asserts v is Settings {
   if (!v || typeof v !== 'object') throw new Error('Settings must be an object');
   const s = v as Settings, keys = Object.keys(defaults('producer@1'));
+  validateNodeSizing(s.nodeSizing ?? legacySizing());
+  if (s.nodeSizing?.policy === 'predictable') validateNodeRadius(s.nodeSize);
   for (const k of Object.keys(s)) if (!keys.includes(k)) throw new Error(`Unknown setting: ${k}`);
   if (s.settingsVersion !== 2) throw new Error('Unsupported settings version');
   if (!Number.isSafeInteger(s.workerRestarts) || s.workerRestarts < 0) throw new Error('workerRestarts must be a nonnegative integer');
@@ -250,7 +254,7 @@ export function upgradeSettings(input: unknown, producer: string): Settings {
   }
   if (disabled.length) explore.disabledDerived = [...(explore.disabledDerived ?? []), ...disabled].slice(-64);
   const settings = { ...base, ...old, layout: { ...base.layout, ...old.layout, force: { ...base.layout.force, ...old.layout?.force } }, ingest: { ...base.ingest, ...old.ingest }, cache: { ...base.cache, ...old.cache }, declaration: migrateDeclaration(old.declaration ?? base.declaration),
-    visuals: { ...base.visuals, ...old.visuals }, explore: { ...base.explore, ...explore } };
+    nodeSizing: { ...base.nodeSizing, ...old.nodeSizing }, visuals: { ...base.visuals, ...old.visuals }, explore: { ...base.explore, ...explore } };
   settings.explore = canonicalExplore(settings.explore);
   if (old.settingsVersion === undefined) for (const key of ['maxProjectionGroups', 'maxProjectionPairs', 'maxProjectionCarriers'] as const) if (settings[key] === 0) settings[key] = base[key];
   validateSettings(settings); return settings;

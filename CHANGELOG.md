@@ -1,8 +1,67 @@
 # Changelog
 
+The owner-approved bounded download ceilings for this UI pass are **245,000 raw / 78,000 gzip bytes** (raised 2026-11-14 from 240,000 / 76,000 to land touch/keyboard graduated-highlight access and the queued UI fixes; 2026-11-13 previously 227,000 / 72,000 for the controls preview). The allowance retains folder-focused saved views and bounds the accompanying interaction fixes; it is not unlimited growth or a performance waiver. Correctness, independent review, deployment and native/runtime acceptance gates are unchanged.
+
+## Unreleased Nodes sizing successor
+
+- Add explicit opt-in predictable node sizing with numeric drafts, preview/cancel/apply and current-zoom radius readout. Preserve legacy sizing until adoption; no new layout engine or hierarchy binding.
+- Share predictable screen-space sizing across WebGL/Canvas, picking and label offsets. Independent runtime visual acceptance remains pending.
+
 All notable changes are recorded here. The format follows Keep a Changelog; versions follow Semantic Versioning. Entries describe accepted behavior and evidence, not an automatic summary of commits.
 
 ## [Unreleased]
+
+- Graduated connection highlighting: hover or selection shows the note and its direct connections brightest, neighbours of neighbours (2 hops) unchanged and the rest faded. Minimum-hop tiers follow type toggles and filters; edge notes are transparent so a direct mapping stays direct. One bounded CPU helper (hop 2 capped at 65,536 scanned entries, visibly reported) drives both WebGL and Canvas, fixing Canvas's uniform edge dimming. A mouse click still opens a note and keeps it as the persistent focus; an empty click clears it. Edge opacity 0 keeps edges hidden. No ancestor/framework tier, no new settings; native visual acceptance pending.
+- Touch taps select instead of opening and show a text-only card with an explicit Open button; empty taps clear it. The note canvas is keyboard-focusable: arrows select the nearest note in that direction, Enter opens, Escape clears and returns focus. Mouse/pen click-to-open is unchanged. Native touch and screen-reader acceptance pending.
+- Software Canvas detail no longer draws over its node/edge budgets or keeps a stale edge subset after an ordinary search, filter or view change. The view is applied and the display falls back to **Group overview** with a notice to narrow filters; saved-view Open still refuses. The renderer itself now refuses an over-budget mask before changing state.
+- A failed saved-view Open no longer offers **Retry view**, which skipped its grouping, detail-limit and configuration checks; use **Open** again.
+- Re-render the graph controls once a refresh finishes so saved-view **Open** no longer stays disabled as "loading". A rebuild of the still-requested view retires an earlier "View not applied" message.
+- **Fit graph** frames the current coordinates of 1–7 visible nodes after Apply or filtering; only an empty view uses the preserved frame.
+- An obsolete member answer replaces a still-shown "Loading members…" with "Members out of date" and **Back to groups**. View-operation feedback no longer erases panel validation errors, and **Retry view** moves keyboard focus to Close before re-issuing. Native interaction acceptance remains pending.
+- Report view failures beside the controls, with an explicit **Retry view**. A newer request or closed graph cannot be overwritten by an obsolete failure, and a current success clears only the view error, retaining partial-data and renderer warnings. A filter or grouping that needs an unmaterialized property reports rebuild failures and storage uncertainty instead of failing silently; no automatic retry.
+- Show the active prefixed folder grouping in **Group by** after opening a folder view.
+- Disable note search for aggregate graphs, explain why, and drop pending search input rather than persisting a query the aggregate cannot use. The stored query is retained.
+- Keep keyboard focus on an enabled control while saving a view, then move it to the resulting action only if focus has not moved elsewhere.
+- Stack saved-view names above their definitions and actions so long definitions cannot squeeze names out of view. Rendered narrow-pane visibility is not yet natively verified.
+- Preserve keyboard focus on the replacement Collapse/Expand group action through label changes and subsequent inspector renders, without scrolling the inspector to it.
+- Show polite pending/failure feedback for member requests with explicit Back to groups recovery. Obsolete rejections cannot replace newer panel contents; no automatic retry or asynchronous focus movement is added.
+- Validate saved hidden/collapsed keys against the requested grouping before result adoption, and identify the requested saved view accurately after an Open failure. Native interaction acceptance remains pending.
+
+- Add one folder starting point with inline definition/name review, explicit collision consent and acknowledged settings-only Save/Delete; opening is separate and generation-checked. Reuse existing folder predicates, saved-view validation and write queue. No appearance/layout snapshot, portable profile format or native acceptance is claimed.
+
+- Candidate: reconcile changed display pixel ratio on the next detail paint when CSS dimensions stay fixed; preserve graph geometry and semantic colors. Deterministic and actual-renderer zoom comparisons are authored, not yet run.
+
+- Correct local additive whiteout in dark-theme edges and node glow by carrying coverage alpha through the existing premultiplied source-over blend. Preserve artistic attenuation, geometry, graph data, stored settings and explicit focus.
+- Respect declared ordinary/focused node color alpha in Canvas detail; explicitly retain source-over. Add scalar source-equation and production Canvas overdraw regressions; native/GPU visual acceptance and graduated semantic hover remain separate.
+
+- Add views-first persistent tools and a single stable overlay inspector, including searchable paged group members with readable names and paths. Keep existing saved records; portable prepared artifacts remain follow-up.
+- Make edge opacity continuous to zero on WebGL, Canvas detail and group Canvas, including WebGL emphasis. Keep graph data, blend modes and settings values intact.
+- Add fine numeric appearance input, wider radius/edge-note sliders within existing validators, contextual performance overrides and explicit saved-setting scope. Preserve acknowledged sizing and physics transactions.
+- Browser/native visual acceptance and independent review of this successor remain pending. No live install or deployment is implied.
+
+## [0.5.2] - Unreleased
+
+- Enforce the bounded physics-controls download allowance of 212,000 raw / 67,200 gzip bytes; correctness, independent review and native acceptance requirements remain unchanged.
+- Keep upload-only test renderers and their frame/backstop clocks owned and disposed per test; production drawing remains unchanged.
+
+### Added
+
+- Native numeric drafts for Spread nodes, Pull toward center (gravity), and advanced Layout step slowdown, mapped to existing settings without invented slider maxima.
+- Explicit **Apply and recompute** validates the full settings merge and starts one finite layout-only worker operation. Invalid, failed, stale or disposed applies retain the last good settings and displayed graph; unrelated settings remain intact.
+- **Reset layout values** changes only three drafts to 2, 1, 1. It does not save, recompute, reset positions or Fit the camera.
+
+### Fixed
+
+- Prepare coordinate-derived CPU state on the existing renderer; acknowledge the candidate settings write before same-context coordinate upload and settings adoption. Preparation, upload or persistence rejection reaches the inline Apply error.
+- Coordinate ordinary/coalesced saves in the existing write queue using execution-time snapshots. Failed/stale candidates compensate from latest live settings without restoring stale whole snapshots. Failed compensation reports disk uncertainty explicitly while retaining the old graph.
+- Standalone controls tests initialize their own host mock before loading the source view; production-bundle tests cover renderer/save failure and ownership races.
+
+### Scope and known limits
+
+- Download ceilings are bounded to 212,000 minified / 67,200 gzip bytes for this slice. Correctness, independent review and deployment gates remain unchanged; no unlimited growth or performance waiver.
+- Coordinate preparation temporarily retains old and next CPU geometry/label data without a second renderer/context. Native peak allocation is unmeasured. Repeated applies start from the prior completed worker baseline; ordinary refresh uses saved settings and existing cache validation.
+- No new engine, link distance, physical damping, pause/resume, density heuristic, label policy, saved-view schema, body-read path or host loading repair. Native visuals and performance remain **UNOBSERVED**; no dense-graph cure or release acceptance is claimed.
+- Runtime update payload contains only `main.js`, `manifest.json`, `styles.css`, never `data.json`; legal materials and provenance remain separate accompanying evidence.
 
 ## [0.5.1] - Unreleased
 
@@ -174,3 +233,9 @@ All notable changes are recorded here. The format follows Keep a Changelog; vers
 - Test-backed alpha, not a public release or production acceptance. No remote adapter or authorization layer.
 - Main-thread load long tasks miss the responsiveness target. Native FPS unavailable; literal native large-vault, mobile and integrated-GPU lanes remain unproven.
 - Sigma is an interim renderer slated for replacement; no bundled-runtime-dependency elimination claim yet.
+
+### Same-context coordinate transaction
+
+Apply prepares CPU coordinate-derived spatial grids, collapsed geometry, discs and label collision placement without constructing another renderer or context. Camera-frame bounds remain independent of the replaced spatial grids; camera, scope, masks, topology and explicit Fit remain separate. Awaited persistence precedes synchronous upload and adoption. Position and atlas textures reuse storage; existing label buffers/VAOs are reused, although buffer resizing can have driver-dependent transient costs. The software path retains its original full geometry limits, not artificial two-renderer half-caps.
+
+Preparation retains old and next coordinate-derived arrays and temporarily old/new label atlases. Nominal atlas backing is approximately 16 MiB each; this is an allocation component, not total browser/GPU peak proof. Context loss or failed GPU rollback retains last-good CPU data for existing recovery and reports uncertainty; failed disk compensation also reports uncertainty. No native latency, memory/driver, mobile, visual or density-cure acceptance is claimed. This unshipped candidate still requires independent review and all unchanged download gates.

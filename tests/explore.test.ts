@@ -152,13 +152,14 @@ test('palette and contrast helpers keep categorical node colors legible in both 
 test('effect policy, degree sizing, edge alpha, halos and label fade are bounded', () => {
   const v = defaults('t@1').visuals;
   const ok = effectPolicy(v, 16000, 44600, 6, false, true); expect(ok.curves).toBe(true); expect(ok.glow).toBe(v.glow); expect(ok.reasons).toEqual([]);
-  const big = effectPolicy(v, 300000, 89200, 100, false, false); expect(big.curves).toBe(false); expect(big.segments).toBe(1); expect(big.glow).toBe(0); expect(big.additive).toBe(false); expect(big.reasons.length).toBe(3);
+  const big = effectPolicy(v, 300000, 89200, 100, false, false); expect(big.curves).toBe(false); expect(big.segments).toBe(1); expect(big.glow).toBe(0); expect(big.dark).toBe(false); expect(big.reasons.length).toBe(3);
   const soft = effectPolicy(v, 10, 10, 1, true, true); expect([soft.glow, soft.curves, soft.halos]).toEqual([0, false, false]);
   expect(effectPolicy({ ...v, softwareEffects: true }, 10, 10, 1, true, true).curves).toBe(true);
   const sizes = degreeSizes(Uint32Array.from([0, 0, 1, 9]), 2); expect(sizes[0]).toBe(1); expect(sizes[2]).toBeCloseTo(3); expect(Math.max(...sizes)).toBeLessThanOrEqual(3);
   for (const edges of [1, 1000, 1e6]) for (const ratio of [.02, 1, 8]) for (const additive of [true, false]) { const a = edgeAlpha(v, edges, ratio, additive); expect(a).toBeGreaterThan(0); expect(a).toBeLessThanOrEqual(1); }
   expect(edgeAlpha(v, 1e6, 1, true)).toBeLessThan(edgeAlpha(v, 1000, 1, true)); expect(edgeAlpha(v, 1e5, .1, true)).toBeGreaterThan(edgeAlpha(v, 1e5, 1, true));
-  // Additive cores must not saturate: per-edge ceiling stays at or below half intensity.
+  // Dark-theme artistic attenuation retains its historical per-edge ceiling.
+  // Accumulated-light correctness is tested separately against actual shader equations.
   expect(edgeAlpha({ ...v, edgeOpacity: 1 }, 1, 1e-4, true)).toBeLessThanOrEqual(.5); expect(edgeAlpha(v, 100, 1, true)).toBeLessThan(edgeAlpha(v, 100, 1, false));
   expect(labelFade(3, 6, 1, LABEL_RATIOS, true).alpha).toBe(0); expect(labelFade(3, 6, .1, LABEL_RATIOS, true).alpha).toBe(1);
   expect(labelFade(3, 6, .1, LABEL_RATIOS, false)).toEqual({ alpha: 1, cut: 0 });

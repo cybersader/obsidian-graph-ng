@@ -15,6 +15,7 @@ export type PipelineRequest =
   | { kind: 'load'; generation: BinaryGeneration }
   | { kind: 'migrate'; generation: { key: string; identities: string[]; positions: number[]; producer: string; layoutHash?: string; edgeKeys?: string[] }; declarationHash: string }
   | { kind: 'project'; complete?: boolean } | { kind: 'detail' } | { kind: 'layout' } | { kind: 'encode' }
+  | { kind: 'recompute'; options: LayoutOptions }
   | { kind: 'gpu' }
   | { kind: 'members'; group: string; view: number }
   | { kind: 'expression-count'; expr: string; context: 'filter' | 'group'; budgetMs?: number }

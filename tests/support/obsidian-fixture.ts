@@ -9,4 +9,5 @@ export class FixtureFile {
 mock.module('obsidian', () => ({
   ItemView: class {}, Plugin: class {}, PluginSettingTab: class {}, Setting: class {}, Notice: class {},
   TFile: FixtureFile, apiVersion: 'test',
+  setIcon: (element: any, icon: string) => { element.empty(); element.createEl('svg', { attr: { 'data-icon': icon, 'aria-hidden': 'true' } }); },
 }));

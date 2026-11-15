@@ -75,3 +75,107 @@ test('drawing-buffer resize never resets an unchanged axis', () => {
   resizeDrawingBuffer(canvas, 1800, 1000); expect(writes).toEqual(['height', 'width', 'width', 'height']);
   expect([canvas.width, canvas.height]).toEqual([1800, 1000]);
 });
+
+
+// Pure probe contracts; these do not execute a browser, renderer, or GPU.
+import { test as zoomProbeTest, expect as zoomProbeExpect } from 'bun:test';
+import { readFileSync as readZoomProbeSource } from 'node:fs';
+import { cssRoi, classifyContext, backendAccepted, probeOutcome, type ContextFacts } from '../scripts/zoom-stability-support';
+const zoomGpuFacts = (): ContextFacts => ({ actualBackend: 'webgl2', contextIsWebGL2: true, contextIsCanvas2D: false, gpuFlag: true, lostContext: false, contextAttributes: { antialias: false }, drawingBuffer: [800, 600], maskedRenderer: 'WebKit WebGL', unmaskedRenderer: 'ANGLE (NVIDIA GeForce RTX)', glVersion: 'WebGL 2.0' });
+zoomProbeTest('ZR-P1 probe explicitly enables Chromium sandbox without alternate launch policy', () => {
+  const code = readZoomProbeSource(new URL('../scripts/zoom-stability-probe.ts', import.meta.url), 'utf8');
+  zoomProbeExpect(code).toContain('headless: true, chromiumSandbox: true'); zoomProbeExpect(code).not.toMatch(/--no-sandbox|--disable-setuid-sandbox|ignoreDefaultArgs/);
+  zoomProbeExpect(code.match(/chromium\.launch\(/g)?.length).toBe(1);
+});
+zoomProbeTest('ZR-P2 requested hardware refuses actual Canvas fallback', () => {
+  const facts: ContextFacts = { ...zoomGpuFacts(), actualBackend: 'canvas2d', contextIsWebGL2: false, contextIsCanvas2D: true, gpuFlag: false, contextAttributes: null, drawingBuffer: null, maskedRenderer: null, unmaskedRenderer: null, glVersion: null };
+  zoomProbeExpect(classifyContext(facts)).toBe('canvas2d'); zoomProbeExpect(backendAccepted('webgl', facts)).toBe(false); zoomProbeExpect(backendAccepted('canvas', facts)).toBe(true);
+});
+zoomProbeTest('ZR-P2 software WebGL stays distinct and cannot pass hardware', () => {
+  for (const name of ['ANGLE (Google SwiftShader)', 'llvmpipe', 'Mesa softpipe', 'lavapipe', 'Microsoft Basic Render Driver']) { const facts = { ...zoomGpuFacts(), unmaskedRenderer: name }; zoomProbeExpect(classifyContext(facts)).toBe('software-webgl'); zoomProbeExpect(backendAccepted('webgl', facts)).toBe(false); }
+});
+zoomProbeTest('ZR-P2 unknown identity, absent context and lost drawing buffer do not prove hardware', () => {
+  for (const change of [{ unmaskedRenderer: null }, { unmaskedRenderer: 'Generic WebGL Renderer' }, { contextAttributes: null }, { drawingBuffer: null }, { lostContext: true }, { contextIsWebGL2: false }, { gpuFlag: false }]) zoomProbeExpect(backendAccepted('webgl', { ...zoomGpuFacts(), ...change })).toBe(false);
+});
+zoomProbeTest('ZR-P2 recognized hardware requires real WebGL2 context evidence', () => {
+  zoomProbeExpect(classifyContext(zoomGpuFacts())).toBe('hardware-webgl'); zoomProbeExpect(backendAccepted('webgl', zoomGpuFacts())).toBe(true); zoomProbeExpect(backendAccepted('canvas', zoomGpuFacts())).toBe(false);
+});
+zoomProbeTest('ZR-P3 stale DPR baseline and updated candidate sample the same CSS region', () => {
+  const baseline = cssRoi(800, 600, 800, 600), candidate = cssRoi(800, 600, 1600, 1200);
+  zoomProbeExpect(baseline.requestedCSS).toEqual(candidate.requestedCSS); zoomProbeExpect(baseline.actualCSS).toEqual(candidate.actualCSS); zoomProbeExpect(baseline.actualCSS.width).toBe(128);
+  zoomProbeExpect([baseline.width, candidate.width]).toEqual([128, 256]); zoomProbeExpect(candidate.samples / baseline.samples).toBe(4);
+  zoomProbeExpect((baseline.samples / 4) / baseline.samples).toBe((candidate.samples / 4) / candidate.samples);
+});
+zoomProbeTest('ZR-P3 actual per-axis backing scale and fractional DPI preserve CSS correspondence', () => {
+  const roi = cssRoi(800, 600, 1000, 1200); zoomProbeExpect([roi.scaleX, roi.scaleY]).toEqual([1.25, 2]); zoomProbeExpect(roi.actualCSS).toEqual(roi.requestedCSS); zoomProbeExpect([roi.width, roi.height]).toEqual([160, 256]); zoomProbeExpect(roi.glY).toBe(1200 - roi.y - roi.height);
+  zoomProbeExpect(() => cssRoi(0, 600, 800, 600)).toThrow('ROI_DIMENSIONS');
+});
+zoomProbeTest('ZR-P4 probe observes public renderer lifecycle and owned scene inputs', () => {
+  const code = readZoomProbeSource(new URL('../scripts/zoom-stability-entry.ts', import.meta.url), 'utf8');
+  zoomProbeExpect(code).toContain('r.refresh(); requestAnimationFrame('); zoomProbeExpect(code).toContain("canvas.getContext('webgl2')"); zoomProbeExpect(code).toContain('internalDerivedColorsVerified: false');
+  zoomProbeExpect(code).not.toMatch(/r\.(?:draw|gl|ctx|dpr|homeRatio|colorBytes)\b/);
+});
+
+
+import { transform as zoomRunnerTransform } from 'esbuild';
+import { createHash as zoomRunnerHash } from 'node:crypto';
+// Execute the actual authored runner with injected IO. No browser, network, pixel,
+// screenshot or build is performed by these control-flow tests.
+async function zoomRunnerFixture(kind: 'software' | 'fallback' | 'unknown' | 'broken' | 'drift') {
+  const sourceText = readZoomProbeSource(new URL('../scripts/zoom-stability-probe.ts', import.meta.url), 'utf8');
+  const { code } = await zoomRunnerTransform(sourceText.replace(/^import .*;\r?\n/gm, ''), { loader: 'ts', target: 'es2022', format: 'esm' });
+  const sourceSha = zoomRunnerHash('sha256').update('fixture-source').digest('hex');
+  let launches = 0, pages = 0, screenshots = 0, saved: any;
+  const sandboxOptions: any[] = [], processStub = { env: { CHROME_BIN: '/synthetic/permitted-browser' }, exitCode: 0 };
+  const empty = async () => {};
+  const browserStub = { version: () => 'synthetic-control-flow', close: empty, newPage: async () => {
+    const ordinal = pages++; let dpr = 1;
+    const cdp = { send: async (_method: string, parameters: any) => { dpr = parameters.deviceScaleFactor; }, detach: empty };
+    return { setDefaultTimeout() {}, addInitScript: empty, on() {}, context: () => ({ newCDPSession: async () => cdp }), goto: empty, waitForFunction: empty, close: empty,
+      screenshot: async () => { screenshots++; if (kind === 'drift') dpr = 1; },
+      evaluate: async (_callback: unknown, ratio?: number | string) => {
+        if (ratio === 'zoom-probe-dpr') return { devicePixelRatio: dpr, viewport: [1024, 768] };
+        if (ratio === undefined) return undefined;
+        if (kind === 'broken') throw new Error('CONTEXT_READBACK_FAILED');
+        const canvas = ordinal === 1 || kind === 'fallback';
+        const facts: ContextFacts = canvas ? { ...zoomGpuFacts(), actualBackend: 'canvas2d', contextIsWebGL2: false, contextIsCanvas2D: true, gpuFlag: false, contextAttributes: null, drawingBuffer: null, maskedRenderer: null, unmaskedRenderer: null, glVersion: null } : { ...zoomGpuFacts(), drawingBuffer: [800 * dpr, 600 * dpr], unmaskedRenderer: kind === 'software' ? 'ANGLE (Google SwiftShader)' : 'Unidentified adapter' };
+        return { ...facts, sourceSha, workersCreated: 0, glError: canvas ? null : 0, devicePixelRatio: dpr, css: [800, 600], backing: [800 * dpr, 600 * dpr], requestedRatio: ratio };
+      },
+    };
+  } };
+  const serverStub = { listen: (_port: number, _host: string, callback: () => void) => callback(), address: () => ({ port: 43123 }), closeAllConnections() {}, close: (callback: () => void) => callback() };
+  const bindings: Record<string, unknown> = { chromium: { launch: async (options: unknown) => { launches++; sandboxOptions.push(options); return browserStub; } }, build: async () => ({ outputFiles: [{ text: 'synthetic harness bytes' }] }), glsl: {}, createServer: () => serverStub, mkdir: empty, readFile: async () => 'fixture-source', writeFile: async (_path: string, text: string) => { saved = JSON.parse(text); }, createHash: zoomRunnerHash, process: processStub, classifyContext, backendAccepted, probeOutcome };
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  await new AsyncFunction(...Object.keys(bindings), code)(...Object.values(bindings));
+  return { launches, pages, screenshots, saved, processStub, sandboxOptions };
+}
+zoomProbeTest('ZR-P2R actual runner retains every usable nonhardware capture and independent Canvas lane before final refusal', async () => {
+  for (const kind of ['software', 'fallback', 'unknown'] as const) {
+    const result = await zoomRunnerFixture(kind);
+    zoomProbeExpect([result.launches, result.pages, result.screenshots]).toEqual([1, 2, 16]); zoomProbeExpect(result.sandboxOptions[0].chromiumSandbox).toBe(true);
+    zoomProbeExpect(result.saved.captures.length).toBe(16); zoomProbeExpect(result.saved.executed).toBe(true); zoomProbeExpect(result.processStub.exitCode).toBe(1); zoomProbeExpect(result.saved.failure).toContain('RESOLUTION_OR_HARDWARE_UNPROVEN');
+    const first = result.saved.captures.slice(0, 8), second = result.saved.captures.slice(8);
+    zoomProbeExpect(first.every((c: any) => c.backend === 'webgl' && c.backendAccepted === false)).toBe(true);
+    zoomProbeExpect(first.every((c: any) => c.contextClassification === (kind === 'software' ? 'software-webgl' : kind === 'fallback' ? 'canvas2d' : 'unverified-webgl'))).toBe(true);
+    zoomProbeExpect(second.every((c: any) => c.backend === 'canvas' && c.contextClassification === 'canvas2d' && c.backendAccepted === true)).toBe(true);
+    zoomProbeExpect(first.map((c: any) => [c.name, c.devicePixelRatio])).toEqual(second.map((c: any) => [c.name, c.devicePixelRatio]));
+    zoomProbeExpect(first.map((c: any) => c.name)).toEqual(['far', 'far-step', 'mid', 'near', 'far', 'far-step', 'mid', 'near']);
+  }
+});
+zoomProbeTest('ZR-P2R actual runner still stops on unusable readback without retries or fabricated captures', async () => {
+  const result = await zoomRunnerFixture('broken');
+  zoomProbeExpect([result.launches, result.pages, result.screenshots]).toEqual([1, 1, 0]); zoomProbeExpect(result.saved.captures).toEqual([]); zoomProbeExpect(result.saved.executed).toBe(false); zoomProbeExpect(result.saved.failure).toContain('CONTEXT_READBACK_FAILED'); zoomProbeExpect(result.processStub.exitCode).toBe(1);
+});
+
+zoomProbeTest('paired harness distinguishes valid stale backing from invalid DPR control', () => {
+  const captures = ['webgl', 'canvas'].flatMap(backend => [1, 2].flatMap(intendedDpr => ['far', 'far-step', 'mid', 'near'].map(name => ({ backend, intendedDpr, name, devicePixelRatio: intendedDpr, beforePixels: { devicePixelRatio: intendedDpr, viewport: [1024, 768] }, beforeScreenshot: { devicePixelRatio: intendedDpr, viewport: [1024, 768] }, afterScreenshot: { devicePixelRatio: intendedDpr, viewport: [1024, 768] }, backendAccepted: true, resolutionMatches: intendedDpr === 1 }))));
+  zoomProbeExpect(probeOutcome({ executed: true, errors: [], captures })).toEqual({ schema: 'zoom-probe-outcome.v1', status: 'acceptance-rejected', matrixValid: true, reasons: ['BACKING_RESOLUTION_MISMATCH'] });
+  const drifted = structuredClone(captures); drifted[4]!.afterScreenshot.devicePixelRatio = 1;
+  zoomProbeExpect(probeOutcome({ executed: true, errors: [], captures: drifted }).status).toBe('infrastructure-failure');
+  zoomProbeExpect(probeOutcome({ executed: true, errors: [], captures: captures.slice(1) }).matrixValid).toBe(false);
+});
+zoomProbeTest('actual runner records screenshot DPR drift as infrastructure failure, not known baseline defect', async () => {
+  const result = await zoomRunnerFixture('drift'); zoomProbeExpect(result.saved.captures.length).toBe(16);
+  zoomProbeExpect(result.saved.captures[4].beforeScreenshot.devicePixelRatio).toBe(2); zoomProbeExpect(result.saved.captures[4].afterScreenshot.devicePixelRatio).toBe(1);
+  zoomProbeExpect(result.saved.outcome.status).toBe('infrastructure-failure'); zoomProbeExpect(result.saved.outcome.reasons).toContain('DPR_OR_VIEWPORT_CONTROL_DRIFT'); zoomProbeExpect(result.processStub.exitCode).toBe(1);
+});

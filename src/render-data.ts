@@ -54,6 +54,34 @@ export function incidentEdges(p: Pick<Projection, 'paths' | 'source' | 'target'>
   for (let e = 0; e < p.source.length; e++) { edges[cursor[p.source[e]!]!++] = e; edges[cursor[p.target[e]!]!++] = e; }
   return { offsets, edges };
 }
+/** Graduated focus, presentation only: minimum hop distance from `f` over type-visible (`on`) edges
+ * between filter-visible (`vis`) nodes. Tier bytes are 255 (focus and direct), 128 (neighbours of
+ * neighbours) or 0; node tiers go in the G byte of the RGBA `state`. An edge note's own relationship
+ * rows are transparent, so a reified mapping keeps its far endpoint direct (and stays lit at hop 2). Hop 1 is complete; hop 2
+ * stops in incident-CSR order after `max` scanned entries and returns true. Only the appended
+ * `nodes`/`edges` are written, so callers clear by those lists, never by a rescan. */
+export function focusTiers(f: number, inc: { offsets: Uint32Array; edges: Uint32Array }, p: Pick<Projection, 'source' | 'target' | 'carrier' | 'carrierNodes'>, on: ArrayLike<number>, vis: ArrayLike<number>, state: Uint8Array, edge: Uint8Array, nodes: number[], edges: number[], max = 65536) {
+  let budget = Infinity;
+  const tier = (i: number) => state[i * 4 + 1]! > 200, own = (e: number, c: number) => !!p.carrierNodes[c] && p.carrier[e]! + 1 === p.carrierNodes[c];
+  const grow = (from: number[], mark: number) => {
+    const out: number[] = [], scan = (u: number, carrier?: boolean) => {
+      for (let j = inc.offsets[u]!; j < inc.offsets[u + 1]! && budget-- > 0; j++) {
+        const e = inc.edges[j]!, v = p.source[e] === u ? p.target[e]! : p.source[e]!;
+        if (!on[e] || !vis[v] || carrier && !own(e, u)) continue;
+        if (!state[v * 4 + 1]) { state[v * 4 + 1] = mark; nodes.push(v); out.push(v); }
+        const a = tier(u), b = tier(v);
+        if (!edge[e] && (a || b || carrier)) { edge[e] = a && b && (u === f || v === f || own(e, u) || own(e, v)) ? 255 : 128; edges.push(e); }
+      }
+    };
+    for (const u of from) scan(u);
+    for (let i = 0; i < out.length; i++) if (p.carrierNodes[out[i]!]) scan(out[i]!, true);
+    return out;
+  };
+  if (f < 0 || !vis[f]) return false;
+  state[f * 4 + 1] = 255; nodes.push(f);
+  const direct = grow([f], 255); budget = max; grow(direct, 128);
+  return budget < 0;
+}
 /** Bound software draw work by both visible nodes and visible edges; never silently truncate. */
 export function canvasDetailEdges(p: Pick<Projection, 'source' | 'target'>, visible: Uint8Array, maxNodes: number, maxEdges: number) {
   if (visible.reduce((n, v) => n + (v ? 1 : 0), 0) > maxNodes) throw new Error('CANVAS_DETAIL_NODE_LIMIT: use group member lists');
@@ -71,18 +99,29 @@ export function segmentDistance(x: number, y: number, ax: number, ay: number, bx
 export interface LabelBox { node: number; x: number; y: number; w: number; h: number }
 /** Precomputed at fixed LOD scales; pan is a translation, never a new collision pass. */
 export function placeLabels(candidates: readonly LabelBox[], cellSize: number, budget: number): LabelBox[] {
-  const cells = new Map<string, LabelBox[]>(), result: LabelBox[] = [];
+  if (!Number.isFinite(cellSize) || cellSize <= 0 || !Number.isSafeInteger(budget) || budget < 1) throw new Error('LABEL_GEOMETRY_RANGE: positive cell size and safe positive budget required');
+  const cells = new Map<string, LabelBox[]>(), result: LabelBox[] = [], wide: LabelBox[] = [];
+  // A wide box uses exact comparisons against accepted labels, not traversal of
+  // an enormous spatial extent. Work is bounded by the supplied candidate/budget count.
+  const cellBudget = Math.max(1, Math.min(budget, candidates.length));
+  const overlaps = (a: LabelBox, b: LabelBox) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
   for (const box of candidates) {
+    if (![box.x, box.y, box.w, box.h, box.x + box.w, box.y + box.h].every(Number.isFinite) || box.w < 0 || box.h < 0) throw new Error('LABEL_GEOMETRY_RANGE: nonfinite or negative label geometry');
     const x0 = Math.floor(box.x / cellSize), x1 = Math.floor((box.x + box.w) / cellSize), y0 = Math.floor(box.y / cellSize), y1 = Math.floor((box.y + box.h) / cellSize);
-    let collision = false;
-    for (let y = y0; y <= y1 && !collision; y++) for (let x = x0; x <= x1 && !collision; x++) for (const b of cells.get(`${x}:${y}`) ?? []) if (box.x < b.x + b.w && box.x + box.w > b.x && box.y < b.y + b.h && box.y + box.h > b.y) { collision = true; break; }
+    if (![x0, x1, y0, y1].every(Number.isSafeInteger)) throw new Error('LABEL_GEOMETRY_RANGE: cell coordinates exceed exact integer precision');
+    const columns = x1 - x0 + 1, rows = y1 - y0 + 1;
+    const broad = columns > cellBudget || rows > cellBudget || columns * rows > cellBudget;
+    let collision = (broad ? result : wide).some(b => overlaps(box, b));
+    if (!broad) for (let dy = 0; dy < rows && !collision; dy++) for (let dx = 0; dx < columns && !collision; dx++) for (const b of cells.get(`${x0 + dx}:${y0 + dy}`) ?? []) if (overlaps(box, b)) { collision = true; break; }
     if (collision) continue;
     result.push(box);
-    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) { const key = `${x}:${y}`, list = cells.get(key); if (list) list.push(box); else cells.set(key, [box]); }
+    if (broad) wide.push(box);
+    else for (let dy = 0; dy < rows; dy++) for (let dx = 0; dx < columns; dx++) { const key = `${x0 + dx}:${y0 + dy}`, list = cells.get(key); if (list) list.push(box); else cells.set(key, [box]); }
     if (result.length >= budget) break;
   }
   return result;
 }
+
 export const LABEL_RATIOS = [.125, .25, .5, 1, 2, 4, 8] as const;
 export function labelLOD(ratio: number) { const i = LABEL_RATIOS.findIndex(r => r >= ratio); return i < 0 ? LABEL_RATIOS.length - 1 : i; }
 

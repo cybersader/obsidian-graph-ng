@@ -1,3 +1,4 @@
+import { validateLayout } from './core/layout-options';
 import { probeGpu } from './gpu-probe';
 import { renderProjection } from './render-projection';
 import { runLayout, runLayoutStream, type LayoutInput } from './core/layout';
@@ -117,6 +118,13 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       // Copies are made in the worker only: the renderer borrows transferred buffers;
       // the authoritative worker buffers remain live for incremental edits and cache encoding.
       return structuredClone({ projection: renderProjection(projection), visible, colors, explore: explored, view: viewGeneration });
+    }
+    case 'recompute': {
+      if (revision !== projectionRevision || !positions) throw new Error('Projection generation changed');
+      validateLayout(r.options);
+      const start = performance.now();
+      const next = await runLayoutStream({ count: projection.paths.length, source: projection.source, target: projection.target, offsets: projection.offsets, targets: projection.targets, seed: Number.parseInt(meta.key.slice(0, 8), 16), initial: positions.slice() }, r.options, config.streamEveryIterations, () => {}, yieldTask, takeBuffer);
+      return { positions: next, milliseconds: performance.now() - start, cached: false };
     }
     case 'layout': {
       const start = performance.now(), seed = Number.parseInt(meta.key.slice(0, 8), 16);
