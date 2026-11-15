@@ -593,6 +593,9 @@ export class ExplorePanel {
     this.flag(host, 'hoverHighlight', 'Graduated connections on hover or selection');
     this.note(host, 'Direct connections brightest, then 2-hop neighbours; the rest fades. Ancestor or framework levels need declared structural relationships; none are inferred.');
     this.flag(host, 'labelFade', 'Fade labels by zoom and importance', true);
+    this.slider(host, 'Label scale by tier', { min: 1, max: 1.6, k: 1.5 }, () => v.labelTierScale, x => { v.labelTierScale = x; }, true);
+    this.flag(host, 'labelPlates', 'Label plates');
+    this.note(host, 'Focus labels largest, then direct connections, then 2-hop. Hubs get larger names. 1 keeps one size.');
     this.flag(host, 'zoomAdapt', 'Adapt to zoom: fade crowded edges and shrink hubs when zoomed out');
     if (this.host.setRelationshipDisplay && hasReified(s.declaration)) this.relationshipDisplay(host);
     if (this.host.carriers()) {

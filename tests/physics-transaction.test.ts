@@ -361,6 +361,19 @@ test('graduated production labels: focus largest, direct then 2-hop by priority,
   f.settings.visuals.hoverHighlight = false; f.hover(2); expect(paint()).toEqual([]); expect(r[k('hoverLabel')].className).toBe('graph-ng-hover-label');
   f.settings.visuals.hoverHighlight = true; f.hover(3); expect(paint().length).toBe(3); r[k('pointerLeave')](); expect(paint()).toEqual([]);
 });
+test('graduated labels fold unlabelled direct connections into a "+N more" button wired to onMoreConnections', async () => {
+  const f = await graduated(Array.from({ length: 40 }, (_, i) => [0, i + 1] as [number, number]), 41), { r, k } = f, asked: number[] = [];
+  const paint = () => { r[k('focusLevel')] = 1; r[k('placeOverlay')](); };
+  f.tap(0); paint();
+  const more = r[k('moreButton')], shown = r[k('tierLabels')].length, hidden = 40 - shown;
+  expect(shown).toBeGreaterThan(0); expect(shown).toBeLessThanOrEqual(24); expect(more.hidden).toBe(false); expect(more.tagName).toBe('BUTTON');
+  expect(more.textContent).toBe(`+${hidden} more`); expect(more.attributes['aria-label']).toBe(`Show ${hidden} more direct connections of ${r[k('name')](0)}`);
+  // The default hook is a safe no-op; a host hook receives the focus.
+  more.click(); r.onMoreConnections = (n: number) => asked.push(n); more.click(); expect(asked).toEqual([0]); expect(f.opened).toEqual([0]);
+  // Labels carry the full name for tooltips and assistive technology.
+  for (const el of r[k('tierLabels')]) expect(el.attributes['aria-label']).toBe(el.textContent);
+  f.tap(EMPTY); paint(); expect(more.hidden).toBe(true); expect(r[k('tierLabels')]).toEqual([]);
+});
 test('focus-label placement re-runs on coordinate change at constant zoom and on viewport resize; DOM font matches the measured font', async () => {
   const f = await graduated([[0, 1], [1, 2], [2, 3], [3, 4]]), { r, k } = f;
   const paint = () => { r[k('focusLevel')] = 1; r[k('placeOverlay')](); };

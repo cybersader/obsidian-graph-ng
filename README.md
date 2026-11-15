@@ -385,7 +385,25 @@ Tiers are topological, by minimum hop count. Only type-visible relationships bet
 
 One pure helper beside the incident-edge index computes the tiers once per focus change, never per frame, and clears its previous bytes by touched lists. The same bytes drive WebGL (node state texture and a per-edge tier attribute) and Canvas (three batched edge strokes, graded node and label alpha), which also closes the earlier Canvas gap where emphasis dimmed all edges uniformly. Hop 1 is complete; hop 2 stops deterministically after 65,536 scanned incident entries and the hover label then says "2-hop context truncated"; ancestor relationship scans share that bound. The same-group scan reads at most 262,144 entries and marks at most 4,096 notes, then says "group context truncated". Emphasis multiplies alpha inside the existing coverage-preserving source-over blending, so overlap cannot add toward white. At edge opacity 0 edges stay hidden while nodes and labels still grade; there is no alpha floor. View, filter, type or scope changes recompute against the new masks; pointer leave, empty clicks and turning the switch off clear stale bytes; a GPU context restore re-uploads them.
 
-**Graduated labels.** While a focus is active, its name is shown largest and bold beside it (with the truncation note when applicable); direct neighbours get full labels, declared ancestors muted labels, 2-hop neighbours smaller, muted labels and same-group members the smallest, faintest ones. Candidates are ranked focus > direct > ancestor > 2-hop > same group, then by connection count, capped like the ordinary labels, and placed with the same `labelsMaxPerViewport` budget and collision grid (at most 64), so a 2-hop label never displaces a nearer one. Ordinary labels for tiered notes hand over to these, and context labels fade to half the dim opacity; when the focus clears, the ordinary labels return. Placement runs once per focus change or label level-of-detail change, never per frame; panning only translates the bounded text-only overlay, identical on WebGL and Canvas.
+**Graduated labels.** While a focus is active, its name is shown largest and bold beside it (with the truncation note when applicable); direct neighbours get full labels, declared ancestors muted labels, 2-hop neighbours smaller, muted labels and same-group members the smallest, faintest ones. Candidates are ranked focus > direct > ancestor > 2-hop > same group, then by connection count, capped like the ordinary labels, and placed under the same `labelsMaxPerViewport` budget (at most 64) with radial collision avoidance (below), so a 2-hop label never displaces a nearer one. Ordinary labels for tiered notes hand over to these, and context labels fade to half the dim opacity; when the focus clears, the ordinary labels return. Placement runs once per focus change or label level-of-detail change, never per frame; panning only translates the bounded text-only overlay, identical on WebGL and Canvas.
+
+**Label sizing.** Labels follow one type scale around the label size setting:
+
+| Tier | Size | Weight |
+| --- | --- | --- |
+| Focus | label size × scale² | bold |
+| Direct connections | label size | semibold |
+| Ancestors | label size | medium |
+| Neighbours of neighbours | label size ÷ scale | regular |
+| Same group, context | label size ÷ scale^1.5 | regular |
+
+- **Label scale by tier** (Appearance, `visuals.labelTierScale`, 1 to 1.6, default 1.2) sets the ratio. 1 keeps one size.
+- **Label plates** (Appearance, `visuals.labelPlates`, on by default) puts a pill tinted with the theme background behind focus labels so they read over dense edges. Neighbours of neighbours and same-group plates are lighter. Ordinary labels keep a thin background outline.
+- **Radial layout.** A direct-connection label sits right of its dot when there is room. When it would overlap, it moves outward along the line from the focus, with a short leader line back to the dot. At most 24 direct connections are labelled. The rest fold into one **+N more** button beside the focus. The button calls the renderer's `onMoreConnections(focus)` hook (a no-op until a host wires it).
+- **Long names** are shortened in the middle ("Access Con…Procedures"). The full name is on the label's tooltip and accessible name, and on the hover label.
+- **No focus.** Ordinary labels grow with connection count, so hubs are named first and largest (the top hub matches the focus size). More appear as you zoom in. The label level changes only once the zoom is clearly past a boundary, so labels do not flicker when you stop near one. Canvas now applies the same zoom fade, importance cut and hub sizes as WebGL.
+
+Placement is cached per focus and label level, so hover frames only move the bounded overlay.
 
 The tier styling lives in shared helpers that drive Canvas; the shaders write the same expressions, and tests compare them term for term. The ring is extra coverage outside the node disc in the same blending, so it cannot add toward white either.
 

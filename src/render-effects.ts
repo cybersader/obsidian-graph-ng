@@ -100,12 +100,12 @@ export function zoomFade(v: Pick<Visuals, 'zoomAdapt' | 'edgeDensityReference'>,
  * stop covering neighbours: zoom^-½ in half-steps of log2 zoom (sizes are recomputed only when
  * the step changes), at least ¼; 1 at or inside home or when marks would not touch. */
 export const prominenceKeep = (zoom: number, crowded: boolean) => crowded && zoom > 1 ? Math.max(.25, 2 ** (-Math.round(Math.log2(zoom) * 2) / 4)) : 1;
-/** Zoom-dependent label opacity and importance cut within the current label LOD band. */
-export function labelFade(nodeSize: number, threshold: number, ratio: number, ratios: readonly number[], fade: boolean): { alpha: number; cut: number } {
+/** Zoom-dependent label opacity and importance cut within the current label LOD band. `level` (optional) pins the atlas level chosen with hysteresis; the cut then clamps instead of jumping. */
+export function labelFade(nodeSize: number, threshold: number, ratio: number, ratios: readonly number[], fade: boolean, level?: number): { alpha: number; cut: number } {
   const visibleAt = nodeSize / (threshold * Math.sqrt(ratio));
   if (!fade) return { alpha: visibleAt >= 1 ? 1 : 0, cut: 0 };
   const alpha = Math.min(1, Math.max(0, (visibleAt - .8) / .35));
-  const i = ratios.findIndex(r => r >= ratio), hi = ratios[Math.max(0, i < 0 ? ratios.length - 1 : i)]!, lo = i > 0 ? ratios[i - 1]! : hi / 2;
+  const i = level ?? ratios.findIndex(r => r >= ratio), hi = ratios[Math.max(0, i < 0 ? ratios.length - 1 : i)]!, lo = i > 0 ? ratios[i - 1]! : hi / 2;
   const progress = Math.min(1, Math.max(0, Math.log2(ratio / lo) / Math.log2(hi / lo || 2)));
   return { alpha, cut: progress * .55 };
 }

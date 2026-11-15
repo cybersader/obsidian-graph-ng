@@ -1,9 +1,10 @@
 import { renderPath, type RenderProjection } from './render-projection';
 import type { Settings } from './settings';
-import { PickGrid, positionTexture, incidentEdges, focusTiers, tintedEdge, edgeBucket, tierNode, tierEdge, tierLabel, segmentDistance, labelLOD, canvasDetailEdges, resizeDrawingBuffer, LABEL_RATIOS } from './render-data';
+import { PickGrid, positionTexture, incidentEdges, focusTiers, tintedEdge, edgeBucket, tierNode, tierEdge, tierLabel, segmentDistance, canvasDetailEdges, resizeDrawingBuffer, LABEL_RATIOS } from './render-data';
 import { readTheme, type GraphTheme } from './render-theme';
 import { baseRadius, sizedRadius, sizingSettings, type NodeSizingValues } from './node-sizing';
-import { buildLabels, focusFont, focusLabels, type LabelAtlas } from './render-labels';
+import { buildLabels, rankFocus, type LabelAtlas } from './render-labels';
+import { DIRECT_LABELS, LABEL_CHARS, middleTruncate, radialLabels, stickyLevel, tierFont, tierType, type LabelSlot } from './label-layout';
 import { carrierAlpha, carrierColors, carrierVisibility, categorical, degreeSizes, densityScale, edgeAlpha, effectPolicy, prominenceKeep, zoomFade, neutralizeGroups, easeInOut, groupHalos, isDark, labelFade, nodeColors, type EffectPolicy, type Halo, type RGB } from './render-effects';
 import { yieldTask } from './core/scheduler';
 import { generationCurrent } from './physics-controls';
@@ -258,9 +259,17 @@ export class DetailRenderer {
   /** Touch/keyboard selection card: text-only note name and an explicit Open button. */
   private noteCard: HTMLElement;
   private hubLabels: HTMLElement[] = [];
-  /** Graduated focus labels: placed [node, rank] pairs, their DOM text and the LOD they were placed at. */
-  private ranked: (readonly [number, number])[] = [];
+  /** Graduated focus labels: placed slots (radial offsets, optional leader), their DOM text and leader lines, and the key they were placed at. */
+  private ranked: LabelSlot[] = [];
   private tierLabels: HTMLElement[] = [];
+  private tierLeaders: HTMLElement[] = [];
+  /** Direct connections without a label fold into one "+N more" button beside the focus. */
+  private moreButton?: HTMLButtonElement;
+  private moreAt?: { dx: number; dy: number };
+  /** Label level of detail with hysteresis (see `stickyLevel`). */
+  private labelLevel = -1;
+  /** Host seam: "+N more" beside the focus asks the host to list all connections. No-op by default. */
+  onMoreConnections: (focus: number) => void = () => {};
   private rankedKey: unknown[] = [];
   private measure?: CanvasRenderingContext2D;
   static async create(container: HTMLElement, p: RenderProjection, positions: Float32Array, visible: Uint8Array, settings: Settings, onNode: (i: number) => void, onZoomOut: () => void, colors: Uint32Array, current = () => true, software = false, onUnavailable = onZoomOut, view: RenderView = {}) {
@@ -361,7 +370,7 @@ export class DetailRenderer {
   }
   async preparePositions(next: Float32Array, current: () => boolean): Promise<CoordinateToken> {
     const revision = ++this.coordinateRevision; ++this.labelsRevision;
-    const same = generationCurrent(() => [this.coordinateRevision, this.labelsRevision, this.positions, this.view, this.filterVisible, this.theme, this.width, this.height, this.settings.nodeSize, this.settings.labelSize, this.settings.labelDensity, this.settings.labelGridCellSize, this.settings.labelsMaxPerViewport, this.settings.labelCandidateMultiplier, this.settings.visuals.hubsMaxGroups, this.settings.visuals.halosMaxGroups]);
+    const same = generationCurrent(() => [this.coordinateRevision, this.labelsRevision, this.positions, this.view, this.filterVisible, this.theme, this.width, this.height, this.settings.nodeSize, this.settings.labelSize, this.settings.labelDensity, this.settings.labelGridCellSize, this.settings.labelsMaxPerViewport, this.settings.labelCandidateMultiplier, this.settings.visuals.labelTierScale, this.settings.visuals.hubsMaxGroups, this.settings.visuals.halosMaxGroups]);
     const valid = () => current() && this.usable && same();
     const check = () => { if (!valid()) throw new Error('Coordinate generation changed or renderer unavailable'); };
     check(); if (next.length !== this.projection.nodeCount * 2) throw new Error('RENDER_POSITION_COUNT');
@@ -794,7 +803,7 @@ export class DetailRenderer {
     this.adaptSizes(zoom);
     if (!gl) { this.drawCanvas(); this.placeOverlay(); if (more) this.refresh(); return; }
     gl.viewport(0, 0, this.canvas.width, this.canvas.height); gl.clearColor(p[8]! / 255, p[9]! / 255, p[10]! / 255, 1); gl.clear(gl.COLOR_BUFFER_BIT);
-    const lod = labelLOD(this.camera.ratio), policy = this.policy, fade = labelFade(this.settings.nodeSize, this.settings.labelRenderedSizeThreshold, this.camera.ratio, LABEL_RATIOS, v.labelFade);
+    const lod = this.lodLevel(), policy = this.policy, fade = labelFade(this.settings.nodeSize, this.settings.labelRenderedSizeThreshold, this.camera.ratio, LABEL_RATIOS, v.labelFade, lod);
     const notes = this.carrierLevel(zoom), edgeWidth = this.settings.edgeSize * zoomFade(v, this.visibleEdges, zoom, this.width, this.height), alpha = edgeAlpha(v, this.visibleEdges, zoom, policy.dark, this.width, this.height);
     const nodeSize = this.baseNodeRadius();
     const focus = v.hoverHighlight ? this.focusLevel : 0, haloAlpha = v.haloOpacity * Math.min(1, Math.max(0, (this.camera.ratio - .06) / .25));
@@ -823,6 +832,8 @@ export class DetailRenderer {
     gl.bindVertexArray(null); this.placeOverlay(); this.timings.maxDraw = Math.max(this.timings.maxDraw || 0, performance.now() - drawStart);
     if (more) this.refresh();
   };
+  /** Current label level with hysteresis; idempotent for an unchanged camera ratio. */
+  private lodLevel() { return this.labelLevel = stickyLevel(this.labelLevel, this.camera.ratio, LABEL_RATIOS); }
   /** DOM text for the hovered note and collapsed groups only: bounded, text-only. */
   private placeOverlay() {
     this.onSizingChange?.();
@@ -831,19 +842,44 @@ export class DetailRenderer {
     if (node >= 0) { const s = this.screenPoint(node); this.hoverLabel.textContent = this.noteCaption(node); this.hoverLabel.className = 'graph-ng-hover-label' + (node === ego && focus ? ' graph-ng-focus' : ''); this.hoverLabel.style.transform = `translate(${Math.round(s.x + radius(node) + 6)}px, ${Math.round(s.y - 10)}px)`; }
     else this.hoverLabel.textContent = '';
     // Graduated labels: placed once per focus or LOD change, translated per frame (bounded DOM).
-    const lod = labelLOD(this.camera.ratio);
-    if (!this.near.length) this.ranked = [];
+    const lod = this.lodLevel(), s = this.settings, tier = v.labelTierScale;
+    if (node >= 0) this.hoverLabel.style.font = node === ego && focus ? tierFont(0, s.labelSize, tier, this.theme.font) : '';
+    if (!this.near.length) { this.ranked = []; this.moreAt = undefined; }
     else if ([lod, this.display, this.fit, this.width, this.height].some((x, i) => x !== this.rankedKey[i])) {
-      // Placement measures each bounded candidate once with the font the DOM label then uses, at the radius offset it is shown with.
-      const s = this.settings, k = this.scale * this.camera.ratio / LABEL_RATIOS[lod]!, budget = Math.max(1, Math.min(s.labelsMaxPerViewport, FOCUS_LABELS, Math.floor(this.width * this.height / s.labelGridCellSize ** 2 * s.labelDensity))), m = this.measure ??= document.createElement('canvas').getContext('2d')!;
-      this.ranked = focusLabels(ego, this.near, this.stateBytes, this.visible, this.projection.offsets, (n, rank) => { const z = s.labelSize * (rank > 2 ? .85 : 1), h = z * 1.5 + 4; m.font = focusFont(rank, z, this.theme.font); return { node: n, x: this.display[n * 2]! * k + radius(n) + 4, y: this.display[n * 2 + 1]! * k - h / 2, w: m.measureText(this.name(n)).width + 4, h }; }, s.labelGridCellSize, budget, budget * s.labelCandidateMultiplier).filter(([n]) => n !== ego);
+      // Placement measures each bounded candidate once with the font and text the DOM label then uses, at the radius offset it is shown with.
+      const k = this.scale * this.camera.ratio / LABEL_RATIOS[lod]!, budget = Math.max(1, Math.min(s.labelsMaxPerViewport, FOCUS_LABELS, Math.floor(this.width * this.height / s.labelGridCellSize ** 2 * s.labelDensity))), m = this.measure ??= document.createElement('canvas').getContext('2d')!;
+      const pad = v.labelPlates ? 16 : 4, text = (n: number, rank: number) => n === ego ? this.noteCaption(n) : middleTruncate(this.name(n), LABEL_CHARS[rank]!);
+      const { list, direct } = rankFocus(ego, this.near, this.stateBytes, this.visible, this.projection.offsets, budget * s.labelCandidateMultiplier);
+      const items = list.map(([n, rank]) => { m.font = tierFont(rank, s.labelSize, tier, this.theme.font); const h = tierType(rank, s.labelSize, tier).size * 1.5 + 4; return { node: n, rank, x: this.display[n * 2]! * k, y: this.display[n * 2 + 1]! * k, r: radius(n), w: m.measureText(text(n, rank)).width + pad, h }; });
+      m.font = tierFont(1, s.labelSize, tier, this.theme.font);
+      const layout = radialLabels(items, budget, DIRECT_LABELS, ego >= 0 ? direct : 0, m.measureText(`+${direct} more`).width + 24, 32);
+      this.ranked = layout.slots.filter(x => x.node !== ego); this.moreAt = layout.more;
       this.rankedKey = [lod, this.display, this.fit, this.width, this.height];
-      while (this.tierLabels.length > this.ranked.length) this.tierLabels.pop()!.remove();
-      while (this.tierLabels.length < this.ranked.length) this.tierLabels.push(this.overlay.appendChild(document.createElement('div')));
-      this.ranked.forEach(([n, rank], i) => { const el = this.tierLabels[i]!; el.className = 'graph-ng-focus-label graph-ng-tier-' + rank; el.style.font = focusFont(rank, s.labelSize * (rank > 2 ? .85 : 1), this.theme.font); el.textContent = this.name(n); });
+      this.overlay.className = 'graph-ng-overlay' + (v.labelPlates ? ' graph-ng-plates' : '');
+      const pool = (list: HTMLElement[], count: number, cls: string) => { while (list.length > count) list.pop()!.remove(); while (list.length < count) list.push(this.overlay.appendChild(Object.assign(document.createElement('div'), { className: cls }))); };
+      pool(this.tierLabels, this.ranked.length, ''); pool(this.tierLeaders, this.ranked.filter(x => x.leader).length, 'graph-ng-leader');
+      let j = 0;
+      this.ranked.forEach(({ node: n, rank, leader }, i) => {
+        const el = this.tierLabels[i]!, full = this.name(n); el.className = 'graph-ng-focus-label graph-ng-tier-' + rank; el.style.font = tierFont(rank, s.labelSize, tier, this.theme.font); el.textContent = text(n, rank);
+        // Truncated names keep the full name for tooltips and assistive technology.
+        el.title = full; el.setAttribute('aria-label', full);
+        if (leader) this.tierLeaders[j++]!.style.width = `${Math.round(Math.hypot(leader[2] - leader[0], leader[3] - leader[1]))}px`;
+      });
+      if (layout.more) {
+        const b = this.moreButton ??= this.overlay.appendChild(Object.assign(document.createElement('button'), { className: 'graph-ng-more', onclick: () => { if (this.focusNode >= 0) this.onMoreConnections(this.focusNode); } }));
+        const name = this.name(ego); b.textContent = `+${layout.hidden} more`; b.setAttribute('aria-label', `Show ${layout.hidden} more direct connections of ${name}`); b.style.font = tierFont(1, s.labelSize, tier, this.theme.font);
+      }
     }
-    if (!this.ranked.length) while (this.tierLabels.length) this.tierLabels.pop()!.remove();
-    this.ranked.forEach(([n], i) => { const el = this.tierLabels[i]!, p = this.screenPoint(n); el.style.opacity = String(focus); el.style.transform = `translate(${Math.round(p.x + radius(n) + 4)}px, ${Math.round(p.y)}px) translateY(-50%)`; });
+    if (!this.ranked.length) { while (this.tierLabels.length) this.tierLabels.pop()!.remove(); while (this.tierLeaders.length) this.tierLeaders.pop()!.remove(); }
+    let j = 0;
+    this.ranked.forEach(({ node: n, dx, dy, leader }, i) => {
+      const el = this.tierLabels[i]!, p = this.screenPoint(n), x = leader ? p.x + dx : p.x + radius(n) + 4, y = leader ? p.y + dy : p.y; el.style.opacity = String(focus); el.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px) translateY(-50%)`;
+      if (leader) { const line = this.tierLeaders[j++]!; line.style.opacity = String(focus); line.style.transform = `translate(${Math.round(p.x + leader[0])}px, ${Math.round(p.y + leader[1])}px) rotate(${Math.atan2(leader[3] - leader[1], leader[2] - leader[0])}rad)`; }
+    });
+    if (this.moreButton) {
+      const at = this.moreAt, show = !!at && ego >= 0 && focus > 0; this.moreButton.hidden = !show;
+      if (show) { const p = this.screenPoint(ego); this.moreButton.style.opacity = String(focus); this.moreButton.style.transform = `translate(${Math.round(p.x + at.dx)}px, ${Math.round(p.y + at.dy)}px) translateY(-50%)`; }
+    }
     // Greedy vertical nudge keeps coincident hub labels legible (hubs are bounded).
     const placed: [number, number, number][] = [];
     this.hubLabels.forEach((el, i) => {
@@ -880,8 +916,14 @@ export class DetailRenderer {
     }
     ctx.globalAlpha = 1;
     for (const h of this.hubs) { ctx.fillStyle = this.groupColor(h.group); ctx.beginPath(); ctx.arc((h.x - this.centerX) * this.scale + this.width / 2, (h.y - this.centerY) * this.scale + this.height / 2, h.radius, 0, Math.PI * 2); ctx.fill(); }
-    ctx.font = `${s.labelSize}px ${this.theme.font}`; ctx.fillStyle = this.theme.text;
-    if (this.atlas && s.nodeSize >= s.labelRenderedSizeThreshold * Math.sqrt(this.camera.ratio)) for (const n of this.atlas.nodes[labelLOD(this.camera.ratio)]!) { ctx.globalAlpha = tierLabel(g[n * 4 + 1]! / 255, 1, focus, dim); if (ctx.globalAlpha > .004) ctx.fillText(this.name(n), x(n) + this.nodeRadius(n) + 4, y(n)); }
+    // The label shader's terms: zoom alpha, importance cut (degree rank), degree-weighted size, background outline.
+    const lod = this.lodLevel(), fade = labelFade(s.nodeSize, s.labelRenderedSizeThreshold, this.camera.ratio, LABEL_RATIOS, s.visuals.labelFade, lod), nodes = this.atlas?.nodes[lod], scales = this.atlas?.scales[lod];
+    ctx.fillStyle = this.theme.text; ctx.strokeStyle = this.theme.background; ctx.lineWidth = 3; ctx.lineJoin = 'round';
+    if (nodes && scales && fade.alpha > .004) nodes.forEach((n, i) => {
+      const cut = Math.min(1, Math.max(0, (1 - i / nodes.length - fade.cut) / .15)); ctx.globalAlpha = tierLabel(g[n * 4 + 1]! / 255, fade.alpha * cut * cut * (3 - 2 * cut), focus, dim);
+      if (ctx.globalAlpha <= .004) return; ctx.font = `${s.labelSize * scales[i]!}px ${this.theme.font}`;
+      const name = this.name(n), lx = x(n) + this.nodeRadius(n) + 4; if (s.visuals.labelPlates) ctx.strokeText(name, lx, y(n)); ctx.fillText(name, lx, y(n));
+    });
   }
   private pointerDown = (e: PointerEvent) => { if (this.disposed || this.lost || e.button > 0) return; this.flight = undefined; this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY }); this.canvas.setPointerCapture(e.pointerId); this.downX = e.clientX; this.downY = e.clientY; this.moved = this.pointers.size > 1; };
   private pointerMove = (e: PointerEvent) => {
