@@ -26,6 +26,8 @@ export interface GraphDeclaration {
   columns: string[];
   carrierResolvers?: { kind: string; key: string }[];
   colors: { name: string; color: string; predicate: Predicate }[];
+  /** Folders left out of the graph entirely, before identity: archives, templates, copies. */
+  exclude?: FolderPath[];
 }
 export const defaultDeclaration = (producer: string): GraphDeclaration => ({
   version: 2, identity: [], edges: [{ name: 'links', kind: 'producer', producer, type: 'link' }],
@@ -57,7 +59,7 @@ export function validatePredicate(v: unknown): asserts v is Predicate {
   } else throw new Error('Unknown predicate kind');
 }
 export function validateDeclaration(v: unknown): asserts v is GraphDeclaration {
-  record(v); only(v, ['version', 'identity', 'edges', 'groups', 'display', 'columns', 'colors', 'carrierResolvers']);
+  record(v); only(v, ['version', 'identity', 'edges', 'groups', 'display', 'columns', 'colors', 'carrierResolvers', 'exclude']);
   if (v.version !== 2) throw new Error('Declaration version must be 2');
   for (const k of ['identity', 'edges', 'groups', 'columns', 'colors']) if (!Array.isArray(v[k])) throw new Error(`${k} must be an array`);
   for (const i of v.identity as unknown[]) { record(i); only(i, ['key']); text(i.key); }
@@ -85,6 +87,7 @@ export function validateDeclaration(v: unknown): asserts v is GraphDeclaration {
     const kinds = new Set<string>();
     for (const resolver of v.carrierResolvers) { record(resolver); only(resolver, ['kind', 'key']); text(resolver.kind); text(resolver.key); if (kinds.has(resolver.kind)) throw new Error('Duplicate carrier resolver'); kinds.add(resolver.kind); }
   }
+  if (v.exclude !== undefined) { if (!Array.isArray(v.exclude) || v.exclude.length > 64) throw new Error('exclude must be at most 64 folders'); for (const f of v.exclude) { validateFolderPath(f); if (!folderPath(f as FolderPath)) throw new Error('exclude folders must be nonempty'); } }
   for (const c of v.colors as unknown[]) { record(c); only(c, ['name', 'color', 'predicate']); text(c.name); if (typeof c.color !== 'string' || !/^(?:#[0-9a-f]{6}(?:[0-9a-f]{2})?|var\(--[a-z0-9-]+\))$/i.test(c.color)) throw new Error('Color must be #rrggbb[aa] or var(--name)'); validatePredicate(c.predicate); }
 }
 export function canonical(v: unknown): string {

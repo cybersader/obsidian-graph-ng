@@ -336,6 +336,20 @@ Deterministic tests evaluate actual pre/post shader scalar expressions and produ
 
 ### Graduated connection highlighting (unreleased)
 
+Also called *graduated relationship highlighting*. Terms used in this section and the code:
+
+| Term | Meaning here |
+| --- | --- |
+| Focus (the *ego*) | The hovered or selected note. |
+| Direct neighbours (1-hop) | Notes one relationship away from the focus. |
+| Neighbours of neighbours (2-hop) | Notes exactly two relationships away. Minimum hop count wins. |
+| Context | Everything else. It fades but stays visible (*focus + context*). |
+| Ego network / k-hop neighbourhood | Standard graph-visualization names for the focus plus everything within k hops; here k = 2. |
+| Tier | One of the brightness levels above (focus/direct, 2-hop, context). |
+| Graduated labels (planned) | The same tiers applied to note names: full labels for direct neighbours, fainter for 2-hop. |
+
+Background on the standard terms: [Neighbourhood (graph theory)](https://en.wikipedia.org/wiki/Neighbourhood_(graph_theory)), and focus + context as in [Fisheye view](https://en.wikipedia.org/wiki/Fisheye_view). *Ego network* is the social-network-analysis name for a focus node plus its neighbourhood.
+
 Hovering a note with a mouse or pen, or selecting one, shows a graded cloud instead of a flat one-hop flag: the note itself and its **direct** connections stay brightest, **neighbours of neighbours** (2 hops) keep their ordinary appearance, and everything else fades by the existing dim opacity. Hover outranks the selection; leaving the canvas falls back to the selected note. A mouse click still opens the note and now also keeps it selected as the persistent focus; a click on empty canvas clears the selection. The existing **Graduated connections on hover or selection** switch (`visuals.hoverHighlight`) turns both off. Reach (2) and the fade ratios are fixed; there are no new settings.
 
 On **touch**, a tap selects instead of opening, because precise taps on dense graphs often hit the wrong note: it shows the same graded cloud and a small text-only card with the note's name and an explicit **Open** button (labelled "Open <name>" for assistive technology). A tap on empty canvas clears the selection and card; pan and pinch are unchanged. **Keyboard:** the note canvas is focusable. Arrow keys select the nearest note in that screen direction and show its card and connections, Enter opens the selected note, Tab reaches the card's Open button, and Escape (from the canvas or the card) clears the selection and returns focus to the canvas. A selection hidden by a filter loses its card and emphasis.

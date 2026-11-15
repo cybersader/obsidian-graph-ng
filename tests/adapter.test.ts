@@ -183,3 +183,20 @@ test('property-only streaming declarations never extract unused producer targets
   try { let count = 0; for await (const batch of adapter.columns(true, { chunkRows: 1, budgetMs: 1 })) { count++; expect(batch.columns.producers).toEqual([]); } expect(count).toBe(1); }
   finally { adapter.index.dispose(); }
 });
+
+test('declared excluded folders never enter rows, coverage or identity, so archive copies cannot quarantine live notes', async () => {
+  const { LocalAdapter } = await import('../src/adapter/local');
+  const files = ['live/a.md', '_archive/old/a.md', '_archived.md'].map(p => new FixtureFile(p));
+  const ids: Record<string, string> = { 'live/a.md': 'x:1', '_archive/old/a.md': 'x:1', '_archived.md': 'x:2' };
+  const app = { vault: { getMarkdownFiles: () => files, getAbstractFileByPath: (p: string) => files.find(f => f.path === p), on() {}, read() { throw new Error('body read forbidden'); } },
+    metadataCache: { getFileCache: (f: FixtureFile) => ({ frontmatter: { curie: ids[f.path] } }), resolvedLinks: {}, on() {} } } as unknown as App;
+  const base = { ...defaultDeclaration('n@1'), identity: [{ key: 'curie' }], columns: ['curie'], edges: [] };
+  const adapter = new LocalAdapter(app, { register() {}, registerEvent() {} } as unknown as Plugin, 'n@1', 1, () => {}, true, base);
+  const rows = async () => { const all: FactRow[] = []; for await (const b of adapter.columns(true, { chunkRows: 8, budgetMs: 8 })) all.push(...unpackRows(b.columns)); return all; };
+  try {
+    expect(buildProjection(await rows(), base).quarantined.length).toBe(2);
+    const excluding = { ...base, exclude: [['_archive']] }; adapter.configure(excluding);
+    const kept = await rows(), p = buildProjection(kept, excluding);
+    expect(kept.map(r => r.path).sort()).toEqual(['_archived.md', 'live/a.md']); expect(p.quarantined).toEqual([]); expect(adapter.coverage()).toEqual({ indexed: 2, listed: 2 });
+  } finally { adapter.index.dispose(); }
+});

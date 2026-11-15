@@ -1,7 +1,7 @@
 import { TFile, type TAbstractFile, type TFolder, type App, type Plugin } from 'obsidian';
 import type { FactRow } from '../core/projection';
 import { IncrementalIndex } from './index';
-import type { GraphDeclaration } from '../core/declaration';
+import { folderPath, type GraphDeclaration } from '../core/declaration';
 import { declaredKeys, packRows, type RowColumns } from '../core/columns';
 import { yieldTask, type IngestOptions } from '../core/scheduler';
 export interface PropertySource {
@@ -31,16 +31,20 @@ export class LocalAdapter {
   invalidate() { this.epoch++; this.reloadRequired = true; this.seedComplete = false; this.indexed.clear(); this.propertyVerified.clear(); this.linksResolved = false; }
   setPropertySource(source?: PropertySource) { this.propertySource = source; this.invalidate(); }
   private declaration?: GraphDeclaration;
+  private excluded: string[] = [];
+  /** Declared excluded folders never enter paths, rows, coverage or identity. */
+  private kept = (path: string) => !this.excluded.some(f => path.startsWith(f + '/'));
+  private markdown() { return this.app.vault.getMarkdownFiles().filter(f => this.kept(f.path)); }
   private keys?: string[];
   constructor(readonly app: App, plugin: Plugin, readonly producer: string, debounceMs: number, onChange: (changed: Set<string>) => void, private streaming = false, declaration?: GraphDeclaration, private propertySource?: PropertySource) {
-    this.declaration = declaration; this.keys = declaration ? declaredKeys(declaration) : undefined;
+    this.declaration = declaration; this.keys = declaration ? declaredKeys(declaration) : undefined; this.excluded = (declaration?.exclude ?? []).map(folderPath);
     this.index = new IncrementalIndex(path => this.streaming ? undefined : this.read(path), changed => { for (const path of changed) { this.dirty.set(path, ++this.changeVersion); if (this.streaming) { this.indexed.delete(path); this.propertyVerified.delete(path); } } onChange(changed); }, debounceMs);
-    const files = app.vault.getMarkdownFiles();
+    const files = this.markdown();
     this.paths = new Set(files.map(f => f.path));
     if (!this.streaming) this.index.seed([...this.paths]);
     this.seedComplete = files.length > 0 && this.indexed.size === files.length;
     this.linksResolved = files.every(f => Object.hasOwn(app.metadataCache.resolvedLinks, f.path));
-    const change = (file: TFile) => { if (file.extension === 'md') { this.paths.add(file.path); this.linksResolved = false; this.index.change(file.path); } };
+    const change = (file: TFile) => { if (file.extension === 'md' && this.kept(file.path)) { this.paths.add(file.path); this.linksResolved = false; this.index.change(file.path); } };
     plugin.registerEvent(app.metadataCache.on('changed', change));
     plugin.registerEvent(app.metadataCache.on('resolve', file => { if (file.extension === 'md') this.index.change(file.path); }));
     // Property coverage cannot substitute for the native resolver's per-source readiness.
@@ -55,13 +59,13 @@ export class LocalAdapter {
       this.linksResolved = false;
       if (file instanceof TFile) {
         this.paths.delete(old); this.indexed.delete(old); this.propertyVerified.delete(old); this.index.remove(old);
-        if (file.extension === 'md') { this.paths.add(file.path); this.index.change(file.path); }
+        if (file.extension === 'md' && this.kept(file.path)) { this.paths.add(file.path); this.index.change(file.path); }
         return;
       }
       for (const child of markdownFiles(file)) {
         const previous = old + child.path.slice(file.path.length);
-        this.paths.delete(previous); this.indexed.delete(previous); this.propertyVerified.delete(previous); this.paths.add(child.path);
-        this.index.rename(previous, child.path);
+        this.paths.delete(previous); this.indexed.delete(previous); this.propertyVerified.delete(previous);
+        if (this.kept(child.path)) { this.paths.add(child.path); this.index.rename(previous, child.path); } else this.index.remove(previous);
       }
     }));
     plugin.register(() => this.index.dispose());
@@ -70,7 +74,7 @@ export class LocalAdapter {
     // One startup reconciliation, not a vault rescan on every edit/resolver batch.
     if (this.streaming) return [...this.values()];
     if (!this.seedComplete) {
-      const files = this.app.vault.getMarkdownFiles();
+      const files = this.markdown();
       if (files.length > 0 && files.every(f => this.app.metadataCache.getFileCache(f) !== null)) {
         this.paths = new Set(files.map(f => f.path)); this.indexed.clear(); this.propertyVerified.clear(); this.index.seed([...this.paths]); this.seedComplete = true;
       }
@@ -78,12 +82,16 @@ export class LocalAdapter {
     return this.index.snapshot();
   }
   *values(): IterableIterator<FactRow> { if (!this.streaming) { yield* this.index.values(); return; } for (const path of this.paths) { const row = this.read(path); if (row) yield row; } }
-  configure(declaration: GraphDeclaration) { this.declaration = declaration; this.keys = declaredKeys(declaration); }
+  configure(declaration: GraphDeclaration) {
+    this.declaration = declaration; this.keys = declaredKeys(declaration);
+    const excluded = (declaration.exclude ?? []).map(folderPath);
+    if (excluded.join('\n') !== this.excluded.join('\n')) { this.excluded = excluded; this.invalidate(); }
+  }
   async *columns(reset: boolean, options: IngestOptions): AsyncGenerator<{ columns: RowColumns; removed: string[]; reset: boolean }> {
     if (!this.declaration) throw new Error('Declared columns required');
     // A cancelled generator can have partially changed the worker; its next pass resets it.
     reset ||= this.reloadRequired;
-    if (reset) { this.paths = new Set(this.app.vault.getMarkdownFiles().map(f => f.path)); this.indexed.clear(); this.propertyVerified.clear(); }
+    if (reset) { this.paths = new Set(this.markdown().map(f => f.path)); this.indexed.clear(); this.propertyVerified.clear(); }
     const turn = this.epoch, source = this.propertySource;
     const current = () => { if (turn !== this.epoch || source !== this.propertySource) throw new Error('Property source changed'); };
     const pending = new Map(this.dirty), paths = reset ? [...this.paths] : [...pending.keys()];
