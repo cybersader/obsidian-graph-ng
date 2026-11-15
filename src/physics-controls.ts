@@ -7,12 +7,12 @@ export type PhysicsValues = Pick<Force, 'scalingRatio' | 'gravity' | 'slowDown'>
 export type PhysicsKey = keyof Required<PhysicsValues>;
 /** [key, label, visible effect, advanced]. Every key is an existing engine setting; no new layout behavior. */
 export const PHYSICS_FIELDS: readonly [PhysicsKey, string, string, boolean][] = [
-  ['scalingRatio', 'Spread nodes', 'Pushes every node away from the others. Higher = more space between nodes and clusters; lower = a denser picture.', false],
-  ['gravity', 'Pull to center', 'Draws everything toward the middle. Higher = rounder, tighter graph with stray islands pulled in; 0 = no pull, so unlinked parts can drift far away.', false],
-  ['linLogMode', 'Tighter clusters (LinLog)', 'Weakens long-distance link pull so well-linked groups separate into distinct clumps. Often pairs well with more Spread.', true],
-  ['outboundAttractionDistribution', 'Dissuade hubs', 'Heavily linked notes pull less, so hubs drift to the edge of their cluster and their neighbors spread out.', true],
-  ['adjustSizes', 'Prevent overlap', 'Treats nodes as having size so they stop stacking on top of each other. Settles more slowly.', true],
-  ['strongGravityMode', 'Strong gravity', 'Pull to center no longer weakens with distance, so far-off islands are pulled in hard. Use with a small Pull to center.', true],
+  ['scalingRatio', 'Spread notes', 'Pushes every note away from the others. Higher = more space between notes and clusters; lower = a denser picture.', false],
+  ['gravity', 'Pull to center', 'Draws everything toward the middle. Higher = rounder, tighter graph with disconnected parts pulled in; 0 = no pull, so disconnected parts can drift far away.', false],
+  ['linLogMode', 'Tighter clusters (LinLog)', 'Weakens long-distance edge pull so densely connected regions separate into distinct clusters. Often pairs well with more Spread.', true],
+  ['outboundAttractionDistribution', 'Dissuade hubs', 'High-degree notes pull less, so hubs drift to the outside of their cluster and their neighbours spread out.', true],
+  ['adjustSizes', 'Prevent overlap', 'Treats each dot as having size so dots stop stacking on top of each other. Settles more slowly.', true],
+  ['strongGravityMode', 'Strong gravity', 'Pull to center no longer weakens with distance, so far-off disconnected parts are pulled in hard. Use with a small Pull to center.', true],
   ['iterations', 'Quality (iterations)', 'How many layout steps run. More = more settled shapes but a slower apply. Whole number, 1 or more.', true],
   ['slowDown', 'Step slowdown', 'Higher = smaller, steadier moves each step (less jitter, may stop before fully settled). Not animation speed. Above 0.', true],
   ['barnesHutTheta', 'Approximation', 'Lower = more accurate repulsion but slower on large graphs; higher = faster and rougher. Above 0.', true],
@@ -31,7 +31,7 @@ export const PRESET_BOUNDS: Record<Scaled, [number, number]> = { scalingRatio: [
  * see README "Layout presets". LinLog and hub dissuasion stay manual: in 100 to 500 steps they
  * left the groups mixed on every tested size. */
 export const PHYSICS_PRESETS: readonly [string, string, Partial<Record<Scaled, number>>][] = [
-  ['Groups apart', 'Weaker pull to the middle, so groups sit further apart and loose notes ring the edge.', { gravity: .5 }],
+  ['Groups apart', 'Weaker pull to the middle, so groups sit further apart and unconnected notes ring the outside.', { gravity: .5 }],
   ['Fill the screen', 'Stronger pull, so the graph fills the view as one round shape with groups touching.', { gravity: 3 }],
   ['Faster', 'Half the steps and a rougher approximation, for very large vaults.', { iterations: .5, barnesHutTheta: 1.3 }],
 ];

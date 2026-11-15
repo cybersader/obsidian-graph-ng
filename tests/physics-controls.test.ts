@@ -43,7 +43,7 @@ test('numeric drafts survive rerenders; reset restores every recommended value; 
   expect(numbers(f)[0].value).toBe('100000');
   input(f, 0, '999999'); input(f, 1, '0'); f.panel.render();
   expect(numbers(f)[0].value).toBe('999999'); expect(f.applied()).toBe(0);
-  expect(f.panel.body.textContent).toContain('What changes on apply: Spread nodes 100000 → 999999; Pull to center 1 → 0.');
+  expect(f.panel.body.textContent).toContain('What changes on apply: Spread notes 100000 → 999999; Pull to center 1 → 0.');
   control(f.panel.body, 'Reset to recommended').click(); expect(f.settings.layout.force.scalingRatio).toBe(100000);
   const d = room;
   for (const [key, label] of PHYSICS_FIELDS) { const e = byLabel(f, label); expect(typeof d[key] === 'boolean' ? e.checked : e.value).toBe(typeof d[key] === 'boolean' ? d[key] : String(d[key])); }
@@ -204,12 +204,12 @@ test('undo restores the tuned values before a preset, and re-applies them in one
   input(f, 0, '900'); control(f.panel.body, 'Fill the screen').click();
   expect(byLabel(f, 'Pull to center').value).toBe(String(room.gravity * 3)); expect(undo().disabled).toBe(false);
   undo().click();
-  expect(byLabel(f, 'Spread nodes').value).toBe('900'); expect(byLabel(f, 'Pull to center').value).toBe('20'); expect(byLabel(f, 'Strong gravity').checked).toBe(false);
+  expect(byLabel(f, 'Spread notes').value).toBe('900'); expect(byLabel(f, 'Pull to center').value).toBe('20'); expect(byLabel(f, 'Strong gravity').checked).toBe(false);
   expect(f.applied()).toBe(0); expect(f.settings).toEqual(before); expect(undo().disabled).toBe(true);
   input(f, 0, '1200'); control(f.panel.body, 'Faster').click(); await (control(f.panel.body, 'Apply and recompute') as any).onclick();
   expect(f.applied()).toBe(1); expect(f.settings.layout.iterations).toBe(Math.round(room.iterations / 2));
   undo().click(); await new Promise(r => setTimeout(r, 0));
   expect(f.applied()).toBe(2); expect(f.settings.layout).toEqual(before.layout);
-  control(f.panel.body, 'Reset to recommended').click(); undo().click(); expect(byLabel(f, 'Spread nodes').value).toBe('1200');
+  control(f.panel.body, 'Reset to recommended').click(); undo().click(); expect(byLabel(f, 'Spread notes').value).toBe('1200');
   f.panel.dispose();
 });

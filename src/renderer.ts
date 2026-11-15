@@ -52,7 +52,7 @@ export class GroupRenderer implements Renderer {
     if (!w || !h) return;
     const dpr = window.devicePixelRatio || 1;
     this.canvas.width = w * dpr; this.canvas.height = h * dpr; this.canvas.style.width = `${w}px`; this.canvas.style.height = `${h}px`;
-    const ctx = this.canvas.getContext('2d'); if (!ctx) { this.container.textContent = 'Canvas unavailable. Use View → Browse groups & members.'; return; }
+    const ctx = this.canvas.getContext('2d'); if (!ctx) { this.container.textContent = 'Canvas unavailable. Use group member lists.'; return; }
     ctx.scale(dpr, dpr); ctx.fillStyle = this.s.backgroundColor; ctx.fillRect(0, 0, w, h);
     this.nodes.clear(); this.edges = []; this.radii.clear();
     // Area-proportional radii within [0.65, 1.15] of the configured radius keep hit targets and labels stable.

@@ -72,7 +72,7 @@ export function effectPolicy(v: Visuals, nodes: number, edges: number, groups: n
   const reasons: string[] = [], soft = software && !v.softwareEffects;
   if (soft) reasons.push('software renderer: glow, curves and halos off');
   let glow = soft ? 0 : v.glow, curves = !soft && v.curvedEdges && v.curvature > 0, halos = !soft && v.groupHalos;
-  if (glow > 0 && nodes > v.glowMaxNodes) { glow = 0; reasons.push(`glow off above ${v.glowMaxNodes.toLocaleString()} nodes`); }
+  if (glow > 0 && nodes > v.glowMaxNodes) { glow = 0; reasons.push(`glow off above ${v.glowMaxNodes.toLocaleString()} notes`); }
   if (curves && edges > v.curvesMaxEdges) { curves = false; reasons.push(`curves off above ${v.curvesMaxEdges.toLocaleString()} edges`); }
   if (halos && groups > v.halosMaxGroups) reasons.push(`halos limited to the ${v.halosMaxGroups.toLocaleString()} largest groups`);
   return { glow, curves, segments: curves ? v.curveSegments : 1, halos: halos && v.halosMaxGroups > 0, dark, reasons };

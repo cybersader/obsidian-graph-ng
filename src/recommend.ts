@@ -11,7 +11,7 @@ export function graphStats(offsets: ArrayLike<number>, edges: number, carriers =
 /** Only presentation keys the renderer reads live; layout keys need a recompute and stay manual. */
 /** Presentation keys the renderer reads live (labels shown in the card). Layout keys need a
  * recompute and stay manual. */
-const LABELS = { edgeOpacity: 'Edge opacity', degreeSizing: 'Degree sizing', labelDensity: 'Label density', glow: 'Glow', curvedEdges: 'Curved edges', groupHalos: 'Group halos', carrierOpacity: 'Edge-note opacity' };
+const LABELS = { edgeOpacity: 'Edge opacity', degreeSizing: 'Degree sizing', labelDensity: 'Label density', glow: 'Glow', curvedEdges: 'Curved edges', groupHalos: 'Group halos', carrierOpacity: 'Relationship-note opacity' };
 export type SuggestionKey = keyof typeof LABELS;
 export interface Suggestion { key: SuggestionKey; label: string; current: number | boolean; value: number | boolean; reason: string }
 /** "Probably the settings you want for data shaped like this." Deterministic, never applied
@@ -33,7 +33,7 @@ export function recommend(t: GraphStats, s: Settings): Suggestion[] {
   // Degree prominence (log curve normalized to the biggest hub). Hub ratio = max degree / mean.
   // ≥ 25: a few hubs would dwarf everything, so soften. 4–25: a real but readable skew, so make
   // the connected notes stand out. < 4: degrees are nearly equal and size carries little meaning.
-  if (n >= 20) add('degreeSizing', h >= 25 ? 1 : h >= 4 ? 2.2 : .6, h >= 25 ? `hubs of ${t.maxDegree} links dwarf the rest` : h >= 4 ? 'skewed; let hubs stand out' : 'even degrees; size says little');
+  if (n >= 20) add('degreeSizing', h >= 25 ? 1 : h >= 4 ? 2.2 : .6, h >= 25 ? `hubs of degree ${t.maxDegree} dwarf the rest` : h >= 4 ? 'skewed; let hubs stand out' : 'even degrees; size says little');
   // Labels: candidates scale with notes; thin them for big graphs, allow more for small ones.
   if (n >= 5000) add('labelDensity', n >= 20000 ? .5 : .75, `${n} notes; declutter`);
   else if (n < 300) add('labelDensity', 1.5, 'few notes; room to label');
@@ -44,7 +44,7 @@ export function recommend(t: GraphStats, s: Settings): Suggestion[] {
   // Halos for many groups overlap into one wash; 32 is well under the 48-halo cap.
   if (t.groups > 32) add('groupHalos', false, `${t.groups} groups overlap`);
   // Edge notes: when they are at least half of the notes, dim them so concepts stay primary.
-  if (t.carriers && t.carriers >= n / 2) add('carrierOpacity', .45, 'many edge notes');
+  if (t.carriers && t.carriers >= n / 2) add('carrierOpacity', .45, 'many relationship notes');
   return out;
 }
 /** Layout values that read well for a graph of this size; the base every preset scales.

@@ -1046,7 +1046,7 @@ export class DetailRenderer {
     this.focusTarget = this.near.length ? 1 : 0; this.focusAt = performance.now();
     if (immediate) this.focusLevel = this.focusTarget;
   }
-  private noteCaption(n: number) { return this.path(n).split('/').pop()!.replace(/\.md$/, '') + (n === this.focusNode ? (this.tierPartial & 1 ? ' (2-hop context truncated)' : '') + (this.tierPartial & 2 ? ' (group context truncated)' : '') : ''); }
+  private noteCaption(n: number) { return this.path(n).split('/').pop()!.replace(/\.md$/, '') + (n === this.focusNode ? (this.tierPartial & 1 ? ' (neighbours of neighbours truncated)' : '') + (this.tierPartial & 2 ? ' (same group truncated)' : '') : ''); }
   /** Selection drives the persistent focus. Touch and keyboard selections show the card; only its
    * explicit Open button (or Enter on the canvas) opens the note. */
   private selectNote(node: number, card?: boolean, keepLens = false) {

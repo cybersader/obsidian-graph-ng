@@ -22,13 +22,13 @@ export class ContributionPage {
       keys: left?.key !== undefined && right?.key !== undefined ? [left.key, right.key] : undefined,
       labels: left && right ? [left.label, right.label] : undefined };
     this.offset = 0; this.status = this.selection.keys ? 'loading' : 'refreshing';
-    this.message = this.selection.keys ? 'Loading contributing mappings…' : 'Refreshing contributing mappings…';
+    this.message = this.selection.keys ? 'Loading contributing relationships…' : 'Refreshing contributing relationships…';
     this.changed();
   }
   suspend() {
     if (!this.selection) return;
     this.token++; this.bound = ''; this.result = undefined; this.edge = undefined;
-    this.status = 'refreshing'; this.message = 'Refreshing contributing mappings…'; this.changed();
+    this.status = 'refreshing'; this.message = 'Refreshing contributing relationships…'; this.changed();
   }
   fail(message: string) { if (!this.selection) return; this.token++; this.bound = ''; this.status = 'error'; this.message = message; this.changed(); }
   move(delta: number, context: ContributionContext) { this.offset = Math.max(0, this.offset + delta * this.size); this.bound = ''; this.update(context); }
@@ -54,21 +54,21 @@ export class ContributionPage {
       const a = unique(s.labels[0]), b = unique(s.labels[1]);
       if (a !== undefined && b !== undefined && (s.a === s.b || a !== b)) s.keys = [a, b];
     }
-    if (!s.keys) { this.suspend(); this.message = 'Refreshing contributing mappings: waiting for unambiguous group keys. Select a fresh relationship if groups changed.'; this.changed(); return; }
+    if (!s.keys) { this.suspend(); this.message = 'Refreshing contributing relationships: waiting for unambiguous group keys. Select a fresh relationship if groups changed.'; this.changed(); return; }
     const a = values.indexOf(s.keys[0]), b = values.indexOf(s.keys[1]);
     const pair = pairKey(String(a), String(b));
     this.edge = a < 0 || b < 0 ? undefined : context.graph.groupEdges.find(e => pairKey(e.a, e.b) === pair);
     if (!this.edge) { this.fail('This relationship is no longer present in the current projection.'); return; }
     const token = ++this.token, revision = context.active;
-    this.bound = bound; this.result = undefined; this.status = 'loading'; this.message = 'Loading contributing mappings…'; this.changed();
+    this.bound = bound; this.result = undefined; this.status = 'loading'; this.message = 'Loading contributing relationships…'; this.changed();
     void this.read(revision, pair, this.offset, this.size, context.view ?? -1).then(result => {
       if (token !== this.token || !this.selection) return;
-      this.result = result; this.status = 'ready'; this.message = result.total ? '' : 'No contributing mappings in this projection.'; this.changed();
+      this.result = result; this.status = 'ready'; this.message = result.total ? '' : 'No contributing relationships in this projection.'; this.changed();
     }, error => {
       if (token !== this.token || !this.selection) return;
       // The worker moved to a newer view than this context: wait for it, never show stale data.
-      if (String(error).includes('View generation changed')) { this.bound = ''; this.status = 'refreshing'; this.message = 'Refreshing contributing mappings…'; this.changed(); return; }
-      this.status = 'error'; this.message = `Could not load contributing mappings: ${String(error)}`; this.changed();
+      if (String(error).includes('View generation changed')) { this.bound = ''; this.status = 'refreshing'; this.message = 'Refreshing contributing relationships…'; this.changed(); return; }
+      this.status = 'error'; this.message = `Could not load contributing relationships: ${String(error)}`; this.changed();
     });
   }
 }

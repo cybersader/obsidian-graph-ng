@@ -63,7 +63,7 @@ export function canonicalView(v: ExploreView): ExploreView {
   if (copy.group?.from === 'folder' && typeof copy.group.prefix === 'string') copy.group.prefix = folderPath(copy.group.prefix).split('/').filter(Boolean);
   return copy;
 }
-const derivedLabel = (g: Extract<GroupSource, { from: 'derived' }>) => { const part = describeTransform(g.transform); return `${part[0]!.toUpperCase()}${part.slice(1)} of ${g.key === '$identity' ? 'identity' : g.key === '$path' ? 'path' : g.key} (split at “${g.transform.delimiter}”)`; };
+const derivedLabel = (g: Extract<GroupSource, { from: 'derived' }>) => { const part = describeTransform(g.transform); return `${part[0]!.toUpperCase()}${part.slice(1)} of ${g.key === '$identity' ? 'ID' : g.key === '$path' ? 'path' : g.key} (split at “${g.transform.delimiter}”)`; };
 export const groupLabel = (g: GroupSource) => g.from === 'expr' ? `Expression: ${g.expr}` : g.from === 'key' ? `Property: ${g.key}` : g.from === 'derived' ? derivedLabel(g) : `Folder depth ${g.depth}${g.prefix !== undefined && folderPath(g.prefix) ? ` under ${folderPath(g.prefix)}` : ''}`;
 /** Display text for a dictionary value: decoded JSON scalars, explicit missing. */
 export function valueLabel(raw: string): string {

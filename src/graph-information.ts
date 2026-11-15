@@ -62,13 +62,13 @@ export function statRow(host: HTMLElement, icon: string, label: string, value: s
 }
 /** The always-visible canvas readout: dots, lines and the vault total, plus a loading state. */
 export function renderReadout(host: HTMLElement, a: Accounting) {
-  for (const [icon, text] of [['circle-dot', plural(a.dots, 'note')], ['spline', plural(a.lines, 'line')]]) { const chip = host.createSpan({ cls: 'graph-ng-readout' }); setIcon(chip.createSpan({ cls: 'graph-ng-stat-icon' }), icon!); countSpan(chip, text!); }
+  for (const [icon, text] of [['circle-dot', plural(a.dots, 'note')], ['spline', plural(a.lines, 'edge')]]) { const chip = host.createSpan({ cls: 'graph-ng-readout' }); setIcon(chip.createSpan({ cls: 'graph-ng-stat-icon' }), icon!); countSpan(chip, text!); }
   host.createSpan({ cls: 'graph-ng-readout graph-ng-count', text: `of ${n(a.total)} in vault` });
 }
 /** The Lines/Notes switch for relationship notes, then each filter that hides (or would hide) them, with its remove button. */
 function relationshipActions(host: HTMLElement, r: InformationReport, e: Explored | undefined, act: InformationActions) {
   const nodes = !!r.relationshipNodes, row = host.createDiv({ cls: 'graph-ng-stat-sub graph-ng-stat-actions' });
-  if (act.display) row.createEl('button', { text: nodes ? 'Show as lines' : 'Show as notes' }).onclick = () => act.display!(!nodes);
+  if (act.display) row.createEl('button', { text: nodes ? 'Show as lines' : 'Show as nodes' }).onclick = () => act.display!(!nodes);
   e?.carrierHidden?.forEach((hidden, i) => {
     if (!hidden) return;
     const warn = host.createDiv({ cls: 'graph-ng-stat-sub graph-ng-stat-warning', attr: { role: 'note' } }), f = e.filters[i]!;
@@ -98,12 +98,12 @@ export function renderInformation(host: HTMLElement, message: string, state: str
     for (const [rule, count] of carriers) statRow(list, 'circle-dot', `${rule} notes, drawn as dots`, n(count));
     relationshipActions(list, r, e, act);
   }
-  host.createEl('h4', { text: 'Lines' });
+  host.createEl('h4', { text: 'Edges' });
   const lines = host.createDiv({ cls: 'graph-ng-stats' });
-  statRow(lines, 'spline', 'Lines drawn', n(a.lines), 'graph-ng-stat-total');
+  statRow(lines, 'spline', 'Edges drawn', n(a.lines), 'graph-ng-stat-total');
   (r.rules ?? []).forEach((rule, i) => {
     const c = r.dropped?.[rule];
-    if (e?.ruleVisible[i]) statRow(lines, 'spline', `${rule} lines`, n(e.ruleVisible[i]!));
+    if (e?.ruleVisible[i]) statRow(lines, 'spline', `${rule} edges`, n(e.ruleVisible[i]!));
     if (c?.missing) statRow(lines, 'unlink', `${rule}: target note missing`, n(c.missing), 'graph-ng-stat-sub');
     if (c?.excluded) statRow(lines, 'copy', `${rule}: endpoint has a duplicate ID`, n(c.excluded), 'graph-ng-stat-sub');
   });

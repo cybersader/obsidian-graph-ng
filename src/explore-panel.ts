@@ -161,7 +161,7 @@ export class ExplorePanel {
       const button = toolButton(this.toolbar, text, icon); button.setAttribute('aria-controls', this.root.id); button.setAttribute('aria-expanded', 'false');
       this.buttons.set(tool, button); button.onclick = () => this.root.hidden || this.tool !== tool ? this.show(tool, button) : this.close();
       if (tool === 'views') {
-        this.search = this.toolbar.createEl('input', { cls: 'graph-ng-explore-search', attr: { type: 'search', placeholder: 'Search notes…', 'aria-label': 'Search note names and identities', spellcheck: 'false' } });
+        this.search = this.toolbar.createEl('input', { cls: 'graph-ng-explore-search', attr: { type: 'search', placeholder: 'Search notes…', 'aria-label': 'Search note names and IDs', spellcheck: 'false' } });
         this.search.maxLength = VIEW_LIMITS.query; this.search.value = view.query;
         this.search.oninput = () => { clearTimeout(this.searchTimer); if (this.settings.projectionFile) return; this.searchTimer = setTimeout(() => { if (!this.disposed && !this.settings.projectionFile) this.update({ query: this.search.value }); }, 160); };
       }
@@ -220,7 +220,7 @@ export class ExplorePanel {
   render() {
     const external = Boolean(this.settings.projectionFile), r = external ? undefined : this.host.result();
     this.search.disabled = external;
-    this.search.title = external ? 'Note search is unavailable in aggregate graphs.' : 'Search note names and identities';
+    this.search.title = external ? 'Note search is unavailable in aggregate graphs.' : 'Search note names and IDs';
     this.search.setAttribute('aria-label', this.search.title);
     if (external) { clearTimeout(this.searchTimer); this.search.value = this.view.query; }
     this.summary(external, r);
@@ -254,7 +254,7 @@ export class ExplorePanel {
     if (external || !r) { this.note(this.counts, external ? 'External aggregate' : 'Waiting for projection…'); return; }
     const stats = this.counts.createDiv({ cls: 'graph-ng-stats' });
     statRow(stats, 'circle-dot', 'Notes', `${num(sum(r.visible))} of ${num(r.nodes)}`);
-    statRow(stats, 'spline', 'Lines', `${num(r.visibleEdges)} of ${num(r.edges)}`);
+    statRow(stats, 'spline', 'Edges', `${num(r.visibleEdges)} of ${num(r.edges)}`);
   }
   private note(host: HTMLElement, text: string) { return host.createDiv({ cls: 'graph-ng-explore-note', text }); }
   /** One bounded text editor serves filters, colours and custom group values. */
@@ -421,7 +421,7 @@ export class ExplorePanel {
       }
     }
     const notes = nodes ? this.host.carriers() : 0, v = this.settings.visuals;
-    if (notes) host.createDiv({ cls: 'graph-ng-explore-note graph-ng-carrier-note', text: `${notes.toLocaleString()} edge notes draw small and beneath${v.carrierTint ? `, in their endpoints' color (bridges: ${v.carrierBridge === 'blend' ? 'blended' : 'source color'}${v.carrierBridgeAccent ? ', accented' : ''})` : ''}.${v.carrierLod ? ' Zoomed out, they fold into their edges.' : ''}` });
+    if (notes) host.createDiv({ cls: 'graph-ng-explore-note graph-ng-carrier-note', text: `${notes.toLocaleString()} relationship notes draw small and beneath${v.carrierTint ? `, in their endpoints' color (bridges: ${v.carrierBridge === 'blend' ? 'blended' : 'source color'}${v.carrierBridgeAccent ? ', accented' : ''})` : ''}.${v.carrierLod ? ' Zoomed out, they fold into their edges.' : ''}` });
     if (order.length > this.groupLimit) host.createEl('button', { text: `Show ${Math.min(this.settings.explore.legendPageSize, order.length - this.groupLimit)} more of ${(order.length - this.groupLimit).toLocaleString()}` }).onclick = () => { this.groupLimit += this.settings.explore.legendPageSize; this.render(); };
   }
   /** Group by a bounded transform of an existing value; no note needs a new property. */
@@ -431,7 +431,7 @@ export class ExplorePanel {
     const form = details.createDiv({ cls: 'graph-ng-derive-grid' });
     const field = <K extends 'select' | 'input'>(label: string, tag: K, attr: Record<string, string>) => { const l = form.createEl('label', { cls: 'graph-ng-field' }), caption = l.createSpan({ text: label }); return [l.createEl(tag, { attr: { 'aria-label': label, ...attr } }), caption] as const; };
     const [source] = field('Derive from', 'select', {});
-    source.createEl('option', { value: '$identity', text: 'Identity' }); source.createEl('option', { value: '$path', text: 'Path' });
+    source.createEl('option', { value: '$identity', text: 'ID' }); source.createEl('option', { value: '$path', text: 'Path' });
     for (const f of r.facets) source.createEl('option', { value: f.key, text: f.key });
     const [kind] = field('Take', 'select', {});
     for (const [v, t] of [['segment', 'One part'], ['prefix', 'First parts']]) kind.createEl('option', { value: v, text: t });
@@ -557,7 +557,7 @@ export class ExplorePanel {
     this.lensButton.disabled = !state?.available; this.lensButton.setAttribute('aria-pressed', String(!!state?.active));
     this.lensButton.textContent = state?.active ? 'Connection lens: on' : 'Connection lens: off';
   }
-  updateSizingReadout() { if (this.sizingOutput) this.sizingOutput.textContent = this.host.sizingReadout?.() ?? 'Open a node graph to inspect actual radii.'; }
+  updateSizingReadout() { if (this.sizingOutput) this.sizingOutput.textContent = this.host.sizingReadout?.() ?? 'Open Notes to inspect actual radii.'; }
   private nodes(host: HTMLElement) {
     const group = host.createDiv({ cls: 'graph-ng-nodes' }); group.createEl('h4', { text: 'Nodes' });
     const current = sizingValues(this.settings);
@@ -606,7 +606,7 @@ export class ExplorePanel {
     const list = this.host.suggestions?.(); if (list === undefined) return;
     const box = host.createDiv({ cls: 'graph-ng-nodes' }); box.createEl('h4', { text: 'Suggested for this graph' });
     const message = box.createDiv({ cls: 'graph-ng-explore-note', attr: { role: 'status', 'aria-live': 'polite' } }); message.textContent = this.suggestMessage;
-    if (!list) return void this.note(box, 'Open a node graph first.');
+    if (!list) return void this.note(box, 'Open Notes first.');
     if (!list.length) return void this.note(box, 'Settings already match.');
     const apply = async (items: Suggestion[]) => {
       if (this.suggestBusy || this.disposed) return;
@@ -648,8 +648,8 @@ export class ExplorePanel {
     this.flag(host, 'groupHalos', 'Group halos (faint tint behind groups at mid zoom)');
     this.guard(host, 'halos');
     this.flag(host, 'autoPalette', 'Color by group when no rule matches');
-    this.flag(host, 'hoverHighlight', 'Graduated connections on the selected note');
-    this.note(host, 'Direct connections brightest, then neighbours of neighbours; the rest fades. Ancestor and group levels need declared structural relationships; none are inferred.');
+    this.flag(host, 'hoverHighlight', 'Graduated connection highlighting on the selected note');
+    this.note(host, 'Direct connections brightest, then neighbours of neighbours; the rest fades. Ancestor and same-group levels need a declared hierarchy and groups; none are inferred.');
     if (this.host.toggleLens) {
       this.lensButton = host.createEl('button', { cls: 'graph-ng-lens-toggle', attr: { 'aria-label': 'Connection lens', 'aria-pressed': 'false' } });
       this.lensButton.onclick = () => { this.host.toggleLens?.(); this.updateLensControl(); };
@@ -659,7 +659,7 @@ export class ExplorePanel {
     const find = host.createEl('details', { cls: 'graph-ng-highlight-options' }); find.createEl('summary', { text: 'Finding connections' });
     this.slider(find, 'Minimum highlighted size (px)', { min: 0, max: 16, k: 1.5 }, () => v.tierMinSize, x => { v.tierMinSize = x; }, false, { def: initial.tierMinSize, desc: 'Direct connections never draw smaller than this; neighbours of neighbours a bit over half. 0 turns it off.' });
     this.flag(find, 'tierRings', 'Rings around the focus and direct connections');
-    this.flag(find, 'focusEdges', 'Strong focus lines (fade the rest)');
+    this.flag(find, 'focusEdges', 'Strong focus edges (fade the rest)');
     this.flag(find, 'offscreenPips', 'Arrows to off-screen direct connections');
     this.flag(find, 'tierLegend', 'Legend with counts per tier');
     this.flag(find, 'focusRipple', 'Ripple when selecting a note');
@@ -669,21 +669,21 @@ export class ExplorePanel {
     this.flag(host, 'labelFade', 'Fade labels by zoom and importance', true);
     this.slider(host, 'Label scale by tier', { min: 1, max: 1.6, k: 1.5 }, () => v.labelTierScale, x => { v.labelTierScale = x; }, true, { def: initial.labelTierScale });
     this.flag(host, 'labelPlates', 'Label plates');
-    this.note(host, 'Focus labels largest, then direct connections, then 2-hop. Hubs get larger names. 1 keeps one size.');
+    this.note(host, 'Focus labels largest, then direct connections, then neighbours of neighbours. Hubs get larger labels. 1 keeps one size.');
     this.flag(host, 'zoomAdapt', 'Adapt to zoom: fade crowded edges and shrink hubs when zoomed out');
     if (this.host.setRelationshipDisplay && hasReified(s.declaration)) this.relationshipDisplay(host);
     if (this.host.carriers()) {
-      slider('carrierOpacity', 'Edge-note opacity', { min: 0, max: 1, k: 2 });
-      slider('carrierSize', 'Edge-note size', { min: .001, max: 4, k: 2 });
-      this.flag(host, 'carrierTint', 'Color edge notes by their endpoints');
-      this.flag(host, 'carrierLod', 'Fold edge notes into edges when zoomed out');
+      slider('carrierOpacity', 'Relationship-note opacity', { min: 0, max: 1, k: 2 });
+      slider('carrierSize', 'Relationship-note size', { min: .001, max: 4, k: 2 });
+      this.flag(host, 'carrierTint', 'Color relationship notes by their endpoints');
+      this.flag(host, 'carrierLod', 'Fold relationship notes into edges when zoomed out');
     }
     this.note(host, 'Edge opacity 0 hides all edges, including highlights. Relationships remain available in Filters and group lists.');
     host.createEl('button', { text: 'Fit graph' }).onclick = () => this.host.fit();
   }
   /** Edges: All / Focus only / Off. Live, saved with plugin settings. */
   private edgeMode(host: HTMLElement) {
-    const v = this.settings.visuals, row = settingRow(host, 'Edges', 'graph-ng-segmented', 'Focus only draws lines just for the selected note and its connections.', 'div');
+    const v = this.settings.visuals, row = settingRow(host, 'Edges', 'graph-ng-segmented', 'Focus only draws edges just for the selected note and its connections.', 'div');
     const line = row.createDiv({ cls: 'graph-ng-setting-line', attr: { role: 'group', 'aria-label': 'Edges' } });
     const modes: [EdgeMode, string][] = [['all', 'All'], ['focus', 'Focus only'], ['off', 'Off']];
     const buttons = modes.map(([mode, text]) => {

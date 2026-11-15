@@ -40,9 +40,9 @@ Three optional, ontology-neutral fields extend the graduated hover/selection hig
 
 - `hierarchy.parentProperty` — each note's parents are the values of this property (a scalar or a list), resolved like inline edge targets: declared identity first, then exact path. Unresolved values and self references are dropped, duplicates collapse, multiple parents are allowed. The focus's ancestors (up to 8 levels, at most 256 notes, cycle-safe) form the *ancestor* tier.
 - `groupContext: true` — with a current grouping, other filter-visible members of the focus's group form the *same group* tier (bounded and reported when truncated).
-- `highlight: "tint"` on a `reified` rule — its edges keep their hop tier but mix in the accent color while a focus is active, so a mapping layer reads distinctly. Direct mappings stay direct.
+- `highlight: "tint"` on a `reified` rule — its edges keep their hop tier but mix in the accent color while a focus is active, so that rule's edges read as a distinct layer. Direct connections stay direct.
 
-Precedence is fixed: focus > direct > ancestor > 2-hop > same group > context.
+Precedence is fixed: focus > direct connections > ancestors > neighbours of neighbours (2-hop) > same group > context. Terms follow the README [Terminology](../README.md#terminology).
 
 **Example idea (Crosswalker-style frameworks, docs only, not a shipped preset):** framework entries carry `curie` and `parent_curie`; crosswalk notes (`kind: crosswalk-edge`) carry `subject_id`/`object_id`/`predicate_id`. Grouping by the CURIE prefix (part 1 of `curie` split at the first `:`) gives framework membership.
 
@@ -56,7 +56,7 @@ Precedence is fixed: focus > direct > ancestor > 2-hop > same group > context.
 }
 ```
 
-Only the focus-emphasis-relevant fields are shown; a complete declaration also needs the required fields above. Hovering a control then shows its direct links and mappings brightest, its parent chain softer, 2-hop neighbours medium, the rest of its framework faintly, and crosswalk edges tinted.
+Only the focus-emphasis-relevant fields are shown; a complete declaration also needs the required fields above. Selecting a note then shows its direct connections brightest, its ancestors softer, neighbours of neighbours medium, the rest of its group faintly, and the tinted rule's edges tinted.
 
 Unresolved edge endpoints are dropped and counted. Self-links and parallel edges survive. Directed edge columns retain direction; CSR adjacency includes both traversal directions. Filters compare scalar type exactly (`1`, `"1"`, `true`, null and missing differ). Folder prefixes use path boundaries, not arbitrary string prefixes.
 
@@ -66,7 +66,7 @@ When a focus has more connections than there are label slots, ring places or vis
 
 - **A priori:** rarer notes beat hubs (inverse connection count). With `interest: {"property": "..."}` declared, that property adds a bonus.
 - **User:** notes visited recently in the card's trail rank higher; the latest visit most.
-- **Bridges first** (Appearance setting `visuals.bridgesFirst`, on by default): with a current grouping, connections in a different group from the focus rank higher. Nothing ontology-specific is named; in a crosswalk this surfaces cross-framework mappings.
+- **Bridges first** (Appearance setting `visuals.bridgesFirst`, on by default): with a current grouping, connections in a different group from the focus rank higher. Nothing domain-specific is named; edges between groups rise first.
 
 `interest.property` is read like any declared key. Only finite JSON numbers count (exact type, as in filters): strings, booleans, lists, null and missing values add nothing. Values are rank-normalised over the graph to 0–1 (ties share a rank), so the scale and outliers do not matter. The field is presentation: it is excluded from layout identity, and absent means the declaration bytes, digest and ranking inputs are unchanged. Scores are computed once per focus change over its direct connections (O(degree log degree)), never per frame.
 

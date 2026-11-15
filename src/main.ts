@@ -260,7 +260,7 @@ export class GraphView extends ItemView {
     renderInformation(this.status, text, state, this.report, this.explored, this.informationActions);
     const health = state === 'error' ? [text] : state === 'building' ? ['Preparing graph…']
       : this.plugin.settings.projectionFile ? ['External aggregate, not verified']
-      : this.gpu && !this.gpu.available && this.gpu.reason !== 'Not probed' ? [`Rendering fallback: ${this.gpu.reason}. Browse groups and members.`]
+      : this.gpu && !this.gpu.available && this.gpu.reason !== 'Not probed' ? [`Rendering fallback: ${this.gpu.reason}. Use group member lists.`]
       : this.provisional ? ['Still loading'] : [];
     const chips = [this.viewFeedbackText, ...health].filter(Boolean), readout = state !== 'error' && this.report;
     this.statusSummary.empty(); if (readout) renderReadout(this.statusSummary, accounting(readout, this.explored));
@@ -347,8 +347,8 @@ export class GraphView extends ItemView {
         }
         if (mode !== this.contentEl.dataset.mode) { if (mode === 'groups') this.toGroups(); else return this.showDetails(); }
       },
-      previewSizing: values => { if (values && !this.detailRenderer) throw new Error('Open a node graph first'); this.detailRenderer?.previewSizing(values); },
-      sizingReadout: () => this.detailRenderer?.sizingReadout() ?? 'Open a node graph to inspect actual radii.',
+      previewSizing: values => { if (values && !this.detailRenderer) throw new Error('Open Notes first'); this.detailRenderer?.previewSizing(values); },
+      sizingReadout: () => this.detailRenderer?.sizingReadout() ?? 'Open Notes to inspect actual radii.',
       applySizing: async values => {
         const renderer = this.detailRenderer, projection = this.projection, scope = this.detailScope, view = this.view, revision = this.activeRevision;
         const current = () => !this.closed && this.detailRenderer === renderer && this.projection === projection && this.detailScope === scope && this.view === view && this.activeRevision === revision;
@@ -483,7 +483,7 @@ export class GraphView extends ItemView {
       this.positions = layout.positions;
       this.cacheTrace.push({ expected: result.meta.key, stored: layout.stored, nodes: result.nodes, ...coverage, valid: layout.cached }); if (this.cacheTrace.length > 16) this.cacheTrace.shift();
       report.layout = { cached: layout.cached, ms: layout.milliseconds, totalMs: performance.now() - start };
-      this.contentEl.dataset.state = 'ready'; this.statusText = this.gpu.available || this.gpu.reason === 'Not probed' ? '' : 'GPU unavailable. Group view and member lists remain available.';
+      this.contentEl.dataset.state = 'ready'; this.statusText = this.gpu.available || this.gpu.reason === 'Not probed' ? '' : 'GPU unavailable. Group overview and member lists remain available.';
       this.contentEl.dataset.layoutMs = String(layout.milliseconds); this.contentEl.dataset.cached = String(layout.cached);
       if (settings.persistLayout && !layout.cached && complete && !this.provisional && (!settings.declaration.edges.some(e => e.kind === 'producer') || this.plugin.adapter.linksResolved)) {
         const generation = await this.plugin.pipeline.request<BinaryGeneration>(revision, { kind: 'encode' });
@@ -645,7 +645,7 @@ export class GraphView extends ItemView {
     else {
       const renderRevision = ++this.renderRevision;
       if (!this.carrierLookup) {
-        const status = this.panel.createDiv({ text: 'Resolving carrier notes…', attr: { role: 'status' } });
+        const status = this.panel.createDiv({ text: 'Resolving relationship notes…', attr: { role: 'status' } });
         const index = carrierIndexer(this.plugin.settings.declaration);
         try {
           await sliced(this.plugin.adapter.values(), this.plugin.settings.ingest, row => {
@@ -675,7 +675,7 @@ export class GraphView extends ItemView {
     const pager = this.contributionPage; if (!pager.selection || this.closed || !this.panel) return;
     this.panel.empty();
     const edge = pager.edge;
-    this.panel.createEl('strong', { text: edge ? Object.entries(edge.typeCounts).map(([t, n]) => `${t}: ${num(n)}`).join(', ') : 'Contributing mappings' });
+    this.panel.createEl('strong', { text: edge ? Object.entries(edge.typeCounts).map(([t, n]) => `${t}: ${num(n)}`).join(', ') : 'Contributing relationships' });
     if (edge?.directional) { this.panel.createDiv({ text: `A → B: ${JSON.stringify(edge.directional.aToB)}` }); this.panel.createDiv({ text: `B → A: ${JSON.stringify(edge.directional.bToA)}` }); }
     const status = this.panel.createDiv({ cls: 'graph-ng-contribution-status', attr: { role: 'status', 'data-state': pager.status }, text: pager.message });
     if (pager.status === 'error') status.createEl('button', { text: 'Retry' }).onclick = () => pager.retry(this.contributionContext());
@@ -877,7 +877,7 @@ export class GraphView extends ItemView {
   private detailVisible() { return this.detailScope ? this.visible?.map((v, i) => v & this.detailScope![i]!) : this.visible; }
   async showDetails(bits = this.detailVisible(), clearPanel = true) {
     const focus = this.pendingFocus; this.pendingFocus = undefined;
-    if (!this.projection || !this.positions || !bits) { new Notice('Individual nodes are not ready; the group graph remains usable.'); return; }
+    if (!this.projection || !this.positions || !bits) { new Notice('Notes are not ready; Group overview remains usable.'); return; }
     const renderRevision = ++this.renderRevision; this.contentEl.dataset.mode = 'nodes-building'; this.returnTo = undefined;
     try {
       if (this.gpu.reason === 'Not probed') this.gpu = await this.plugin.pipeline.request<typeof this.gpu | undefined>(this.activeRevision, { kind: 'gpu' }) ?? gpuStatus();
@@ -909,7 +909,7 @@ export class GraphView extends ItemView {
       else this.detailRenderer.fitAll(0);
       if (focus?.projection === this.projection) this.detailRenderer.focusNote(focus.node, focus.lens);
       this.explorePanel?.render();
-    } catch (e) { if (renderRevision !== this.renderRevision) return; this.gpu = { available: false, reason: String(e) }; this.showGroups(); this.statusText = [this.statusText, 'GPU unavailable; group fallback active.'].filter(Boolean).join(' '); }
+    } catch (e) { if (renderRevision !== this.renderRevision) return; this.gpu = { available: false, reason: String(e) }; this.showGroups(); this.statusText = [this.statusText, 'GPU unavailable; showing Group overview.'].filter(Boolean).join(' '); }
   }
 }
 const CANVAS_FALLBACK = 'Too many notes to draw individually on this renderer; showing Group overview. Narrow filters to see notes.';

@@ -216,8 +216,8 @@ export class ConnectionCard {
     const field = nav.appendChild(el('label', '', 'graph-ng-connection-filter'));
     field.append(el('span', 'Find a connection'));
     const input = this.navInput = field.appendChild(el('input')) as HTMLInputElement;
-    input.type = 'search'; input.placeholder = 'Title, ID or group'; input.maxLength = 160; input.value = this.navQuery;
-    input.setAttribute('aria-label', 'Filter connections by title, ID, group or relationship'); input.setAttribute('aria-controls', this.navId);
+    input.type = 'search'; input.placeholder = 'Name, ID or group'; input.maxLength = 160; input.value = this.navQuery;
+    input.setAttribute('aria-label', 'Filter connections by name, ID, group or relationship'); input.setAttribute('aria-controls', this.navId);
     input.oninput = () => { clearTimeout(this.navTimer); this.navTimer = setTimeout(() => { this.setQuery(input.value); this.paintConnections(); }, NAV_DEBOUNCE_MS); };
     this.navList = nav.appendChild(el('div', '', 'graph-ng-connections')); this.navList.id = this.navId; this.navList.setAttribute('aria-label', 'Direct connections by declared group');
     if (initial && (direct <= ROWS || this.navSections.length === 1)) for (const section of this.navSections) this.navOpen.add(section.key);
@@ -254,7 +254,7 @@ export class ConnectionCard {
     if (searching) {
       const found = filterConnections(sections, this.navQuery, this.title), shown = this.navShown;
       this.navStatus!.textContent = `${found.length.toLocaleString()} of ${total.toLocaleString()} connections`;
-      if (!found.length) list.append(el('div', 'No matching connections. Try another title, ID or group.', 'graph-ng-explore-note'));
+      if (!found.length) list.append(el('div', 'No matching connections. Try another name, ID or group.', 'graph-ng-explore-note'));
       for (const entry of found.slice(0, shown)) list.append(this.row(entry, true));
       if (found.length > shown) list.append(button(`Show ${Math.min(ROWS, found.length - shown)} more`, 'Show more matching connections', () => {
         const scroll = list.scrollTop; this.navShown += ROWS; this.paintConnections(); list.scrollTop = scroll; this.rows[shown]?.focus();

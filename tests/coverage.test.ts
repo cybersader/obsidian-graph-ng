@@ -65,13 +65,13 @@ test('a complete, unfiltered graph says all notes are accounted for; lines break
   expect(host.querySelector('.graph-ng-coverage-state').textContent).toBe('All notes accounted for');
   const stats = host.querySelectorAll('.graph-ng-stat').map((s: any) => [s.querySelector('svg')?.getAttribute('data-icon'), s.querySelector('.graph-ng-stat-label').textContent, s.querySelector('.graph-ng-count').textContent]);
   expect(stats.slice(0, 3)).toEqual([['circle-dot', 'Shown as dots', '15'], ['spline', 'Drawn as crosswalk lines', '4'], ['files', 'Markdown notes in vault', '19']]);
-  expect(stats).toContainEqual(['spline', 'crosswalk lines', String(e.ruleVisible[0])]);
-  expect(stats).toContainEqual(['spline', 'links lines', String(e.ruleVisible[1])]);
+  expect(stats).toContainEqual(['spline', 'crosswalk edges', String(e.ruleVisible[0])]);
+  expect(stats).toContainEqual(['spline', 'links edges', String(e.ruleVisible[1])]);
   expect(stats).toContainEqual(['unlink', 'links: target note missing', '1']);
   expect(e.ruleVisible[0]! + e.ruleVisible[1]!).toBe(e.visibleEdges);
   // The canvas readout: dots, lines and the vault total, no middle dots.
   const readout: any = new ControlElement(); renderReadout(readout, a);
-  expect(readout.querySelectorAll('.graph-ng-readout').map((x: any) => x.textContent)).toEqual(['15 notes', `${e.visibleEdges} lines`, 'of 19 in vault']);
+  expect(readout.querySelectorAll('.graph-ng-readout').map((x: any) => x.textContent)).toEqual(['15 notes', `${e.visibleEdges} edges`, 'of 19 in vault']);
   expect(readout.querySelectorAll('svg').map((x: any) => x.getAttribute('data-icon'))).toEqual(['circle-dot', 'spline']);
   expect(readout.textContent).not.toContain('·');
 });
@@ -101,7 +101,7 @@ test('facet toggles own only negated value lists and presence tests on their key
   expect(toggledValues([{ kind: 'eq', key: 'kind', value: 'set' }], 'kind', present).owned).toEqual([]);
 });
 
-test('relationship notes drawn as lines offer "Show as notes", and name the filter that would hide them, with its remove button', () => {
+test('relationship notes drawn as lines offer "Show as nodes", and name the filter that would hide them, with its remove button', () => {
   const rows = vault().filter(x => !x.path.startsWith('Dup/')), p = buildProjection(rows, d), room = { kind: 'expr' as const, expr: '!file.hasProperty("kind")' };
   const e = { ...explore(p, d, { ...emptyView(), filters: [room] }, new Uint32Array(p.paths.length), 0, { facetValues: 50 }) };
   // The worker counts filters on the relationship notes alone; the room filter hides all 4 of them.
@@ -111,7 +111,7 @@ test('relationship notes drawn as lines offer "Show as notes", and name the filt
     rows: rows.length, ruleNotes: p.ruleNotes, rules: d.edges.map(x => x.name), vault: rows.length, excluded: [] };
   const calls: unknown[] = [], host: any = new ControlElement(), act = { display: (nodes: boolean) => calls.push(['display', nodes]), remove: (i: number) => calls.push(['remove', i]) };
   renderInformation(host, '', 'ready', r, e, act);
-  const show = host.querySelectorAll('button').find((b: any) => b.textContent === 'Show as notes'); expect(show).toBeDefined();
+  const show = host.querySelectorAll('button').find((b: any) => b.textContent === 'Show as nodes'); expect(show).toBeDefined();
   // The action sits directly under the lines row.
   const coverage = host.querySelector('.graph-ng-coverage').children, at = coverage.findIndex((c: any) => c.textContent.startsWith('Drawn as crosswalk lines'));
   expect(coverage[at + 1].contains(show)).toBe(true);

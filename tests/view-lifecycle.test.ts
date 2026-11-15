@@ -57,7 +57,7 @@ test('filters inspector: inline stat rows, one plain sentence, removable chips w
   f.panel.summary(false, result);
   const counts = f.panel.counts, row = (s: any) => [s.querySelector('svg')?.getAttribute('data-icon'), s.querySelector('.graph-ng-stat-label').textContent, s.querySelector('.graph-ng-count').textContent];
   expect(counts.querySelector('.graph-ng-scope-name')).toBeUndefined(); expect(counts.textContent).not.toContain('filter');
-  expect(counts.querySelectorAll('.graph-ng-stat').map(row)).toEqual([['circle-dot', 'Notes', '7 of 10'], ['spline', 'Lines', '5 of 20']]);
+  expect(counts.querySelectorAll('.graph-ng-stat').map(row)).toEqual([['circle-dot', 'Notes', '7 of 10'], ['spline', 'Edges', '5 of 20']]);
   f.panel.host.scoped = () => true; f.panel.host.scope = () => 'Group A'; f.panel.summary(false, result); expect(counts.querySelector('.graph-ng-scope-name').textContent).toBe('In Group A');
   f.panel.summary(true, undefined); expect(counts.textContent).toContain('External aggregate'); expect(counts.querySelector('.graph-ng-stat')).toBeUndefined();
   f.panel.view = { ...emptyView(), filters: [] }; f.panel.body.empty(); f.panel.filters(f.panel.body, result);
@@ -227,7 +227,7 @@ test('fact groups paint before layout, pending links prevent exact caching, and 
     showGroups() { painted++; expect(encoded).toBe(0); } });
   try {
     await view.refreshOnce(); expect(painted).toBe(1); expect(complete).toBe(false); expect(caches).toBe(0); expect(encoded).toBe(0);
-    expect(view.contentEl.dataset.verified).toBe('false'); expect(view.status.textContent).toContain('Links pending'); expect(view.status.textContent).toContain('Still loading'); expect(view.statusSummary.textContent).toContain('1 note0 linesof 1 in vault'); expect(view.statusSummary.textContent).toContain('Still loading');
+    expect(view.contentEl.dataset.verified).toBe('false'); expect(view.status.textContent).toContain('Links pending'); expect(view.status.textContent).toContain('Still loading'); expect(view.statusSummary.textContent).toContain('1 note0 edgesof 1 in vault'); expect(view.statusSummary.textContent).toContain('Still loading');
     links['a.md'] = {}; adapter.invalidate();
     await view.refreshOnce(); expect(complete).toBe(true); expect(encoded).toBe(1); expect(caches).toBe(1); expect(view.contentEl.dataset.verified).toBe('true');
     const request = pipeline.request;

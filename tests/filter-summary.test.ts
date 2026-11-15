@@ -22,7 +22,7 @@ test('derived grouping labels use parts, not zero-based segment jargon', () => {
   const derived = (transform: any, key = 'curie') => groupLabel({ from: 'derived', key, transform });
   expect(derived({ kind: 'segment', delimiter: ':', index: 0 })).toBe('Part 1 of curie (split at “:”)');
   expect(derived({ kind: 'segment', delimiter: '/', index: -1 }, '$path')).toBe('Last part of path (split at “/”)');
-  expect(derived({ kind: 'segment', delimiter: ':', index: -2 }, '$identity')).toBe('Part 2 from the end of identity (split at “:”)');
+  expect(derived({ kind: 'segment', delimiter: ':', index: -2 }, '$identity')).toBe('Part 2 from the end of ID (split at “:”)');
   expect(derived({ kind: 'prefix', delimiter: ':', segments: 1 })).toBe('First 1 part of curie (split at “:”)');
   expect(derived({ kind: 'prefix', delimiter: ':', segments: 2 })).toBe('First 2 parts of curie (split at “:”)');
 });
@@ -35,7 +35,7 @@ test('graph information renders icon stat rows, a plain-English issues list and 
   const report: any = { nodes: 16121, edges: 49534, indexed: 90, listed: 100, linksPending: true, provisional: true, unresolved: 1, duplicates: 2, rows: 100, rules: ['crosswalk'], dropped: { crosswalk: { drawn: 10, missing: 2, excluded: 1, carriers: 3 } } };
   renderInformation(host, 'Building layout in worker…', 'ready', report);
   const rows = host.querySelectorAll('.graph-ng-stat').map((t: any) => [t.children[0].children[0].getAttribute('data-icon'), t.children[1].textContent, t.children[2].textContent]);
-  expect(rows).toEqual([['circle-dot', 'Shown as dots', '16,121'], ['copy', 'Duplicate IDs, left out', '2'], ['files', 'Markdown notes in vault', '16,123'], ['spline', 'Lines drawn', '49,534'],
+  expect(rows).toEqual([['circle-dot', 'Shown as dots', '16,121'], ['copy', 'Duplicate IDs, left out', '2'], ['files', 'Markdown notes in vault', '16,123'], ['spline', 'Edges drawn', '49,534'],
     ['unlink', 'crosswalk: target note missing', '2'], ['copy', 'crosswalk: endpoint has a duplicate ID', '1'], ['timer', 'Layout', 'Building…']]);
   expect(host.querySelectorAll('.graph-ng-count').length).toBe(rows.length);
   const issues = host.querySelectorAll('li').map((li: any) => li.children[0].textContent);

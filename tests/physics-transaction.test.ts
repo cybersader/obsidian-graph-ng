@@ -463,7 +463,7 @@ test('graduated production dense hub reports deterministic 2-hop truncation in t
   for (const hub of [1, 2]) for (let i = 0; i < 33000; i++) pairs.push([hub, id++]);
   const f = await graduated(pairs, id, 70000), { r, k } = f, started = performance.now();
   f.tap(0); const ms = performance.now() - started; r[k('focusLevel')] = 1; r[k('placeOverlay')]();
-  expect(r[k('hoverLabel')].textContent).toContain('2-hop context truncated'); expect(f.tiers().filter(v => v === 128).length).toBeLessThanOrEqual(65536);
+  expect(r[k('hoverLabel')].textContent).toContain('neighbours of neighbours truncated'); expect(f.tiers().filter(v => v === 128).length).toBeLessThanOrEqual(65536);
   expect(f.actual()).toEqual(f.expected(0)); expect(ms).toBeLessThan(5000);
   f.hover(3); r[k('placeOverlay')](); expect(r[k('hoverLabel')].textContent).not.toContain('truncated');
 });
