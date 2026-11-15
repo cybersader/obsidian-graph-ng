@@ -29,6 +29,8 @@ function cleanupFailure(error: unknown, phase: string, cleanup: unknown) { retur
 const VIEW = 'graph-ng';
 interface Generation { key: string; identities: string[]; positions: number[]; producer: string; layoutHash?: string; edgeKeys?: string[] }
 interface Data { settings: Settings; generations: Record<string, Generation> }
+/** Assign `next[k]` where `live[k]` still equals `was[k]`, in place; returns the count of keys kept live. */
+const adopt = <T extends object>(live: T, next: T, was: T, keys: (keyof T)[]) => keys.filter(k => JSON.stringify(live[k]) === JSON.stringify(was[k]) ? (live[k] = next[k], false) : true).length;
 export default class GraphPlugin extends Plugin {
   settings!: Settings;
   adapter!: LocalAdapter;
@@ -147,13 +149,16 @@ export default class GraphPlugin extends Plugin {
     return this.writes;
   }
   /** Acknowledged candidate write: live settings change only after save and a current check. */
-  private commitCandidate(label: string, build: () => Settings, assign: (next: Settings) => void, current: () => boolean) {
+  /** `assign` adopts only candidate keys still equal to `was` (their value when the save began) and returns how many it left
+   *  live; a live edit made during the save wins and is then persisted, never overwritten by the stale suggestion. */
+  private commitCandidate(label: string, build: () => Settings, assign: (next: Settings, was: Settings) => number, current: () => boolean) {
     this.writes = this.writes.catch(() => {}).then(async () => {
       if (!current()) throw new Error(`${label} view changed`);
+      const was = structuredClone(this.settings);
       try {
         await this.saveData({ settings: settingsForSave(build()) });
         if (!current()) throw new Error(`${label} view changed during save`);
-        assign(build());
+        if (assign(build(), was)) await this.saveData({ settings: settingsForSave(this.settings) });
       } catch (error) {
         try { await this.saveData({ settings: settingsForSave(this.settings) }); } catch { throw new Error(`${label} save failed; restoring saved settings also failed; storage recovery uncertain`); }
         throw error;
@@ -161,12 +166,12 @@ export default class GraphPlugin extends Plugin {
     }); return this.writes;
   }
   commitSizing(values: NodeSizingValues, current: () => boolean) {
-    return this.commitCandidate('Sizing', () => sizingSettings(this.settings, values), next => { this.settings.nodeSize = next.nodeSize; this.settings.visuals.degreeSizing = next.visuals.degreeSizing; this.settings.visuals.degreeCurve = next.visuals.degreeCurve; this.settings.nodeSizing = next.nodeSizing; }, current);
+    return this.commitCandidate('Sizing', () => sizingSettings(this.settings, values), (next, was) => adopt(this.settings, next, was, ['nodeSize', 'nodeSizing']) + adopt(this.settings.visuals, next.visuals, was.visuals, ['degreeSizing', 'degreeCurve']), current);
   }
   /** Suggested presentation values; mutates in place because live renderers hold this object. */
   commitSuggestions(list: Suggestion[], current: () => boolean) {
     list = structuredClone(list);
-    return this.commitCandidate('Graph', () => suggestionSettings(this.settings, list), next => { this.settings.labelDensity = next.labelDensity; Object.assign(this.settings.visuals, next.visuals); }, current);
+    return this.commitCandidate('Graph', () => suggestionSettings(this.settings, list), (next, was) => adopt(this.settings, next, was, ['labelDensity']) + adopt(this.settings.visuals, next.visuals, was.visuals, Object.keys(next.visuals) as (keyof Settings['visuals'])[]), current);
   }
   /** Narrow bookmark transaction on the single settings queue; never applies graph settings. */
   commitSavedView(saved: SavedView | null, expected: SavedView | null) {

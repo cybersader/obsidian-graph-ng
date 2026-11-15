@@ -166,10 +166,8 @@
 /* Graduated labels: the focus is largest and boldest, direct neighbours full, declared ancestors muted,
    2-hop smaller and fainter, same-group context smallest and faintest. */
 .graph-ng-hover-label.graph-ng-focus { font-weight:var(--font-bold, 700); font-size:var(--font-ui-medium); }
-.graph-ng-focus-label { position:absolute; left:0; top:0; white-space:nowrap; pointer-events:none; color:var(--text-normal); font-size:var(--font-ui-small); text-shadow:0 0 3px var(--background-primary), 0 0 2px var(--background-primary); }
-.graph-ng-tier-1 { font-weight:var(--font-semibold, 600); }
-.graph-ng-tier-2 { color:var(--text-muted); }
-.graph-ng-tier-3, .graph-ng-tier-4 { font-size:var(--font-ui-smaller); color:var(--text-muted); }
+.graph-ng-focus-label { position:absolute; left:0; top:0; white-space:nowrap; pointer-events:none; color:var(--text-normal); text-shadow:0 0 3px var(--background-primary), 0 0 2px var(--background-primary); }
+.graph-ng-tier-2, .graph-ng-tier-3 { color:var(--text-muted); }
 .graph-ng-tier-4 { color:var(--text-faint); }
 @media (pointer: coarse) { .graph-ng-toolbar button, .graph-ng-explore button, .graph-ng-explore input:not([type=checkbox]):not([type=range]), .graph-ng-explore select { min-height:44px; } .graph-ng-explore .graph-ng-chip-action, .graph-ng-chip-json > summary { min-height:44px; min-width:44px; } }
 .graph-ng-suggestion { flex: 1; min-width: 0; }

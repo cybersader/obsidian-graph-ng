@@ -63,7 +63,10 @@ export function buildProjection(input: readonly FactRow[], d: GraphDeclaration):
   const gone = new Set(quarantined.flatMap(q => [q.id, q.path])), dropped: NonNullable<Projection['dropped']> = Object.create(null);
   const tally = (rule: string) => dropped[rule] ??= { drawn: 0, missing: 0, excluded: 0, carriers: 0 };
   const miss = (rule: string, ...refs: string[]) => { const t = tally(rule); if (refs.some(r => gone.has(r))) t.excluded++; else t.missing++; };
-  sorted.forEach((r, i) => { if (excluded.has(i)) for (const e of d.edges) if (e.kind === 'reified' && has(r, e.sourceProperty) && has(r, e.targetProperty)) tally(e.name).carriers++; });
+  // A quarantined source loses its inline/producer relationships too; each counts once, whatever its destination.
+  const carries = (r: FactRow) => d.edges.some(e => e.kind === 'reified' && has(r, e.sourceProperty) && has(r, e.targetProperty));
+  sorted.forEach((r, i) => { if (excluded.has(i)) for (const e of d.edges) if (e.kind === 'reified' && has(r, e.sourceProperty) && has(r, e.targetProperty)) tally(e.name).carriers++;
+    else if (d.display.reifiedAsNodes || !carries(r)) tally(e.name).excluded += e.kind === 'inline' ? values(r.properties[e.key]).length : e.kind === 'producer' ? [...(r.links?.[e.producer] ?? [])].length : 0; });
   const rowIndex = new Map(rows.map((row, i) => [row.path, i]));
   const carriers = new Set<string>();
   for (const r of rows) for (const e of d.edges) if (e.kind === 'reified' && has(r, e.sourceProperty) && has(r, e.targetProperty)) carriers.add(r.path);

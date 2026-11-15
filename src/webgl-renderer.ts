@@ -3,7 +3,7 @@ import type { Settings } from './settings';
 import { PickGrid, positionTexture, incidentEdges, focusTiers, tintedEdge, edgeBucket, tierNode, tierEdge, tierLabel, segmentDistance, labelLOD, canvasDetailEdges, resizeDrawingBuffer, LABEL_RATIOS } from './render-data';
 import { readTheme, type GraphTheme } from './render-theme';
 import { baseRadius, sizedRadius, sizingSettings, type NodeSizingValues } from './node-sizing';
-import { buildLabels, focusLabels, type LabelAtlas } from './render-labels';
+import { buildLabels, focusFont, focusLabels, type LabelAtlas } from './render-labels';
 import { carrierAlpha, carrierColors, carrierVisibility, categorical, degreeSizes, densityScale, edgeAlpha, effectPolicy, prominenceKeep, zoomFade, neutralizeGroups, easeInOut, groupHalos, isDark, labelFade, nodeColors, type EffectPolicy, type Halo, type RGB } from './render-effects';
 import { yieldTask } from './core/scheduler';
 import { generationCurrent } from './physics-controls';
@@ -261,7 +261,8 @@ export class DetailRenderer {
   /** Graduated focus labels: placed [node, rank] pairs, their DOM text and the LOD they were placed at. */
   private ranked: (readonly [number, number])[] = [];
   private tierLabels: HTMLElement[] = [];
-  private rankedLod = -1;
+  private rankedKey: unknown[] = [];
+  private measure?: CanvasRenderingContext2D;
   static async create(container: HTMLElement, p: RenderProjection, positions: Float32Array, visible: Uint8Array, settings: Settings, onNode: (i: number) => void, onZoomOut: () => void, colors: Uint32Array, current = () => true, software = false, onUnavailable = onZoomOut, view: RenderView = {}) {
     await yieldTask(); if (!current()) throw new Error('Renderer superseded');
     let renderer: DetailRenderer | undefined;
@@ -715,7 +716,7 @@ export class DetailRenderer {
     if (key !== this.tierSource || immediate) {
       for (const i of this.near) s[i * 4 + 1] = 0;
       for (const e of this.tierEdges) t[e] = 0;
-      this.near = []; this.tierEdges = []; this.tierSource = key; this.focusNode = edges ? -1 : node; this.rankedLod = -1; this.tierPartial = 0;
+      this.near = []; this.tierEdges = []; this.tierSource = key; this.focusNode = edges ? -1 : node; this.rankedKey = []; this.tierPartial = 0;
       // A selected relationship lights its rows and both endpoints as direct tiers, without a focus ring.
       if (edges) for (const e of edges) { t[e] = 255; this.tierEdges.push(e); for (const n of [this.projection.source[e]!, this.projection.target[e]!]) if (!s[n * 4 + 1]) { s[n * 4 + 1] = 255; this.near.push(n); } }
       else this.tierPartial = focusTiers(node, this.edges, this.projection, this.edgeOn, this.filterVisible, s, t, this.near, this.tierEdges, 65536, this.settings.declaration.groupContext ? this.view.groupCodes : undefined);
@@ -832,13 +833,14 @@ export class DetailRenderer {
     // Graduated labels: placed once per focus or LOD change, translated per frame (bounded DOM).
     const lod = labelLOD(this.camera.ratio);
     if (!this.near.length) this.ranked = [];
-    else if (lod !== this.rankedLod) {
-      const s = this.settings, k = this.scale * this.camera.ratio / LABEL_RATIOS[lod]!, budget = Math.max(1, Math.min(s.labelsMaxPerViewport, FOCUS_LABELS, Math.floor(this.width * this.height / s.labelGridCellSize ** 2 * s.labelDensity)));
-      this.ranked = focusLabels(ego, this.near, this.stateBytes, this.visible, this.projection.offsets, (n, rank) => { const z = s.labelSize * (rank ? 1 : 1.25); return { node: n, x: this.display[n * 2]! * k + this.nodeRadius(n) + 4, y: this.display[n * 2 + 1]! * k - z / 2, w: this.name(n).length * z * .6 + 4, h: z * 1.5 + 4 }; }, s.labelGridCellSize, budget, budget * s.labelCandidateMultiplier).filter(([n]) => n !== ego);
-      this.rankedLod = lod;
+    else if ([lod, this.display, this.fit, this.width, this.height].some((x, i) => x !== this.rankedKey[i])) {
+      // Placement measures each bounded candidate once with the font the DOM label then uses, at the radius offset it is shown with.
+      const s = this.settings, k = this.scale * this.camera.ratio / LABEL_RATIOS[lod]!, budget = Math.max(1, Math.min(s.labelsMaxPerViewport, FOCUS_LABELS, Math.floor(this.width * this.height / s.labelGridCellSize ** 2 * s.labelDensity))), m = this.measure ??= document.createElement('canvas').getContext('2d')!;
+      this.ranked = focusLabels(ego, this.near, this.stateBytes, this.visible, this.projection.offsets, (n, rank) => { const z = s.labelSize * (rank > 2 ? .85 : 1), h = z * 1.5 + 4; m.font = focusFont(rank, z, this.theme.font); return { node: n, x: this.display[n * 2]! * k + radius(n) + 4, y: this.display[n * 2 + 1]! * k - h / 2, w: m.measureText(this.name(n)).width + 4, h }; }, s.labelGridCellSize, budget, budget * s.labelCandidateMultiplier).filter(([n]) => n !== ego);
+      this.rankedKey = [lod, this.display, this.fit, this.width, this.height];
       while (this.tierLabels.length > this.ranked.length) this.tierLabels.pop()!.remove();
       while (this.tierLabels.length < this.ranked.length) this.tierLabels.push(this.overlay.appendChild(document.createElement('div')));
-      this.ranked.forEach(([n, rank], i) => { const el = this.tierLabels[i]!; el.className = 'graph-ng-focus-label graph-ng-tier-' + rank; el.textContent = this.name(n); });
+      this.ranked.forEach(([n, rank], i) => { const el = this.tierLabels[i]!; el.className = 'graph-ng-focus-label graph-ng-tier-' + rank; el.style.font = focusFont(rank, s.labelSize * (rank > 2 ? .85 : 1), this.theme.font); el.textContent = this.name(n); });
     }
     if (!this.ranked.length) while (this.tierLabels.length) this.tierLabels.pop()!.remove();
     this.ranked.forEach(([n], i) => { const el = this.tierLabels[i]!, p = this.screenPoint(n); el.style.opacity = String(focus); el.style.transform = `translate(${Math.round(p.x + radius(n) + 4)}px, ${Math.round(p.y)}px) translateY(-50%)`; });

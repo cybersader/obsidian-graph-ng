@@ -120,10 +120,10 @@ test('view and saved-view persistence validates, canonicalizes and round-trips t
   expect(() => validateVisuals({ ...s.visuals, glow: 2 })).toThrow('glow'); expect(() => validateVisuals({ ...s.visuals, extra: true })).toThrow('Unknown');
   expect(() => validateSettings({ ...s, explore: { ...s.explore, facetValues: 0 } })).toThrow('facetValues');
 });
-test('legacy settings without visuals/explore upgrade to defaults', () => {
+test('legacy settings without visuals/explore upgrade to defaults, keeping the earlier degree sizing', () => {
   const s = defaults('test@1') as any; delete s.visuals; delete s.explore; s.explore = { panelOpen: false };
   const upgraded = upgradeSettings(s, 'test@1');
-  expect(upgraded.visuals).toEqual(defaults('test@1').visuals); expect(upgraded.explore.panelOpen).toBe(false); expect(upgraded.explore.view).toEqual(emptyView());
+  expect(upgraded.visuals).toEqual({ ...defaults('test@1').visuals, degreeSizing: 1.6, degreeCurve: 'legacy' }); expect(upgraded.explore.panelOpen).toBe(false); expect(upgraded.explore.view).toEqual(emptyView());
 });
 test('explore settings, saved views and color rules stay settings-sharing scanner safe', () => {
   const s = defaults('obsidian-links@1.13.7');

@@ -361,6 +361,18 @@ test('graduated production labels: focus largest, direct then 2-hop by priority,
   f.settings.visuals.hoverHighlight = false; f.hover(2); expect(paint()).toEqual([]); expect(r[k('hoverLabel')].className).toBe('graph-ng-hover-label');
   f.settings.visuals.hoverHighlight = true; f.hover(3); expect(paint().length).toBe(3); r[k('pointerLeave')](); expect(paint()).toEqual([]);
 });
+test('focus-label placement re-runs on coordinate change at constant zoom and on viewport resize; DOM font matches the measured font', async () => {
+  const f = await graduated([[0, 1], [1, 2], [2, 3], [3, 4]]), { r, k } = f;
+  const paint = () => { r[k('focusLevel')] = 1; r[k('placeOverlay')](); };
+  f.tap(1); paint(); const ranked = r[k('ranked')];
+  paint(); expect(r[k('ranked')]).toBe(ranked);
+  // Labels render with the exact font string used for measureText during placement.
+  const el = r[k('tierLabels')][0]; expect(el.style.font).toBe(`600 ${f.settings.labelSize}px ${r[k('theme')].font}`);
+  // Coordinate adoption or rollback swaps the display array without touching the camera.
+  const display = r[k('display')]; r[k('display')] = Float32Array.from(display, (x: number) => x + 3); paint(); expect(r[k('ranked')]).not.toBe(ranked);
+  const moved = r[k('ranked')]; r[k('display')] = display; paint(); expect(r[k('ranked')]).not.toBe(moved);
+  const back = r[k('ranked')]; r[k('width')] += 40; paint(); expect(r[k('ranked')]).not.toBe(back);
+});
 test('graduated production WebGL uploads the tier column and state on focus and on view re-upload', async () => {
   const f = await graduated([[0, 1], [1, 2], [2, 3]]), { r, k } = f;
   let bound: unknown; const uploads: unknown[][] = [], images: unknown[] = [];

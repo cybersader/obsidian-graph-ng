@@ -14,6 +14,8 @@ export function focusLabels(focus: number, near: readonly number[], state: Uint8
   list.length = Math.min(list.length, cap);
   return list.length ? placeLabels(list.map(n => box(n, rank(n))), cell, budget).map(b => [b.node, rank(b.node)] as const) : [];
 }
+/** One font string for focus-label placement (measureText) and the DOM label it positions. */
+export const focusFont = (rank: number, size: number, family: string) => `${rank === 1 ? 600 : 400} ${size}px ${family}`;
 /** Rasterize codepoints once, then place bounded lists at each LOD. No per-frame text work. */
 export async function buildLabels(p: RenderProjection, grid: Pick<PickGrid, 'positions' | 'visible' | 'minX' | 'minY' | 'width' | 'height'>, s: Settings, width: number, height: number, font: string, current: () => boolean, visible = grid.visible): Promise<LabelAtlas> {
   const canvas = document.createElement('canvas'); canvas.width = canvas.height = 2048;

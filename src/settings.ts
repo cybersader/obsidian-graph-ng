@@ -260,9 +260,10 @@ export function upgradeSettings(input: unknown, producer: string): Settings {
     else old.groupLevel = level! - removed.filter(i => i < level!).length;
   }
   if (disabled.length) explore.disabledDerived = [...(explore.disabledDerived ?? []), ...disabled].slice(-64);
-  // Saved visuals predating degree curves keep the earlier log-radius appearance until explicit adoption.
+  // Saved settings predating degree curves (with or without a visuals block) keep the earlier log-radius appearance until explicit adoption;
+  // fresh installs never reach this migration and use defaults().
   const settings = { ...base, ...old, layout: { ...base.layout, ...old.layout, force: { ...base.layout.force, ...old.layout?.force } }, ingest: { ...base.ingest, ...old.ingest }, cache: { ...base.cache, ...old.cache }, declaration: migrateDeclaration(old.declaration ?? base.declaration),
-    nodeSizing: { ...base.nodeSizing, ...old.nodeSizing }, visuals: { ...base.visuals, ...old.visuals && { degreeSizing: 1.6, degreeCurve: 'legacy' as const }, ...old.visuals }, explore: { ...base.explore, ...explore } };
+    nodeSizing: { ...base.nodeSizing, ...old.nodeSizing }, visuals: { ...base.visuals, degreeSizing: 1.6, degreeCurve: 'legacy' as const, ...old.visuals }, explore: { ...base.explore, ...explore } };
   settings.explore = canonicalExplore(settings.explore);
   if (old.settingsVersion === undefined) for (const key of ['maxProjectionGroups', 'maxProjectionPairs', 'maxProjectionCarriers'] as const) if (settings[key] === 0) settings[key] = base[key];
   validateSettings(settings); return settings;

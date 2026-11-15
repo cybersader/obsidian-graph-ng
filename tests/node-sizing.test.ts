@@ -55,6 +55,22 @@ test('stale save restores latest settings and preserves unrelated concurrent edi
   await expect(f.plugin.commitSizing(values, () => current)).rejects.toThrow('changed');
   expect(f.plugin.settings.nodeSizing.policy).toBe('legacy'); expect(f.writes[1].settings.visuals.glow).toBe(.123);
 });
+test('a live edit made while a candidate save is pending wins over the stale candidate and is then persisted', async () => {
+  for (const kind of ['sizing', 'suggestion'] as const) {
+    const f = runtime(); let release!: () => void;
+    f.plugin.saveData = async (data: any) => { f.writes.push(structuredClone(data)); if (f.writes.length === 1) await new Promise<void>(r => { release = r; }); };
+    const pending = kind === 'sizing' ? f.plugin.commitSizing(values, () => true)
+      : f.plugin.commitSuggestions([{ key: 'edgeOpacity', label: 'e', current: .4, value: .2, reason: 'r' }, { key: 'glow', label: 'g', current: .3, value: .1, reason: 'r' }], () => true);
+    await Promise.resolve(); await Promise.resolve();
+    // The user moves a live Appearance slider for one touched key while the save is pending.
+    if (kind === 'sizing') f.plugin.settings.visuals.degreeSizing = 7.5; else f.plugin.settings.visuals.edgeOpacity = .9;
+    release(); await pending;
+    const v = f.plugin.settings.visuals, last = f.writes.at(-1).settings.visuals;
+    if (kind === 'sizing') { expect(v.degreeSizing).toBe(7.5); expect(last.degreeSizing).toBe(7.5); expect(f.plugin.settings.nodeSizing.policy).toBe('predictable'); expect(v.degreeCurve).toBe('sqrt'); }
+    else { expect(v.edgeOpacity).toBe(.9); expect(last.edgeOpacity).toBe(.9); expect(v.glow).toBe(.1); expect(last.glow).toBe(.1); }
+    expect(f.writes.length).toBe(2);
+  }
+});
 function panelFixture() {
   const f = runtime(), root = new ControlElement(); const render = ExplorePanel.prototype.render; ExplorePanel.prototype.render = function () {};
   let panel: any, preview: any = null;
@@ -168,7 +184,8 @@ test('saved settings without a degree curve keep the earlier appearance; curve r
   const fresh = defaults('links'), old: any = structuredClone(fresh); delete old.visuals.degreeCurve; old.visuals.degreeSizing = 1.6;
   const up = upgradeSettings(old, 'links'); expect(up.visuals.degreeCurve).toBe('legacy'); expect(up.visuals.degreeSizing).toBe(1.6);
   const partial: any = structuredClone(fresh); partial.visuals = { glow: .2 }; expect(upgradeSettings(partial, 'links').visuals).toMatchObject({ degreeCurve: 'legacy', degreeSizing: 1.6, glow: .2 });
-  expect(upgradeSettings({}, 'links').visuals.degreeCurve).toBe('sqrt');
+  // Saved settings with no visuals block at all are legacy too; only a fresh install (defaults()) adopts the new curve.
+  expect(upgradeSettings({}, 'links').visuals).toMatchObject({ degreeCurve: 'legacy', degreeSizing: 1.6 }); expect(defaults('links').visuals).toMatchObject({ degreeCurve: 'sqrt', degreeSizing: 4 });
   expect(() => validateSettings({ ...fresh, visuals: { ...fresh.visuals, degreeCurve: 'cubic' } as any })).toThrow('degreeCurve');
   const next = sizingSettings(up, { ...values, curve: 'linear' }); expect(sizingValues(next).curve).toBe('linear');
   expect(upgradeSettings(settingsForSave(next), 'links').visuals.degreeCurve).toBe('linear');

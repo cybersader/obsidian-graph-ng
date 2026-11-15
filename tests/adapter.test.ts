@@ -213,6 +213,18 @@ test('relationship accounting splits drawn, missing-endpoint, duplicate-endpoint
   expect(p.unresolved).toBe(2); expect(p.source.length).toBe(1);
 });
 
+test('duplicate-ID sources count their lost inline and producer relationships as excluded, once each', () => {
+  const d = { ...defaultDeclaration('n@1'), identity: [{ key: 'curie' }], columns: ['curie'], edges: [{ name: 'see', kind: 'inline' as const, key: 'see', type: 'see' }, { name: 'links', kind: 'producer' as const, producer: 'links', type: 'link' }] };
+  const row = (path: string, properties: Record<string, unknown>, links: string[] = []) => ({ path, properties, links: { links } });
+  const p = buildProjection([
+    row('c.md', { curie: 'x:c' }), row('d1.md', { curie: 'x:d', see: 'x:c' }, ['c.md']), row('d2.md', { curie: 'x:d', see: ['x:c', 'x:d'] }, ['c.md', 'd1.md']),
+  ], d as any);
+  expect(p.quarantined.length).toBe(2); expect(p.source.length).toBe(0);
+  // d1 and d2 each lose their links to c; d2's self/sibling references (destination also excluded) count once, not twice.
+  expect(p.dropped!.see).toEqual({ drawn: 0, missing: 0, excluded: 3, carriers: 0 });
+  expect(p.dropped!.links).toEqual({ drawn: 0, missing: 0, excluded: 3, carriers: 0 });
+});
+
 test('an excluded note resolving after the initial load never enters rows or coverage', async () => {
   const { LocalAdapter } = await import('../src/adapter/local');
   const files = ['live/a.md', '_archive/a.md'].map(p => new FixtureFile(p)), events = new Map<string, (...a: any[]) => void>();
