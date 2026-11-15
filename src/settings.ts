@@ -6,12 +6,16 @@ import { canonicalView, emptyView, validateSaved, validateView, type ExploreView
 /** Degree → node size. linear/sqrt/log are area-proportional; legacy is the earlier log-of-radius curve. */
 export type DegreeCurve = 'linear' | 'sqrt' | 'log' | 'legacy';
 export const DEGREE_CURVES: DegreeCurve[] = ['sqrt', 'log', 'linear', 'legacy'];
+/** Which lines draw: all, only the focus's graduated tiers (nothing until a note is focused), or none. */
+export type EdgeMode = 'all' | 'focus' | 'off';
+export const EDGE_MODES: EdgeMode[] = ['all', 'focus', 'off'];
 export interface Visuals {
   degreeSizing: number;
   degreeCurve: DegreeCurve;
   edgeOpacity: number;
   edgeDensityReference: number;
   edgeColorMix: number;
+  edgeMode: EdgeMode;
   edgeDirection: boolean;
   glow: number;
   curvedEdges: boolean;
@@ -76,7 +80,7 @@ export interface Visuals {
 export interface DisabledDerive { location: string; key: string; pattern: string }
 export interface ExploreSettings { panelOpen: boolean; facetValues: number; legendPageSize: number; view: ExploreView; savedViews: SavedView[]; disabledDerived: DisabledDerive[] }
 export const defaultVisuals = (): Visuals => ({
-  degreeSizing: 4, degreeCurve: 'sqrt', edgeOpacity: .4, edgeDensityReference: 3000, edgeColorMix: .65, edgeDirection: false, glow: .3,
+  degreeSizing: 4, degreeCurve: 'sqrt', edgeOpacity: .4, edgeDensityReference: 3000, edgeColorMix: .65, edgeMode: 'all', edgeDirection: false, glow: .3,
   curvedEdges: true, curvature: .12, curveSegments: 8, hoverHighlight: true, dimOpacity: .12, groupHalos: false, haloOpacity: .05,
   autoPalette: true, labelFade: true, cameraAnimationMs: 450, glowMaxNodes: 250000, curvesMaxEdges: 60000, halosMaxGroups: 48, hubsMaxGroups: 256, softwareEffects: false,
   carrierTint: true, carrierBridge: 'blend', carrierBridgeAccent: .35, carrierOpacity: .7, carrierSize: .6, carrierDensityReference: 8000, carrierLod: true, carrierLodNear: .3, carrierLodFar: .6, zoomAdapt: true, labelTierScale: 1.2, labelPlates: true,
@@ -97,6 +101,7 @@ export function validateVisuals(v: unknown): asserts v is Visuals {
   if (!DEGREE_CURVES.includes(o.degreeCurve as DegreeCurve)) throw new Error('visuals.degreeCurve must be sqrt, log, linear or legacy');
   if (typeof o.curvature !== 'number' || !(o.curvature >= 0 && o.curvature <= .5)) throw new Error('visuals.curvature must be between 0 and 0.5');
   if ((o.curveSegments as number) < 2 || (o.curveSegments as number) > 32) throw new Error('visuals.curveSegments must be 2–32');
+  if (!EDGE_MODES.includes(o.edgeMode as EdgeMode)) throw new Error('visuals.edgeMode must be all, focus or off');
   if (o.carrierBridge !== 'blend' && o.carrierBridge !== 'source') throw new Error('visuals.carrierBridge must be blend or source');
   const { carrierSize: z, carrierLodNear: a, carrierLodFar: b } = o as Record<string, number>;
   if (![z, a, b].every(x => typeof x === 'number') || !(z! > 0 && z! <= 4 && a! > 0 && a! < b! && b! <= 8)) throw new Error('visuals: need 0 < carrierSize ≤ 4 and 0 < carrierLodNear < carrierLodFar ≤ 8');

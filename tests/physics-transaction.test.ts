@@ -248,6 +248,17 @@ test('UX production Canvas detail honors zero and fractional opacity without cha
   const stroke = ctx.stroke; let calls: number[] = []; ctx.stroke = () => calls.push(ctx.globalAlpha);
   try { for (const opacity of [0, .00001, .2]) { calls = []; f.plugin.settings.visuals.edgeOpacity = opacity; r[key('drawCanvas')](); expect(calls.length).toBe(opacity ? 1 : 0); if (opacity) { expect(calls[0]).toBeGreaterThan(0); expect(calls[0]).toBeLessThanOrEqual(opacity * 3.75); } expect(r.projection.source.length).toBe(1); } } finally { ctx.stroke = stroke; }
 });
+test('Edges mode in production Canvas: Off draws no lines, Focus only draws none until a note is focused', async () => {
+  const f = await fixture(), r = f.renderer, key = (name: string) => typeof mangle[name] === 'string' ? mangle[name] : name, v = f.plugin.settings.visuals;
+  r.projection.source = new Uint32Array([0]); r.projection.target = new Uint32Array([1]);
+  r[key('edgeOn')] = new Uint8Array([1]); r[key('filterVisible')] = new Uint8Array([1, 1, 1]); r[key('canvasEdges')] = new Uint32Array([0]); r[key('visibleEdges')] = 1;
+  const stroke = ctx.stroke; let calls: number[] = []; ctx.stroke = () => calls.push(ctx.globalAlpha);
+  try {
+    v.edgeOpacity = .2;
+    for (const [mode, lines] of [['all', 1], ['focus', 0], ['off', 0]] as const) { calls = []; v.edgeMode = mode; r[key('drawCanvas')](); expect(calls.length).toBe(lines); }
+    expect(r.projection.source.length).toBe(1);
+  } finally { ctx.stroke = stroke; v.edgeMode = 'all'; }
+});
 test('UX production WebGL scheduling omits edges at zero even with hover/focus, preserves context', async () => {
   const f = await fixture(), r = f.renderer, key = (name: string) => typeof mangle[name] === 'string' ? mangle[name] : name;
   let current = -1; const draws: number[] = [], alphas: number[] = [];

@@ -96,6 +96,39 @@ export function zoomFade(v: Pick<Visuals, 'zoomAdapt' | 'edgeDensityReference'>,
   const crowd = visibleEdges * Math.max(zoom, 1e-6) * Math.sqrt(1024000 / Math.max(1, width * height)) / v.edgeDensityReference;
   return Math.min(1, Math.max(.35, 1 / Math.sqrt(crowd)));
 }
+/** Screen-space edge ink: the context web's coverage per pixel stays near 1 − e^(−INK × opacity) at
+ * every zoom instead of building into a grey fog. LENGTH_FADE × the mean edge length is the screen
+ * length beyond which a line fades as ref / length, so a long line adds no more ink than a typical one. */
+export const INK = .3, LENGTH_FADE = 1.5;
+/** Sampled geometry of the drawn web in world units: mean edge length, mean length after the long-line
+ * fade, and the core area (π × endpoint variance). Bounded: at most `samples` edges, recomputed only
+ * when positions or the view change, never per frame. */
+export interface EdgeInk { length: number; clipped: number; area: number }
+export function edgeInk(positions: ArrayLike<number>, source: ArrayLike<number>, target: ArrayLike<number>, drawn: (e: number) => boolean, samples = 4096): EdgeInk {
+  const step = Math.max(1, Math.ceil(source.length / samples)), lengths: number[] = [];
+  let x = 0, y = 0, xx = 0, yy = 0;
+  for (let e = 0; e < source.length; e += step) if (drawn(e)) {
+    const a = source[e]! * 2, b = target[e]! * 2, ax = positions[a]!, ay = positions[a + 1]!, bx = positions[b]!, by = positions[b + 1]!;
+    lengths.push(Math.hypot(bx - ax, by - ay)); x += ax + bx; y += ay + by; xx += ax * ax + bx * bx; yy += ay * ay + by * by;
+  }
+  const n = lengths.length; if (!n) return { length: 0, clipped: 0, area: 0 };
+  const length = lengths.reduce((s, l) => s + l, 0) / n, ref = LENGTH_FADE * length, k = 2 * n;
+  return { length, clipped: lengths.reduce((s, l) => s + Math.min(l, ref), 0) / n, area: Math.PI * Math.max(0, xx / k - (x / k) ** 2 + yy / k - (y / k) ** 2) };
+}
+/** Expected line layers per pixel in the core of the web: edges × faded length × stroke width (CSS px)
+ * over the core area, at `scale` px per world unit. Falls as 1 / scale when zooming in. */
+export const overdraw = (ink: EdgeInk, edges: number, width: number, scale: number) => ink.area > 0 && scale > 0 ? edges * ink.clipped * width / (ink.area * scale) : 0;
+/** Per-line alpha that spends the ink budget across `layers` overlapping lines (source-over:
+ * coverage 1 − (1 − a)^layers ≈ 1 − e^(−budget)). 1 (no cap) when off or sparse. */
+export const inkAlpha = (v: Pick<Visuals, 'zoomAdapt' | 'edgeOpacity'>, layers: number) => v.zoomAdapt && layers > 0 ? Math.min(1, INK * v.edgeOpacity / layers) : 1;
+/** Canvas2D strokes one path per tier, so overlaps union instead of accumulating: coverage is
+ * alpha × (1 − e^(−layers)). This alpha gives the same core coverage as the WebGL budget. */
+export const unionAlpha = (v: Pick<Visuals, 'zoomAdapt' | 'edgeOpacity'>, layers: number) => v.zoomAdapt && layers > 0 ? Math.min(1, (1 - Math.exp(-INK * v.edgeOpacity)) / (1 - Math.exp(-layers))) : 1;
+/** Screen length (CSS px) above which context lines fade as fadeLength / length. Grows without
+ * bound as the web thins below one layer, so zoomed-in or sparse views keep every line. */
+export const fadeLength = (v: Pick<Visuals, 'zoomAdapt'>, ink: EdgeInk, scale: number, layers: number) => v.zoomAdapt && layers > 0 && ink.length > 0 ? LENGTH_FADE * ink.length * scale / Math.min(1, layers) : Infinity;
+/** The long-line fade factor for one line of `length` px. */
+export const lengthFade = (length: number, fade: number) => Math.min(1, fade / Math.max(length, 1));
 /** "Adapt to zoom" degree-prominence kept when zoomed out past home on a crowded view, so hubs
  * stop covering neighbours: zoom^-½ in half-steps of log2 zoom (sizes are recomputed only when
  * the step changes), at least ¼; 1 at or inside home or when marks would not touch. */

@@ -113,6 +113,7 @@
     "edgeOpacity": 0.4,
     "edgeDensityReference": 3000,
     "edgeColorMix": 0.65,
+    "edgeMode": "all",
     "edgeDirection": false,
     "glow": 0.3,
     "curvedEdges": true,

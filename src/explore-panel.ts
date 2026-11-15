@@ -9,7 +9,7 @@ import { suggestions } from './core/expr/autocomplete';
 import { declaredKeys } from './core/columns';
 import { describePredicate, groupLabel, NO_COLOR, VIEW_LIMITS, validateSaved, validateView, type ExploreResult, type ExploreView, type SavedView, type ViewCamera } from './core/explore';
 import { canonical, validateDerivedGroup, validatePredicate, type GraphDeclaration, type GroupSource, type Predicate, type Scalar } from './core/declaration';
-import type { DegreeCurve, Settings, Visuals } from './settings';
+import type { DegreeCurve, EdgeMode, Settings, Visuals } from './settings';
 import { progressiveSlider, type Curve } from './progressive-slider';
 /** Slider travel per numeric layout control; typed values outside the span stay unclamped. */
 const PHYSICS_CURVES: Partial<Record<PhysicsKey, Curve>> = { scalingRatio: { min: .1, max: 100, log: true }, gravity: { min: 0, max: 20, k: 3 }, slowDown: { min: .1, max: 100, log: true }, iterations: { min: 1, max: 1000, log: true, int: true }, barnesHutTheta: { min: .1, max: 3, k: 2 } };
@@ -589,6 +589,7 @@ export class ExplorePanel {
     this.note(host, 'Closing ends a preview; drafts stay here. Live controls below save automatically in plugin settings, not named views.');
     host.createEl('h4', { text: 'Live appearance defaults' });
     this.slider(host, 'Label density', { min: .25, max: 3, log: true }, () => s.labelDensity, x => { s.labelDensity = x; }, true);
+    this.edgeMode(host);
     slider('edgeOpacity', 'Edge opacity (0–1)', { min: 0, max: 1, k: 2.5 });
     slider('edgeColorMix', 'Edge color blend', { min: 0, max: 1 });
     slider('glow', 'Glow', { min: 0, max: 1, k: 2 });
@@ -632,6 +633,18 @@ export class ExplorePanel {
     }
     this.note(host, 'Edge opacity 0 hides all edges, including highlights. Relationships remain available in Filters and group lists.');
     host.createEl('button', { text: 'Fit graph' }).onclick = () => this.host.fit();
+  }
+  /** Edges: All / Focus only / Off. Live, saved with plugin settings. */
+  private edgeMode(host: HTMLElement) {
+    const v = this.settings.visuals, row = host.createDiv({ cls: 'graph-ng-row graph-ng-segmented', attr: { role: 'group', 'aria-label': 'Edges' } });
+    row.createSpan({ text: 'Edges' });
+    const modes: [EdgeMode, string][] = [['all', 'All'], ['focus', 'Focus only'], ['off', 'Off']];
+    const buttons = modes.map(([mode, text]) => {
+      const button = row.createEl('button', { text, attr: { 'aria-pressed': String(v.edgeMode === mode) } });
+      button.onclick = () => { v.edgeMode = mode; buttons.forEach((b, i) => b.setAttribute('aria-pressed', String(modes[i]![0] === mode))); this.host.visualsChanged(false); };
+      return button;
+    });
+    this.note(host, 'Focus only draws lines just for the selected note and its connections.');
   }
   private relationBusy = false;
   private relationMessage = '';
