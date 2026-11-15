@@ -26,7 +26,7 @@ export interface RendererControls {
   readonly cardNode: number;
   /** A relationship (line) or path card is open. */
   readonly edgeCard: boolean;
-  /** Neighbourhood is active. */
+  /** "Only connections" is active. */
   readonly isolated: boolean;
   pick(x: number, y: number): number;
   pickHub(x: number, y: number): number;
@@ -59,7 +59,7 @@ export interface RendererControls {
   cardKey(e: KeyboardEvent): boolean;
   /** Card history back (-1) or forward (1); false when there is nowhere to go. */
   cardStep(step: number): boolean;
-  /** Neighbourhood around a note; -1 returns to the full graph. */
+  /** "Only connections" around a note; -1 returns to the full graph. */
   isolate(node: number): void;
   focusCanvas(): void;
   /** Go to a note as the card's Go to does: select it with its card and fly the camera there. */
@@ -133,7 +133,7 @@ export const actions = new ActionRegistry();
 export const registerAction = (action: Action) => actions.register(action);
 
 const ARROWS = ['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp'];
-// Escape layers: the card (or relationship card) first, then the lens, then a card-less selection, then Neighbourhood.
+// Escape layers: the card (or relationship card) first, then the lens, then a card-less selection, then "Only connections".
 // Hover holds no focus, so there is no hover layer.
 for (const action of [
   { id: 'close-card', label: 'Close card', key: 'Escape', order: 10, when: ({ host }) => host.cardNode >= 0 || host.edgeCard, run: ({ host }) => { host.selectNote(-1, false, true); host.focusCanvas(); } },

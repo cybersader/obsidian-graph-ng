@@ -1,5 +1,5 @@
 import { test, expect } from 'bun:test';
-import { PickGrid, positionTexture, incidentEdges, segmentDistance, placeLabels, labelLOD, LABEL_RATIOS, canvasDetailEdges, resizeDrawingBuffer } from '../src/render-data';
+import { PickGrid, positionTexture, incidentEdges, segmentDistance, placeLabels, labelLOD, LABEL_RATIOS, canvasDetailEdges, CanvasLimit, resizeDrawingBuffer } from '../src/render-data';
 import { buildProjection } from '../src/core/projection';
 import { defaultDeclaration, validateDeclaration } from '../src/core/declaration';
 import { defaults, upgradeSettings, validateSettings } from '../src/settings';
@@ -63,6 +63,8 @@ test('software edge and node budgets reject excess work, never silently truncate
   expect([...canvasDetailEdges(p, visible, 2, 3)]).toEqual([0, 1, 2]);
   expect(() => canvasDetailEdges(p, visible, 1, 3)).toThrow('CANVAS_DETAIL_NODE_LIMIT');
   expect(() => canvasDetailEdges(p, visible, 2, 2)).toThrow('CANVAS_DETAIL_EDGE_LIMIT');
+  // Callers detect the refusal by type, not by matching message text.
+  expect(() => canvasDetailEdges(p, visible, 1, 3)).toThrow(CanvasLimit); expect(() => canvasDetailEdges(p, visible, 2, 2)).toThrow(CanvasLimit);
 });
 
 test('drawing-buffer resize never resets an unchanged axis', () => {

@@ -255,3 +255,16 @@ test('neighbourhood remains bounded at 16k nodes / 55k edges and never admits ex
   for (let i = 0; i < n; i++) if (!base[i]) expect(result.mask[i]).toBe(0);
   for (const [node, count] of result.frontier) { expect(result.mask[node]).toBe(1); expect(count).toBeGreaterThan(0); }
 });
+
+test('neighbourhood travel reveals: a shown target joins alone, with its linking dot, only while it touches the region', () => {
+  const g = graph(), run = (h: number, shown: number[], base = g.all) => neighbourhood(0, h, new Set(), g.inc, g.p, g.on, base, shown);
+  const ones = (mask: Uint8Array) => [...mask.keys()].filter(i => mask[i]);
+  // Reach 0 plus the target 10: the relationship-note dot 9 that links it comes too, and nothing else.
+  expect(ones(run(0, [10]).mask)).toEqual([0, 9, 10]);
+  // 5 touches the region through 1; 6 then touches 5, in visit order. 8 (beyond 4) stays hidden.
+  const chain = run(1, [5, 6]); expect(chain.mask[5]).toBe(1); expect(chain.mask[6]).toBe(1); expect(chain.mask[8]).toBe(0);
+  expect(chain.frontier.get(1)).toBeUndefined(); expect(chain.frontier.get(4)).toBe(1);
+  // A target that does not touch the region is not admitted; neither is a filtered one.
+  expect(run(1, [6]).mask[6]).toBe(0);
+  const base = g.all.slice(); base[5] = 0; expect(ones(run(1, [5, 6], base).mask)).toEqual(ones(run(1, []).mask));
+});

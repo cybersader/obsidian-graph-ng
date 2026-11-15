@@ -162,12 +162,14 @@ export function offscreenPips(ids: ArrayLike<number>, xy: ArrayLike<number>, w: 
   return pips.filter((p): p is Pip => !!p);
 }
 export const PIP_DIRECTIONS = ['right', 'lower right', 'below', 'lower left', 'left', 'upper left', 'above', 'upper right'] as const;
+/** Thrown when software drawing would exceed its node or edge bound; callers test the type, not the message. */
+export class CanvasLimit extends Error {}
 /** Bound software draw work by both visible nodes and visible edges; never silently truncate. */
 export function canvasDetailEdges(p: Pick<Projection, 'source' | 'target'>, visible: Uint8Array, maxNodes: number, maxEdges: number) {
-  if (visible.reduce((n, v) => n + (v ? 1 : 0), 0) > maxNodes) throw new Error('CANVAS_DETAIL_NODE_LIMIT: use group member lists');
+  if (visible.reduce((n, v) => n + (v ? 1 : 0), 0) > maxNodes) throw new CanvasLimit('CANVAS_DETAIL_NODE_LIMIT: use group member lists');
   const edges: number[] = [];
   for (let e = 0; e < p.source.length; e++) if (visible[p.source[e]!] && visible[p.target[e]!]) {
-    if (edges.length >= maxEdges) throw new Error('CANVAS_DETAIL_EDGE_LIMIT: use group member lists');
+    if (edges.length >= maxEdges) throw new CanvasLimit('CANVAS_DETAIL_EDGE_LIMIT: use group member lists');
     edges.push(e);
   }
   return Uint32Array.from(edges);

@@ -1,6 +1,6 @@
 import { renderPath, type RenderProjection } from './render-projection';
 import type { Settings } from './settings';
-import { PickGrid, positionTexture, incidentEdges, focusTiers, tintedEdge, edgeBucket, tierNode, tierEdge, tierLabel, segmentDistance, shownTier, shownEdgeTier, tierCounts, tierLift, liftRadius, strongEdge, offscreenPips, TIERS, ALL_TIERS, PIP_DIRECTIONS, canvasDetailEdges, resizeDrawingBuffer, LABEL_RATIOS, PATH_EDGE, pathStroke } from './render-data';
+import { PickGrid, positionTexture, incidentEdges, focusTiers, tintedEdge, edgeBucket, tierNode, tierEdge, tierLabel, segmentDistance, shownTier, shownEdgeTier, tierCounts, tierLift, liftRadius, strongEdge, offscreenPips, TIERS, ALL_TIERS, PIP_DIRECTIONS, canvasDetailEdges, CanvasLimit, resizeDrawingBuffer, LABEL_RATIOS, PATH_EDGE, pathStroke } from './render-data';
 import { readTheme, type GraphTheme } from './render-theme';
 import { baseRadius, sizedRadius, sizingSettings, type NodeSizingValues } from './node-sizing';
 import { buildLabels, rankFocus, type LabelAtlas } from './render-labels';
@@ -357,7 +357,7 @@ export class DetailRenderer {
   private toolsInset = 0;
   /** Neighbourhood: a temporary mask over the host's filter, recomputed when the host view changes. */
   private baseVisible: Uint8Array;
-  private isolation?: { node: number; hops: number; expanded: Set<number> };
+  private isolation?: { node: number; hops: number; expanded: Set<number>; shown: number[] };
   private frontier = new Map<number, number>();
   private frontierBadges: { node: number; el: HTMLElement; width: number }[] = [];
   private neighbourhoodPartial = false;
@@ -1125,8 +1125,9 @@ export class DetailRenderer {
    * to it (zooming in when far out) and an active neighbourhood keeps its anchor. */
   private travel(n: number) {
     if (!this.baseVisible[n]) return;
-    // Travelling reveals a hidden target through the current frontier, never moves the anchor.
-    if (this.isolation && !this.filterVisible[n]) this.expandNeighbourhood(this.selected);
+    // Travelling reveals only a hidden target that touches the region (never the traveller's other neighbours) and never moves the anchor.
+    const s = this.isolation;
+    if (s && !this.filterVisible[n]) this.isolate(s.node, s.hops, false, s.expanded, [...s.shown, n]);
     if (!this.filterVisible[n]) this.isolate(-1, 1, false); // A history jump outside this region exits it.
     if (!this.filterVisible[n]) return;
     const lensed = this.lensWanted >= 0;
@@ -1136,13 +1137,13 @@ export class DetailRenderer {
     this.centreOn(this.display[n * 2]!, this.display[n * 2 + 1]!, Math.min(this.camera.ratio, this.homeRatio * .5), undefined, ...this.cardInset());
   }
   /** Temporary neighbourhood, intersected with the host filter. Reach changes reset expansion. */
-  isolate(node: number, hops = 1, fit = true, expanded = new Set<number>()) {
+  isolate(node: number, hops = 1, fit = true, expanded = new Set<number>(), shown: number[] = []) {
     const previous = this.isolation, frontier = this.frontier, partial = this.neighbourhoodPartial;
-    this.isolation = node >= 0 && this.baseVisible[node] ? { node, hops: Math.max(0, Math.min(3, hops)), expanded } : undefined;
+    this.isolation = node >= 0 && this.baseVisible[node] ? { node, hops: Math.max(0, Math.min(3, hops)), expanded, shown } : undefined;
     try { this.applyView(this.isolationMask(this.baseVisible, this.view), this.view); }
     catch (error) {
-      if (!String(error).includes('CANVAS_DETAIL_')) throw error;
-      this.isolation = previous; this.frontier = frontier; this.neighbourhoodPartial = partial; this.showIsolation(); this.isolationBar.append(el('small', 'Neighbourhood exceeds renderer limits')); return;
+      if (!(error instanceof CanvasLimit)) throw error;
+      this.isolation = previous; this.frontier = frontier; this.neighbourhoodPartial = partial; this.showIsolation(); this.isolationBar.append(el('small', 'Too many notes to draw')); return;
     }
     if (this.isolation && !this.filterVisible[this.selected]) this.selectNote(node, true);
     this.showIsolation();
@@ -1150,19 +1151,19 @@ export class DetailRenderer {
   }
   private expandNeighbourhood(n: number) {
     const s = this.isolation; if (!s || !this.frontier.has(n)) return;
-    this.isolate(s.node, s.hops, false, new Set([...s.expanded, n]));
+    this.isolate(s.node, s.hops, false, new Set([...s.expanded, n]), s.shown);
     this.canvas.focus();
   }
   private isolationMask(base: Uint8Array, view: RenderView) {
     const s = this.isolation, p = this.projection; this.frontier = new Map(); this.neighbourhoodPartial = false;
     if (!s || !base[s.node]) { this.isolation = undefined; return base; }
-    const result = neighbourhood(s.node, s.hops, s.expanded, this.edges, p, e => !view.typeHidden?.[p.type[e]!], base);
+    const result = neighbourhood(s.node, s.hops, s.expanded, this.edges, p, e => !view.typeHidden?.[p.type[e]!], base, s.shown);
     this.frontier = result.frontier; this.neighbourhoodPartial = result.partial; return result.mask;
   }
   private showIsolation() {
     if (!this.isolationBar) return;
     const s = this.isolation;
-    isolationBar(this.isolationBar, s ? this.name(s.node) : '', s?.hops ?? 1, this.filterVisible.reduce((a, b) => a + b, 0), s?.expanded.size ?? 0, this.neighbourhoodPartial, h => { this.isolate(s!.node, h); this.isolationBar.querySelectorAll('button')[h]?.focus(); }, () => { this.isolate(-1); this.canvas.focus(); });
+    isolationBar(this.isolationBar, s ? this.name(s.node) : '', s?.hops ?? 1, this.filterVisible.reduce((a, b) => a + b, 0), s ? s.expanded.size + s.shown.length : 0, this.neighbourhoodPartial, h => { this.isolate(s!.node, h); this.isolationBar.querySelectorAll('button')[h]?.focus(); }, () => { this.isolate(-1); this.canvas.focus(); });
     for (const b of this.frontierBadges) b.el.remove(); this.frontierBadges = [];
     for (const [node, count] of this.frontier) {
       if (this.frontierBadges.length === 24) break;
@@ -1171,7 +1172,7 @@ export class DetailRenderer {
       const width = Math.max(32, 16 + String(count).length * 7); b.style.width = `${width}px`;
       this.frontierBadges.push({ node, el: this.overlay.appendChild(b), width });
     }
-    if (this.frontier.size > 24) this.isolationBar.append(el('small', 'Up to 24 badges. Select any node to expand.'));
+    if (this.frontier.size > 24) this.isolationBar.append(el('small', 'Up to 24 badges. Select any note to expand.'));
   }
   /** The lens, else the selection, is the focus: hover never moves it (hover is only a ring and a name).
    * The graduated-highlight switch turns it off. */
@@ -1391,7 +1392,7 @@ export class DetailRenderer {
       const spots = [[p.x + gap, p.y - 10], [p.x - gap - w, p.y - 10], [mid, p.y - gap - h], [mid, p.y + gap]].filter(([x, y]) => !under(x!, y!, w, h));
       const inView = ([x, y]: number[]) => x! >= 0 && y! >= 0 && x! + w <= this.width && y! + h <= this.height, free = ([x, y]: number[]) => !taken.some(b => overlapsBox(x!, y!, w, h, b));
       const at = spots.find(q => inView(q) && free(q)) ?? spots.find(free) ?? spots.find(inView) ?? spots[0];
-      hover.hidden = !at; if (at) hover.style.transform = `translate(${Math.round(at[0]!)}px, ${Math.round(at[1]!)}px)`;
+      hover.hidden = !at; if (at) taken.push([at[0]!, at[1]!, w, h]); if (at) hover.style.transform = `translate(${Math.round(at[0]!)}px, ${Math.round(at[1]!)}px)`;
     }
     this.placePath(radius, focus);
     this.crumbTrail.update(v.breadcrumb, this.card.history);
@@ -1402,7 +1403,8 @@ export class DetailRenderer {
       const h = this.hubs[i]!, x = (h.x - this.centerX) * this.scale + this.width / 2, half = el.offsetWidth / 2 || 40, line = el.offsetHeight || 18;
       let y = (h.y - this.centerY) * this.scale + this.height / 2 + h.radius + 4;
       for (let k = 0; k < placed.length; k++) { const [px, py, ph] = placed[k]!; if (Math.abs(px - x) < half + ph && Math.abs(py - y) < line) { y = py + line + 2; k = -1; } }
-      placed.push([x, y, half]); el.style.transform = `translate(-50%, 0) translate(${Math.round(x)}px, ${Math.round(y)}px)`;
+      // Placed labels, "+N more" and the hover label above keep their place: a hub label never lands on them.
+      el.hidden = taken.some(b => overlapsBox(x - half, y, 2 * half, line, b)); placed.push([x, y, half]); el.style.transform = `translate(-50%, 0) translate(${Math.round(x)}px, ${Math.round(y)}px)`;
     });
   }
   /** Where Group overview leads back to: the selection (or lens), its group and the camera. */

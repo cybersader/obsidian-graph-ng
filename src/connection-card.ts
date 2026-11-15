@@ -55,13 +55,19 @@ export function reach(focus: number, inc: Incidence, p: Columns, on: On, vis: Ar
 }
 /** One mask authority: base ego network, then explicit one-hop expansions in visit order.
  * Filter changes cannot retain an expansion disconnected from the anchor. Frontier counts are
- * distinct hidden neighbours, not parallel edges; excluded nodes/types never count. */
-export function neighbourhood(focus: number, hops: number, expanded: Set<number>, inc: Incidence, p: Columns, on: On, base: Uint8Array) {
+ * distinct hidden neighbours, not parallel edges; excluded nodes/types never count. A `shown` note
+ * (a travel target) joins alone, with the relationship-note dot that links it, only while it is
+ * adjacent to the region: travel reveals its target, never the traveller's other neighbours. */
+export function neighbourhood(focus: number, hops: number, expanded: Set<number>, inc: Incidence, p: Columns, on: On, base: Uint8Array, shown: Iterable<number> = []) {
   let budget = 200000; const scan = () => budget-- > 0;
   const result = reach(focus, inc, p, on, base, hops, 0, scan), mask = new Uint8Array(base.length), frontier = new Map<number, number>();
   for (const n of expanded) if (result.nodes.has(n)) {
     const more = reach(n, inc, p, on, base, 1, 0, scan); for (const v of more.nodes) result.nodes.add(v);
     result.truncated ||= more.truncated;
+  }
+  for (const t of shown) if (base[t] && !result.nodes.has(t)) {
+    const dots = new Map<number, number>();
+    neighbours(t, inc, p, on, base, (e, w, dot) => { if (dot) dots.set(e, w); else if (result.nodes.has(w)) { result.nodes.add(t); if (dots.has(e)) result.nodes.add(dots.get(e)!); } }, scan);
   }
   for (const n of result.nodes) mask[n] = 1;
   for (const n of result.nodes) {
@@ -235,10 +241,10 @@ export class ConnectionCard {
     open.append(button('Open', 'Open ' + name, act('open')), button('New tab', `Open ${name} in a new tab`, act('tab')), button('Right', `Open ${name} to the right`, act('split')));
     const actions = c.appendChild(el('div', '', 'graph-ng-card-actions')), tool = (icon: string, text: string, label: string, a: CardAction) => actions.appendChild(iconButton(icon, label, act(a), text, ''));
     tool('crosshair', 'Focus', `Focus here: fit ${name} and its direct connections`, 'focus');
+    // Expand shows only when something is hidden: never a disabled "+0".
     const hidden = h.frontier?.(n) ?? 0;
-    if (h.isolated()) {
-      const expand = tool('plus', `Expand +${hidden}`, `Add ${hidden} hidden neighbours of ${name}`, 'expand'); expand.disabled = !hidden; expand.className = 'graph-ng-count';
-    } else tool('network', 'Neighbourhood', 'Show neighbourhood of ' + name, 'isolate');
+    if (!h.isolated()) tool('network', 'Only connections', 'Show only connections of ' + name, 'isolate');
+    else if (hidden) tool('plus', 'Expand', `Add ${hidden} hidden neighbours of ${name}`, 'expand').append(el('span', '+' + hidden, 'graph-ng-count'));
     this.lensToggle = h.lensed ? tool('search', 'Lens', 'Connection lens for ' + name, 'lens') : undefined; this.syncLens();
     tool('link', 'Copy link', 'Copy link to ' + name, 'copy');
     const nav = c.appendChild(el('div', '', 'graph-ng-navigator'));
@@ -359,11 +365,11 @@ export class ConnectionCard {
 /** Persistent anchor, exact mask count, explicit reach and a single exit. */
 export function isolationBar(bar: HTMLElement, name: string, hops: number, count: number, expanded: number, partial: boolean, setHops: (hops: number) => void, clear: () => void) {
   bar.textContent = ''; if (!name) return;
-  const title = bar.appendChild(el('span', `Neighbourhood of ${name}, reach ${hops}, ${count.toLocaleString()} ${count === 1 ? 'node' : 'nodes'}`, 'graph-ng-count'));
+  const title = bar.appendChild(el('span', `Only connections of ${name}, reach ${hops}, ${count.toLocaleString()} ${count === 1 ? 'note' : 'notes'}`, 'graph-ng-count'));
   title.setAttribute('role', 'status');
-  const controls = bar.appendChild(el('div', '', 'graph-ng-reach')); controls.setAttribute('role', 'group'); controls.setAttribute('aria-label', 'Neighbourhood reach');
+  const controls = bar.appendChild(el('div', '', 'graph-ng-reach')); controls.setAttribute('role', 'group'); controls.setAttribute('aria-label', 'Reach');
   controls.append(el('span', 'Reach'));
   for (let h = 0; h <= 3; h++) { const b = controls.appendChild(button(String(h), `Reach ${h} hops`, () => setHops(h), 'graph-ng-count')); b.setAttribute('aria-pressed', String(h === hops)); }
   controls.append(closeButton(clear));
-  bar.append(el('small', partial ? 'Partial neighbourhood: scan limit reached' : expanded ? 'Expanded beyond reach. Change reach to reset.' : 'Expand a + badge to reveal hidden neighbours.'));
+  bar.append(el('small', partial ? 'Partial: scan limit reached' : expanded ? 'Expanded beyond reach. Change reach to reset.' : 'Expand a + badge to reveal hidden neighbours.'));
 }

@@ -534,17 +534,17 @@ test('neighbourhood: reach 0–3, additive expansion, anchored travel, filters a
   for (const name of ['Open', 'New tab', 'Right', 'Copy link']) control(card(), name).click();
   expect(opens).toEqual([['0.md', 'reuse'], ['0.md', 'tab'], ['0.md', 'split']]); expect(copies).toEqual(['0.md']);
   const before = { ...r.camera }; control(card(), 'Focus').click(); expect(r[k('flight')].to).not.toEqual(before);
-  control(card(), 'Neighbourhood').click();
-  expect([...r[k('filterVisible')]]).toEqual([1, 1, 0, 0, 1]); expect(bar().textContent).toContain('Neighbourhood of 0, reach 1, 3 nodes');
+  control(card(), 'Only connections').click();
+  expect([...r[k('filterVisible')]]).toEqual([1, 1, 0, 0, 1]); expect(bar().textContent).toContain('Only connections of 0, reach 1, 3 notes');
   control(bar(), 'Reach 2 hops').click(); expect([...r[k('filterVisible')]]).toEqual([1, 1, 1, 0, 1]);
   control(bar(), 'Reach 3 hops').click(); expect([...r[k('filterVisible')]]).toEqual([1, 1, 1, 1, 1]);
   control(bar(), 'Reach 0 hops').click(); expect([...r[k('filterVisible')]]).toEqual([1, 0, 0, 0, 0]);
   control(bar(), 'Reach 1 hops').click();
   // Travel within the region keeps its anchor and mask; hidden adjacent rows expand on demand.
   r[k('travel')](1); expect(r.selected).toBe(1); expect([...r[k('filterVisible')]]).toEqual([1, 1, 0, 0, 1]);
-  expect(r[k('frontier')].get(1)).toBe(1); expect(control(card(), 'Expand +1').disabled).toBe(false);
+  expect(r[k('frontier')].get(1)).toBe(1); expect(card().textContent).toContain('Expand+1');
   const camera = { ...r.camera }, positions = r.positions;
-  control(card(), 'Expand +1').click(); expect([...r[k('filterVisible')]]).toEqual([1, 1, 1, 0, 1]);
+  control(card(), 'Add 1 hidden neighbours of 1').click(); expect([...r[k('filterVisible')]]).toEqual([1, 1, 1, 0, 1]);
   expect(r.camera).toEqual(camera); expect(r.positions).toBe(positions); expect(r[k('isolation')].node).toBe(0);
   r[k('travel')](2); r[k('travel')](3); expect(r.selected).toBe(3); expect([...r[k('filterVisible')]]).toEqual([1, 1, 1, 1, 1]);
   control(bar(), 'Reach 1 hops').click(); expect(r.selected).toBe(0); expect(r[k('isolation')].expanded.size).toBe(0);
@@ -552,7 +552,7 @@ test('neighbourhood: reach 0–3, additive expansion, anchored travel, filters a
   r.setView(new Uint8Array([1, 1, 0, 1, 1]), {}); expect([...r[k('filterVisible')]]).toEqual([1, 1, 0, 0, 1]);
   control(bar(), 'Close').click(); expect([...r[k('filterVisible')]]).toEqual([1, 1, 0, 1, 1]); expect(bar().textContent).toBe('');
   expect(r[k('frontierBadges')]).toHaveLength(0);
-  control(card(), 'Neighbourhood').click(); r[k('keyDown')]({ key: 'Escape', target: r.canvas, preventDefault() {} }); expect(bar().textContent).not.toBe('');
+  control(card(), 'Only connections').click(); r[k('keyDown')]({ key: 'Escape', target: r.canvas, preventDefault() {} }); expect(bar().textContent).not.toBe('');
   r[k('keyDown')]({ key: 'Escape', target: r.canvas, preventDefault() {} }); expect(bar().textContent).toBe('');
 });
 test('neighbourhood frontier badges are bounded, clickable, text-only and independent of hover', async () => {
@@ -576,7 +576,35 @@ test('neighbourhood expansion refuses Canvas overflow before changing mask, anch
   const mask = r[k('filterVisible')], region = r[k('isolation')], frontier = r[k('frontier')];
   r[k('expandNeighbourhood')](1);
   expect(r[k('filterVisible')]).toBe(mask); expect(r[k('isolation')]).toBe(region); expect(r[k('frontier')]).toBe(frontier);
-  expect(r[k('isolationBar')].textContent).toContain('exceeds renderer limits');
+  expect(r[k('isolationBar')].textContent).toContain('Too many notes to draw');
+});
+test('Only connections refusal is detected by type: an unrelated error that merely mentions CANVAS_DETAIL_ still propagates', async () => {
+  const f = await graduated([[0, 1], [1, 2], [2, 3]]), { r, k } = f;
+  r.isolate(0, 1, false); const region = r[k('isolation')];
+  r[k('applyView')] = () => { throw new Error('CANVAS_DETAIL_ lookalike from another layer'); };
+  expect(() => r[k('expandNeighbourhood')](1)).toThrow('CANVAS_DETAIL_ lookalike');
+  expect(r[k('isolationBar')].textContent).not.toContain('Too many notes to draw'); expect(region.node).toBe(0);
+});
+test('Only connections card: Expand keeps the action-button classes, counts in a graph-ng-count span, and is absent when nothing is hidden', async () => {
+  const f = await graduated([[0, 1], [1, 2], [1, 3], [0, 4]]), { r, k } = f, card = () => r[k('noteCard')];
+  const expandButton = (): any => card().querySelectorAll('button').find((b: any) => b.textContent.startsWith('Expand'));
+  f.tap(0); control(card(), 'Only connections').click();
+  expect(expandButton()).toBeUndefined(); // the anchor shows every neighbour at reach 1
+  r[k('travel')](1); const expand = expandButton(), focus: any = control(card(), 'Focus');
+  expect(expand.className).toBe(focus.className); expect(expand.attributes['aria-label']).toBe('Add 2 hidden neighbours of 1');
+  expect(expand.children.map((c: any) => [c.className, c.textContent])).toEqual([['graph-ng-card-icon', ''], ['', 'Expand'], ['graph-ng-count', '+2']]);
+  expand.click(); expect([...r[k('filterVisible')]]).toEqual([1, 1, 1, 1, 1]);
+  r[k('travel')](2); r[k('travel')](1); expect(r.selected).toBe(1); expect(expandButton()).toBeUndefined(); // fully revealed: no "+0"
+});
+test('Only connections travel reveals only the hidden target, never the other hidden neighbours of the current note', async () => {
+  const f = await graduated([[0, 1], [1, 2], [1, 3], [0, 4]]), { r, k } = f, bar = () => r[k('isolationBar')];
+  f.tap(0); r.isolate(0, 1, false); r[k('travel')](1); expect([...r[k('filterVisible')]]).toEqual([1, 1, 0, 0, 1]);
+  r[k('travel')](2); expect(r.selected).toBe(2); expect([...r[k('filterVisible')]]).toEqual([1, 1, 1, 0, 1]);
+  expect(r[k('frontier')].get(1)).toBe(1); expect(r[k('isolation')].node).toBe(0); expect(r[k('isolation')].expanded.size).toBe(0);
+  expect(bar().textContent).toContain('Only connections of 0, reach 1, 4 notes');
+  // Changing reach drops travel reveals; a jump to a note that does not touch the region exits.
+  control(bar(), 'Reach 0 hops').click(); expect([...r[k('filterVisible')]]).toEqual([1, 0, 0, 0, 0]); expect(r[k('isolation')].shown).toEqual([]);
+  r[k('travel')](3); expect(r[k('isolation')]).toBeUndefined(); expect(r.selected).toBe(3); expect([...r[k('filterVisible')]]).toEqual([1, 1, 1, 1, 1]);
 });
 test('hub navigator auto-opens a lone section, collapses on demand and pages each group by 50', async () => {
   const pairs: [number, number][] = Array.from({ length: 60 }, (_, i) => [0, i + 1]);
@@ -997,7 +1025,7 @@ test('docked card: a fixed right-edge panel that never moves with the camera; la
   expect(head.children[3].children[0].dataset.icon).toBe('x');
   // One segmented Open control, then the icon+label grid.
   const open = root.children.find((c: any) => c.className === 'graph-ng-card-open'); expect(open.attributes.role).toBe('group'); expect(open.children.map((b: any) => b.textContent)).toEqual(['Open', 'New tab', 'Right']);
-  expect(root.children.find((c: any) => c.className === 'graph-ng-card-actions').children.map((b: any) => b.textContent)).toEqual(['Focus', 'Neighbourhood', 'Lens', 'Copy link']);
+  expect(root.children.find((c: any) => c.className === 'graph-ng-card-actions').children.map((b: any) => b.textContent)).toEqual(['Focus', 'Only connections', 'Lens', 'Copy link']);
   // Panning and zooming never move the card.
   r[k('pointerDown')]({ pointerId: 1, button: 0, clientX: 300, clientY: 300 }); r[k('pointerMove')]({ pointerId: 1, clientX: 120, clientY: 210 }); r[k('pointerUp')]({ pointerId: 1, clientX: 120, clientY: 210 });
   r.setCamera(r.camera.x + .2, r.camera.y - .1, r.camera.ratio * .5); r[k('placeOverlay')]();
@@ -1056,7 +1084,9 @@ test('docked card: Only connections, Lens and path cards share the dock; labels 
   root.offsetWidth = 320; root.offsetHeight = 260;
   const dock = () => { r[k('placeOverlay')](); return root.style.transform; };
   f.tap(0); const at = dock(); expect(at).toBe('translate(472px, 8px)');
-  control(root, 'Neighbourhood').click(); expect(r[k('isolation')]).toBeDefined(); expect(dock()).toBe(at); expect(control(root, 'Expand +0').disabled).toBe(true);
+  control(root, 'Only connections').click(); expect(r[k('isolation')]).toBeDefined(); expect(dock()).toBe(at);
+  // The anchor has no hidden neighbours at reach 1: no Expand at all, never a disabled "+0".
+  expect(root.querySelectorAll('button').some((b: any) => b.textContent.startsWith('Expand'))).toBe(false);
   control(root, 'Lens').click(); expect(r.lensNode).toBe(0); expect(dock()).toBe(at);
   r.isolate(-1); r.setLens(-1);
   const shift = (n: number) => { const { x, y } = r.screenPoint(n), e = { pointerId: 1, clientX: x, clientY: y, pointerType: 'mouse', shiftKey: true }; r[k('pointerDown')](e); r[k('pointerUp')](e); };
@@ -1187,6 +1217,19 @@ test('review: relationship menu retains endpoint actions when optional carrier l
   await Bun.sleep(0);
   expect(menus[0]!.map(e => e.id)).toEqual(['menu-source', 'menu-target']);
   menus[0]![1].run(); expect(r.selected).toBe(1);
+});
+
+test('a collapsed-group hub label never lands on the hover label', async () => {
+  const f = await graduated([[0, 1], [1, 2], [2, 3]]), { r, k } = f;
+  r.setView(new Uint8Array(5).fill(1), { groupCodes: new Uint32Array([0, 1, 1, 0, 0]), groupLabels: ['Ends', 'Middle'], collapsed: new Uint8Array([0, 1]) });
+  f.hover(0); r[k('placeOverlay')]();
+  const hover = r[k('hoverLabel')], label = r[k('hubLabels')][0], hub = r[k('hubs')][0];
+  expect(hover.hidden).toBe(false); expect(hover.textContent).not.toBe('');
+  const [x, y] = hover.style.transform.match(/-?[\d.]+/g).map(Number), scale = r[k('scale')];
+  // Move the hub so its centred label (below the disc) would sit on the hover label, then away again.
+  const put = (sx: number, sy: number) => { hub.x = r[k('centerX')] + (sx - r[k('width')] / 2) / scale; hub.y = r[k('centerY')] + (sy - hub.radius - 4 - r[k('height')] / 2) / scale; r[k('placeOverlay')](); };
+  put(x + 10, y + 2); expect(hover.hidden).toBe(false); expect(label.hidden).toBe(true);
+  put(x + 10, y + 200); expect(label.hidden).toBe(false);
 });
 
 test('review: collapsing an inner path note clears its path, not just paths with hidden endpoints', async () => {
