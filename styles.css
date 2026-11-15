@@ -363,4 +363,4 @@
 .graph-ng-frontier { position:absolute; left:0; top:0; min-width:32px; height:32px; text-align:center; font-size:var(--font-ui-small); padding:2px 4px; pointer-events:auto; border:1px solid var(--interactive-accent); border-radius:16px; background:var(--background-primary); color:var(--text-normal); z-index:1; }
 .graph-ng-frontier[hidden] { display:none; }
 
-.graph-ng-isolation > .graph-ng-count { text-align:left; white-space:normal; font-size:var(--font-ui-small); color:var(--text-normal); line-height:1.4; }
+.graph-ng-isolation > .graph-ng-count { text-align:left; white-space:normal; overflow-wrap:anywhere; font-size:var(--font-ui-small); color:var(--text-normal); line-height:1.4; }

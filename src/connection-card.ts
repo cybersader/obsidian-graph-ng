@@ -359,7 +359,7 @@ export class ConnectionCard {
 /** Persistent anchor, exact mask count, explicit reach and a single exit. */
 export function isolationBar(bar: HTMLElement, name: string, hops: number, count: number, expanded: number, partial: boolean, setHops: (hops: number) => void, clear: () => void) {
   bar.textContent = ''; if (!name) return;
-  const title = bar.appendChild(el('span', `Neighbourhood of ${name}, reach ${hops}, ${count.toLocaleString()} nodes`, 'graph-ng-count'));
+  const title = bar.appendChild(el('span', `Neighbourhood of ${name}, reach ${hops}, ${count.toLocaleString()} ${count === 1 ? 'node' : 'nodes'}`, 'graph-ng-count'));
   title.setAttribute('role', 'status');
   const controls = bar.appendChild(el('div', '', 'graph-ng-reach')); controls.setAttribute('role', 'group'); controls.setAttribute('aria-label', 'Neighbourhood reach');
   controls.append(el('span', 'Reach'));
