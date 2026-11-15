@@ -243,3 +243,20 @@
 .graph-ng-find-status:empty { display:none; }
 .graph-ng-find-status, .graph-ng-find-keys { color:var(--text-muted); padding:0 6px; }
 .graph-ng-find-ring { position:absolute; left:0; top:0; z-index:2; width:32px; height:32px; border:3px solid var(--interactive-accent); border-radius:50%; pointer-events:none; }
+
+/* Orientation: visited-notes trail, minimap, zoom-out clamp and the way back from Group overview. */
+.graph-ng-top { position:absolute; left:50%; top:8px; transform:translateX(-50%); display:flex; flex-direction:column; align-items:center; gap:6px; max-width:calc(100% - 16px); pointer-events:none; }
+.graph-ng-top .graph-ng-isolation { position:static; transform:none; max-width:100%; }
+.graph-ng-crumbs { pointer-events:auto; max-width:100%; overflow-x:auto; }
+.graph-ng-crumbs[hidden], .graph-ng-minimap[hidden], .graph-ng-zoom-chip[hidden] { display:none; }
+.graph-ng-crumbs ol { display:flex; align-items:center; gap:2px; margin:0; padding:0; list-style:none; }
+.graph-ng-crumbs li { display:flex; align-items:center; flex:none; }
+.graph-ng-crumbs li + li::before { content:'\203A'; padding:0 4px; color:var(--text-faint); }
+.graph-ng-crumb { min-height:32px; max-width:140px; padding:0 10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; border-radius:16px; font-size:var(--font-ui-smaller); background:color-mix(in srgb, var(--background-primary) 88%, transparent); border:1px solid var(--background-modifier-border); }
+.graph-ng-crumb[aria-current] { background:var(--interactive-accent); color:var(--text-on-accent); }
+.graph-ng-minimap { position:absolute; right:8px; bottom:8px; width:160px; height:120px; pointer-events:auto; background:color-mix(in srgb, var(--background-primary) 88%, transparent); border:1px solid var(--background-modifier-border); border-radius:var(--radius-s, 4px); overflow:hidden; cursor:crosshair; }
+.graph-ng-minimap canvas { display:block; width:160px; height:120px; touch-action:none; }
+.graph-ng-minimap:focus-visible { outline:2px solid var(--interactive-accent); }
+.graph-ng-zoom-chip { position:absolute; left:50%; bottom:12px; transform:translateX(-50%); display:flex; align-items:center; gap:8px; pointer-events:auto; padding:4px 4px 4px 12px; font-size:var(--font-ui-small); background:var(--background-primary); border:1px solid var(--background-modifier-border); border-radius:16px; }
+.graph-ng-zoom-chip button, .graph-ng-back-chip { min-height:32px; border-radius:16px; }
+.graph-ng-back-chip { position:absolute; left:8px; top:8px; }

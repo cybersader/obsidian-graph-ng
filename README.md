@@ -488,6 +488,15 @@ Select a note, then **Shift-click** a second note (or right-click it and choose 
 
 The search is a pure bidirectional BFS on the incident-edge index (`src/path-finder.ts`); it runs once per request, never per frame. WebGL and Canvas draw the same path strokes; the rings and badges are DOM overlays. Evidence: `tests/path-finder.test.ts` and the compiled-renderer path test in `tests/physics-transaction.test.ts`; native visual and screen-reader acceptance are pending. Known gaps: there is no keyboard-only way to choose the second note yet (it needs the right-click menu or search stream), and the path follows the hover-highlight switch.
 
+### Orientation: zoom limit, minimap and visited-notes trail (unreleased)
+
+- **Zoom out without the cliff:** with a note selected or the lens on, zooming out with the wheel or a pinch stops at the Group overview threshold (`lodZoomRatio`) instead of switching. A chip says **Zoomed all the way out** with a **Group overview** button. With nothing selected the wheel switches as before.
+- **Back from Group overview:** opening Group overview from Notes with a selected (or lensed) note rings that note's group and shows **Back to** followed by the note name, which reopens Notes with the same note, card and camera.
+- **Minimap** (`visuals.minimap`, on): a 160×120 corner overview of where the notes are, with the current view as a rectangle and the focus and its direct connections as dots. Click or drag it to move the view. It is focusable: arrow keys pan and Home fits all. Hidden when the canvas is under 500 px wide. The density image is rebuilt only after positions or filters change and settle (O(notes)), never per frame.
+- **Visited-notes trail** (`visuals.breadcrumb`, on): chips for the last 8 visited notes along the top edge, joined by chevrons. It reads the connection card's own history (closing the card clears it, as before); a chip travels there, and Alt+Left/Right still step.
+
+Both toggles are under Appearance → Finding connections. Evidence: `tests/orientation.test.ts` (clamp, minimap mapping and density, trail model) and the compiled-renderer orientation test in `tests/physics-transaction.test.ts`; native visual and screen-reader acceptance are pending.
+
 ### Resolution-change candidate (unverified)
 
 The next detail paint reconciles a changed device-pixel ratio even when the CSS box did not resize. This preserves CSS geometry, semantic colors and layout; it does not establish the cause of scale-dependent color shifts or guarantee all-scale crispness. The optional `probe:zoom` local synthetic harness compares fixed coordinates at far/small-step/mid/near zoom on actual WebGL and bounded Canvas with DPR 1→2, records backend/backing resolution and screenshots, and requires separate runtime authorization. Source authoring is not execution or native/live-tab evidence.

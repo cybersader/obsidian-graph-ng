@@ -232,6 +232,7 @@ export default class GraphPlugin extends Plugin {
     delete this.generations[declarationHash]; await this.save();
   }
 }
+type ReturnPoint = NonNullable<ReturnType<DetailRenderer['returnPoint']>> & { projection: unknown };
 export class GraphView extends ItemView {
   private renderer?: Renderer;
   private unsubscribe?: () => void;
@@ -296,6 +297,9 @@ export class GraphView extends ItemView {
   private detailScope?: Uint8Array;
   private scopeName = 'Selected group';
   private pendingCamera?: ViewCamera;
+  /** Focus to return to from Group overview ("Back to" chip), bound to the projection it indexes. */
+  private returnTo?: ReturnPoint;
+  private pendingFocus?: ReturnPoint;
   private body!: HTMLElement;
   private gpu = { available: false, reason: 'Not probed' };
   readonly startupTrace: { revision: number; start: number; groupsAt: number; drawMs: number; firstGroupMs: number }[] = [];
@@ -335,7 +339,7 @@ export class GraphView extends ItemView {
           }
           this.detailScope = undefined; mode = 'nodes';
         }
-        if (mode !== this.contentEl.dataset.mode) { if (mode === 'groups') this.showGroups(); else return this.showDetails(); }
+        if (mode !== this.contentEl.dataset.mode) { if (mode === 'groups') this.toGroups(); else return this.showDetails(); }
       },
       previewSizing: values => { if (values && !this.detailRenderer) throw new Error('Open a node graph first'); this.detailRenderer?.previewSizing(values); },
       sizingReadout: () => this.detailRenderer?.sizingReadout() ?? 'Open a node graph to inspect actual radii.',
@@ -481,6 +485,11 @@ export class GraphView extends ItemView {
       if (!current()) { this.plugin.adapter.invalidate(); this.plugin.ingestedHash = ''; this.contentEl.dataset.verified = 'false'; }
     }
   }
+  /** Group overview from Notes: remember the held focus so its group is ringed and a chip leads back. */
+  private toGroups() {
+    const back = this.contentEl.dataset.mode === 'nodes' ? this.detailRenderer?.returnPoint() : undefined;
+    this.returnTo = back && { ...back, projection: this.projection }; this.showGroups();
+  }
   showGroups(preserveSelection = false) {
     if (!preserveSelection) this.contributionPage.clear();
     this.renderRevision++;
@@ -488,7 +497,8 @@ export class GraphView extends ItemView {
     this.renderer?.dispose(); this.detailRenderer = undefined; this.stage.empty(); this.panel.empty();
     const projection = this.groupGraph, generation = this.groupGeneration, source = this.viewSource; if (!projection) return;
     const settings = this.plugin.settings, pages = groupPages(projection, settings.groupCanvasPageSize);
-    let canvasPage = 0;
+    const back = this.returnTo?.projection === this.projection ? this.returnTo : undefined, ring = back?.group === undefined ? undefined : String(back.group);
+    let canvasPage = Math.max(0, Math.floor(projection.groups.findIndex(g => g.id === ring) / settings.groupCanvasPageSize));
     const canvasControls = this.panel.createDiv({ cls: 'graph-ng-canvas-pager' });
     const previous = canvasControls.createEl('button', { text: 'Previous canvas groups' });
     const label = canvasControls.createSpan();
@@ -497,7 +507,8 @@ export class GraphView extends ItemView {
     const draw = () => {
       this.renderer?.dispose(); this.stage.empty();
       const selected = pages.canvas(canvasPage);
-      this.renderer = new GroupRenderer(this.stage, selected, settings, id => this.drill(id), edge => this.edgeList(edge, projection, generation, source), id => this.groupColor(Number(id)));
+      this.renderer = new GroupRenderer(this.stage, selected, settings, id => this.drill(id), edge => this.edgeList(edge, projection, generation, source), id => this.groupColor(Number(id)), ring);
+      if (back) this.stage.createEl('button', { cls: 'graph-ng-back-chip', text: 'Back to ' + back.name }).onclick = () => { this.pendingCamera = back.camera; this.pendingFocus = back; void this.showDetails(); };
       previous.disabled = canvasPage === 0; next.disabled = (canvasPage + 1) * settings.groupCanvasPageSize >= projection.groups.length;
       label.textContent = ` Canvas groups ${canvasPage * settings.groupCanvasPageSize + 1}–${Math.min((canvasPage + 1) * settings.groupCanvasPageSize, projection.groups.length)} / ${projection.groups.length} `;
       this.contentEl.dataset.canvasGroups = String(selected.groups.length);
@@ -847,13 +858,13 @@ export class GraphView extends ItemView {
   private detailVisible() { return this.detailScope ? this.visible?.map((v, i) => v & this.detailScope![i]!) : this.visible; }
   async showDetails(bits = this.detailVisible(), clearPanel = true) {
     if (!this.projection || !this.positions || !bits) { new Notice('Individual nodes are not ready; the group graph remains usable.'); return; }
-    const renderRevision = ++this.renderRevision; this.contentEl.dataset.mode = 'nodes-building';
+    const renderRevision = ++this.renderRevision; this.contentEl.dataset.mode = 'nodes-building'; this.returnTo = undefined;
     try {
       if (this.gpu.reason === 'Not probed') this.gpu = await this.plugin.pipeline.request<typeof this.gpu | undefined>(this.activeRevision, { kind: 'gpu' }) ?? gpuStatus();
       if (renderRevision !== this.renderRevision || this.closed) return;
       if (!this.admitDetail(bits)) { this.contentEl.dataset.mode = 'groups'; return; }
       this.renderer?.dispose(); this.stage.empty(); if (clearPanel) { this.contributionPage.clear(); this.panel.empty(); }
-      this.detailRenderer = await DetailRenderer.create(this.stage, this.projection, this.positions, bits, this.plugin.settings, i => this.openPath(renderPath(this.projection!, i)), () => this.showGroups(), this.colors!, () => renderRevision === this.renderRevision, !this.gpu.available, () => {
+      this.detailRenderer = await DetailRenderer.create(this.stage, this.projection, this.positions, bits, this.plugin.settings, i => this.openPath(renderPath(this.projection!, i)), () => this.toGroups(), this.colors!, () => renderRevision === this.renderRevision, !this.gpu.available, () => {
         if (renderRevision !== this.renderRevision || this.closed) return;
         this.gpu = { available: false, reason: 'WebGL context could not be restored' };
         this.showGroups(); void this.showDetails(bits, clearPanel);
@@ -870,6 +881,7 @@ export class GraphView extends ItemView {
       this.detailRenderer.onMoreConnections = focus => this.detailRenderer?.showConnections(focus);
       this.detailRenderer.onHub = group => { const key = this.explored?.groupKeys[group]; if (key !== undefined) this.setView({ ...this.view, collapsedGroups: this.view.collapsedGroups.filter(k => k !== key) }, () => this.focusGroup(group)); };
       if (this.pendingCamera) { const c = this.pendingCamera; this.pendingCamera = undefined; this.detailRenderer.flyTo(c.x, c.y, c.ratio); }
+      const f = this.pendingFocus; this.pendingFocus = undefined; if (f?.projection === this.projection) this.detailRenderer.focusNote(f.node, f.lens);
       this.explorePanel?.render();
     } catch (e) { if (renderRevision !== this.renderRevision) return; this.gpu = { available: false, reason: String(e) }; this.showGroups(); this.statusText = [this.statusText, 'GPU unavailable; group fallback active.'].filter(Boolean).join(' '); }
   }

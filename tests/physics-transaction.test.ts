@@ -5,6 +5,7 @@ import { defaults } from '../src/settings';
 import { encodeStrings } from '../src/core/columns';
 import { ControlElement, control } from './support/controls-dom';
 import { focusTiers, incidentEdges } from '../src/render-data';
+import { miniFit, toCamera } from '../src/minimap';
 
 // Actual production classes; the DOM/driver seam does not establish native rendering/performance.
 const source = readFileSync(new URL('../main.js', import.meta.url), 'utf8');
@@ -877,4 +878,33 @@ test('context menu: right-click on a note, a line and empty canvas shows the reg
   menus[1]!.run('menu-target'); expect(r.selected).toBe(2);
   await Bun.sleep(850); await right(EMPTY); expect(menus[2]!.ids).toEqual(['menu-fit', 'menu-clear']);
   menus[2]!.run('menu-clear'); expect(r.selected).toBe(-1);
+});
+test('orientation: a held focus clamps wheel and pinch zoom-out with a Group overview chip; breadcrumb and minimap travel', async () => {
+  const f = await graduated([[0, 1], [1, 2], [2, 3]], 4), { r, k } = f, chip = r[k('limitChip')], crumbs = r[k('crumbTrail')].root, mini = r[k('miniMap')].root, limit = f.settings.lodZoomRatio;
+  let overviews = 0; r[k('onZoomOut')] = () => { overviews++; };
+  const wheel = () => r.input.wheel({ preventDefault() {}, deltaY: 1000, clientX: 400, clientY: 300 });
+  f.tap(0); for (let i = 0; i < 6; i++) wheel();
+  expect(overviews).toBe(0); expect(r.camera.ratio).toBeCloseTo(limit); r[k('placeOverlay')](); expect(chip.hidden).toBe(false);
+  control(chip, 'Group overview').click(); expect(overviews).toBe(1);
+  // Pinch out with a focus also stops at the threshold.
+  r.setCamera(r.camera.x, r.camera.y, 1); r[k('pointerDown')]({ pointerId: 1, button: 0, clientX: 300, clientY: 300 }); r[k('pointerDown')]({ pointerId: 2, button: 0, clientX: 500, clientY: 300 });
+  r[k('pointerMove')]({ pointerId: 2, clientX: 310, clientY: 300 }); expect(r.camera.ratio).toBeCloseTo(limit); expect(overviews).toBe(1);
+  r[k('pointerUp')]({ pointerId: 2, clientX: 310, clientY: 300 }); r[k('pointerUp')]({ pointerId: 1, clientX: 300, clientY: 300 });
+  // The card history drives the breadcrumb; a chip travels back.
+  const row = (name: string) => r[k('noteCard')].querySelectorAll('button').find((b: any) => b.textContent === name);
+  r.setCamera(.5, .5, 1); row('1').click(); row('2').click(); r[k('placeOverlay')]();
+  expect(crumbs.hidden).toBe(false); expect(crumbs.querySelectorAll('button').map((b: any) => [b.textContent, b.getAttribute('aria-current')])).toEqual([['0', null], ['1', null], ['2', 'location']]);
+  control(crumbs, '0').click(); expect(r.selected).toBe(0); r[k('placeOverlay')](); expect(crumbs.querySelectorAll('button')[0].getAttribute('aria-current')).toBe('location');
+  f.settings.visuals.breadcrumb = false; r[k('placeOverlay')](); expect(crumbs.hidden).toBe(true);
+  // Minimap: shown on wide canvases; a click centres the camera on that point.
+  expect(mini.hidden).toBe(false);
+  const canvas = mini.children[0], frame = r[k('cameraFrame')], fit = miniFit(frame, 160, 120);
+  canvas.listeners.get('pointerdown')({ button: 0, pointerId: 3, clientX: 400, clientY: 300 });
+  const [x, y] = toCamera(frame, fit, 80, 60); expect(r.camera.x).toBeCloseTo(x); expect(r.camera.y).toBeCloseTo(y);
+  mini.listeners.get('keydown')({ key: 'ArrowRight', preventDefault() {}, stopPropagation() {} }); expect(r.camera.x).toBeGreaterThan(x);
+  r[k('width')] = 400; r[k('placeOverlay')](); expect(mini.hidden).toBe(true);
+  r[k('width')] = 800; f.settings.visuals.minimap = false; r[k('placeOverlay')](); expect(mini.hidden).toBe(true);
+  // Nothing selected: the wheel hands over to Group overview as before.
+  r[k('keyDown')]({ key: 'Escape', target: r.canvas, preventDefault() {} }); expect(r.selected).toBe(-1); r[k('placeOverlay')](); expect(chip.hidden).toBe(true);
+  r.setCamera(.5, .5, 1); wheel(); expect(overviews).toBe(2);
 });

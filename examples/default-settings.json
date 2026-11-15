@@ -150,7 +150,9 @@
     "tierLegend": true,
     "clickOpens": false,
     "bridgesFirst": true,
-    "hoverDwellMs": 350
+    "hoverDwellMs": 350,
+    "minimap": true,
+    "breadcrumb": true
   },
   "explore": {
     "panelOpen": true,

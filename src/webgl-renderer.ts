@@ -15,6 +15,9 @@ import { Interaction, type RendererControls } from './interaction';
 import type { MenuPresenter } from './context-menu';
 import { highlightOverlay, paintLegend } from './overlays';
 import { findPath, alternatePath, hopRows, pathNotes, OUTCOME, MAX_ALTERNATES, MAX_HOPS, type Hop } from './path-finder';
+import { Minimap, MINIMAP_MIN_CANVAS } from './minimap';
+import { Breadcrumb } from './breadcrumb';
+import { zoomStep, atZoomLimit, zoomChip } from './zoom-limit';
 /** Hard DOM bound for graduated focus labels, under `labelsMaxPerViewport`. */
 const FOCUS_LABELS = 64;
 /** Selection ripple length (ms), and the inset of off-screen pips from the view border (CSS px). */
@@ -362,6 +365,10 @@ export class DetailRenderer {
   private pathView?: { from: number; to: number; found: Hop[][]; hops: Hop[]; edges: number[]; note: string };
   /** Two endpoint rings, then numbered hop badges (at most MAX_HOPS). */
   private pathMarks: HTMLElement[] = [];
+  /** Orientation overlays: corner minimap, visited-notes trail and the zoom-out clamp chip. */
+  private miniMap: Minimap;
+  private crumbTrail: Breadcrumb;
+  private limitChip: HTMLElement;
   static async create(container: HTMLElement, p: RenderProjection, positions: Float32Array, visible: Uint8Array, settings: Settings, onNode: (i: number) => void, onZoomOut: () => void, colors: Uint32Array, current = () => true, software = false, onUnavailable = onZoomOut, view: RenderView = {}) {
     await yieldTask(); if (!current()) throw new Error('Renderer superseded');
     let renderer: DetailRenderer | undefined;
@@ -395,7 +402,9 @@ export class DetailRenderer {
     this.hoverLabel = this.overlay.appendChild(Object.assign(document.createElement('div'), { className: 'graph-ng-hover-label' }));
     const div = (className: string) => this.overlay.appendChild(Object.assign(document.createElement('div'), { className }));
     this.cueLine = div('graph-ng-cue-line'); this.cueRing = div('graph-ng-cue'); this.cueLine.hidden = this.cueRing.hidden = true;
-    this.isolationBar = div('graph-ng-isolation');
+    const top = div('graph-ng-top'); this.crumbTrail = new Breadcrumb(top, n => this.name(n), by => this.card.step(by));
+    this.isolationBar = top.appendChild(Object.assign(document.createElement('div'), { className: 'graph-ng-isolation' }));
+    this.miniMap = new Minimap(this.overlay, this.cameraFrame, (x, y) => this.setCamera(x, y, this.camera.ratio), () => this.fitAll()); this.limitChip = zoomChip(this.overlay, () => this.onZoomOut());
     this.noteCard = div('graph-ng-card'); this.card = new ConnectionCard(this.noteCard, this.cardHost());
     const input = this.input = new Interaction(this.controls());
     ({ pointerDown: this.pointerDown, pointerMove: this.pointerMove, pointerUp: this.pointerUp, pointerLeave: this.pointerLeave, keyDown: this.keyDown } = input);
@@ -1227,6 +1236,9 @@ export class DetailRenderer {
       if (show) { const p = this.screenPoint(ego); this.moreButton.style.opacity = String(focus); this.moreButton.style.transform = `translate(${Math.round(p.x + at.dx)}px, ${Math.round(p.y + at.dy)}px) translateY(-50%)`; }
     }
     this.placeCard(radius); this.placePath(radius, focus);
+    this.limitChip.hidden = !(this.holdsFocus() && atZoomLimit(this.camera.ratio, s.lodZoomRatio));
+    this.crumbTrail.update(v.breadcrumb, this.card.history);
+    this.miniMap.update({ on: v.minimap && this.width >= MINIMAP_MIN_CANVAS, positions: this.display, visible: this.visible, cx: this.camera.x, cy: this.camera.y, worldW: this.width / this.scale, worldH: this.height / this.scale, focus: this.focusNode, directs: this.directs, ink: this.theme.text, accent: this.theme.accent });
     // Greedy vertical nudge keeps coincident hub labels legible (hubs are bounded).
     const placed: [number, number, number][] = [];
     this.hubLabels.forEach((el, i) => {
@@ -1235,6 +1247,17 @@ export class DetailRenderer {
       for (let k = 0; k < placed.length; k++) { const [px, py, ph] = placed[k]!; if (Math.abs(px - x) < half + ph && Math.abs(py - y) < line) { y = py + line + 2; k = -1; } }
       placed.push([x, y, half]); el.style.transform = `translate(-50%, 0) translate(${Math.round(x)}px, ${Math.round(y)}px)`;
     });
+  }
+  private holdsFocus() { return this.selected >= 0 || this.lensWanted >= 0; }
+  /** Where Group overview leads back to: the selection (or lens), its group and the camera. */
+  returnPoint() {
+    const n = this.lensWanted >= 0 ? this.lensWanted : this.selected;
+    return n < 0 ? undefined : { node: n, name: this.name(n), group: this.view.groupCodes?.[n], lens: this.lensWanted === n, camera: { ...this.camera } };
+  }
+  /** Select a note and show its card, optionally with the lens (Back from Group overview). */
+  focusNote(n: number, lens = false) {
+    if (!(n >= 0 && n < this.visible.length && this.filterVisible[n])) return;
+    this.selectNote(n, true); if (lens) this.setLens(n);
   }
   private updateLegend() { paintLegend(this.legendRows, this.legendCounts, this.tierMask, this.tierTotals); }
   /** Keep the zoom; centre the note. */
@@ -1384,10 +1407,11 @@ export class DetailRenderer {
       setCamera: (x, y, ratio) => this.setCamera(x, y, ratio),
       flyTo: (x, y, ratio, ms) => this.flyTo(x, y, ratio, ms),
       panBy: (dx, dy) => this.setCamera(this.camera.x - dx / this.scale / this.cameraFrame.width, this.camera.y - dy / this.scale / this.cameraFrame.height, this.camera.ratio),
-      zoomAt: (factor, x, y) => {
-        this.flight = undefined; const before = this.scale;
-        this.camera.ratio = this.clampRatio(this.camera.ratio * factor);
-        this.camera.x += (x / before - x / this.scale) / this.cameraFrame.width; this.camera.y += (y / before - y / this.scale) / this.cameraFrame.height; this.refresh(); if (this.camera.ratio >= this.settings.lodZoomRatio) this.onZoomOut();
+      zoomAt: (factor, x, y, pinch) => {
+        // A held focus (selection or lens) clamps at the overview threshold instead of leaving the notes.
+        this.flight = undefined; const before = this.scale, s = this.settings, step = zoomStep(this.camera.ratio, factor, s.cameraMinRatio, s.cameraMaxRatio, s.lodZoomRatio, this.holdsFocus());
+        this.camera.ratio = step.ratio;
+        this.camera.x += (x / before - x / this.scale) / this.cameraFrame.width; this.camera.y += (y / before - y / this.scale) / this.cameraFrame.height; this.refresh(); if (step.overview && !pinch) this.onZoomOut();
       },
       setLens: n => this.setLens(n),
       toggleLens: () => this.toggleLens(),
@@ -1416,7 +1440,7 @@ export class DetailRenderer {
   };
   dispose() { clearTimeout(this.sizingTimer);
     if (this.disposed) return; this.disposed = true; this.labelsRevision++; clearTimeout(this.restoreTimer); this.restoreTimer = undefined; cancelAnimationFrame(this.frameId); clearTimeout(this.frameTimer); this.frameTimer = undefined; this.observer.disconnect(); this.media.removeEventListener('change', this.refreshTheme);
-    this.input.detach(this.container);
+    this.input.detach(this.container); this.miniMap.dispose();
     this.canvas.removeEventListener('webglcontextlost', this.contextLost); this.canvas.removeEventListener('webglcontextrestored', this.contextRestored);
     const gl = this.gl; if (gl && !this.lost) { for (const p of this.programs) gl.deleteProgram(p.handle); for (const b of [...this.buffers, ...this.labelBuffers, ...this.discBuffers]) if (b) gl.deleteBuffer(b); for (const v of [...this.vaos, ...this.labelVaos]) gl.deleteVertexArray(v); for (const t of this.textures) gl.deleteTexture(t); }
     gl?.getExtension('WEBGL_lose_context')?.loseContext();

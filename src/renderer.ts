@@ -23,7 +23,7 @@ export class GroupRenderer implements Renderer {
   private media = matchMedia('(prefers-color-scheme: dark)');
   private base: Settings;
   constructor(private container: HTMLElement, private p: GroupProjection, private s: Settings,
-    private onGroup: (id: string) => void, private onEdge: (edge: GroupProjection['groupEdges'][number]) => void, private colorOf?: (id: string) => string) {
+    private onGroup: (id: string) => void, private onEdge: (edge: GroupProjection['groupEdges'][number]) => void, private colorOf?: (id: string) => string, private ring?: string) {
     this.base = s; this.refreshTheme();
     this.media.addEventListener('change', this.refreshTheme);
     this.canvas = document.createElement('canvas'); this.canvas.className = 'graph-ng-groups'; this.canvas.setAttribute('aria-label', 'Declared groups and counted relationships'); container.append(this.canvas);
@@ -98,6 +98,8 @@ export class GroupRenderer implements Renderer {
       const r = this.radii.get(g.id)!, fill = fills.get(g.id)!;
       ctx.save(); if (dark && this.s.visuals.glow > 0) { ctx.shadowColor = fill; ctx.shadowBlur = 28 * this.s.visuals.glow; }
       ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fillStyle = fill; ctx.fill(); ctx.restore();
+      // The group of the focus you came from (Back to chip).
+      if (g.id === this.ring) { ctx.beginPath(); ctx.arc(p.x, p.y, r + 6, 0, Math.PI * 2); ctx.strokeStyle = this.s.textColor; ctx.lineWidth = 3; ctx.stroke(); }
       ctx.beginPath(); ctx.arc(p.x, p.y, r - 1.5, 0, Math.PI * 2); ctx.strokeStyle = bg; ctx.globalAlpha = .35; ctx.lineWidth = 2; ctx.stroke(); ctx.globalAlpha = 1;
       ctx.font = `600 ${this.s.labelSize}px sans-serif`; ctx.textAlign = 'center';
       const countLabel = `${g.count.toLocaleString()} members`, maxWidth = Math.min(180, w / Math.max(2, Math.ceil(Math.sqrt(this.p.groups.length))) - 12);

@@ -51,8 +51,9 @@ export interface RendererControls {
   flyTo(x: number, y: number, ratio: number, ms?: number): void;
   /** Drag the view by a screen delta. */
   panBy(dx: number, dy: number): void;
-  /** Wheel zoom by `factor` about a point given relative to the view centre; may hand over to the overview. */
-  zoomAt(factor: number, x: number, y: number): void;
+  /** Zoom by `factor` about a point given relative to the view centre. The wheel may hand over to
+   * the overview unless a note is selected or lensed (then it clamps); a pinch never hands over. */
+  zoomAt(factor: number, x: number, y: number, pinch?: boolean): void;
   setLens(node: number): void;
   toggleLens(): void;
   /** Let the connection card handle a key first; true when it did. */
@@ -193,7 +194,7 @@ export class Interaction {
     const old = this.pointers.get(e.pointerId);
     if (old) {
       if (Math.hypot(e.clientX - this.downX, e.clientY - this.downY) > 3) { this.moved = true; this.gestures.unpress(); }
-      if (this.pointers.size === 2) { for (const [id, other] of this.pointers) if (id !== e.pointerId) { const before = Math.hypot(old.x - other.x, old.y - other.y), after = Math.hypot(e.clientX - other.x, e.clientY - other.y); if (before > 0 && after > 0) h.setCamera(h.camera.x, h.camera.y, h.camera.ratio * before / after); } }
+      if (this.pointers.size === 2) { for (const [id, other] of this.pointers) if (id !== e.pointerId) { const before = Math.hypot(old.x - other.x, old.y - other.y), after = Math.hypot(e.clientX - other.x, e.clientY - other.y); if (before > 0 && after > 0) h.zoomAt(before / after, 0, 0, true); } }
       else h.panBy(e.clientX - old.x, e.clientY - old.y);
       old.x = e.clientX; old.y = e.clientY; return;
     }
