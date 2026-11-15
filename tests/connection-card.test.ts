@@ -1,5 +1,5 @@
-import { test, expect } from 'bun:test';
-import { connectionGroups, navigatorSections, filterConnections, reach, NavHistory, dockCard, sheetCard, DOCK_ROOM, SHEET_WIDTH } from '../src/connection-card';
+import { test, expect, beforeAll, afterAll } from 'bun:test';
+import { connectionGroups, navigatorSections, filterConnections, entryTitle, ConnectionCard, NAV_DEBOUNCE_MS, type CardHost, reach, NavHistory, dockCard, sheetCard, DOCK_ROOM, SHEET_WIDTH } from '../src/connection-card';
 import { incidentEdges } from '../src/render-data';
 
 // Synthetic graph. Types: 0 'cites', 1 'part of'. Node 9 is a relationship-note dot owned by row 0
@@ -85,28 +85,139 @@ test('history pruning preserves the current stop and both branches while droppin
 
 
 test('navigator deduplicates notes across relationships and preserves declared group keys, not guessed names', () => {
+  const host = { name: (n: number) => `ID-${n}`, title: (n: number) => n === 1 ? '<b>Recovery checks</b>' : '', group: (n: number) => ({ key: n % 2, label: 'Same label' }) };
   const grouped = navigatorSections([
     { type: 'supports', out: true, nodes: [1, 2, 3] },
     { type: 'supports', out: false, nodes: [1] },
     { type: 'related', out: true, nodes: [1, 4] },
-  ], { name: n => `ID-${n}`, title: n => n === 1 ? '<b>Recovery checks</b>' : '', group: n => ({ key: n % 2, label: 'Same label' }) });
+  ], host), title = (e: Parameters<typeof entryTitle>[0]) => entryTitle(e, host);
   expect(grouped.map(g => [g.key, g.entries.length])).toEqual([[0, 2], [1, 2]]);
   const row = grouped[1]!.entries[0]!;
-  expect(row.title).toBe('<b>Recovery checks</b>'); expect(row.name).toBe('ID-1');
+  expect(title(row)).toBe('<b>Recovery checks</b>'); expect(row.name).toBe('ID-1'); expect(row.label).toBe('Same label');
   expect(row.relations).toEqual(['→ supports', '← supports', '→ related']);
-  expect(grouped[0]!.entries[0]!.title).toBe('ID-2');
-  expect(filterConnections(grouped, 'same RECOVERY id-1 related').flatMap(g => g.entries).map(r => r.node)).toEqual([1]);
-  expect(filterConnections(grouped, 'no match')).toEqual([]);
-  expect(filterConnections(grouped, '   ').flatMap(g => g.entries).length).toBe(4);
+  expect(title(grouped[0]!.entries[0]!)).toBe('ID-2');
+  expect(filterConnections(grouped, 'same RECOVERY id-1 related', title).map(r => r.node)).toEqual([1]);
+  expect(filterConnections(grouped, 'no match', title)).toEqual([]);
+  expect(filterConnections(grouped, '   ', title).length).toBe(4);
 });
 
-test('navigator fallback, bounded title and hub filtering only resolve metadata once per connected note', () => {
+test('navigator fallback, bounded title and hub filtering fetch each title once, and only when searched', () => {
   let lookups = 0;
-  const sections = navigatorSections([{ type: 'maps', out: true, nodes: Array.from({ length: 221 }, (_, i) => i + 1) }], {
-    name: n => `ID-${n}`, title: n => { lookups++; return n === 1 ? 'x'.repeat(400) : n % 2 ? 'Access review' : 'Recovery check'; },
-  });
-  expect(sections[0]!.label).toBe('Ungrouped'); expect(sections[0]!.entries[0]!.title.length).toBe(256);
-  expect(filterConnections(sections, 'recovery').flatMap(g => g.entries).length).toBe(110);
-  expect(filterConnections(sections, 'ID-221').flatMap(g => g.entries).map(r => r.node)).toEqual([221]);
+  const host = { name: (n: number) => `ID-${n}`, title: (n: number) => { lookups++; return n === 1 ? 'x'.repeat(400) : n % 2 ? 'Access review' : 'Recovery check'; } };
+  const sections = navigatorSections([{ type: 'maps', out: true, nodes: Array.from({ length: 221 }, (_, i) => i + 1) }], host);
+  const title = (e: Parameters<typeof entryTitle>[0]) => entryTitle(e, host);
+  expect(lookups).toBe(0);
+  expect(sections[0]!.label).toBe('Ungrouped'); expect(title(sections[0]!.entries[0]!).length).toBe(256);
+  expect(filterConnections(sections, 'recovery', title).length).toBe(110);
+  expect(filterConnections(sections, 'ID-221', title).map(r => r.node)).toEqual([221]);
   expect(lookups).toBe(221);
+});
+
+/** Just enough DOM for the card: no layout, no native events beyond the handler properties it sets. */
+class El {
+  children: El[] = []; parent: El | null = null; attrs: Record<string, string> = {}; style: Record<string, string> = {}; dataset: Record<string, string> = {};
+  hidden = false; disabled = false; className = ''; id = ''; title = ''; value = ''; type = ''; placeholder = ''; maxLength = 0; scrollTop = 0; text = '';
+  onclick?: () => void; oninput?: () => void; onfocus?: () => void; onblur?: () => void;
+  static active: El | null = null;
+  constructor(readonly tagName: string) {}
+  get textContent(): string { return this.text + this.children.map(c => c.textContent).join(''); }
+  set textContent(v: string) { this.children = []; this.text = v; }
+  appendChild(c: El) { c.parent = this; this.children.push(c); return c; }
+  append(...cs: El[]) { cs.forEach(c => this.appendChild(c)); }
+  createEl(tag: string) { return this.appendChild(new El(tag)); }
+  empty() { this.children = []; this.text = ''; }
+  contains(n: unknown): boolean { return n === this || this.children.some(c => c.contains(n)); }
+  setAttribute(k: string, v: string) { this.attrs[k] = v; }
+  getAttribute(k: string) { return this.attrs[k] ?? null; }
+  removeAttribute(k: string) { delete this.attrs[k]; }
+  querySelector() { return null; }
+  focus() { El.active = this; this.onfocus?.(); }
+  click() { this.onclick?.(); }
+  all(): El[] { return this.children.flatMap(c => [c, ...c.all()]); }
+  find(cls: string) { return this.all().filter(c => c.className === cls); }
+  tag(tag: string) { return this.all().filter(c => c.tagName === tag); }
+}
+const g = globalThis as Record<string, unknown>, real = { document: g.document, setTimeout: g.setTimeout, clearTimeout: g.clearTimeout };
+/** Manual timers: the debounce runs only when a test flushes it. */
+let timers: { run: () => void; ms: number }[] = [];
+beforeAll(() => {
+  g.document = { createElement: (tag: string) => new El(tag), get activeElement() { return El.active; } };
+  g.setTimeout = (run: () => void, ms: number) => { const t = { run, ms }; timers.push(t); return t; };
+  g.clearTimeout = (t: unknown) => { timers = timers.filter(x => x !== t); };
+});
+afterAll(() => { for (const [k, v] of Object.entries(real)) if (v === undefined) delete g[k]; else g[k] = v; });
+
+/** A focus note 0 with `count` connections spread over three groups; counts title lookups per connection. */
+function rig(count = 120) {
+  const lookups: number[] = [], calls: string[] = [], nodes = Array.from({ length: count }, (_, i) => i + 1);
+  const host: CardHost = {
+    name: n => `ID-${n}`, color: () => 'red', title: n => { if (n) lookups.push(n); return `Note ${n}`; },
+    group: n => ({ key: n % 3, label: `Group ${n % 3}` }), groups: () => ({ groups: [{ type: 'maps', out: true, nodes }], direct: count }),
+    isolated: () => false, act() {}, travel: n => calls.push(`travel ${n}`), cue() {}, close: () => calls.push('close'),
+  };
+  const root = new El('div'), card = new ConnectionCard(root as unknown as HTMLElement, host); timers = []; card.show(0);
+  const input = root.tag('input')[0]!, list = root.find('graph-ng-connections')[0]!;
+  const type = (text: string) => { input.value = text; input.oninput!(); };
+  const flush = () => timers.splice(0).forEach(t => t.run());
+  const key = (k: string, target: El = El.active!) => card.key({ key: k, target, altKey: false, preventDefault() {}, stopPropagation() {} } as unknown as KeyboardEvent);
+  const more = () => list.find('graph-ng-connection-more')[0];
+  return { card, root, input, list, lookups, calls, type, flush, key, more, rows: () => card.rows as unknown as El[], status: () => root.find('graph-ng-nav-status')[0]!.textContent };
+}
+
+test('find box debounces typing: one repaint per pause, not per keystroke', () => {
+  const r = rig();
+  r.type('i'); r.type('id'); r.type('id-1');
+  expect(timers.map(t => t.ms)).toEqual([NAV_DEBOUNCE_MS]); expect(NAV_DEBOUNCE_MS).toBe(80);
+  expect(r.status()).toBe('120 direct connections in 3 groups'); expect(r.rows()).toHaveLength(0);
+  r.flush();
+  expect(r.status()).toBe('32 of 120 connections'); expect(r.rows()).toHaveLength(32);
+  // A redraw while typing is pending keeps the typed text instead of dropping it.
+  r.type('id-12'); r.card.render(); expect(timers).toHaveLength(0);
+  expect(r.root.tag('input')[0]!.value).toBe('id-12'); expect(r.status()).toBe('2 of 120 connections');
+});
+
+test('matches are one flat list of 50 rows with their group, paged by "Show 50 more"; clearing restores the sections', () => {
+  const r = rig(120);
+  // Open one section before searching; the query must not disturb it.
+  r.list.find('graph-ng-connection-group').find(t => t.textContent.includes('Group 1'))!.click();
+  const expanded = () => r.list.find('graph-ng-connection-group').map(t => t.attrs['aria-expanded']);
+  const before = expanded(); expect(before.filter(x => x === 'true')).toHaveLength(1);
+  r.type('note'); r.flush();
+  expect(r.list.find('graph-ng-connection-section')).toHaveLength(0);
+  expect(r.rows()).toHaveLength(50); expect(r.more()!.textContent).toBe('Show 50 more');
+  expect(r.rows()[0]!.find('graph-ng-connection-label')[0]!.textContent).toMatch(/^Group \d$/);
+  r.more()!.click(); expect(r.rows()).toHaveLength(100); expect(El.active).toBe(r.rows()[50]!); expect(r.more()!.textContent).toBe('Show 20 more');
+  r.more()!.click(); expect(r.rows()).toHaveLength(120); expect(r.more()).toBeUndefined();
+  // A new query starts again at one page.
+  r.type('id-1'); r.flush(); expect(r.rows()).toHaveLength(32); r.type('note'); r.flush(); expect(r.rows()).toHaveLength(50);
+  r.type(''); r.flush();
+  expect(expanded()).toEqual(before); expect(r.rows()).toHaveLength(40); expect(r.list.find('graph-ng-connection-label')).toHaveLength(0);
+});
+
+test('find box keys: Down enters the results, Up returns, Enter travels, Escape clears then closes', () => {
+  const r = rig();
+  r.type('id-1'); r.flush(); r.input.focus();
+  expect(r.key('ArrowDown')).toBe(true); expect(El.active).toBe(r.rows()[0]!);
+  expect(r.key('ArrowDown')).toBe(true); expect(El.active).toBe(r.rows()[1]!);
+  r.key('ArrowUp'); expect(El.active).toBe(r.rows()[0]!);
+  r.key('ArrowUp'); expect(El.active).toBe(r.input);
+  // Other keys in the box stay with the text field.
+  expect(r.key('l')).toBe(true); expect(El.active).toBe(r.input);
+  r.key('ArrowDown'); r.key('ArrowDown'); r.key('Enter');
+  expect(r.calls).toEqual(['travel 15']);
+  r.input.focus(); r.key('Escape');
+  expect(r.input.value).toBe(''); expect(r.status()).toBe('120 direct connections in 3 groups'); expect(El.active).toBe(r.input); expect(r.calls).toEqual(['travel 15']);
+  r.key('Escape'); expect(r.calls).toEqual(['travel 15', 'close']);
+  // Escape also clears text still waiting on the debounce.
+  r.type('pending'); r.key('Escape', r.input); expect(r.input.value).toBe(''); expect(timers).toHaveLength(0); expect(r.calls).toHaveLength(2);
+});
+
+test('titles are fetched only for drawn rows and memoized for the card build', () => {
+  const r = rig(120), fresh = () => r.lookups.splice(0).length, toggle = () => r.list.find('graph-ng-connection-group')[0]!;
+  expect(fresh()).toBe(0); // 120 connections over three closed sections: no rows, no titles
+  toggle().click(); expect(fresh()).toBe(40);
+  toggle().click(); toggle().click(); expect(fresh()).toBe(0); // repaints reuse the memo
+  r.type('note'); r.flush(); expect(fresh()).toBe(80); // searching needs every title, each once
+  r.type('id-1'); r.flush(); r.type(''); r.flush(); expect(fresh()).toBe(0);
+  r.card.render(); expect(fresh()).toBe(40); // a new build fetches again, only for the 40 drawn rows
 });

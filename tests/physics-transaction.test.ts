@@ -1293,25 +1293,28 @@ test('hover pulse: only the hovered note grows and rings, the graph is untouched
   } finally { ctx.arc = arc; fixtureReducedMotion = false; }
 });
 
-test('navigator filters cached titles and declared groups without graph motion, catches text keys, and resets on travel', async () => {
+test('navigator filters lazily fetched titles and declared groups without graph motion, catches text keys, and resets on travel', async () => {
   const f = await graduated(Array.from({ length: 221 }, (_, i) => [0, i + 1] as [number, number]), 222), { r, k } = f;
   let titles = 0; r.noteTitle = (path: string) => { titles++; return Number(path.replace('.md', '')) % 2 ? '<b>Recovery check</b>' : 'Access review'; };
   r.setView(new Uint8Array(222).fill(1), { groupCodes: Uint32Array.from({ length: 222 }, (_, n) => n % 3), groupLabels: ['Atlas', 'Beacon', 'Cedar'] });
   f.tap(0); const card = r[k('noteCard')], input = card.querySelector('input'), rows = () => card.querySelectorAll('button').filter((b: any) => b.className === 'graph-ng-connection');
   expect(rows().length).toBe(0); expect(card.textContent).toContain('221 direct connections in 3 groups');
   const camera = { ...r.camera }, positions = r.positions, tiers = f.actual(), lookups = titles;
-  input.value = 'beacon RECOVERY'; input.oninput(); expect(card.querySelector('input')).toBe(input);
+  // The find box is debounced (80 ms); `type` waits past it.
+  const type = async (value: string) => { input.value = value; input.oninput(); await Bun.sleep(100); };
+  await type('beacon RECOVERY'); expect(card.querySelector('input')).toBe(input);
   expect(rows().length).toBe(37); expect(card.textContent).toContain('37 of 221 connections'); expect(card.querySelectorAll('b').length).toBe(0);
   expect(rows().every((row: any) => row.textContent.includes('<b>Recovery check</b>'))).toBe(true);
-  expect(titles).toBe(lookups); expect(r.camera).toEqual(camera); expect(r.positions).toBe(positions); expect(r.selected).toBe(0); expect(f.actual()).toEqual(tiers);
+  // Search fetches each connection's title once; a refined query reuses them.
+  expect(titles - lookups).toBe(221); await type('beacon recovery check'); expect(titles - lookups).toBe(221); expect(r.camera).toEqual(camera); expect(r.positions).toBe(positions); expect(r.selected).toBe(0); expect(f.actual()).toEqual(tiers);
   // Typing must not invoke graph shortcuts or suppress native input behavior.
   for (const key of ['l', 'r', 'Home', 'ArrowLeft', 'Enter']) {
     let prevented = false; card.onkeydown({ key, target: input, preventDefault() { prevented = true; }, stopPropagation() {} }); expect(prevented).toBe(false);
     expect(r.lensNode).toBe(-1); expect(r.selected).toBe(0);
   }
-  input.value = 'no such title'; input.oninput(); expect(rows().length).toBe(0); expect(card.textContent).toContain('No matching connections');
+  await type('no such title'); expect(rows().length).toBe(0); expect(card.textContent).toContain('No matching connections');
   card.onkeydown({ key: 'Escape', target: input, preventDefault() {}, stopPropagation() {} }); expect(r.selected).toBe(0); expect(input.value).toBe('');
-  input.value = 'beacon recovery'; input.oninput(); rows()[0].click(); expect(r.selected).not.toBe(0); expect(card.querySelector('input').value).toBe('');
+  await type('beacon recovery'); rows()[0].click(); expect(r.selected).not.toBe(0); expect(card.querySelector('input').value).toBe('');
 });
 
 test('large hub labels are a six-note preview while the full topology remains available', async () => {
@@ -1329,8 +1332,12 @@ test('navigator bounds group headers, searches beyond the page, and preserves co
   r.setView(new Uint8Array(151).fill(1), { groupCodes: Uint32Array.from({ length: 151 }, (_, n) => n), groupLabels: Array.from({ length: 151 }, (_, n) => `Group ${String(n).padStart(3, '0')}`) });
   f.tap(0); const card = r[k('noteCard')], groups = () => card.querySelectorAll('button').filter((b: any) => b.className === 'graph-ng-connection-group');
   expect(groups().length).toBe(100); control(card, 'Show more groups').click(); expect(groups().length).toBe(150);
-  const input = card.querySelector('input'); input.value = 'Group 150'; input.oninput(); expect(groups().length).toBe(1); expect(groups()[0].textContent).toContain('Group 150');
-  input.value = ''; input.oninput(); expect(groups().length).toBe(100); expect(groups()[0].attributes['aria-expanded']).toBe('false');
+  // A query lists matches flat (with their group name) from every group, beyond the header page.
+  const input = card.querySelector('input'), rows = () => card.querySelectorAll('button').filter((b: any) => b.className === 'graph-ng-connection');
+  input.value = 'Group 150'; input.oninput(); await Bun.sleep(100); expect(groups().length).toBe(0);
+  expect(rows().length).toBe(1); expect(rows()[0].textContent).toContain('Group 150');
+  // Clearing restores the sections as they were, including the extra header page.
+  input.value = ''; input.oninput(); await Bun.sleep(100); expect(groups().length).toBe(150); expect(groups()[0].attributes['aria-expanded']).toBe('false');
   // A small neighbourhood initially expands, but an explicit collapse survives a same-note refresh.
   r[k('focusNote')](1); const section = card.querySelectorAll('button').find((b: any) => b.className === 'graph-ng-connection-group');
   expect(section.attributes['aria-expanded']).toBe('true'); section.click(); r.card.show(1);

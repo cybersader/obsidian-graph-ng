@@ -124,7 +124,7 @@
 .graph-ng-connection-text { display:flex; flex-direction:column; gap:3px; min-width:0; }
 .graph-ng-connection-meta { display:flex; flex-wrap:wrap; gap:4px 10px; }
 .graph-ng-connection-title { white-space:normal; line-height:1.35; }
-.graph-ng-connection-id, .graph-ng-connection-relation { color:var(--text-muted); font-size:var(--font-ui-smaller); white-space:normal; line-height:1.3; }
+.graph-ng-connection-id, .graph-ng-connection-label, .graph-ng-connection-relation { color:var(--text-muted); font-size:var(--font-ui-smaller); white-space:normal; line-height:1.3; }
 .graph-ng-connection-id { font-variant-numeric:tabular-nums; }
 .graph-ng-card .graph-ng-connection-more { font-variant-numeric:tabular-nums; width:100%; margin:4px 0; }
 .graph-ng-card .graph-ng-section-second { margin:2px 0 4px 18px; min-height:28px; }
