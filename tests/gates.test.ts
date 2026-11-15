@@ -112,6 +112,27 @@ test('mangled bundle properties are private to the main bundle', async () => {
   expect(MANGLED_PROPS.filter((n: string) => reserved.has(n) || literals.has(n))).toEqual([]);
 });
 
+test('property mangling excludes every declared settings and node-sizing schema key', async () => {
+  const { MANGLED_PROPS } = await import('../scripts/mangle-props.mjs');
+  const { default: ts } = await import('typescript');
+  const keys = new Set<string>();
+  // Unlike a string-literal scan, this covers unquoted and optional persistence keys,
+  // including fields absent from defaults. Core/message keys are covered above.
+  for (const file of ['settings.ts', 'node-sizing.ts']) {
+    const source = ts.createSourceFile(file, fs.readFileSync(path.join(import.meta.dir, '../src', file), 'utf8'), ts.ScriptTarget.Latest, true);
+    const visit = (node: import('typescript').Node) => {
+      if (ts.isPropertySignature(node) && (ts.isIdentifier(node.name) || ts.isStringLiteral(node.name))) keys.add(node.name.text);
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+  }
+  expect(keys.has('settingsVersion')).toBe(true);
+  expect(keys.has('labelTierScale')).toBe(true);
+  expect(keys.has('floor')).toBe(true);
+  expect(MANGLED_PROPS.filter(name => keys.has(name))).toEqual([]);
+  expect(new Set(MANGLED_PROPS).size).toBe(MANGLED_PROPS.length);
+});
+
 test('UI pass download ceilings remain exactly bounded and active documentation agrees', () => {
   const root = path.resolve(import.meta.dirname, '..');
   const gate = fs.readFileSync(path.join(root, 'scripts/bundle-size.mjs'), 'utf8');

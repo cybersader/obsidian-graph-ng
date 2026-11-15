@@ -543,3 +543,39 @@ The focused command `flock /tmp/openclast-local-verification.lock build-containe
 The same-renderer/context candidate subsequently measures **211,202 minified / 67,033 gzip bytes** (gzip level 9), under the bounded **212,000 / 67,200** download allowance. This budget-only release preparation freezes the runtime implementation; source, bundle and complete staged-candidate hashes are retained privately. Corrected deterministic fixtures own frame/backstop lifecycle work; their success does not establish native GPU, nontrivial scope, target-scale latency, memory or mobile acceptance. Independent review and the remaining native lanes are still required.
 
 The owner-approved bounded download ceilings for the controls preview are **227,000 raw / 72,000 gzip bytes** (previously 224,000 / 71,000). Correctness, independent review, deployment and native/runtime acceptance gates are unchanged.
+
+## Bounded bundle size reclamation — 2026-11-15
+
+Against baseline `f603cbb`, the retained build-only change reduces `main.js` from **354,038 raw / 117,705 gzip** to **349,822 raw / 117,167 gzip** (gzip level 9): **4,216 / 538 bytes saved**. The unchanged **355,000 / 118,000** caps leave **5,178 raw / 833 gzip bytes** of headroom. The requested 10,000 / 3,000 reduction target is **not met**. This is the measured safe candidate retained, not a claim that further optimization is impossible.
+
+The existing esbuild minification, GLSL comment/whitespace stripping, shared-core factory, used-export discovery and runtime-dependency exclusion were already active. Metafiles and source-map spans identify these largest baseline main-bundle inputs:
+
+| Input | Raw contribution | Standalone gzip |
+| --- | ---: | ---: |
+| Detail renderer | 70,426 | 23,979 |
+| Shared-core factory/prelude | 63,342 | 20,907 |
+| Main plugin/view, including embedded worker | 63,170 | 20,016 |
+| Explore panel | 46,831 | 15,026 |
+
+The source-map span attribution includes one extra boundary byte for main compared with esbuild's input contribution. Standalone gzip compresses each module separately; the private profile also records the whole-bundle gzip delta when each module's spans are omitted. Neither compressed measure is additive. Nested core/worker input sizes must not be added again to the complete main bundle.
+
+| Retained step, in measurement order | Raw saved | Gzip saved |
+| --- | ---: | ---: |
+| 67 additional private class member names | 3,247 | 377 |
+| 16 main-realm panel/renderer callback names | 969 | 161 |
+| Total | **4,216** | **538** |
+
+Only the existing explicit `mangleProps` allowlist changes generated runtime code. No `src/` file, UI text, validation, persisted schema, worker protocol, dependency, shader transform or bundle cap changes. The new gate reads settings/node-sizing property signatures through the already-installed TypeScript compiler, including optional and unquoted keys, and excludes them from mangling. Existing DOM/ES/Obsidian, worker/harness and string-literal exclusions remain intact. Compiled-renderer tests resolve affected private names through the existing emitted cache rather than assuming the original spelling.
+
+Rejected private prototypes remain in ignored evidence, not the build: receiver aliases saved raw bytes but increased gzip; property-key interning traded substantially fewer raw bytes for only small gzip savings and introduced dynamic lookups with unmeasured runtime cost; shader-private-name shortening saved only another 471 raw / 51 gzip bytes on the first mangling candidate, insufficient to justify a new shader transform. User-visible strings and errors were not shortened. No validation, feature branch or security boundary was removed to chase the target.
+
+Verification ran on a Linux x86-64 development workstation. Every command below used `flock -w 3000 -E 75 /tmp/openclast-bun.lock timeout --kill-after=5s 1800s ./scripts/run.sh <arguments>`; `run.sh` retained its separate containment lock.
+
+| Arguments | Observed result |
+| --- | --- |
+| `gates:fast` before build/testing | All five prerequisite lanes pass, including the isolated frozen-lock install with scripts disabled. |
+| `build` | Strict TypeScript and production main/shared-core/worker build pass. |
+| `test --timeout 10000` | **527 pass / 0 fail**, **145,019 assertions**, 34 package-script files, including production-bundle renderer seams and packaged-worker tests. |
+| `gates` | All **six lanes pass**; zero runtime packages, unchanged lockfile/trust policy, unchanged size caps. |
+
+Independent review found no blocking issue in the allowlist, schema guard or compiled-test seam changes. This pass did not rerun native-host, browser, shader-driver or hardware-performance lanes; their existing acceptance gaps remain. No publication, real-vault access or deployment occurred. Private evidence is retained under `.workspace/evidence/size-reclaim/` (baseline/final profiles, prototype outputs, build/test/gate logs); `.workspace/evidence/bundle-size.json` records the current source commit, tree state and artifact hash.

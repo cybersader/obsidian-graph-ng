@@ -95,12 +95,12 @@ function retained(f: Awaited<ReturnType<typeof fixture>>) {
 }
 
 test('production software Apply preserves renderer/canvas/camera/frame/selection and changes picking once', async () => {
-  const f = await fixture(), canvas = f.renderer.canvas, frame = f.renderer[compiled('cameraFrame')], camera = { ...f.renderer.camera }, center = [f.renderer.centerX, f.renderer.centerY, f.renderer.scale];
+  const f = await fixture(), canvas = f.renderer.canvas, frame = f.renderer[compiled('cameraFrame')], camera = { ...f.renderer.camera }, center = [f.renderer[compiled('centerX')], f.renderer[compiled('centerY')], f.renderer.scale];
   const atlas = f.renderer.atlas;
   f.renderer.fitAll = () => { throw new Error('Hidden Fit'); };
   Renderer.create = new Proxy(Renderer.create, { apply() { throw new Error('Renderer reconstructed'); } });
   try { await f.view.applyLayout(values); } finally { Renderer.create = originalFactory; }
-  expect(f.view.detailRenderer).toBe(f.renderer); expect(f.renderer.canvas).toBe(canvas); expect(f.renderer[compiled('cameraFrame')]).toBe(frame); expect(f.renderer.camera).toEqual(camera); expect([f.renderer.centerX, f.renderer.centerY, f.renderer.scale]).toEqual(center);
+  expect(f.view.detailRenderer).toBe(f.renderer); expect(f.renderer.canvas).toBe(canvas); expect(f.renderer[compiled('cameraFrame')]).toBe(frame); expect(f.renderer.camera).toEqual(camera); expect([f.renderer[compiled('centerX')], f.renderer[compiled('centerY')], f.renderer.scale]).toEqual(center);
   expect(f.renderer.selected).toBe(2); expect(f.renderer.grid.pick(80, 90, .1)).toBe(0); expect(f.renderer.grid.pick(0, 0, .1)).toBe(-1);
   expect(f.renderer.positions).toBe(f.next); expect(f.renderer.atlas).not.toBe(atlas); expect(f.view.contentEl.dataset.mode).toBe('nodes'); expect(f.requests()).toBe(1); expect(f.writes.length).toBe(1);
 });
@@ -189,10 +189,10 @@ test('production token discard/rollback cannot overwrite a newer winning token',
 test('production sizing preview/cancel keeps renderer camera selection scope settings and layout unchanged', async () => {
   const f = await fixture(), original = structuredClone(f.plugin.settings), camera = { ...f.renderer.camera }, positions = f.renderer.positions, canvas = f.renderer.canvas;
   const value = { radius: 12, prominence: 5, compensation: 0, floor: .3, curve: 'sqrt' as const };
-  f.renderer.previewSizing(value);
+  f.renderer[compiled('previewSizing')](value);
   expect(f.plugin.settings).toEqual(original); expect(f.writes.length).toBe(0); expect(f.requests()).toBe(0);
   expect(f.renderer.camera).toEqual(camera); expect(f.renderer.selected).toBe(2); expect(f.renderer.positions).toBe(positions); expect(f.renderer.canvas).toBe(canvas);
-  expect(f.renderer.sizingReadout()).toContain('12.00–12.00');
+  expect(f.renderer[compiled('sizingReadout')]()).toContain('12.00–12.00');
   const point = f.renderer.screenPoint(2); expect(f.renderer.pick(point.x + 16, point.y)).toBe(2);
   const radii: number[] = []; ctx.arc = (_x: number, _y: number, radius: number) => radii.push(radius);
   f.renderer[compiled('drawCanvas')](); expect(radii.slice(0, 2)).toEqual([12, 12]);
@@ -201,16 +201,16 @@ test('production sizing preview/cancel keeps renderer camera selection scope set
   await f.renderer[compiled('prepareLabels')](() => true);
   expect(f.renderer.atlas.levels.every((level: Float32Array) => level.length % 11 === 0)).toBe(true);
   const populated = f.renderer.atlas.levels.find((level: Float32Array) => level.length > 0); expect(populated).toBeDefined(); expect(populated[10]).toBe(1);
-  f.renderer.previewSizing(null); expect(f.renderer.pick(point.x + original.nodeSize * (1 + original.visuals.degreeSizing) * (1 + .6 * level) + 5, point.y)).not.toBe(2); expect(f.plugin.settings).toEqual(original); expect(f.renderer.camera).toEqual(camera);
+  f.renderer[compiled('previewSizing')](null); expect(f.renderer.pick(point.x + original.nodeSize * (1 + original.visuals.degreeSizing) * (1 + .6 * level) + 5, point.y)).not.toBe(2); expect(f.plugin.settings).toEqual(original); expect(f.renderer.camera).toEqual(camera);
 });
 
 test('production sizing apply acknowledgement and rejected save preserve last-saved policy', async () => {
   const f = await fixture(), value = { radius: 6, prominence: 9, compensation: .5, floor: .2, curve: 'linear' as const }, camera = { ...f.renderer.camera };
-  f.renderer.previewSizing(value); await f.plugin.commitSizing(value, () => true); f.renderer.previewSizing(null, true);
+  f.renderer[compiled('previewSizing')](value); await f.plugin.commitSizing(value, () => true); f.renderer[compiled('previewSizing')](null, true);
   expect(f.plugin.settings.nodeSizing.policy).toBe('predictable'); expect(f.plugin.settings.nodeSize).toBe(6); expect(f.renderer.camera).toEqual(camera); expect(f.renderer.selected).toBe(2); expect(f.requests()).toBe(0);
   const saved = structuredClone(f.plugin.settings); let calls = 0; f.plugin.saveData = async () => { if (++calls === 1) throw new Error('synthetic failure'); };
-  f.renderer.previewSizing({ ...value, radius: 10 });
-  await expect(f.plugin.commitSizing({ ...value, radius: 10 }, () => true)).rejects.toThrow('synthetic failure'); f.renderer.previewSizing(null, true);
+  f.renderer[compiled('previewSizing')]({ ...value, radius: 10 });
+  await expect(f.plugin.commitSizing({ ...value, radius: 10 }, () => true)).rejects.toThrow('synthetic failure'); f.renderer[compiled('previewSizing')](null, true);
   expect(f.plugin.settings).toEqual(saved); expect(calls).toBe(2);
 });
 
@@ -219,18 +219,18 @@ test('Repair R2 carrier-size edits invalidate stale label multipliers and coales
   const f = await fixture(), v = { radius: 10, prominence: 1, compensation: 0, floor: .3, curve: 'log' as const }, camera = { ...f.renderer.camera }, positions = f.renderer.positions;
   f.renderer.projection.carrierNodes[0] = 1; f.plugin.settings.visuals.carrierLod = false;
   f.renderer.setView(new Uint8Array([1, 0, 0]), {});
-  await f.plugin.commitSizing(v, () => true); f.renderer.previewSizing(null, true);
+  await f.plugin.commitSizing(v, () => true); f.renderer[compiled('previewSizing')](null, true);
   await f.renderer[compiled('prepareLabels')](() => true);
   const multiplier = () => f.renderer.atlas.levels.find((level: Float32Array) => level.length > 0)[10];
   expect(multiplier()).toBeCloseTo(.6);
-  f.plugin.settings.visuals.carrierSize = 1; f.renderer.refreshVisuals(false); const firstTimer = f.renderer.sizingTimer;
+  f.plugin.settings.visuals.carrierSize = 1; f.renderer.refreshVisuals(false); const firstTimer = f.renderer[compiled('sizingTimer')];
   expect(f.renderer.atlas).toBeUndefined(); expect(firstTimer).toBeDefined();
   f.plugin.settings.visuals.carrierSize = 2; f.renderer.refreshVisuals(false);
-  expect(f.renderer.sizingTimer).not.toBe(firstTimer); expect(f.renderer.atlas).toBeUndefined();
+  expect(f.renderer[compiled('sizingTimer')]).not.toBe(firstTimer); expect(f.renderer.atlas).toBeUndefined();
   await f.renderer[compiled('prepareLabels')](() => true);
   expect(multiplier() * 10).toBeCloseTo(20);
-  const atlas = f.renderer.atlas, timer = f.renderer.sizingTimer; f.renderer.refreshVisuals(false);
-  expect(f.renderer.atlas).toBe(atlas); expect(f.renderer.sizingTimer).toBe(timer);
+  const atlas = f.renderer.atlas, timer = f.renderer[compiled('sizingTimer')]; f.renderer.refreshVisuals(false);
+  expect(f.renderer.atlas).toBe(atlas); expect(f.renderer[compiled('sizingTimer')]).toBe(timer);
   const radii: number[] = []; ctx.arc = (_x: number, _y: number, radius: number) => radii.push(radius); f.renderer[compiled('drawCanvas')]();
   expect(radii).toEqual([20]); expect(f.renderer.camera).toEqual(camera); expect(f.renderer.positions).toBe(positions); expect(f.renderer.selected).toBe(2); expect(f.requests()).toBe(0);
 });
@@ -239,7 +239,7 @@ test('Repair R2 carrier-size edits invalidate stale label multipliers and coales
 test('Repair R2 legacy carrier edit retains existing atlas and creates no sizing rebuild', async () => {
   const f = await fixture(), atlas = f.renderer.atlas;
   expect(f.plugin.settings.nodeSizing.policy).toBe('legacy'); f.plugin.settings.visuals.carrierSize = 2; f.renderer.refreshVisuals(false);
-  expect(f.renderer.atlas).toBe(atlas); expect(f.renderer.sizingTimer).toBeUndefined(); expect(f.requests()).toBe(0);
+  expect(f.renderer.atlas).toBe(atlas); expect(f.renderer[compiled('sizingTimer')]).toBeUndefined(); expect(f.requests()).toBe(0);
 });
 
 // Driver/Canvas calls from the production bundle; no GPU execution is claimed.
@@ -881,7 +881,7 @@ test('wiring: card Lens action, lens-displaced picking/arrows/cue/labels, and Es
     // Escape layers: the card first (lens stays), then the lens, then nothing left to clear.
     expect(canvasKey('Escape')).toBe(true); expect(card().textContent).toBe(''); expect(r.selected).toBe(-1); expect(r.lensNode).toBe(0);
     expect(canvasKey('Escape')).toBe(true); expect(r.lensNode).toBe(-1); expect(r[k('lensPoints')].size).toBe(0);
-    { const d = r[k('display')]; expect(r.screenPoint(1)).toEqual({ x: (d[2] - r.centerX) * r.scale + r[k('width')] / 2, y: (d[3] - r.centerY) * r.scale + r[k('height')] / 2 }); }
+    { const d = r[k('display')]; expect(r.screenPoint(1)).toEqual({ x: (d[2] - r[compiled('centerX')]) * r.scale + r[k('width')] / 2, y: (d[3] - r[compiled('centerY')]) * r.scale + r[k('height')] / 2 }); }
     // The card's own Escape also closes only the card.
     f.tap(0); control(card(), 'Lens').click(); expect(r.lensNode).toBe(0); cardKey('Escape', rows()[0]); expect(card().textContent).toBe(''); expect(r.lensNode).toBe(0);
     // A click on empty canvas still clears both.
@@ -1044,7 +1044,7 @@ test('docked card: a fixed right-edge panel that never moves with the camera; la
   // Focus here fits the box in the view minus the docked card, centred in the remaining area.
   let box: number[] = []; const frame = r.frame; r.frame = (...args: number[]) => { box = args; }; control(root, 'Focus').click(); r.frame = frame;
   expect(box.slice(5)).toEqual([336, 0]);
-  r.frame(0, 0, 100, 100, 0, 336, 0); expect((50 - r.centerX) * r.scale + 400).toBeCloseTo((800 - 336) / 2, 6); expect(100 * r.scale).toBeLessThanOrEqual(800 - 336);
+  r.frame(0, 0, 100, 100, 0, 336, 0); expect((50 - r[compiled('centerX')]) * r.scale + 400).toBeCloseTo((800 - 336) / 2, 6); expect(100 * r.scale).toBeLessThanOrEqual(800 - 336);
   // Narrow views keep the bottom sheet; framing then insets the bottom instead.
   r[k('width')] = 400; r[k('placeOverlay')](); expect(root.className).toBe('graph-ng-card graph-ng-sheet'); expect(r[k('cardRect')][0]).toBe(0);
 });
@@ -1247,7 +1247,7 @@ test('review: a failed Back-to detail attempt consumes pending focus before any 
   const setFocus = () => { view[compiled('pendingFocus')] = { projection: view.projection, node: 2, lens: true }; };
   setFocus(); view.positions = undefined; await view.showDetails(); expect(view[compiled('pendingFocus')]).toBeUndefined();
   view.positions = new Float32Array(6); view.gpu = { available: false, reason: 'synthetic refusal' };
-  view.admitDetail = () => false; setFocus();
+  view[compiled('admitDetail')] = () => false; setFocus();
   await view.showDetails(); expect(view[compiled('pendingFocus')]).toBeUndefined();
 });
 
@@ -1263,12 +1263,12 @@ test('review: travel, clamped framing and Fit all centre in the unobscured stage
     f.settings.cameraMinRatio = 2;
     r.frame(0, 0, 0, 0, 0, right, bottom);
     expect(r.camera.ratio).toBe(2);
-    expect((0 - r.centerX) * r.scale + width / 2).toBeCloseTo((width - right) / 2, 6);
-    expect((0 - r.centerY) * r.scale + 300).toBeCloseTo((600 - bottom) / 2, 6);
+    expect((0 - r[compiled('centerX')]) * r.scale + width / 2).toBeCloseTo((width - right) / 2, 6);
+    expect((0 - r[compiled('centerY')]) * r.scale + 300).toBeCloseTo((600 - bottom) / 2, 6);
   }
   f.settings.cameraMinRatio = .02; r[k('width')] = 800;
   r[k('selectNote')](-1); r.fitAll(0);
-  expect((50 - r.centerX) * r.scale + 400).toBeCloseTo(300, 6);
+  expect((50 - r[compiled('centerX')]) * r.scale + 400).toBeCloseTo(300, 6);
   expect(r.screenPoint(0).x).toBeGreaterThan(0); expect(r.screenPoint(2).x).toBeLessThan(600);
   expect(r[k('homeRatio')]).toBe(r.camera.ratio);
 });
