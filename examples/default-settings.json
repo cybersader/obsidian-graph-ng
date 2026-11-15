@@ -147,7 +147,8 @@
     "focusEdges": true,
     "offscreenPips": true,
     "focusRipple": true,
-    "tierLegend": true
+    "tierLegend": true,
+    "clickOpens": false
   },
   "explore": {
     "panelOpen": true,

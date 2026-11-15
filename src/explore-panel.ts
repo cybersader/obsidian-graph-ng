@@ -592,6 +592,7 @@ export class ExplorePanel {
     this.flag(host, 'autoPalette', 'Color by group when no rule matches');
     this.flag(host, 'hoverHighlight', 'Graduated connections on hover or selection');
     this.note(host, 'Direct connections brightest, then neighbours of neighbours; the rest fades. Ancestor or framework levels need declared structural relationships; none are inferred.');
+    this.flag(host, 'clickOpens', 'Click opens notes directly (skip the connection card)');
     const find = host.createEl('details', { cls: 'graph-ng-highlight-options' }); find.createEl('summary', { text: 'Finding connections' });
     this.slider(find, 'Minimum highlighted size (px)', { min: 0, max: 16, k: 1.5 }, () => v.tierMinSize, x => { v.tierMinSize = x; });
     this.note(find, 'Direct connections never draw smaller than this at any zoom; neighbours of neighbours get a bit over half. 0 turns it off.');

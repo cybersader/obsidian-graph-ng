@@ -516,6 +516,18 @@ export class GraphView extends ItemView {
     if (!(this.app.vault.getAbstractFileByPath(path) instanceof TFile)) { new Notice('The referenced note is not available locally.'); return; }
     void this.app.workspace.openLinkText(path, '', 'tab');
   }
+  /** Connection card: reuse an open note tab, a new tab, or a split to the right. */
+  private openNote(path: string, mode: 'reuse' | 'tab' | 'split') {
+    const file = this.app.vault.getAbstractFileByPath(path), w = this.app.workspace;
+    if (!(file instanceof TFile)) { new Notice('The referenced note is not available locally.'); return; }
+    const leaf = mode === 'split' ? w.getLeaf('split', 'vertical') : (mode === 'reuse' && w.getLeavesOfType('markdown')[0]) || w.getLeaf('tab');
+    void leaf.openFile(file);
+  }
+  private copyLink(path: string) {
+    const file = this.app.vault.getAbstractFileByPath(path);
+    const link = `[[${file instanceof TFile ? this.app.metadataCache.fileToLinktext(file, '', true) : path.replace(/\.md$/, '')}]]`;
+    void navigator.clipboard.writeText(link).then(() => new Notice('Link copied'), () => new Notice('Could not copy the link'));
+  }
   private paginate<T>(items: readonly T[], render: (item: T, host: HTMLElement) => void, host = this.panel, listClass = 'graph-ng-list') {
     let index = 0; const size = this.plugin.settings.listPageSize, root = host.createDiv({ cls: 'graph-ng-pagination' });
     const controls = root.createDiv({ cls: 'graph-ng-page-controls' }), previous = controls.createEl('button', { text: 'Previous page' });
@@ -841,6 +853,8 @@ export class GraphView extends ItemView {
       const detailGeneration = this.detailGeneration;
       this.detailRenderer.describeEdges = edges => this.plugin.pipeline.request(detailGeneration, { kind: 'relationships', edges });
       this.detailRenderer.openPath = path => this.openPath(path);
+      this.detailRenderer.openNote = (path, mode) => this.openNote(path, mode);
+      this.detailRenderer.copyLink = path => this.copyLink(path);
       this.detailRenderer.onSizingChange = () => this.explorePanel?.updateSizingReadout();
       this.detailRenderer.onHub = group => { const key = this.explored?.groupKeys[group]; if (key !== undefined) this.setView({ ...this.view, collapsedGroups: this.view.collapsedGroups.filter(k => k !== key) }, () => this.focusGroup(group)); };
       if (this.pendingCamera) { const c = this.pendingCamera; this.pendingCamera = undefined; this.detailRenderer.flyTo(c.x, c.y, c.ratio); }
