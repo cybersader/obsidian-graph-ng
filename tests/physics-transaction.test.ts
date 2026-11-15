@@ -908,6 +908,37 @@ test('docked card: a fixed right-edge panel that never moves with the camera; la
   // Narrow views keep the bottom sheet; framing then insets the bottom instead.
   r[k('width')] = 400; r[k('placeOverlay')](); expect(root.className).toBe('graph-ng-card graph-ng-sheet'); expect(r[k('cardRect')][0]).toBe(0);
 });
+test('docked card beside the graph tools: the card docks left of an open panel; framing and off-screen arrows keep clear of both', async () => {
+  const f = await graduated([[0, 1], [1, 2], [2, 3], [0, 4]]), { r, k } = f, root = r[k('noteCard')];
+  root.offsetWidth = 320; root.offsetHeight = 300;
+  let tools = 0; r.measureTools = () => tools;
+  // No panel: the card docks to the view's right edge.
+  f.tap(1); r[k('focusLevel')] = 1; r[k('placeOverlay')]();
+  expect([...r[k('cardRect')]]).toEqual([800 - 8 - 320, 8, 320, 300]);
+  // Opening the panel (368 px over the stage) moves the card left of it, not under it.
+  tools = 368; r.syncTools(); r[k('placeOverlay')]();
+  const rect = [...r[k('cardRect')]]; expect(rect).toEqual([800 - 368 - 8 - 320, 8, 320, 300]); expect(root.style.transform).toBe(`translate(${rect[0]}px, 8px)`);
+  expect(rect[0]! + rect[2]!).toBeLessThanOrEqual(800 - 368);
+  // The panel covers the minimap's column, so the card may use the full height.
+  expect(root.style.maxHeight).toBe(`${600 - 16}px`);
+  // Focus framing fits the notes left of card and panel together.
+  let box: number[] = []; const frame = r.frame; r.frame = (...args: number[]) => { box = args; }; control(root, 'Focus').click();
+  expect(box.slice(5)).toEqual([368 + 320 + 16, 0]);
+  // Group framing keeps clear of the panel even without a card.
+  r[k('selectNote')](-1); r[k('view')].groupCodes = new Uint32Array(5); r.frameGroup(0); r.frame = frame;
+  expect(box.slice(5)).toEqual([368, 0]);
+  // Off-screen arrows sit inside the area left of card and panel.
+  f.tap(1); r[k('focusLevel')] = 1; r.setCamera(r.camera.x, r.camera.y, r.camera.ratio * .05); r[k('placeOverlay')]();
+  const shown = r[k('pipEls')].filter((el: any) => !el.hidden);
+  expect(shown.length).toBeGreaterThan(0);
+  for (const el of shown) expect(Number(/translate\((-?[\d.]+)px/.exec(el.style.transform)![1]) + 16).toBeLessThanOrEqual(800 - 368 - 320 - 16);
+  // A panel that leaves no room for the docked card turns the card into a sheet across the remaining width.
+  tools = 500; r.syncTools(); r[k('placeOverlay')]();
+  expect(root.className).toBe('graph-ng-card graph-ng-sheet'); expect(root.style.width).toBe('300px'); expect(r[k('cardRect')][2]).toBe(300);
+  // A panel that covers the graph is ignored; closing it restores the edge dock.
+  tools = 700; r.syncTools(); r[k('placeOverlay')](); expect([...r[k('cardRect')]]).toEqual([472, 8, 320, 300]); expect(root.style.width).toBe('');
+  tools = 368; r.syncTools(); tools = 0; r.syncTools(); r[k('placeOverlay')](); expect([...r[k('cardRect')]]).toEqual([472, 8, 320, 300]);
+});
 test('docked card: Only connections, Lens and path cards share the dock; labels never draw over them', async () => {
   const f = await graduated([[0, 1], [1, 2], [2, 3], [0, 4], [4, 3]], 6), { r, k } = f, root = r[k('noteCard')];
   root.offsetWidth = 320; root.offsetHeight = 260;

@@ -501,7 +501,7 @@ Evidence is deterministic: helper tiers, label ranking/budget/collision, shader 
 
 ### Connection card (unreleased)
 
-Highlighting shows where the connections are; the connection card makes them findable and actionable. Click (or tap, or arrow-key select) a note in Notes and the card opens as a side panel docked to the right edge of the graph. It never moves when you pan or zoom, it stops above the minimap, and on views narrower than 520 px it becomes a bottom sheet. **Focus**, path and Only connections framing fit the notes into the area left of the card.
+Highlighting shows where the connections are; the connection card makes them findable and actionable. Click (or tap, or arrow-key select) a note in Notes and the card opens as a side panel docked to the right edge of the graph. It never moves when you pan or zoom, it stops above the minimap, and on views narrower than 520 px it becomes a bottom sheet. While the graph tools panel (Filters, Appearance, Layout, Graph information) is open, the card docks just left of it instead of underneath (a bottom sheet across the remaining width when the card no longer fits beside it). **Focus**, path, group and Only connections framing fit the notes into the area left of both, and off-screen arrows stay clear of both.
 
 - **Header:** the note name, then **Back**, **Forward** and **Close** icon buttons (an X; the name "Close" is for assistive technology only).
 - **Counts:** a chip with its **direct connections** count and one with its **neighbours of neighbours** count ("+" when the 2-hop scan was cut short).
@@ -537,7 +537,7 @@ Right-click a note, long-press it for half a second on touch, or press Shift+F10
 - **Empty canvas:** Fit all, and Clear selection when something is selected.
 - A long-press never fires after a drag or a pinch.
 
-The earlier focus lock, hover delay and Alt shortcut are gone: hover never moves the highlight, so there is nothing to lock. Saved settings with `visuals.hoverDwellMs` load and drop the key. Reveal in file explorer is not in the menu because Obsidian has no public API for it. Evidence: `tests/context-menu.test.ts` and the compiled-renderer menu, focus-model and docked-card tests in `tests/physics-transaction.test.ts`; native menu, touch and screen-reader acceptance are pending.
+Focus follows clicks only (see the click-to-focus model above): hover is a ring and a name, so menus never race a moving highlight. Saved settings from earlier versions load and drop keys that no longer exist. Reveal in file explorer is not in the menu because Obsidian has no public API for it. Evidence: `tests/context-menu.test.ts` and the compiled-renderer menu, focus-model and docked-card tests in `tests/physics-transaction.test.ts`; native menu, touch and screen-reader acceptance are pending.
 
 ### How are these connected? (unreleased)
 

@@ -289,6 +289,8 @@
 .graph-ng-setting > input[type=checkbox], .graph-ng-setting > select { grid-column:2; grid-row:1 / span 2; justify-self:end; margin:0; }
 .graph-ng-setting > select { max-width:12rem; }
 .graph-ng-toggle { cursor:pointer; min-height:32px; }
+.graph-ng-setting-line { grid-column:1 / -1; display:flex; flex-wrap:wrap; gap:8px; }
+.graph-ng-setting-line > button { min-height:32px; margin:0; }
 .graph-ng-explore .graph-ng-slider-reset { grid-column:2; grid-row:1; justify-self:end; width:32px; height:32px; min-height:32px; margin:-8px -8px -8px 0; padding:8px; color:var(--text-muted); }
 .graph-ng-slider-reset svg { width:16px; height:16px; }
 .graph-ng-slider-line { grid-column:1 / -1; display:flex; align-items:center; gap:8px; }

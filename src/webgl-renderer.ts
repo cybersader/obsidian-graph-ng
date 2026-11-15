@@ -8,7 +8,7 @@ import { DIRECT_LABELS, LABEL_CHARS, middleTruncate, radialLabels, stickyLevel, 
 import { carrierAlpha, carrierColors, carrierVisibility, categorical, degreeSizes, densityScale, edgeAlpha, edgeInk, overdraw, inkAlpha, unionAlpha, fadeLength, lengthFade, type EdgeInk, effectPolicy, prominenceKeep, zoomFade, neutralizeGroups, easeInOut, groupHalos, isDark, labelFade, nodeColors, type EffectPolicy, type Halo, type RGB } from './render-effects';
 import { yieldTask } from './core/scheduler';
 import { generationCurrent } from './physics-controls';
-import { ConnectionCard, connectionGroups, isolationBar, dockCard, reach, button, closeButton, el, SHEET_WIDTH, type CardAction, type CardHost } from './connection-card';
+import { ConnectionCard, connectionGroups, isolationBar, dockCard, sheetCard, reach, button, closeButton, el, type CardAction, type CardHost } from './connection-card';
 import { interestScorer, byInterest, type Scorer } from './interest';
 import { lensConnections, lensLayout, lensAmount, lensCoordinate, pickLens, type LensConnection, type LensPoint } from './lens-layout';
 import { Interaction, type RendererControls } from './interaction';
@@ -16,9 +16,11 @@ import type { MenuPresenter } from './context-menu';
 import { invalidateSearch, disposeSearch } from './search';
 import { highlightOverlay, paintLegend } from './overlays';
 import { findPath, alternatePath, hopRows, pathNotes, OUTCOME, MAX_ALTERNATES, MAX_HOPS, type Hop } from './path-finder';
-import { Minimap, MINIMAP_H, MINIMAP_MIN_CANVAS } from './minimap';
+import { Minimap, MINIMAP_H, MINIMAP_W, MINIMAP_MIN_CANVAS } from './minimap';
 import { Breadcrumb } from './breadcrumb';
 import { zoomStep, atZoomLimit, zoomChip } from './zoom-limit';
+/** Narrowest view left of the graph tools panel that still docks the card beside it (CSS px). */
+const TOOLS_MIN_ROOM = 240;
 /** Hard DOM bound for graduated focus labels, under `labelsMaxPerViewport`. */
 const FOCUS_LABELS = 64;
 /** Selection ripple length (ms), and the inset of off-screen pips from the view border (CSS px). */
@@ -334,6 +336,9 @@ export class DetailRenderer {
   private cueRing: HTMLElement;
   private cueLine: HTMLElement;
   private cardRect = [0, 0, 0, 0];
+  /** Host measure of the graph tools panel's overlap with the view's right edge (CSS px). */
+  measureTools?: () => number;
+  private toolsInset = 0;
   /** "Show only connections": a temporary mask over the host's filter, recomputed when the host view changes. */
   private baseVisible: Uint8Array;
   private isolation?: { node: number; hops: number };
@@ -435,7 +440,7 @@ export class DetailRenderer {
     this.canvas.addEventListener('webglcontextlost', this.contextLost); this.canvas.addEventListener('webglcontextrestored', this.contextRestored);
     input.attach(this.container);
     this.media.addEventListener('change', this.refreshTheme);
-    this.observer = new ResizeObserver(() => { const changed = this.resize(); if (changed && this.ready) void this.prepareLabels(() => !this.disposed).catch(() => {}); }); this.observer.observe(container);
+    this.observer = new ResizeObserver(() => { const changed = this.resize(); this.syncTools(); if (changed && this.ready) void this.prepareLabels(() => !this.disposed).catch(() => {}); }); this.observer.observe(container);
   }
   private packState() {
     const packed = positionTexture(this.positions); this.positionWidth = packed.width; this.positionHeight = packed.height;
@@ -798,7 +803,7 @@ export class DetailRenderer {
     const codes = this.view.groupCodes; if (!codes) return;
     let x = Infinity, y = Infinity, xx = -Infinity, yy = -Infinity;
     for (let i = 0; i < codes.length; i++) if (codes[i] === group && this.filterVisible[i]) { const a = this.positions[i * 2]!, b = this.positions[i * 2 + 1]!; x = Math.min(x, a); y = Math.min(y, b); xx = Math.max(xx, a); yy = Math.max(yy, b); }
-    if (x !== Infinity) this.frame(x, y, xx, yy, ms);
+    if (x !== Infinity) { const [right, bottom] = this.cardInset(); this.frame(x, y, xx, yy, ms, right, bottom); }
   }
   /** Frame the 1st–99th percentile of visible nodes so a few isolated outliers do not shrink the web;
    * fewer than 8 nodes are framed exactly. Only an empty view falls back to the preserved frame. */
@@ -1051,9 +1056,18 @@ export class DetailRenderer {
   /** Space the open card takes from the view: [right, bottom]. The docked side panel's width (its
    * CSS width before it is first measured) or the bottom sheet's height; none without a card. */
   private cardInset(): [number, number] {
-    if (this.card.node < 0 && !this.selectedEdges.length && !this.pathView) return [0, 0];
-    const [w, h] = this.card.size ?? [Math.min(320, this.width - 16), Math.min(this.height * .55, 240)];
-    return this.width < SHEET_WIDTH ? [0, h] : [w + 16, 0];
+    const t = this.toolsInset;
+    if (this.card.node < 0 && !this.selectedEdges.length && !this.pathView) return [t, 0];
+    const [w, h] = this.card.size ?? [Math.min(320, this.width - t - 16), Math.min(this.height * .55, 240)];
+    return sheetCard(this.width, t) ? [t, h] : [t + w + 16, 0];
+  }
+  /** Re-measure the graph tools panel over the view's right edge (via `measureTools`); the card docks
+   * left of it and framing and off-screen arrows keep clear of it. Ignored when it leaves no room
+   * for even a narrow card (the panel then covers the graph). */
+  syncTools() {
+    const px = Math.round(this.measureTools?.() ?? 0), inset = px > 0 && this.width - px >= TOOLS_MIN_ROOM ? px : 0;
+    if (inset === this.toolsInset || this.disposed) return;
+    this.toolsInset = inset; this.card.size = undefined; this.refresh();
   }
   /** Travel from a Connections row or history: the note becomes focus and selection, the camera flies
    * to it (zooming in when far out) and an active "Show only connections" re-centres on it. */
@@ -1341,9 +1355,11 @@ export class DetailRenderer {
   private placeCard() {
     const c = this.noteCard, w = this.width, h = this.height;
     if (this.card.node < 0 && !this.selectedEdges.length && !this.pathView) { this.cardRect = [0, 0, 0, 0]; this.cueRing.hidden = this.cueLine.hidden = true; return; }
-    const sheet = w < SHEET_WIDTH, cls = 'graph-ng-card' + (sheet ? ' graph-ng-sheet' : ''), room = `${Math.max(120, h - 16 - (this.settings.visuals.minimap && w >= MINIMAP_MIN_CANVAS ? MINIMAP_H + 8 : 0))}px`;
-    if (c.className !== cls || !sheet && c.style.maxHeight !== room) { c.className = cls; c.style.maxHeight = sheet ? '' : room; this.card.size = undefined; }
-    const [cw, ch] = this.card.size ??= [c.offsetWidth || 320, c.offsetHeight || 240], rect = this.cardRect = dockCard(w, h, cw, ch);
+    // The card stops above the minimap unless the tools panel already covers the minimap's column.
+    const t = this.toolsInset, sheet = sheetCard(w, t), cls = 'graph-ng-card' + (sheet ? ' graph-ng-sheet' : ''), mini = this.settings.visuals.minimap && w >= MINIMAP_MIN_CANVAS && t < MINIMAP_W + 8;
+    const room = `${Math.max(120, h - 16 - (mini ? MINIMAP_H + 8 : 0))}px`, across = sheet && t ? `${w - t}px` : '';
+    if (c.className !== cls || !sheet && c.style.maxHeight !== room || c.style.width !== across) { c.className = cls; c.style.maxHeight = sheet ? '' : room; c.style.width = across; this.card.size = undefined; }
+    const [cw, ch] = this.card.size ??= [c.offsetWidth || 320, c.offsetHeight || 240], rect = this.cardRect = dockCard(w, h, cw, ch, 8, t);
     c.style.transform = sheet ? '' : `translate(${rect[0]}px, ${rect[1]}px)`;
     const n = this.cue, ring = this.cueRing, line = this.cueLine;
     if (n < 0 || !this.filterVisible[n]) { ring.hidden = line.hidden = true; return; }

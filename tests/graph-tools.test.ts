@@ -356,3 +356,23 @@ test('UX relationship notes Lines | Nodes: shown only with reified rules; one ap
   await setRelationshipDisplay(plugin, true); expect(applies).toBe(2); // no-op when already in that display
   f.panel.dispose();
 });
+test('settings rows: Edges and layout Presets use the name, description and control row; a panel title is never repeated as a heading', () => {
+  const f = fixture(), headings = () => [...f.panel.root.querySelectorAll('h3'), ...f.panel.root.querySelectorAll('h4')].map(e => e.textContent);
+  const row = (name: string) => f.panel.root.querySelectorAll('.graph-ng-setting').find((r: any) => r.children[0]?.textContent === name) as any;
+  const parts = (r: any) => r.children.map((c: any) => [...c.classes].find((n: string) => n.startsWith('graph-ng-setting-')));
+  f.panel.show('appearance');
+  expect(headings().filter(t => t === 'Appearance')).toHaveLength(1); expect(headings()).toContain('Color rules');
+  const edges = row('Edges'); expect(edges.tagName).toBe('DIV'); expect(parts(edges)).toEqual(['graph-ng-setting-name', 'graph-ng-setting-desc', 'graph-ng-setting-line']);
+  const modes = edges.children[2]; expect(modes.getAttribute('role')).toBe('group'); expect(modes.getAttribute('aria-label')).toBe('Edges');
+  expect(modes.children.map((b: any) => b.textContent)).toEqual(['All', 'Focus only', 'Off']);
+  control(modes, 'Focus only').click(); expect(f.settings.visuals.edgeMode).toBe('focus'); expect(modes.children.map((b: any) => b.getAttribute('aria-pressed'))).toEqual(['false', 'true', 'false']);
+  // Sliders share the row: name first, a description line where given, then the track line.
+  const slider = row('Minimum highlighted size'); expect(parts(slider).filter(Boolean)).toEqual(['graph-ng-setting-name', 'graph-ng-setting-desc']);
+  expect(f.panel.root.textContent).not.toContain('Hover delay');
+  f.panel.show('layout');
+  expect(headings().filter(t => t === 'Layout')).toHaveLength(1);
+  const presets = row('Presets'); expect(presets.tagName).toBe('DIV'); expect(parts(presets)).toEqual(['graph-ng-setting-name', 'graph-ng-setting-desc', 'graph-ng-setting-line']);
+  const buttons = presets.children[2]; expect(buttons.getAttribute('aria-label')).toBe('Layout presets');
+  expect(buttons.children.map((b: any) => b.textContent)).toEqual(['Reset to recommended', 'Groups apart', 'Fill the screen', 'Faster', 'Undo last preset']);
+  f.panel.show('views'); expect(headings().filter(t => t === 'Saved views')).toHaveLength(1);
+});

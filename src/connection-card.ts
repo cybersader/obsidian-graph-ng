@@ -68,11 +68,17 @@ export class NavHistory {
 }
 /** Views narrower than this show the card as a bottom sheet instead of a docked side panel. */
 export const SHEET_WIDTH = 520;
-/** The card's rectangle [x, y, w, h] in a width×height view: docked to the top-right edge (a fixed
- * side panel that never follows the camera), or a full-width bottom sheet on narrow views. */
-export function dockCard(width: number, height: number, w: number, h: number, m = 8): [number, number, number, number] {
-  return width < SHEET_WIDTH ? [0, height - h, width, h] : [Math.max(m, width - m - w), m, w, h];
+/** The card's rectangle [x, y, w, h] in a width×height view whose right `right` px are covered (the
+ * graph tools panel): docked to the top-right edge of the remaining room (a fixed side panel that
+ * never follows the camera), or a bottom sheet across that room (`sheetCard`). */
+export function dockCard(width: number, height: number, w: number, h: number, m = 8, right = 0): [number, number, number, number] {
+  const room = width - right;
+  return sheetCard(width, right) ? [0, height - h, room, h] : [Math.max(m, room - m - w), m, w, h];
 }
+/** Room beside the tools panel for the docked card: its 320 px CSS width plus both 8 px margins. */
+export const DOCK_ROOM = 336;
+/** Bottom sheet when the view is narrow, or when the tools panel leaves no room for the docked card. */
+export const sheetCard = (width: number, right = 0) => width < SHEET_WIDTH || width - right < DOCK_ROOM;
 export type CardAction = 'open' | 'tab' | 'split' | 'focus' | 'isolate' | 'lens' | 'copy';
 export interface CardHost {
   name(n: number): string;

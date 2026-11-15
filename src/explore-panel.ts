@@ -39,6 +39,8 @@ export interface PanelHost {
   setColors(colors: GraphDeclaration['colors']): Promise<void>;
   visualsChanged(labels: boolean): void;
   lens?(): { active: boolean; available: boolean };
+  /** The panel opened, closed or switched tool: the graph re-measures the room it leaves. */
+  toolsChanged?(): void;
   toggleLens?(): void;
   groupColor(code: number): string;
   focusGroup(code: number): void;
@@ -72,8 +74,8 @@ export async function setRelationshipDisplay(plugin: { settings: Settings; apply
 }
 /** Toggle/select row: name on the left with an optional muted line under it; the caller appends the control. Long
  * toggle labels split at "(...)" or ": " into name and description; the control keeps the full accessible name. */
-function settingRow(host: HTMLElement, label: string, cls: string, desc?: string) {
-  const row = host.createEl('label', { cls: `graph-ng-setting ${cls}` }), [, name = label, a, b] = (!desc && /^(.+?)(?: \((.+)\)|: (.+))$/.exec(label)) || [], more = desc ?? a ?? b;
+function settingRow(host: HTMLElement, label: string, cls: string, desc?: string, tag: 'label' | 'div' = 'label') {
+  const row = host.createEl(tag, { cls: `graph-ng-setting ${cls}` }), [, name = label, a, b] = (!desc && /^(.+?)(?: \((.+)\)|: (.+))$/.exec(label)) || [], more = desc ?? a ?? b;
   row.createSpan({ cls: 'graph-ng-setting-name', text: name });
   if (more) row.createDiv({ cls: 'graph-ng-setting-desc', text: more[0]!.toUpperCase() + more.slice(1) });
   return row;
@@ -197,8 +199,9 @@ export class ExplorePanel {
     try { validateView(next); } catch (e) { this.invalid.textContent = `Not applied: ${e instanceof Error ? e.message : String(e)}`; return; }
     this.invalid.textContent = ''; this.view = next; this.host.setView(this.view, after); this.render();
   }
+  private toolTitle() { return this.tool === 'members' ? 'Groups & members' : this.tool === 'views' ? 'Saved views' : TOOLS.find(([tool]) => tool === this.tool)![1]; }
   private layout() {
-    this.title.textContent = this.tool === 'members' ? 'Groups & members' : this.tool === 'views' ? 'Saved views' : TOOLS.find(([tool]) => tool === this.tool)![1];
+    this.title.textContent = this.toolTitle();
     for (const [tool, button] of this.buttons) button.setAttribute('aria-expanded', String(!this.root.hidden && tool === this.tool));
     if (this.host.information) this.host.information.hidden = this.root.hidden || this.tool !== 'information';
     if (this.host.members) {
@@ -209,6 +212,7 @@ export class ExplorePanel {
       }
     }
     this.body.hidden = this.root.hidden || this.tool === 'information' || this.tool === 'members'; this.render();
+    this.host.toolsChanged?.();
   }
   render() {
     const external = Boolean(this.settings.projectionFile), r = external ? undefined : this.host.result();
@@ -231,7 +235,8 @@ export class ExplorePanel {
     const scroll = this.body.scrollTop; this.body.empty(); this.guards = [];
     for (const [id, title] of SECTIONS[this.tool] ?? []) {
       const section = this.body.createEl('section', { cls: `graph-ng-explore-section graph-ng-explore-${id}` });
-      section.createEl('h4', { text: title });
+      // The panel title already names a section that shares it (Appearance, Layout, Saved views).
+      if (title !== this.toolTitle()) section.createEl('h4', { text: title });
       const content = section.createDiv();
       if (!r && id !== 'display' && id !== 'views' && id !== 'physics') { this.note(content, external ? 'External aggregate has no note rows to filter or regroup.' : 'Awaiting projection.'); continue; }
       this[id](content, r!);
@@ -475,7 +480,10 @@ export class ExplorePanel {
     const fill = (values: Required<PhysicsValues>, note: string, name: string) => { this.physicsUndo = { values: { ...draft }, name, applied: false }; for (const [key] of PHYSICS_FIELDS) { const v = values[key]; draft[key] = typeof v === 'boolean' ? v : String(v); } this.physicsError = ''; this.physicsNote = note; this.render(); };
     const size = this.host.result(), recommended = recommendedPhysics(size?.nodes ?? 1000, size?.edges ?? 3000);
     this.note(host, 'Change values or pick a preset, then Apply and recompute. Nothing is saved or moved until you apply. Fit graph is separate.');
-    const presets = host.createDiv({ cls: 'graph-ng-form', attr: { role: 'group', 'aria-label': 'Layout presets' } });
+    const presets = settingRow(host, 'Presets', 'graph-ng-presets', 'Each one scales the recommended values for this graph size.', 'div').createDiv({ cls: 'graph-ng-setting-line', attr: { role: 'group', 'aria-label': 'Layout presets' } });
+    const reset = presets.createEl('button', { text: 'Reset to recommended', attr: { title: 'Values measured to read well for a graph of this size' } });
+    reset.disabled = this.physicsBusy;
+    reset.onclick = () => fill(recommended, 'Recommended values for this graph loaded.', 'Reset to recommended');
     for (const [name, effect] of PHYSICS_PRESETS) {
       const b = presets.createEl('button', { text: name, attr: { title: effect } }); b.disabled = this.physicsBusy;
       b.onclick = () => fill(presetValues(name, recommended), `${name} loaded: ${effect} Apply and recompute to see it.`, name);
@@ -487,9 +495,8 @@ export class ExplorePanel {
     const summarize = () => { const now = applied(), diff = PHYSICS_FIELDS.filter(([key]) => draft[key] !== now[key]).map(([key, title]) => `${title} ${show(now[key])} → ${show(draft[key])}`); changes.textContent = [this.physicsNote, diff.length ? `What changes on apply: ${diff.join('; ')}.` : 'No pending changes.'].filter(Boolean).join(' '); };
     const basic = host.createDiv(), advanced = host.createEl('details', { cls: 'graph-ng-physics-advanced' });
     advanced.createEl('summary', { text: 'Advanced physics' }); advanced.open = this.physicsAdvanced; advanced.ontoggle = () => { this.physicsAdvanced = advanced.open; };
-    const initial = physicsDefaults();
     for (const [key, title, help, more] of PHYSICS_FIELDS) {
-      const parent = more ? advanced : basic, value = draft[key], def = initial[key];
+      const parent = more ? advanced : basic, value = draft[key], def = recommended[key];
       if (typeof value === 'boolean') {
         const row = settingRow(parent, title, 'graph-ng-toggle graph-ng-physics-field', help), input = row.createEl('input', { attr: { type: 'checkbox', 'aria-label': title } });
         input.disabled = this.physicsBusy; input.checked = value; input.onchange = () => { draft[key] = input.checked; summarize(); };
@@ -498,9 +505,6 @@ export class ExplorePanel {
     summarize();
     host.createDiv({ cls: 'graph-ng-explore-error', text: this.physicsError, attr: { role: 'alert' } });
     const actions = host.createDiv({ cls: 'graph-ng-form' });
-    const reset = actions.createEl('button', { text: 'Reset to recommended', attr: { title: 'Values measured to read well for a graph of this size' } });
-    reset.disabled = this.physicsBusy;
-    reset.onclick = () => fill(recommended, 'Recommended values for this graph loaded.', 'Reset to recommended');
     const apply = actions.createEl('button', { text: this.physicsBusy ? 'Recomputing…' : 'Apply and recompute', cls: 'mod-cta' });
     apply.disabled = this.physicsBusy;
     apply.onclick = () => run();
@@ -648,15 +652,14 @@ export class ExplorePanel {
   }
   /** Edges: All / Focus only / Off. Live, saved with plugin settings. */
   private edgeMode(host: HTMLElement) {
-    const v = this.settings.visuals, row = host.createDiv({ cls: 'graph-ng-row graph-ng-segmented', attr: { role: 'group', 'aria-label': 'Edges' } });
-    row.createSpan({ text: 'Edges' });
+    const v = this.settings.visuals, row = settingRow(host, 'Edges', 'graph-ng-segmented', 'Focus only draws lines just for the selected note and its connections.', 'div');
+    const line = row.createDiv({ cls: 'graph-ng-setting-line', attr: { role: 'group', 'aria-label': 'Edges' } });
     const modes: [EdgeMode, string][] = [['all', 'All'], ['focus', 'Focus only'], ['off', 'Off']];
     const buttons = modes.map(([mode, text]) => {
-      const button = row.createEl('button', { text, attr: { 'aria-pressed': String(v.edgeMode === mode) } });
+      const button = line.createEl('button', { text, attr: { 'aria-pressed': String(v.edgeMode === mode) } });
       button.onclick = () => { v.edgeMode = mode; buttons.forEach((b, i) => b.setAttribute('aria-pressed', String(modes[i]![0] === mode))); this.host.visualsChanged(false); };
       return button;
     });
-    this.note(host, 'Focus only draws lines just for the selected note and its connections.');
   }
   private relationBusy = false;
   private relationMessage = '';

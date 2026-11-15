@@ -360,7 +360,7 @@ export class GraphView extends ItemView {
       applyLayout: values => this.applyLayout(values), settings: () => this.plugin.settings, result: () => this.explored, mode: () => this.contentEl.dataset.mode ?? 'groups',
       policy: () => this.detailRenderer?.policy.reasons ?? [], carriers: () => this.detailRenderer?.carrierCount ?? 0, relationshipNotes: () => this.relationshipNotes(), setRelationshipDisplay: nodes => setRelationshipDisplay(this.plugin, nodes), setView: (view, after) => this.setView(view, after), setColors: colors => this.setColors(colors), preview: (expr, context) => this.previewExpression(expr, context),
       lens: () => { const r = this.contentEl.dataset.mode === 'nodes' ? this.detailRenderer : undefined; return { active: !!r && r.lensNode >= 0, available: !!r && (r.lensNode >= 0 || r.selected >= 0 || r.hovered >= 0) }; },
-      toggleLens: () => this.detailRenderer?.toggleLens(),
+      toggleLens: () => this.detailRenderer?.toggleLens(), toolsChanged: () => this.detailRenderer?.syncTools?.(),
       visualsChanged: labels => { this.plugin.saveSoon(); this.detailRenderer?.refreshVisuals(labels); if (this.contentEl.dataset.mode === 'groups') this.showGroups(true); },
       groupColor: code => this.groupColor(code), focusGroup: code => this.focusGroup(code), fit: () => this.detailRenderer?.fitAll(),
       camera: () => this.detailRenderer ? { ...this.detailRenderer.camera } : null, restoreCamera: camera => this.restoreCamera(camera), persist: () => this.plugin.saveSoon(),
@@ -371,6 +371,12 @@ export class GraphView extends ItemView {
     const source = this.plugin.propertySource;
     void Promise.resolve().then(() => !this.closed && source === this.plugin.propertySource && source?.load?.()).catch(() => {});
     await this.refresh();
+  }
+  /** How far the open graph tools panel reaches over the stage from its right edge (CSS px). */
+  private toolsOverlap() {
+    const tools = this.explorePanel?.root; if (!tools || tools.hidden) return 0;
+    const stage = this.stage.getBoundingClientRect(), panel = tools.getBoundingClientRect();
+    return panel.width > 0 ? Math.max(0, Math.min(stage.width, stage.right - panel.left)) : 0;
   }
   invalidateSource() { this.explored = undefined; this.explorePanel?.render(); this.contributionPage.clear(); this.groupGeneration = -1; this.revision++; this.renderRevision++; this.provisional = true; if (this.contentEl) this.contentEl.dataset.verified = 'false'; this.renderer?.dispose(); this.renderer = undefined; this.projection = undefined; this.detailGeneration = -1; this.positions = undefined; this.groupGraph = undefined; this.stage?.empty(); this.panel?.empty(); }
   promoteProperties() {
@@ -877,6 +883,7 @@ export class GraphView extends ItemView {
       this.detailRenderer.openPath = path => this.openPath(path);
       this.detailRenderer.openNote = (path, mode) => this.openNote(path, mode);
       this.detailRenderer.copyLink = path => this.copyLink(path);
+      this.detailRenderer.measureTools = () => this.toolsOverlap(); this.detailRenderer.syncTools?.();
       this.detailRenderer.showMenu = obsidianMenu(this.app, Menu, path => { const f = this.app.vault.getAbstractFileByPath(path); return f instanceof TFile ? f : null; }, this.leaf);
       this.detailRenderer.onSizingChange = () => { this.explorePanel?.updateSizingReadout(); this.explorePanel?.updateLensControl(); };
       this.detailRenderer.onLensChange = () => this.explorePanel?.updateLensControl();

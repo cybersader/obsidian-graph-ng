@@ -15,7 +15,7 @@ const PRESS_MS = 500, REOPEN_MS = 800;
 const views = new WeakMap<RendererControls, Gestures>();
 
 /** Per-view context menu and touch long-press. Hover is only a light preview (ring and name);
- * the graduated highlight follows the selection, so there is no hover intent or focus lock. */
+ * the graduated highlight follows the selection, so hover needs no timer or override. */
 export class Gestures {
   private press?: ReturnType<typeof setTimeout>;
   private opened = -Infinity;

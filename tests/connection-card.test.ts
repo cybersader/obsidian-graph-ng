@@ -1,5 +1,5 @@
 import { test, expect } from 'bun:test';
-import { connectionGroups, reach, NavHistory, dockCard, SHEET_WIDTH } from '../src/connection-card';
+import { connectionGroups, reach, NavHistory, dockCard, sheetCard, DOCK_ROOM, SHEET_WIDTH } from '../src/connection-card';
 import { incidentEdges } from '../src/render-data';
 
 // Synthetic graph. Types: 0 'cites', 1 'part of'. Node 9 is a relationship-note dot owned by row 0
@@ -71,7 +71,9 @@ test('the card docks to the top-right edge (no note position involved); narrow v
   expect(dockCard(800, 600, 320, 200)).toEqual([472, 8, 320, 200]);
   // Wider than the view: pinned to the left margin, never off screen.
   expect(dockCard(600, 400, 700, 200)).toEqual([8, 8, 700, 200]);
-  expect(dockCard(SHEET_WIDTH - 1, 600, 300, 240)).toEqual([0, 360, SHEET_WIDTH - 1, 240]);
+  expect(dockCard(SHEET_WIDTH - 1, 600, 300, 240)).toEqual([0, 360, SHEET_WIDTH - 1, 240]);  // An open tools panel over the right 368 px: the card docks left of it, or becomes a sheet across what is left.
+  expect(dockCard(800, 600, 320, 200, 8, 368)).toEqual([104, 8, 320, 200]); expect(sheetCard(800, 368)).toBe(false);
+  expect(sheetCard(800, 800 - DOCK_ROOM + 1)).toBe(true); expect(dockCard(800, 600, 320, 200, 8, 500)).toEqual([0, 400, 300, 200]);
 });
 
 test('history pruning preserves the current stop and both branches while dropping unavailable indices', () => {
