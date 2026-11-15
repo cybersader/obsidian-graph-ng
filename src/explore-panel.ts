@@ -1,7 +1,7 @@
 import { folderPredicate, folderView } from './saved-views';
 import { setIcon } from 'obsidian';
 import { sizingValues, sizingSettings, MAX_NODE_RADIUS, type NodeSizingValues } from './node-sizing';
-import { physicsSettings, physicsDefaults, presetValues, PHYSICS_FIELDS, PHYSICS_PRESETS, type PhysicsKey, type PhysicsValues } from './physics-controls';
+import { physicsSettings, presetValues, PHYSICS_FIELDS, PHYSICS_PRESETS, type PhysicsKey, type PhysicsValues } from './physics-controls';
 import { editAsExpression, builderPredicate, checked } from './core/expr/engine';
 import { validate } from './core/expr/syntax';
 import { filterSummary } from './filter-summary';
@@ -13,7 +13,7 @@ import { defaults, defaultVisuals, type DegreeCurve, type EdgeMode, type Setting
 import { progressiveSlider, type Curve, type SliderOptions } from './progressive-slider';
 /** Slider travel per numeric layout control; typed values outside the span stay unclamped. */
 const PHYSICS_CURVES: Partial<Record<PhysicsKey, Curve>> = { scalingRatio: { min: .1, max: 100, log: true }, gravity: { min: 0, max: 20, k: 3 }, slowDown: { min: .1, max: 100, log: true }, iterations: { min: 1, max: 1000, log: true, int: true }, barnesHutTheta: { min: .1, max: 3, k: 2 } };
-import type { Suggestion } from './recommend';
+import { recommendedPhysics, type Suggestion } from './recommend';
 /** The view owns the worker, renderer and persistence; the panel only edits state. */
 export interface PanelHost {
   settings(): Settings;
@@ -100,6 +100,8 @@ export class ExplorePanel {
   private lensButton?: HTMLButtonElement;
   private physicsError = '';
   private physicsBusy = false;
+  /** Draft before the last preset or reset; `applied` once Apply ran with the preset values. */
+  private physicsUndo?: { values: Record<PhysicsKey, string | boolean>; name: string; applied: boolean };
   private disposed = false;
   private drafts = new Map<string, string>();
   private expressionTimers = new Set<ReturnType<typeof setTimeout>>();
@@ -470,13 +472,17 @@ export class ExplorePanel {
   private physics(host: HTMLElement) {
     const applied = (): Record<PhysicsKey, string | boolean> => { const l = this.settings.layout; return Object.fromEntries(PHYSICS_FIELDS.map(([key]) => { const v = key === 'iterations' ? l.iterations : l.force[key]; return [key, typeof v === 'boolean' ? v : String(v)]; })) as Record<PhysicsKey, string | boolean>; };
     const draft = this.physicsDraft ??= applied();
-    const fill = (values: Required<PhysicsValues>, note: string) => { for (const [key] of PHYSICS_FIELDS) { const v = values[key]; draft[key] = typeof v === 'boolean' ? v : String(v); } this.physicsError = ''; this.physicsNote = note; this.render(); };
+    const fill = (values: Required<PhysicsValues>, note: string, name: string) => { this.physicsUndo = { values: { ...draft }, name, applied: false }; for (const [key] of PHYSICS_FIELDS) { const v = values[key]; draft[key] = typeof v === 'boolean' ? v : String(v); } this.physicsError = ''; this.physicsNote = note; this.render(); };
+    const size = this.host.result(), recommended = recommendedPhysics(size?.nodes ?? 1000, size?.edges ?? 3000);
     this.note(host, 'Change values or pick a preset, then Apply and recompute. Nothing is saved or moved until you apply. Fit graph is separate.');
     const presets = host.createDiv({ cls: 'graph-ng-form', attr: { role: 'group', 'aria-label': 'Layout presets' } });
     for (const [name, effect] of PHYSICS_PRESETS) {
       const b = presets.createEl('button', { text: name, attr: { title: effect } }); b.disabled = this.physicsBusy;
-      b.onclick = () => fill(presetValues(name), `${name} preset loaded: ${effect} Apply and recompute to see it.`);
+      b.onclick = () => fill(presetValues(name, recommended), `${name} loaded: ${effect} Apply and recompute to see it.`, name);
     }
+    const undo = this.physicsUndo, back = presets.createEl('button', { text: 'Undo last preset', attr: { title: undo ? `Back to the values before ${undo.name}` : 'No preset to undo' } });
+    back.disabled = this.physicsBusy || !undo;
+    back.onclick = () => { if (!undo) return; Object.assign(draft, undo.values); this.physicsUndo = undefined; this.physicsNote = `${undo.name} undone.`; if (undo.applied) void run(); else this.render(); };
     const changes = host.createDiv({ cls: 'graph-ng-explore-note', attr: { 'aria-live': 'polite' } }), show = (v: string | boolean) => typeof v === 'boolean' ? (v ? 'on' : 'off') : v;
     const summarize = () => { const now = applied(), diff = PHYSICS_FIELDS.filter(([key]) => draft[key] !== now[key]).map(([key, title]) => `${title} ${show(now[key])} → ${show(draft[key])}`); changes.textContent = [this.physicsNote, diff.length ? `What changes on apply: ${diff.join('; ')}.` : 'No pending changes.'].filter(Boolean).join(' '); };
     const basic = host.createDiv(), advanced = host.createEl('details', { cls: 'graph-ng-physics-advanced' });
@@ -492,18 +498,20 @@ export class ExplorePanel {
     summarize();
     host.createDiv({ cls: 'graph-ng-explore-error', text: this.physicsError, attr: { role: 'alert' } });
     const actions = host.createDiv({ cls: 'graph-ng-form' });
-    const reset = actions.createEl('button', { text: 'Reset to defaults' });
+    const reset = actions.createEl('button', { text: 'Reset to recommended', attr: { title: 'Values measured to read well for a graph of this size' } });
     reset.disabled = this.physicsBusy;
-    reset.onclick = () => fill(physicsDefaults(), '');
+    reset.onclick = () => fill(recommended, 'Recommended values for this graph loaded.', 'Reset to recommended');
     const apply = actions.createEl('button', { text: this.physicsBusy ? 'Recomputing…' : 'Apply and recompute', cls: 'mod-cta' });
     apply.disabled = this.physicsBusy;
-    apply.onclick = async () => {
+    apply.onclick = () => run();
+    const run = async () => {
       if (this.physicsBusy || this.disposed) return;
       try {
         const values = Object.fromEntries(PHYSICS_FIELDS.map(([key]) => { const v = draft[key]; return [key, typeof v === 'boolean' ? v : v.trim() ? Number(v) : NaN]; })) as unknown as PhysicsValues;
         physicsSettings(this.settings, values);
         this.physicsBusy = true; this.physicsError = ''; this.physicsNote = ''; this.render();
         await this.host.applyLayout(values);
+        if (this.physicsUndo) this.physicsUndo.applied = true;
       } catch (e) { this.physicsError = `Not applied: ${e instanceof Error ? e.message : String(e)}`; }
       finally { this.physicsBusy = false; if (!this.disposed) this.render(); }
     };

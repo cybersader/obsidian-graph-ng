@@ -1,7 +1,8 @@
 import { test, expect } from 'bun:test';
 import './support/obsidian-fixture';
 import { defaults } from '../src/settings';
-import { physicsSettings, physicsDefaults, presetValues, PHYSICS_FIELDS, PHYSICS_PRESETS } from '../src/physics-controls';
+import { physicsSettings, presetValues, PHYSICS_FIELDS, PHYSICS_PRESETS, PRESET_BOUNDS } from '../src/physics-controls';
+import { recommendedPhysics } from '../src/recommend';
 import { upgradeSettings } from '../src/settings';
 import { ExplorePanel } from '../src/explore-panel';
 import { emptyView } from '../src/core/explore';
@@ -12,7 +13,7 @@ function fixture() {
   const settings = defaults('links'), root = new ControlElement(); let applied = 0;
   const render = ExplorePanel.prototype.render; ExplorePanel.prototype.render = function () {};
   let panel: any;
-  try { panel = new ExplorePanel(root as any, { settings: () => settings, async applyLayout(v: any) { applied++; settings.layout = physicsSettings(settings, v).layout; } } as any, emptyView()); }
+  try { panel = new ExplorePanel(root as any, { settings: () => settings, result: () => ({ nodes: 16000, edges: 50000 }), async applyLayout(v: any) { applied++; settings.layout = physicsSettings(settings, v).layout; } } as any, emptyView()); }
   finally { ExplorePanel.prototype.render = render; }
   panel.render = () => { panel.body.empty(); panel.physics(panel.body); }; panel.render();
   return { panel, settings, applied: () => applied };
@@ -36,17 +37,18 @@ test('invalid zero negative NaN Infinity and invalid full settings are atomic', 
   expect(s).toEqual(before); expect(() => physicsSettings({ ...s, nodeSize: NaN }, values)).toThrow();
 });
 const byLabel = (f: ReturnType<typeof fixture>, label: string): any => f.panel.body.querySelectorAll('input').find((e: any) => e.getAttribute('aria-label') === label);
-test('numeric drafts survive rerenders; reset restores every exposed default; explicit apply runs once', async () => {
+const room = recommendedPhysics(16000, 50000);
+test('numeric drafts survive rerenders; reset restores every recommended value; explicit apply runs once', async () => {
   const f = fixture(); f.settings.layout.force.scalingRatio = 100000; f.panel.physicsDraft = undefined; f.panel.render();
   expect(numbers(f)[0].value).toBe('100000');
   input(f, 0, '999999'); input(f, 1, '0'); f.panel.render();
   expect(numbers(f)[0].value).toBe('999999'); expect(f.applied()).toBe(0);
   expect(f.panel.body.textContent).toContain('What changes on apply: Spread nodes 100000 → 999999; Pull to center 1 → 0.');
-  control(f.panel.body, 'Reset to defaults').click(); expect(f.settings.layout.force.scalingRatio).toBe(100000);
-  const d = physicsDefaults();
+  control(f.panel.body, 'Reset to recommended').click(); expect(f.settings.layout.force.scalingRatio).toBe(100000);
+  const d = room;
   for (const [key, label] of PHYSICS_FIELDS) { const e = byLabel(f, label); expect(typeof d[key] === 'boolean' ? e.checked : e.value).toBe(typeof d[key] === 'boolean' ? d[key] : String(d[key])); }
   const apply: any = control(f.panel.body, 'Apply and recompute'); const pending = apply.onclick(); apply.onclick(); await pending;
-  expect(f.applied()).toBe(1); expect(f.settings.layout.force.scalingRatio).toBe(2); f.panel.dispose();
+  expect(f.applied()).toBe(1); expect(f.settings.layout.force.scalingRatio).toBe(10); expect(f.settings.layout.force.strongGravityMode).toBe(true); f.panel.dispose();
 });
 test('every control has a plain label and an effect hint; advanced controls sit in a collapsed section', () => {
   const f = fixture(), details: any = f.panel.body.querySelector('details');
@@ -61,16 +63,16 @@ test('every control has a plain label and an effect hint; advanced controls sit 
 test('presets and checkboxes only fill drafts; one explicit apply sends every exposed value', async () => {
   const f = fixture(); let sent: any; f.panel.host.applyLayout = async (v: any) => { sent = v; f.settings.layout = physicsSettings(f.settings, v).layout; };
   const before = structuredClone(f.settings);
-  control(f.panel.body, 'Clustered').click();
+  control(f.panel.body, 'Groups apart').click();
   expect(f.settings).toEqual(before); expect(sent).toBeUndefined();
-  expect(byLabel(f, 'Tighter clusters (LinLog)').checked).toBe(true); expect(byLabel(f, 'Spread nodes').value).toBe('4');
-  expect(f.panel.body.textContent).toContain('Clustered preset loaded');
+  expect(byLabel(f, 'Strong gravity').checked).toBe(true); expect(byLabel(f, 'Pull to center').value).toBe(String(room.gravity / 2));
+  expect(f.panel.body.textContent).toContain('Groups apart loaded');
   const overlap = byLabel(f, 'Prevent overlap'); overlap.checked = true; overlap.onchange();
   f.panel.render(); expect(byLabel(f, 'Prevent overlap').checked).toBe(true);
   await (control(f.panel.body, 'Apply and recompute') as any).onclick();
-  expect(sent).toEqual({ ...presetValues('Clustered'), adjustSizes: true });
-  expect(f.settings.layout.iterations).toBe(200); expect(f.settings.layout.force.linLogMode).toBe(true);
-  expect(f.settings.layout.force.outboundAttractionDistribution).toBe(true); expect(f.settings.layout.force.adjustSizes).toBe(true);
+  expect(sent).toEqual({ ...presetValues('Groups apart', room), adjustSizes: true });
+  expect(f.settings.layout.iterations).toBe(room.iterations); expect(f.settings.layout.force.gravity).toBe(room.gravity / 2);
+  expect(f.settings.layout.force.strongGravityMode).toBe(true); expect(f.settings.layout.force.adjustSizes).toBe(true);
   expect({ ...f.settings.layout, iterations: 100, force: before.layout.force }).toEqual(before.layout);
   f.panel.dispose();
 });
@@ -165,4 +167,49 @@ test('recompute callers settle by exact RPC ownership; late responses cannot com
     p.dispose(new Error('cancelled by disposal'));
     expect(await Promise.all([active, queued])).toEqual(['Error: cancelled by disposal', 'Error: cancelled by disposal']);
   } finally { p.dispose(); }
+});
+
+test('preset transforms are relative to the base, bounded, and never compound', () => {
+  for (const [nodes, edges] of [[500, 1500], [16000, 50000]] as const) {
+    const base = recommendedPhysics(nodes, edges);
+    for (const [name, , scale] of PHYSICS_PRESETS) {
+      const out = presetValues(name, base);
+      expect(presetValues(name, base)).toEqual(out); expect(base).toEqual(recommendedPhysics(nodes, edges));
+      for (const [key] of PHYSICS_FIELDS) {
+        const factor = (scale as Record<string, number>)[key];
+        if (factor === undefined) expect(out[key]).toBe(base[key]);
+        else expect(Math.abs((out[key] as number) / (base[key] as number) - factor)).toBeLessThan(.02);
+      }
+      expect(() => physicsSettings(defaults('links'), out)).not.toThrow();
+    }
+  }
+  const extreme = { ...recommendedPhysics(500, 1500), gravity: 15, iterations: 30, barnesHutTheta: 2.9 };
+  expect(presetValues('Fill the screen', extreme).gravity).toBe(PRESET_BOUNDS.gravity[1]);
+  expect(presetValues('Faster', extreme)).toMatchObject({ iterations: PRESET_BOUNDS.iterations[0], barnesHutTheta: PRESET_BOUNDS.barnesHutTheta[1] });
+  expect(PHYSICS_PRESETS.length).toBeGreaterThanOrEqual(3); expect(PHYSICS_PRESETS.length).toBeLessThanOrEqual(5);
+  for (const [, effect] of PHYSICS_PRESETS) expect(effect).not.toContain('\u00b7');
+});
+test('recommended values scale with graph size and stay valid', () => {
+  const sizes = [[50, 60], [500, 1500], [2000, 6000], [16000, 50000], [200000, 900000]].map(([n, e]) => recommendedPhysics(n!, e!));
+  for (let i = 1; i < sizes.length; i++) { expect(sizes[i]!.gravity).toBeLessThanOrEqual(sizes[i - 1]!.gravity); expect(sizes[i]!.iterations).toBeLessThanOrEqual(sizes[i - 1]!.iterations); }
+  expect(sizes[0]!.gravity).toBeGreaterThan(sizes[3]!.gravity); expect(sizes[0]!.iterations).toBeGreaterThan(sizes[3]!.iterations);
+  for (const v of sizes) { expect(v.strongGravityMode).toBe(true); expect(v.gravity).toBeGreaterThanOrEqual(.1); expect(v.gravity).toBeLessThanOrEqual(.25); expect(() => physicsSettings(defaults('links'), v)).not.toThrow(); }
+  expect(recommendedPhysics(16000, 50000)).toMatchObject({ scalingRatio: 10, gravity: .125, slowDown: 1, iterations: 150, barnesHutTheta: 1.2 });
+  expect(recommendedPhysics(0, 0).iterations).toBe(300);
+});
+test('undo restores the tuned values before a preset, and re-applies them in one click once the preset was applied', async () => {
+  const f = fixture(); f.settings.layout.force.scalingRatio = 1200; f.settings.layout.force.gravity = 20; f.settings.layout.force.slowDown = 20; f.panel.physicsDraft = undefined; f.panel.render();
+  const before = structuredClone(f.settings), undo = () => control(f.panel.body, 'Undo last preset') as any;
+  expect(undo().disabled).toBe(true);
+  input(f, 0, '900'); control(f.panel.body, 'Fill the screen').click();
+  expect(byLabel(f, 'Pull to center').value).toBe(String(room.gravity * 3)); expect(undo().disabled).toBe(false);
+  undo().click();
+  expect(byLabel(f, 'Spread nodes').value).toBe('900'); expect(byLabel(f, 'Pull to center').value).toBe('20'); expect(byLabel(f, 'Strong gravity').checked).toBe(false);
+  expect(f.applied()).toBe(0); expect(f.settings).toEqual(before); expect(undo().disabled).toBe(true);
+  input(f, 0, '1200'); control(f.panel.body, 'Faster').click(); await (control(f.panel.body, 'Apply and recompute') as any).onclick();
+  expect(f.applied()).toBe(1); expect(f.settings.layout.iterations).toBe(Math.round(room.iterations / 2));
+  undo().click(); await new Promise(r => setTimeout(r, 0));
+  expect(f.applied()).toBe(2); expect(f.settings.layout).toEqual(before.layout);
+  control(f.panel.body, 'Reset to recommended').click(); undo().click(); expect(byLabel(f, 'Spread nodes').value).toBe('1200');
+  f.panel.dispose();
 });

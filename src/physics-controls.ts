@@ -22,16 +22,28 @@ const FORCE_KEYS = PHYSICS_FIELDS.map(([key]) => key).filter(key => key !== 'ite
 export function physicsDefaults(): Required<PhysicsValues> {
   return { ...Object.fromEntries(FORCE_KEYS.map(key => [key, DEFAULT_LAYOUT.force[key]])), iterations: DEFAULT_LAYOUT.iterations } as Required<PhysicsValues>;
 }
-/** One-click starting points; they only fill drafts. Apply and recompute remains the single commit. */
-export const PHYSICS_PRESETS: readonly [string, string, Partial<PhysicsValues>][] = [
-  ['Clustered', 'Separates linked groups into distinct clumps.', { linLogMode: true, outboundAttractionDistribution: true, scalingRatio: 4, iterations: 200 }],
-  ['Spacious', 'More room between everything; easier to read labels.', { scalingRatio: 10, gravity: .5 }],
-  ['Compact', 'Pulls the graph into a tight ball that fits the screen.', { scalingRatio: 1, gravity: 3 }],
+type Scaled = 'scalingRatio' | 'gravity' | 'slowDown' | 'iterations' | 'barnesHutTheta';
+/** Every preset result stays inside the slider ranges, so no preset can produce an extreme value. */
+export const PRESET_BOUNDS: Record<Scaled, [number, number]> = { scalingRatio: [.1, 100], gravity: [.001, 20], slowDown: [.1, 100], iterations: [20, 1000], barnesHutTheta: [.1, 3] };
+/** One-click starting points as multipliers of a base (the recommended values for this graph's
+ * size), so the same click reads the same on 500 or 16k notes and never compounds. They only
+ * fill drafts; Apply and recompute remains the single commit. Measured on synthetic graphs:
+ * see README "Layout presets". LinLog and hub dissuasion stay manual: in 100 to 500 steps they
+ * left the groups mixed on every tested size. */
+export const PHYSICS_PRESETS: readonly [string, string, Partial<Record<Scaled, number>>][] = [
+  ['Groups apart', 'Weaker pull to the middle, so groups sit further apart and loose notes ring the edge.', { gravity: .5 }],
+  ['Fill the screen', 'Stronger pull, so the graph fills the view as one round shape with groups touching.', { gravity: 3 }],
+  ['Faster', 'Half the steps and a rougher approximation, for very large vaults.', { iterations: .5, barnesHutTheta: 1.3 }],
 ];
-export function presetValues(name: string): Required<PhysicsValues> {
+export function presetValues(name: string, base: Required<PhysicsValues> = physicsDefaults()): Required<PhysicsValues> {
   const preset = PHYSICS_PRESETS.find(([label]) => label === name);
   if (!preset) throw new Error(`Unknown layout preset: ${name}`);
-  return { ...physicsDefaults(), ...preset[2] } as Required<PhysicsValues>;
+  const out = { ...base };
+  for (const [key, factor] of Object.entries(preset[2]) as [Scaled, number][]) {
+    const [min, max] = PRESET_BOUNDS[key], value = Math.min(max, Math.max(min, base[key] * factor));
+    out[key] = key === 'iterations' ? Math.round(value) : +value.toPrecision(3);
+  }
+  return out;
 }
 /** Validate the full merge, never mutate the last good settings. Absent optional keys keep current values. */
 export function physicsSettings(settings: Settings, values: PhysicsValues): Settings {

@@ -39,8 +39,56 @@ Open **Layout** in graph controls. Numeric changes, checkboxes and presets are d
 | Step slowdown, advanced | `layout.force.slowDown` | Higher = smaller moves per iteration; positive finite. Not damping or animation speed. |
 | Approximation, advanced | `layout.force.barnesHutTheta` | Lower = more accurate, slower repulsion; higher = faster, rougher. Positive finite. |
 
-Each field also has a slider (spread and slowdown 0.1–100 logarithmic, gravity 0–20); sliders only edit the draft. The slider span is not a validation maximum: typed values outside it are kept unclamped and the slider rests at its end. **Reset to defaults** changes only three drafts to 2, 1, 1; applying remains explicit. Full settings validation preserves unexposed layout and appearance settings. Invalid, failed or stale worker results do not replace the last good settings or graph.
-Advanced controls are collapsed by default. Presets fill drafts from defaults: **Clustered** (LinLog + Dissuade hubs, Spread 4, 200 iterations), **Spacious** (Spread 10, Pull 0.5), **Compact** (Spread 1, Pull 3). **Reset to defaults** restores every exposed control's default draft (Spread 2, Pull 1, Step slowdown 1, 100 iterations, Approximation 1.2, toggles off). There is no slider maximum or clamping of valid custom values. Edge weight influence stays hidden because projection edges are unit-weight. Full settings validation preserves unexposed layout and appearance settings (seed, maximum force, Barnes-Hut on/off). Invalid, failed or stale worker results do not replace the last good settings or graph.
+Each field also has a slider (spread and slowdown 0.1–100 logarithmic, gravity 0–20); sliders only edit the draft. The slider span is not a validation maximum: typed values outside it are kept unclamped and the slider rests at its end. Full settings validation preserves unexposed layout and appearance settings. Invalid, failed or stale worker results do not replace the last good settings or graph.
+Advanced controls are collapsed by default. There is no slider maximum or clamping of valid custom values.
+
+### Layout presets
+
+**Reset to recommended** fills values worked out from this graph's note and link count. The presets scale those values, so a click means the same on 500 notes or 16,000, and clicking twice never compounds. Every result stays inside the slider ranges.
+
+| Button | What it does |
+| --- | --- |
+| Reset to recommended | Strong gravity, Pull to center 0.1 to 0.25 (less for bigger graphs), Spread 10, Step slowdown 1, 100 to 300 steps on a fixed time budget (150 at 16k notes and 50k links). |
+| Groups apart | Half the pull: groups sit further apart and unlinked notes ring the edge. |
+| Fill the screen | Three times the pull: one round shape that fills the view, with groups touching. |
+| Faster | Half the steps and a rougher approximation, for very large vaults. |
+| Undo last preset | Puts back the values from before the last preset or reset. If that preset was already applied, it re-applies your old values in the same click. |
+
+How the values were chosen: the layout code ran headlessly on synthetic framework graphs (nine groups built as trees with local links, hub notes, cross-group links, 5% unlinked notes; 525 and 16,800 notes at about 3.1 links per note). Each candidate was fitted to a 900 px view and scored on edge length spread (q90/q10), share of 3 px dots that overlap, group silhouette, share of the view holding notes, and the median gap to the nearest dot. Rendered images were inspected by eye. Findings:
+
+- The view always fits the graph to the screen, so **Spread nodes** alone acts as a zoom and changes little.
+- With normal gravity, unlinked notes fly out in rings and squeeze the real graph into the middle. This was the cause of the poor Spacious and Compact results and the Pull 0.5 room state. Strong gravity keeps them close.
+- LinLog and Dissuade hubs left the groups mixed within 500 steps, so no preset uses them.
+- A large Step slowdown (for example 20) leaves a fresh layout unsettled. It only looks good when it starts from an already settled picture.
+
+Measured results (fresh start unless noted; "from room state" starts from a layout settled at 23.64 / 0.5 / 1, as Apply does):
+
+| Notes / links | Values | Start | Edge spread (lower is more even) | Overlap at 3 px | Group silhouette (higher separates) | View fill | Median gap |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 525 / 1628 | **Owner reference 1200/20/20**: kr 1200, g 20, slow 20, 100 steps | fresh | 5.3 | 20.4% | -0.089 | 25% | 10.1px |
+| 525 / 1628 | **Owner reference 1200/20/20**: kr 1200, g 20, slow 20, 100 steps | from room state | 6.3 | 9.3% | 0.273 | 20% | 9.8px |
+| 525 / 1628 | **Room state 23.64/0.5/1**: kr 23.64, g 0.5, slow 1, 100 steps | fresh | 6.4 | 96.8% | 0.297 | 5% | 2.9px |
+| 525 / 1628 | **Old Spacious**: kr 10, g 0.5, slow 1, 100 steps | fresh | 6.3 | 95.0% | 0.292 | 5% | 3.1px |
+| 525 / 1628 | **Old Clustered**: kr 4, g 1, slow 1, 200 steps | fresh | 28.8 | 34.1% | -0.12 | 28% | 8.4px |
+| 525 / 1628 | **Old Compact**: kr 1, g 3, slow 1, 100 steps | fresh | 6.4 | 80.2% | 0.287 | 7% | 4.1px |
+| 525 / 1628 | **Recommended**: kr 10, g 0.223 strong, slow 1, 300 steps | fresh | 6.1 | 1.1% | 0.239 | 39% | 18px |
+| 525 / 1628 | **Recommended**: kr 10, g 0.223 strong, slow 1, 300 steps | from room state | 6.2 | 0.0% | 0.221 | 41% | 19.8px |
+| 525 / 1628 | **Groups apart**: kr 10, g 0.112 strong, slow 1, 300 steps | fresh | 6.2 | 3.0% | 0.259 | 32% | 15.7px |
+| 525 / 1628 | **Fill the screen**: kr 10, g 0.669 strong, slow 1, 300 steps | fresh | 5.9 | 5.7% | 0.193 | 42% | 19.8px |
+| 525 / 1628 | **Faster**: kr 10, g 0.223 strong, slow 1, 150 steps | fresh | 5.9 | 1.5% | 0.24 | 40% | 18.2px |
+| 16800 / 52080 | **Owner reference 1200/20/20**: kr 1200, g 20, slow 20, 100 steps | fresh | 4.8 | 96.6% | -0.116 | 54% | 1.6px |
+| 16800 / 52080 | **Owner reference 1200/20/20**: kr 1200, g 20, slow 20, 100 steps | from room state | 6.9 | 98.9% | 0.211 | 47% | 1.7px |
+| 16800 / 52080 | **Room state 23.64/0.5/1**: kr 23.64, g 0.5, slow 1, 100 steps | fresh | 7.1 | 99.4% | 0.251 | 24% | 0.5px |
+| 16800 / 52080 | **Old Spacious**: kr 10, g 0.5, slow 1, 100 steps | fresh | 7.1 | 99.4% | 0.247 | 24% | 0.5px |
+| 16800 / 52080 | **Old Clustered**: kr 4, g 1, slow 1, 200 steps | fresh | 10.1 | 97.8% | -0.051 | 47% | 1.5px |
+| 16800 / 52080 | **Old Compact**: kr 1, g 3, slow 1, 100 steps | fresh | 7.1 | 99.3% | 0.236 | 24% | 0.5px |
+| 16800 / 52080 | **Recommended**: kr 10, g 0.124 strong, slow 1, 150 steps | fresh | 7 | 98.6% | 0.216 | 53% | 2.6px |
+| 16800 / 52080 | **Recommended**: kr 10, g 0.124 strong, slow 1, 150 steps | from room state | 7 | 98.8% | 0.216 | 53% | 2.6px |
+| 16800 / 52080 | **Groups apart**: kr 10, g 0.062 strong, slow 1, 150 steps | fresh | 7.1 | 99.0% | 0.231 | 43% | 2.1px |
+| 16800 / 52080 | **Fill the screen**: kr 10, g 0.372 strong, slow 1, 150 steps | fresh | 7.1 | 97.7% | 0.178 | 66% | 3.3px |
+| 16800 / 52080 | **Faster**: kr 10, g 0.124 strong, slow 1, 75 steps | fresh | 7 | 98.7% | 0.22 | 55% | 2.3px |
+
+At 16,800 notes almost every 3 px dot touches another at fit-all zoom whatever the values, so fill and median gap are the useful readability measures there. The script and images are not shipped; they are reproducible from the description above. Edge weight influence stays hidden because projection edges are unit-weight. Full settings validation preserves unexposed layout and appearance settings (seed, maximum force, Barnes-Hut on/off). Invalid, failed or stale worker results do not replace the last good settings or graph.
 
 Apply runs one finite layout-only worker recomputation on the current projection without body reads, source re-ingestion or cache mutation. Only a still-current open view commits settings and displayed positions. Positions can change; detail coordinates update on the same renderer/context with retained camera-frame bounds, camera and scope. **Fit graph** stays separate. Preview coordinates do not replace persisted worker generations: repeated applies start from the worker's previous completed baseline; ordinary refresh uses saved layout settings through existing cache validation. Saved-view schema is unchanged. External aggregate projections cannot apply note-layout settings.
 

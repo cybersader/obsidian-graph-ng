@@ -1,4 +1,5 @@
 import { validateSettings, type Settings } from './settings';
+import type { PhysicsValues } from './physics-controls';
 /** Shape statistics of the loaded projection. Ontology-neutral: counts only. */
 export interface GraphStats { nodes: number; edges: number; carriers: number; groups: number; averageDegree: number; maxDegree: number; hubRatio: number }
 export function graphStats(offsets: ArrayLike<number>, edges: number, carriers = 0, groups = 0): GraphStats {
@@ -45,6 +46,24 @@ export function recommend(t: GraphStats, s: Settings): Suggestion[] {
   // Edge notes: when they are at least half of the notes, dim them so concepts stay primary.
   if (t.carriers && t.carriers >= n / 2) add('carrierOpacity', .45, 'many edge notes');
   return out;
+}
+/** Layout values that read well for a graph of this size; the base every preset scales.
+ * Measured on synthetic framework graphs (500 to 16k notes, about 3 links per note, 5% orphans):
+ * - Display fits the graph to the view, so Spread is only a zoom; it stays at 10.
+ * - Normal gravity lets unlinked notes fly out in rings and squeezes the real graph into the
+ *   middle. Strong gravity grows with distance and keeps them close; 0.12 to 0.22 balanced
+ *   group separation against filling the view, a little less pull suiting bigger graphs.
+ * - Step slowdown above 1 leaves a fresh layout unsettled in the step budget, so it stays 1.
+ * - Steps follow a cost budget of about 10M node-or-link steps: 300 for small graphs, 150 at 16k
+ *   notes and 50k links; more steps did not change the measured picture. */
+export function recommendedPhysics(nodes: number, edges: number): Required<PhysicsValues> {
+  const n = Math.max(1, nodes), size = n + Math.max(0, edges);
+  return {
+    scalingRatio: 10, slowDown: 1, strongGravityMode: true, linLogMode: false, outboundAttractionDistribution: false, adjustSizes: false,
+    gravity: +Math.min(.25, Math.max(.1, .2 * (1000 / n) ** .17)).toFixed(3),
+    iterations: Math.min(300, Math.max(100, Math.round(1e7 / size / 10) * 10)),
+    barnesHutTheta: n < 2000 ? .8 : 1.2,
+  };
 }
 /** Validated candidate with the suggestions applied; never mutates `s`. */
 export function suggestionSettings(s: Settings, list: readonly Suggestion[]): Settings {
