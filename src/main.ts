@@ -3,7 +3,8 @@ import { legacySizing, sizingSettings, type NodeSizingValues } from './node-sizi
 import { generationCurrent, physicsSettings, type PhysicsValues } from './physics-controls';
 import { expressionPrelude } from './core/expr/expression-prelude';
 import { predicateColumn, groupColumn as sourceColumn } from './core/declaration';
-import { ItemView, Plugin, PluginSettingTab, Setting, Notice, TFile, apiVersion, type WorkspaceLeaf } from 'obsidian';
+import { ItemView, Menu, Plugin, PluginSettingTab, Setting, Notice, TFile, apiVersion, type WorkspaceLeaf } from 'obsidian';
+import { obsidianMenu } from './context-menu';
 import { LocalAdapter, type PropertySource } from './adapter/local';
 import { canonical, digest, layoutDeclaration, migrateDeclaration, validateDeclaration, type GraphDeclaration, type Predicate } from './core/declaration';
 import { canonicalView, validateSaved, NO_COLOR, type SavedView, type ExploreResult, type ExploreView, type ViewCamera } from './core/explore';
@@ -863,6 +864,7 @@ export class GraphView extends ItemView {
       this.detailRenderer.openPath = path => this.openPath(path);
       this.detailRenderer.openNote = (path, mode) => this.openNote(path, mode);
       this.detailRenderer.copyLink = path => this.copyLink(path);
+      this.detailRenderer.showMenu = obsidianMenu(this.app, Menu, path => { const f = this.app.vault.getAbstractFileByPath(path); return f instanceof TFile ? f : null; }, this.leaf);
       this.detailRenderer.onSizingChange = () => { this.explorePanel?.updateSizingReadout(); this.explorePanel?.updateLensControl(); };
       this.detailRenderer.onLensChange = () => this.explorePanel?.updateLensControl();
       this.detailRenderer.onMoreConnections = focus => this.detailRenderer?.showConnections(focus);

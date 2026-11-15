@@ -51,7 +51,7 @@ afterEach(() => {
 let fixtureReducedMotion = false;
 const rendererWindow = { devicePixelRatio: 1 };
 const module = { exports: {} as any };
-const obsidian = { ItemView: class {}, Plugin: class {}, PluginSettingTab: class {}, Setting: class {}, TFile: class {}, apiVersion: 'synthetic', Notice: class {} };
+const obsidian = { ItemView: class {}, Menu: class {}, Plugin: class {}, PluginSettingTab: class {}, Setting: class {}, TFile: class {}, apiVersion: 'synthetic', Notice: class {} };
 vm.runInNewContext(source + `\n;module.exports.__renderer=${rendererName};`, { module, exports: module.exports, require: () => obsidian, console, structuredClone, setTimeout: fixtureTimeout, clearTimeout: clearFixtureTimeout, performance, TextEncoder, TextDecoder, MessageChannel, document, window: rendererWindow, devicePixelRatio: 1, getComputedStyle: () => ({ getPropertyValue: () => '' }), matchMedia: (query: string) => ({ matches: query.includes('prefers-reduced-motion') && fixtureReducedMotion, addEventListener() {}, removeEventListener() {} }), ResizeObserver: class { observe() {} disconnect() {} }, requestAnimationFrame: requestFrame, cancelAnimationFrame: cancelFrame }, { filename: 'production-main.js' });
 const GraphPlugin = module.exports.default, GraphView = module.exports.GraphView, Renderer = module.exports.__renderer;
 const mangle = JSON.parse(readFileSync(new URL('../.workspace/evidence/main-mangle-cache.json', import.meta.url), 'utf8'));
@@ -294,6 +294,8 @@ test('zoom DPR-only change updates backing resolution on next production paint w
 // recorded GL upload calls only. No GPU raster, native visual quality, FPS or device input is claimed.
 async function graduated(pairs: [number, number][], n = 5, max = 0) {
   const settings = defaults('links'), opened: number[] = [], p: any = projection(n);
+  // Tier-authority tests retier on every hover; hover intent (dwell, preview, lock) has its own tests.
+  settings.visuals.hoverDwellMs = 0;
   if (max) { settings.canvasMaxDetailNodes = max; settings.canvasMaxDetailEdges = max; }
   Object.assign(p, { source: Uint32Array.from(pairs, x => x[0]), target: Uint32Array.from(pairs, x => x[1]), type: new Uint32Array(pairs.length), types: ['link'], carrier: new Uint32Array(pairs.length).fill(0xffffffff) });
   const positions = Float32Array.from({ length: n * 2 }, (_, i) => i % 2 ? (i >> 1) * 37 % 100 : (i >> 1) * 50);
@@ -814,4 +816,41 @@ test('review: Open reuses only unpinned notes and reveals the destination; expli
   expect(requested).toEqual([['tab']]); expect(revealed.at(-1)).toBe(created);
   view.openNote('Synthetic.md', 'tab'); view.openNote('Synthetic.md', 'split'); await Promise.resolve(); await Promise.resolve();
   expect(requested.slice(-2)).toEqual([['tab'], ['split', 'vertical']]); expect(opened).not.toContain('pinned');
+});
+
+// Wave-4 hover intent and context menu through the compiled renderer (Canvas fixture, synthetic DOM).
+// The Obsidian Menu itself is a host seam; native menu rendering is not claimed.
+test('hover intent: a selection makes hover a preview until the dwell or Alt; Lock focus (card chip, K) holds it until deselect', async () => {
+  const f = await graduated([[0, 1], [1, 2], [2, 3]]), { r, k } = f, card = () => r[k('noteCard')];
+  const key = (key: string) => { let handled = false; r[k('keyDown')]({ key, target: r.canvas, preventDefault() { handled = true; } }); return handled; };
+  const alt = (n: number) => { const p = r.screenPoint(n); r[k('pointerMove')]({ pointerId: 9, clientX: p.x, clientY: p.y, pointerType: 'mouse', altKey: true }); };
+  f.settings.visuals.hoverDwellMs = 30;
+  f.hover(3); expect(f.actual()).toEqual(f.expected(3)); // nothing selected: as before
+  r[k('pointerLeave')](); f.tap(0);
+  f.hover(3); expect(r.hovered).toBe(3); expect(f.actual()).toEqual(f.expected(0)); // preview: ring and label only
+  await Bun.sleep(60); expect(f.actual()).toEqual(f.expected(3)); // dwell retiers
+  f.hover(2); expect(f.actual()).toEqual(f.expected(0)); alt(2); expect(f.actual()).toEqual(f.expected(2)); // Alt retiers now
+  const chip = control(card(), 'Lock focus'); expect(chip.attributes['aria-pressed']).toBe('false');
+  chip.click(); expect(chip.textContent).toBe('Focus locked'); expect(chip.attributes['aria-pressed']).toBe('true'); expect(f.actual()).toEqual(f.expected(0));
+  f.hover(1); alt(1); await Bun.sleep(60); expect(r.hovered).toBe(1); expect(f.actual()).toEqual(f.expected(0));
+  expect(key('k')).toBe(true); expect(chip.textContent).toBe('Lock focus'); expect(f.actual()).toEqual(f.expected(0));
+  await Bun.sleep(60); expect(f.actual()).toEqual(f.expected(1)); // unlocked: the dwell resumes
+  expect(key('K')).toBe(true); expect(control(card(), 'Focus locked').attributes['aria-pressed']).toBe('true');
+  f.tap(EMPTY); expect(r.selected).toBe(-1); f.hover(3); expect(f.actual()).toEqual(f.expected(3)); // deselect released the lock
+  f.tap(0); expect(control(card(), 'Lock focus').attributes['aria-pressed']).toBe('false');
+});
+test('context menu: right-click on a note, a line and empty canvas shows the registry entries through the host menu seam', async () => {
+  const f = await graduated([[0, 1], [1, 2], [2, 3]]), { r, k } = f, menus: { ids: string[]; path?: string; run: (id: string) => void }[] = [];
+  r[k('showMenu')] = (entries: any[], _x: number, _y: number, path?: string) => menus.push({ ids: entries.map(e => e.id), path, run: id => entries.find(e => e.id === id).run() });
+  const opens: [string, string][] = []; r.openNote = (path: string, mode: string) => opens.push([path, mode]);
+  const right = async (q: { x: number; y: number }) => { let prevented = false; r.input.contextMenu({ clientX: q.x, clientY: q.y, preventDefault() { prevented = true; } }); expect(prevented).toBe(true); await Bun.sleep(0); };
+  const a = r.screenPoint(1), b = r.screenPoint(2);
+  await right(a); expect(menus[0]!.ids).toEqual(['menu-open', 'menu-tab', 'menu-right', 'menu-focus', 'menu-lens', 'lock-focus', 'menu-only', 'menu-copy']); expect(typeof menus[0]!.path).toBe('string');
+  menus[0]!.run('menu-right'); expect(opens).toEqual([[menus[0]!.path!, 'split']]);
+  menus[0]!.run('lock-focus'); expect(r.selected).toBe(1); expect(control(r[k('noteCard')], 'Focus locked').attributes['aria-pressed']).toBe('true');
+  await Bun.sleep(850); await right({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+  expect(menus[1]!.ids).toEqual(['menu-source', 'menu-target']); expect(menus[1]!.path).toBeUndefined(); // no relationship note on this line
+  menus[1]!.run('menu-target'); expect(r.selected).toBe(2);
+  await Bun.sleep(850); await right(EMPTY); expect(menus[2]!.ids).toEqual(['menu-fit', 'menu-clear']);
+  menus[2]!.run('menu-clear'); expect(r.selected).toBe(-1);
 });

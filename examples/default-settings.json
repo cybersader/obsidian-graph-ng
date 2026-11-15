@@ -149,7 +149,8 @@
     "focusRipple": true,
     "tierLegend": true,
     "clickOpens": false,
-    "bridgesFirst": true
+    "bridgesFirst": true,
+    "hoverDwellMs": 350
   },
   "explore": {
     "panelOpen": true,

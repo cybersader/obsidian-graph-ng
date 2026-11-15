@@ -72,7 +72,7 @@ export function placeCard(x: number, y: number, gap: number, width: number, heig
   if (top + h > height - m) top = y - 14 - h;
   return { x: Math.round(Math.max(m, Math.min(left, width - m - w))), y: Math.round(Math.max(m, Math.min(top, height - m - h))) };
 }
-export type CardAction = 'open' | 'tab' | 'split' | 'focus' | 'isolate' | 'lens' | 'copy';
+export type CardAction = 'open' | 'tab' | 'split' | 'focus' | 'isolate' | 'lens' | 'copy' | 'lock';
 export interface CardHost {
   name(n: number): string;
   color(n: number): string;
@@ -81,6 +81,8 @@ export interface CardHost {
   isolated(): boolean;
   /** Whether the connection lens is open on this note; hosts without a lens omit it (no Lens action). */
   lensed?(n: number): boolean;
+  /** Whether hover is locked out of moving the highlight; hosts without a lock omit it. */
+  locked?(): boolean;
   act(action: CardAction, n: number): void;
   travel(n: number): void;
   cue(n: number): void;
@@ -100,12 +102,13 @@ export class ConnectionCard {
   private limit = ROWS;
   private moving = false;
   private lensToggle?: HTMLElement;
+  private lockToggle?: HTMLElement;
   constructor(readonly root: HTMLElement, private host: CardHost) {}
   show(n: number) {
     if (n !== this.node) this.limit = ROWS;
     this.node = n; if (!this.moving) this.history.visit(n); this.render();
   }
-  hide() { this.node = -1; this.rows = []; this.size = undefined; this.lensToggle = undefined; this.history.clear(); this.root.textContent = ''; this.root.removeAttribute?.('aria-label'); }
+  hide() { this.node = -1; this.rows = []; this.size = undefined; this.lensToggle = this.lockToggle = undefined; this.history.clear(); this.root.textContent = ''; this.root.removeAttribute?.('aria-label'); }
   /** Back (-1) or forward (1) through visited notes. */
   step(step: number) {
     if (this.node < 0) return false;
@@ -137,6 +140,7 @@ export class ConnectionCard {
       button('Focus', `Focus here: fit ${name} and its direct connections`, act('focus')));
     const only = actions.appendChild(button('Only connections', 'Show only connections of ' + name, act('isolate'))); only.setAttribute('aria-pressed', String(h.isolated()));
     this.lensToggle = h.lensed ? actions.appendChild(button('Lens', 'Connection lens for ' + name, act('lens'))) : undefined; this.syncLens();
+    this.lockToggle = h.locked ? actions.appendChild(button('', 'Lock focus: hover only previews other notes (K)', act('lock'))) : undefined; this.syncLock();
     actions.append(button('Copy link', 'Copy link to ' + name, act('copy')));
     const list = c.appendChild(el('div', '', 'graph-ng-connections')); list.setAttribute('aria-label', 'Connections');
     if (!groups.length) list.append(el('div', 'No direct connections', 'graph-ng-explore-note'));
@@ -162,6 +166,8 @@ export class ConnectionCard {
   }
   /** Reflect the host's lens state on the Lens action (aria-pressed). */
   syncLens() { if (this.lensToggle && this.node >= 0) this.lensToggle.setAttribute('aria-pressed', String(!!this.host.lensed?.(this.node))); }
+  /** Reflect the focus lock on its chip: "Focus locked" while on. */
+  syncLock() { const b = this.lockToggle, on = !!this.host.locked?.(); if (b && this.node >= 0) { b.textContent = on ? 'Focus locked' : 'Lock focus'; b.setAttribute('aria-pressed', String(on)); } }
   /** Expand the Connections list as "Show all" does (in chunks of at most 1000 rows) and focus its first row. */
   showAll() {
     if (this.node < 0) return;

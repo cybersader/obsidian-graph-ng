@@ -12,6 +12,7 @@ import { ConnectionCard, connectionGroups, isolationBar, placeCard, reach, butto
 import { interestScorer, byInterest, type Scorer } from './interest';
 import { lensConnections, lensLayout, lensAmount, lensCoordinate, pickLens, type LensConnection, type LensPoint } from './lens-layout';
 import { Interaction, type RendererControls } from './interaction';
+import type { MenuPresenter } from './context-menu';
 import { highlightOverlay, paintLegend } from './overlays';
 /** Hard DOM bound for graduated focus labels, under `labelsMaxPerViewport`. */
 const FOCUS_LABELS = 64;
@@ -223,6 +224,8 @@ export class DetailRenderer {
   /** Host seams for the connection card: open in a reused, new-tab or split leaf, and copy a wikilink. */
   openNote?: (path: string, mode: 'reuse' | 'tab' | 'split') => void;
   copyLink?: (path: string) => void;
+  /** Host seam for the context menu (src/context-menu.ts `obsidianMenu`). */
+  showMenu?: MenuPresenter;
   private edgeAnchor = -1;
   private edgeToken = 0;
   paletteUploads = 0;
@@ -351,6 +354,8 @@ export class DetailRenderer {
   private pointerLeave: (e?: PointerEvent) => void;
   private keyDown: (e: KeyboardEvent) => void;
   private ripple?: { start: number; reach: number };
+  /** The hover is a preview (ring and label) and the highlight stays on the selection. */
+  private hoverPreview = false;
   static async create(container: HTMLElement, p: RenderProjection, positions: Float32Array, visible: Uint8Array, settings: Settings, onNode: (i: number) => void, onZoomOut: () => void, colors: Uint32Array, current = () => true, software = false, onUnavailable = onZoomOut, view: RenderView = {}) {
     await yieldTask(); if (!current()) throw new Error('Renderer superseded');
     let renderer: DetailRenderer | undefined;
@@ -379,7 +384,7 @@ export class DetailRenderer {
     this.timings.grid = performance.now() - started; started = performance.now();
     this.theme = readTheme(container, settings);
     this.timings.theme = performance.now() - started; started = performance.now();
-    this.canvas = document.createElement('canvas'); this.canvas.className = 'graph-ng-detail'; this.canvas.setAttribute('aria-label', 'Graph notes. Arrows select, Enter opens, R cycles relationships, L toggles connection lens, Alt+Left goes back, Escape clears.'); this.canvas.tabIndex = 0; this.canvas.style.touchAction = 'none'; container.append(this.canvas);
+    this.canvas = document.createElement('canvas'); this.canvas.className = 'graph-ng-detail'; this.canvas.setAttribute('aria-label', 'Graph notes. Arrows select, Enter opens, R cycles relationships, L toggles connection lens, K locks focus, Shift+F10 opens the menu, Alt+Left goes back, Escape clears.'); this.canvas.tabIndex = 0; this.canvas.style.touchAction = 'none'; container.append(this.canvas);
     this.overlay = container.createDiv ? container.createDiv({ cls: 'graph-ng-overlay' }) : container.appendChild(Object.assign(document.createElement('div'), { className: 'graph-ng-overlay' }));
     this.hoverLabel = this.overlay.appendChild(Object.assign(document.createElement('div'), { className: 'graph-ng-hover-label' }));
     const div = (className: string) => this.overlay.appendChild(Object.assign(document.createElement('div'), { className }));
@@ -388,7 +393,7 @@ export class DetailRenderer {
     this.noteCard = div('graph-ng-card'); this.card = new ConnectionCard(this.noteCard, this.cardHost());
     const input = this.input = new Interaction(this.controls());
     ({ pointerDown: this.pointerDown, pointerMove: this.pointerMove, pointerUp: this.pointerUp, pointerLeave: this.pointerLeave, keyDown: this.keyDown } = input);
-    this.noteCard.onkeydown = input.cardKeyDown;
+    this.noteCard.onkeydown = input.cardKeyDown; input.gestures.onLock = () => this.card.syncLock();
     ({ ripple: this.rippleEl, legend: this.legend, rows: this.legendRows, counts: this.legendCounts, pips: this.pipEls, parts: this.pipParts } = highlightOverlay(this.overlay, i => { this.tierMask ^= 1 << i; this.updateLegend(); this.rankedKey = []; this.refresh(); }, i => this.panTo(this.pipTargets[i] ?? -1)));
     this.resize();
     this.gl = software ? null : this.canvas.getContext('webgl2', { antialias: false, alpha: false, preserveDrawingBuffer: false });
@@ -959,6 +964,7 @@ export class DetailRenderer {
     if (node < 0 && this.lensAnchor >= 0 && !keepLens) this.setLens(-1);
     this.selected = node; this.selectedEdges = []; this.edgeAnchor = -1; this.edgeToken++; this.cue = -1; if (card || node < 0) this.hovered = -1; this.emphasize(); this.startRipple(node); this.refresh();
     if (card && node >= 0) this.card.show(node); else this.card.hide();
+    if (node < 0) this.input?.gestures.lock(false);
   }
   /** The navigator's view of the graph: every lookup is O(degree) over the incident-edge CSR. Rows
    * list connections under the host filter, so a "Show only connections" mask never hides them. */
@@ -971,6 +977,7 @@ export class DetailRenderer {
       secondHop: n => reach(n, this.edges, p, on, this.baseVisible, 2),
       isolated: () => !!this.isolation,
       lensed: n => this.lensWanted >= 0 && this.lensWanted === n,
+      locked: () => this.input.gestures.locked,
       act: (a, n) => this.cardAction(a, n),
       travel: n => this.travel(n),
       cue: n => { this.cue = n; this.refresh(); },
@@ -989,6 +996,7 @@ export class DetailRenderer {
     if (action === 'lens') this.setLens(this.lensWanted === n ? -1 : n);
     else if (action === 'focus') this.frameNodes(reach(n, this.edges, this.projection, e => !!this.edgeOn[e], this.filterVisible, 1).nodes);
     else if (action === 'isolate') this.isolate(this.isolation ? -1 : n);
+    else if (action === 'lock') this.input.gestures.lock();
     else if (action === 'copy') { if (this.copyLink) this.copyLink(path); else void navigator.clipboard?.writeText(`[[${this.name(n)}]]`).catch(() => {}); }
     else if (this.openNote) this.openNote(path, action === 'open' ? 'reuse' : action);
     else this.onNode(n);
@@ -1028,12 +1036,12 @@ export class DetailRenderer {
   }
   private showIsolation() { const s = this.isolation; if (this.isolationBar) isolationBar(this.isolationBar, s ? this.name(s.node) : '', s?.hops ?? 1, h => this.isolate(s!.node, h), () => this.isolate(-1)); }
   /** Hover outranks the persistent selection; the hover-highlight switch turns both off. */
-  private emphasize(immediate?: boolean) { const v = this.lensAnchor >= 0 ? this.lensAnchor : this.hovered < 0 ? this.selected : this.hovered, on = this.settings.visuals.hoverHighlight; this.setFocus(on ? v : -1, immediate, on && v < 0 && this.selectedEdges?.length ? this.selectedEdges : undefined); }
+  private emphasize(immediate?: boolean) { const v = this.lensAnchor >= 0 ? this.lensAnchor : this.hovered < 0 || this.hoverPreview ? this.selected : this.hovered, on = this.settings.visuals.hoverHighlight; this.setFocus(on ? v : -1, immediate, on && v < 0 && this.selectedEdges?.length ? this.selectedEdges : undefined); }
   /** Select a relationship (never opens). The card lists every drawn parallel row between the pair;
    * rule names and relationship-note paths arrive from the worker and fill in when resolved. */
   private selectEdge(edge: number, anchor = -1) {
     const p = this.projection, c = this.noteCard, token = ++this.edgeToken;
-    this.card.hide(); this.selected = this.hovered = -1; this.cue = -1; this.edgeAnchor = anchor; this.selectedEdges = this.edgeParallels(edge); this.emphasize(); this.refresh();
+    this.card.hide(); this.selected = this.hovered = -1; this.cue = -1; this.edgeAnchor = anchor; this.selectedEdges = this.edgeParallels(edge); this.emphasize(); this.refresh(); this.input.gestures.lock(false);
     const el = (tag: string, text = '', cls = '') => Object.assign(document.createElement(tag), { textContent: text, className: cls });
     const a = p.source[edge]!, b = p.target[edge]!, box = el('div', '', 'graph-ng-relationships'), na = this.name(a), nb = this.name(b);
     box.append(el('strong', `${na} → ${nb}`));
@@ -1314,7 +1322,7 @@ export class DetailRenderer {
       selectNote: (n, card, keepLens) => this.selectNote(n, card, keepLens),
       selectEdge: e => this.selectEdge(e),
       cycleEdge: step => this.cycleEdge(step),
-      setHover: (node, edge) => { this.hovered = node; this.hoveredEdge = edge; this.emphasize(); this.refresh(); },
+      setHover: (node, edge, preview) => { this.hovered = node; this.hoveredEdge = edge; this.hoverPreview = !!preview; this.emphasize(); this.refresh(); },
       hint: (hub, node, edge, cursor) => {
         this.container.title = hub >= 0 ? `${this.view.groupLabels?.[hub] ?? ''} (collapsed) — click to expand` : node >= 0 ? this.path(node) : edge >= 0 ? `${this.path(p.source[edge]!)} → ${this.path(p.target[edge]!)} [${p.types[p.type[edge]!]!}]` : '';
         if (cursor) this.canvas.style.cursor = node >= 0 || hub >= 0 || edge >= 0 ? 'pointer' : 'grab';
@@ -1338,6 +1346,11 @@ export class DetailRenderer {
       isolate: n => this.isolate(n),
       focusCanvas: () => this.canvas.focus(),
       flyToNote: n => this.travel(n),
+      act: (a, n) => this.cardAction(a, n),
+      travel: n => this.travel(n),
+      fitAll: () => this.fitAll(),
+      relationship: async e => { const carrier = p.carrier[e] === 0xffffffff ? undefined : (await this.describeEdges?.([e]))?.[0]?.carrier; return { source: p.source[e]!, target: p.target[e]!, note: carrier ? () => this.openPath?.(carrier) : undefined }; },
+      showMenu: (entries, x, y, n) => this.showMenu?.(entries, x, y, n >= 0 ? this.path(n) : undefined),
     };
   }
   private contextLost = (e: Event) => {

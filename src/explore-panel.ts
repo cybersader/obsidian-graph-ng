@@ -616,6 +616,8 @@ export class ExplorePanel {
     this.flag(find, 'tierLegend', 'Legend with counts per tier');
     this.flag(find, 'focusRipple', 'Ripple when selecting a note');
     this.flag(find, 'bridgesFirst', 'Bridges first: rank connections to other groups higher');
+    this.slider(find, 'Hover delay (ms)', { min: 0, max: 2000, k: 2 }, () => v.hoverDwellMs, x => { v.hoverDwellMs = Math.round(x); });
+    this.note(find, 'With a note selected, hover only rings others until you rest. Alt skips; K locks.');
     this.flag(host, 'labelFade', 'Fade labels by zoom and importance', true);
     this.slider(host, 'Label scale by tier', { min: 1, max: 1.6, k: 1.5 }, () => v.labelTierScale, x => { v.labelTierScale = x; }, true);
     this.flag(host, 'labelPlates', 'Label plates');

@@ -1,4 +1,6 @@
 import type { Settings } from './settings';
+import type { CardAction } from './connection-card';
+import { Gestures, MENU_ACTIONS, type MenuEntry, type Relation } from './context-menu';
 
 /** Everything input handling may ask of the renderer. The renderer builds one object (see
  * `DetailRenderer.controls`); interaction code never reaches into renderer internals. Screen
@@ -36,8 +38,8 @@ export interface RendererControls {
   selectEdge(edge: number): void;
   /** Step through the selection's relationships; false when there is nothing to step. */
   cycleEdge(step: number): boolean;
-  /** Set hover state, re-emphasize and redraw. */
-  setHover(node: number, edge: number): void;
+  /** Set hover state, re-emphasize and redraw. A preview rings and labels the note but keeps the highlight on the selection. */
+  setHover(node: number, edge: number, preview?: boolean): void;
   /** Tooltip for what is under the pointer; also sets the cursor when `cursor` is true. */
   hint(hub: number, node: number, edge: number, cursor: boolean): void;
   /** Note is filter-visible and can be opened. */
@@ -62,12 +64,23 @@ export interface RendererControls {
   focusCanvas(): void;
   /** Go to a note as the card's Go to does: select it with its card and fly the camera there. */
   flyToNote(node: number): void;
+  /** A connection-card action on a note: open modes, focus, lens, only connections, copy, lock. */
+  act(action: CardAction, node: number): void;
+  /** Select a note, show its card and fly to it. */
+  travel(node: number): void;
+  fitAll(): void;
+  /** A relationship's ends and its relationship note, if any. */
+  relationship(edge: number): Promise<Relation>;
+  /** Show a context menu at client coordinates; `node` is the clicked note or -1. */
+  showMenu(entries: MenuEntry[], x: number, y: number, node: number): void;
 }
 
 export interface ActionContext {
   readonly host: RendererControls;
   /** The note the action applies to: the selection, else the hover (a context menu passes the clicked note). */
   readonly node: number;
+  /** The relationship a context menu was opened on, or -1. */
+  readonly edge?: number;
   /** The key press that triggered the action; absent when run from a menu. */
   readonly event?: KeyboardEvent;
 }
@@ -139,6 +152,7 @@ for (const action of [
     }
   },
 ] satisfies Action[]) actions.register(action);
+for (const action of MENU_ACTIONS) actions.register(action);
 
 /** Pointer, wheel and keyboard input for one renderer: drag and pinch, hover, click versus
  * Ctrl-click, and key actions through the registry. */
@@ -148,15 +162,17 @@ export class Interaction {
   private downX = 0;
   private downY = 0;
   private lastPointer?: { clientX: number; clientY: number };
-  constructor(private host: RendererControls, private registry = actions) {}
+  /** Context menu, long-press and hover intent (src/context-menu.ts). */
+  readonly gestures: Gestures;
+  constructor(private host: RendererControls, private registry = actions) { this.gestures = new Gestures(host, registry); }
   attach(container: HTMLElement) {
     const c = this.host.canvas; container.addEventListener('pointerleave', this.pointerLeave);
-    c.addEventListener('pointerdown', this.pointerDown); c.addEventListener('pointermove', this.pointerMove); c.addEventListener('pointerup', this.pointerUp); c.addEventListener('pointercancel', this.pointerCancel); c.addEventListener('pointerleave', this.pointerLeave); c.addEventListener('keydown', this.keyDown); c.addEventListener('wheel', this.wheel, { passive: false });
+    c.addEventListener('pointerdown', this.pointerDown); c.addEventListener('pointermove', this.pointerMove); c.addEventListener('pointerup', this.pointerUp); c.addEventListener('pointercancel', this.pointerCancel); c.addEventListener('pointerleave', this.pointerLeave); c.addEventListener('keydown', this.keyDown); c.addEventListener('wheel', this.wheel, { passive: false }); c.addEventListener('contextmenu', this.contextMenu);
   }
   detach(container: HTMLElement) {
     const c = this.host.canvas; container.removeEventListener('pointerleave', this.pointerLeave);
-    c.removeEventListener('pointerdown', this.pointerDown); c.removeEventListener('pointermove', this.pointerMove); c.removeEventListener('pointerup', this.pointerUp); c.removeEventListener('pointercancel', this.pointerCancel); c.removeEventListener('pointerleave', this.pointerLeave); c.removeEventListener('keydown', this.keyDown); c.removeEventListener('wheel', this.wheel);
-    this.release();
+    c.removeEventListener('pointerdown', this.pointerDown); c.removeEventListener('pointermove', this.pointerMove); c.removeEventListener('pointerup', this.pointerUp); c.removeEventListener('pointercancel', this.pointerCancel); c.removeEventListener('pointerleave', this.pointerLeave); c.removeEventListener('keydown', this.keyDown); c.removeEventListener('wheel', this.wheel); c.removeEventListener('contextmenu', this.contextMenu);
+    this.release(); this.gestures.dispose();
   }
   /** Drop active pointers (context loss, dispose). */
   release() { this.pointers.clear(); }
@@ -164,13 +180,17 @@ export class Interaction {
   replayHover() { if (this.lastPointer) this.pointerMove({ ...this.lastPointer, pointerId: -1 } as PointerEvent); }
   /** Context for actions run outside a key press (menus). */
   context(node = this.host.selected >= 0 ? this.host.selected : this.host.hovered): ActionContext { return { host: this.host, node }; }
-  pointerDown = (e: PointerEvent) => { const h = this.host; if (!h.live || e.button > 0) return; h.stopFlight(); this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY }); h.canvas.setPointerCapture(e.pointerId); this.downX = e.clientX; this.downY = e.clientY; this.moved = this.pointers.size > 1; };
+  pointerDown = (e: PointerEvent) => { const h = this.host; if (!h.live || e.button > 0) return; h.stopFlight(); this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY }); h.canvas.setPointerCapture(e.pointerId); this.downX = e.clientX; this.downY = e.clientY; this.moved = this.pointers.size > 1;
+    // A still touch held for 500 ms opens the menu; a drag, a second finger or lifting cancels it.
+    if (e.pointerType === 'touch' && !this.moved) this.gestures.hold(() => { const r = h.canvas.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top, node = h.pick(x, y); this.pointerCancel(e); this.gestures.open(node, node < 0 ? h.pickEdge(x, y) : -1, e.clientX, e.clientY); });
+    else this.gestures.unpress();
+  };
   pointerMove = (e: PointerEvent) => {
     const h = this.host; if (!h.live) return;
     this.lastPointer = { clientX: e.clientX, clientY: e.clientY };
     const old = this.pointers.get(e.pointerId);
     if (old) {
-      if (Math.hypot(e.clientX - this.downX, e.clientY - this.downY) > 3) this.moved = true;
+      if (Math.hypot(e.clientX - this.downX, e.clientY - this.downY) > 3) { this.moved = true; this.gestures.unpress(); }
       if (this.pointers.size === 2) { for (const [id, other] of this.pointers) if (id !== e.pointerId) { const before = Math.hypot(old.x - other.x, old.y - other.y), after = Math.hypot(e.clientX - other.x, e.clientY - other.y); if (before > 0 && after > 0) h.setCamera(h.camera.x, h.camera.y, h.camera.ratio * before / after); } }
       else h.panBy(e.clientX - old.x, e.clientY - old.y);
       old.x = e.clientX; old.y = e.clientY; return;
@@ -180,12 +200,12 @@ export class Interaction {
     // With no selection, keep the last hover focus across empty canvas so its controls
     // can be reached. Another node, an empty click, or leaving the graph clears it.
     const keep = node < 0 && hub < 0 && h.selected < 0 && h.focusNode >= 0 && h.settings.visuals.hoverHighlight, next = keep ? h.hovered : node;
-    if (next === h.hovered && edge === h.hoveredEdge) return;
-    h.setHover(next, edge); h.hint(hub, node, edge, true);
+    if (next === h.hovered && edge === h.hoveredEdge && !(e.altKey && this.gestures.previewing)) return;
+    this.gestures.hover(next, edge, e.altKey); h.hint(hub, node, edge, true);
   };
   pointerUp = (e: PointerEvent) => {
     const h = this.host; if (!h.live) return;
-    const had = this.pointers.delete(e.pointerId); if (h.canvas.hasPointerCapture(e.pointerId)) h.canvas.releasePointerCapture(e.pointerId);
+    this.gestures.unpress(); const had = this.pointers.delete(e.pointerId); if (h.canvas.hasPointerCapture(e.pointerId)) h.canvas.releasePointerCapture(e.pointerId);
     if (had && !this.moved) {
       const rect = h.canvas.getBoundingClientRect(), x = e.clientX - rect.left, y = e.clientY - rect.top, hub = h.pickHub(x, y);
       if (hub >= 0) { h.openHub(hub); return; }
@@ -199,11 +219,18 @@ export class Interaction {
       h.selectNote(node, !direct); if (node >= 0 && direct) h.open(node);
     }
   };
-  pointerCancel = (e: PointerEvent) => { this.pointers.delete(e.pointerId); this.moved = true; };
+  pointerCancel = (e: PointerEvent) => { this.gestures.unpress(); this.pointers.delete(e.pointerId); this.moved = true; };
+  /** Right-click (or the browser's own long-press menu): the menu for the note, line or empty canvas under the pointer. */
+  contextMenu = (e: MouseEvent) => {
+    e.preventDefault(); const h = this.host; if (!h.live) return;
+    this.gestures.unpress(); if (this.pointers.size) this.moved = true;
+    const r = h.canvas.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top, node = h.pick(x, y);
+    this.gestures.open(node, node < 0 ? h.pickEdge(x, y) : -1, e.clientX, e.clientY);
+  };
   pointerLeave = (e?: PointerEvent) => {
     const h = this.host, next = e?.relatedTarget;
     if (next && h.owns(next)) return;
-    this.lastPointer = undefined; if (!this.pointers.size) { h.setHover(-1, -1); h.hint(-1, -1, -1, false); }
+    this.lastPointer = undefined; if (!this.pointers.size) { this.gestures.hover(-1, -1); h.hint(-1, -1, -1, false); }
   };
   wheel = (e: WheelEvent) => {
     e.preventDefault(); const h = this.host; if (!h.live) return;

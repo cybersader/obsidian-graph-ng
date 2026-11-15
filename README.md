@@ -465,6 +465,17 @@ Press **/** or **Ctrl/Cmd+K** over the note graph to open a search box. It finds
 
 Matching runs in the worker over the same cached name-and-identity text as the search filter, once per pause in typing (120 ms), in chunks of 4,096 notes that a newer query cancels. Only note indices come back; identities stay in the worker. Nothing runs per frame. Aggregate graphs have no note search. Evidence: `tests/search.test.ts` and the worker test in `tests/pipeline.test.ts`; native keyboard and screen-reader acceptance are pending.
 
+### Context menu and focus lock (unreleased)
+
+Right-click a note, long-press it for half a second on touch, or press Shift+F10 or the menu key, and Obsidian's menu opens where you are pointing.
+
+- **Notes:** Open, Open in new tab, Open to the right, Focus here, Lens, Lock focus, Show only connections and Copy link. Other plugins' file actions follow, as in the core graph.
+- **Lines:** Open relationship note (when the line has one), Go to source and Go to target.
+- **Empty canvas:** Fit all, and Clear selection when something is selected.
+- A long-press never fires after a drag or a pinch.
+
+**Focus lock.** With a note selected, hovering another note only previews it: a ring and its name, while the highlight stays on the selection. Rest on it for 350 ms, or hold Alt, and the highlight moves. **Lock focus** (the menu, the card's chip, or **K**) keeps the highlight on the selection however you hover; the chip reads **Focus locked** while on. Clearing the selection releases the lock. With nothing selected, hover works as before. **Hover delay (ms)** (`visuals.hoverDwellMs`, Appearance, Finding connections, 0 to 5000, default 350; 0 moves the highlight at once). Reveal in file explorer is not in the menu because Obsidian has no public API for it. Evidence: `tests/context-menu.test.ts` and the compiled-renderer menu and hover-intent tests in `tests/physics-transaction.test.ts`; native menu, touch and screen-reader acceptance are pending.
+
 ### Resolution-change candidate (unverified)
 
 The next detail paint reconciles a changed device-pixel ratio even when the CSS box did not resize. This preserves CSS geometry, semantic colors and layout; it does not establish the cause of scale-dependent color shifts or guarantee all-scale crispness. The optional `probe:zoom` local synthetic harness compares fixed coordinates at far/small-step/mid/near zoom on actual WebGL and bounded Canvas with DPR 1→2, records backend/backing resolution and screenshots, and requires separate runtime authorization. Source authoring is not execution or native/live-tab evidence.
