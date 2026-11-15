@@ -17,7 +17,9 @@ class Element extends ControlElement {
   appendChild(node: any) { node.parent = this; this.children.push(node); return node; }
   getContext(kind: string) { return kind === '2d' ? ctx : null; }
   getBoundingClientRect() { return { left: 0, top: 0, width: this.clientWidth, height: this.clientHeight }; }
-  addEventListener() {} removeEventListener() {}
+  listeners = new Map<string, unknown>();
+  addEventListener(type: string, listener: unknown) { this.listeners.set(type, listener); }
+  removeEventListener(type: string, listener: unknown) { if (this.listeners.get(type) === listener) this.listeners.delete(type); }
   setPointerCapture() {} releasePointerCapture() {} hasPointerCapture() { return false; }
   createDiv(options: any = {}) { const e = new Element(); e.className = options.cls; return this.appendChild(e); }
   className = '';
@@ -632,12 +634,13 @@ test('lens production Canvas edges, node arcs and relationship picking use the i
     expect(r[k('pickEdge')]((a.x + b.x) / 2, (a.y + b.y) / 2)).toBe(0);
   } finally { Object.assign(ctx, saved); }
 });
-test('lens production WebGL uploads only touched offsets; animation changes no position buffers', async () => {
+test('lens production WebGL batches touched offsets by texture row; animation changes no position buffers', async () => {
   const { r, k } = await graduated([[0, 1], [0, 2]]), writes: any[][] = [];
   r.gl = new Proxy({ isContextLost: () => false, texImage2D: (...v: any[]) => writes.push(['image', ...v]), texSubImage2D: (...v: any[]) => writes.push(['sub', ...v]), bufferData: (...v: any[]) => writes.push(['buffer', ...v]) }, { get: (o: any, key: string) => key in o ? o[key] : key.toUpperCase() === key ? 1 : () => {} });
   try {
-    r.setLens(0); const offsets = writes.filter(v => v[0] === 'sub'); expect(offsets.length).toBe(2);
-    expect(offsets.map(v => [...v.at(-1)])).toEqual([1, 2].map(n => Array.from(r[k('lensBytes')]).slice(n * 4, n * 4 + 4)));
+    r.setLens(0); const offsets = writes.filter(v => v[0] === 'sub'); expect(offsets.length).toBe(1);
+    expect(offsets[0]!.slice(3, 7)).toEqual([1, 0, 2, 1]);
+    expect([...offsets[0]!.at(-1)]).toEqual(Array.from(r[k('lensBytes')]).slice(4, 12));
     writes.length = 0; const motion = r[k('lensMotion')]; r[k('animate')](motion.start + 110); r[k('animate')](motion.start + 220);
     expect(writes).toEqual([]);
     r[k('uploadLens')](); expect(writes[0]?.at(-1)).toBe(r[k('lensBytes')]); // restoration allocation retains the active ring
@@ -703,4 +706,112 @@ test('wiring: card Lens action, lens-displaced picking/arrows/cue/labels, and Es
     // A click on empty canvas still clears both.
     f.tap(EMPTY); expect(r.lensNode).toBe(-1);
   } finally { fixtureReducedMotion = false; }
+});
+
+// Review regressions exercise the shipped class, not an alternate UI implementation.
+test('review: hover-only controls remain reachable across empty canvas and overlay entry, then dismiss and clean up', async () => {
+  const f = await graduated(Array.from({ length: 40 }, (_, i) => [0, i + 1] as [number, number]), 41), { r, k } = f;
+  r.onMoreConnections = (n: number) => r.showConnections(n);
+  f.hover(0); r[k('focusLevel')] = 1; r[k('placeOverlay')]();
+  const more = r[k('moreButton')]; expect(more.hidden).toBe(false); expect(r.selected).toBe(-1);
+  f.hover(EMPTY); expect(r[k('focusNode')]).toBe(0);
+  r[k('pointerLeave')]({ relatedTarget: more }); r[k('placeOverlay')]();
+  expect(more.hidden).toBe(false); expect(r[k('legend')].hidden).toBe(false);
+  more.click(); expect(r.selected).toBe(0); expect(r.card.node).toBe(0);
+  f.tap(EMPTY); f.hover(0); r[k('keyDown')]({ key: 'Escape', target: r.canvas, preventDefault() {} });
+  expect(r[k('focusNode')]).toBe(-1);
+  f.hover(0); r[k('pointerLeave')]({ relatedTarget: new Element() }); expect(r[k('focusNode')]).toBe(-1);
+  const container = r.container; expect(container.listeners.has('pointerleave')).toBe(true);
+  r.dispose(); expect(container.listeners.has('pointerleave')).toBe(false);
+});
+
+test('review: carrier dots neither consume direct-label slots nor inflate the connection-card more count', async () => {
+  const pairs: [number, number][] = [];
+  for (let i = 0; i < 40; i++) pairs.push([0, i + 41], [i + 41, i + 1]);
+  const f = await graduated(pairs, 81), { r, k } = f;
+  for (let i = 0; i < 40; i++) { r.projection.carrierNodes[i + 41] = i + 1; r.projection.carrier[i * 2] = r.projection.carrier[i * 2 + 1] = i; }
+  r.setView(new Uint8Array(81).fill(1), {}); f.tap(0); r[k('focusLevel')] = 1; r[k('placeOverlay')]();
+  const direct = r[k('ranked')].filter((slot: any) => slot.rank === 1);
+  expect(direct.length).toBeGreaterThan(0); expect(direct.every((slot: any) => slot.node < 41)).toBe(true);
+  expect(r[k('moreButton')].textContent).toBe(`+${40 - direct.length} more`);
+  expect(r[k('tierTotals')][0]).toBe(40); expect(r[k('noteCard')].textContent).toContain('40 direct connections');
+});
+
+test('review: relationship cards remeasure after note cards, async details and same-mode viewport resizing', async () => {
+  const f = await graduated([[0, 1], [1, 2]]), { r, k } = f, root = r[k('noteCard')];
+  root.offsetWidth = 300; root.offsetHeight = 120;
+  f.tap(0); r[k('placeOverlay')](); expect(r.card.size).toEqual([300, 120]);
+  let resolve!: (info: any[]) => void;
+  r[k('describeEdges')] = () => new Promise(done => { resolve = done; });
+  r[k('selectEdge')](0); expect(r.card.size).toBeUndefined();
+  root.offsetHeight = 180; r[k('placeOverlay')](); expect(r.card.size).toEqual([300, 180]);
+  resolve([{ rule: 'synthetic rule', carrier: 'Synthetic relationship.md' }]); await Promise.resolve();
+  expect(r.card.size).toBeUndefined(); root.offsetHeight = 280; r[k('placeOverlay')](); expect(r.card.size).toEqual([300, 280]);
+  const [x, y, w, h] = r[k('cardRect')]; expect(x).toBeGreaterThanOrEqual(8); expect(y + h).toBeLessThanOrEqual(r.height - 8); expect(x + w).toBeLessThanOrEqual(r.width - 8);
+  r.container.clientHeight = 350; root.offsetHeight = 200; r.resize(); expect(r.card.size).toBeUndefined();
+  r[k('placeOverlay')](); expect(r.card.size).toEqual([300, 200]);
+  r[k('selectNote')](-1); expect(r.card.size).toBeUndefined();
+});
+
+test('review: filtered history skips removed targets without drifting from the displayed card', async () => {
+  const f = await graduated([[0, 1], [1, 2], [2, 3]]), { r, k } = f;
+  for (const n of [0, 1, 2]) r[k('travel')](n);
+  expect(r.card.history.items).toEqual([0, 1, 2]);
+  r.setView(new Uint8Array([1, 0, 1, 1, 1]), {});
+  expect(r.card.history.items).toEqual([0, 2]); expect(r.card.history.at).toBe(1);
+  control(r[k('noteCard')], '‹').click(); expect(r.selected).toBe(0); expect(r.card.node).toBe(0); expect(r.card.history.at).toBe(0);
+  control(r[k('noteCard')], '›').click(); expect(r.selected).toBe(2); expect(r.card.history.at).toBe(1);
+  // Local isolation does not discard history still available under the host filter.
+  r.isolate(2, 1, false); expect(r.card.history.items).toEqual([0, 2]);
+  r.card.step(-1); expect(r.selected).toBe(0); expect(r.card.node).toBe(0); expect(r.card.history.items).toEqual([0, 2]); expect(r.card.history.at).toBe(0);
+  r.card.step(1); expect(r.selected).toBe(2); expect(r.card.history.at).toBe(1);
+});
+
+test('review: a distant high-degree lens cannot starve picking a nearby unrelated edge', async () => {
+  const pairs: [number, number][] = [];
+  for (let i = 1; i <= 400; i++) { pairs.push([0, i]); for (let j = 401; j <= 500; j++) pairs.push([i, j]); }
+  pairs.push([501, 502]);
+  const { r, k } = await graduated(pairs, 503, 50000), next = r.positions.slice();
+  next[1002] = 1e7; next[1003] = 0; next[1004] = 1e7 + 100; next[1005] = 0;
+  const token = await prepare(r, next, () => true); token.commit(); token.discard();
+  r.setLens(0); r[k('animate')](r[k('lensMotion')].start + 220);
+  const a = r.screenPoint(501), b = r.screenPoint(502);
+  expect(r[k('lensPoints')].size).toBe(400);
+  expect(r[k('pickEdge')]((a.x + b.x) / 2, (a.y + b.y) / 2)).toBe(pairs.length - 1);
+});
+
+test('review: a 5000-connection lens uploads at most one span per touched texture row, including cleared offsets', async () => {
+  const { r, k } = await graduated(Array.from({ length: 5000 }, (_, i) => [0, i + 1] as [number, number]), 5001, 6000), writes: any[][] = [];
+  const gpu = new Float32Array(r[k('lensBytes')].length), width = r.positionWidth;
+  r.gl = new Proxy({ isContextLost: () => false, texSubImage2D: (...v: any[]) => { writes.push(v); gpu.set(v[8], (v[3] * width + v[2]) * 4); } }, { get: (o: any, key: string) => key in o ? o[key] : key.toUpperCase() === key ? 1 : () => {} });
+  try {
+    r.setLens(0); expect(writes.length).toBe(Math.ceil(5001 / width)); expect(gpu).toEqual(r[k('lensBytes')]);
+    r[k('animate')](r[k('lensMotion')].start + 220); writes.length = 0;
+    r.setLens(-1); r[k('animate')](r[k('lensMotion')].start + 220);
+    expect(writes.length).toBe(Math.ceil(5001 / width)); expect(gpu.every(v => v === 0)).toBe(true);
+  } finally { r.gl = null; }
+});
+
+test('review: Focus action frames effective lens coordinates, not hidden layout positions', async () => {
+  const { r, k } = await graduated([[0, 1], [0, 2]]); r[k('selectNote')](0, true);
+  r.setLens(0); r[k('animate')](r[k('lensMotion')].start + 220);
+  let box: number[] = []; r.frame = (...args: number[]) => { box = args; };
+  control(r[k('noteCard')], 'Focus').click();
+  const xs = [0, 1, 2].map(n => r[k('renderCoordinate')](n, 0)), ys = [0, 1, 2].map(n => r[k('renderCoordinate')](n, 1));
+  expect(box.slice(0, 4)).toEqual([Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]);
+  expect(box.slice(0, 4)).not.toEqual([0, 0, 100, 74]);
+});
+
+test('review: Open reuses only unpinned notes and reveals the destination; explicit tab and split still create leaves', async () => {
+  const plugin: any = new GraphPlugin(); plugin.settings = defaults('links');
+  const view = new GraphView(null, plugin), file = new obsidian.TFile(), opened: string[] = [], revealed: any[] = [], requested: any[][] = [];
+  const leaf = (name: string, pinned = false) => ({ getViewState: () => ({ pinned }), openFile: async (f: unknown) => { expect(f).toBe(file); opened.push(name); } });
+  const pinned = leaf('pinned', true), reusable = leaf('reuse'), created = leaf('created'); let leaves = [pinned, reusable];
+  view.app = { vault: { getAbstractFileByPath: () => file }, workspace: { getLeavesOfType: () => leaves, getLeaf: (...args: unknown[]) => { requested.push(args); return created; }, revealLeaf: async (target: unknown) => { revealed.push(target); } } };
+  view.openNote('Synthetic.md', 'reuse'); await Promise.resolve(); await Promise.resolve();
+  expect(opened).toEqual(['reuse']); expect(revealed).toEqual([reusable]); expect(requested).toEqual([]);
+  leaves = [pinned]; view.openNote('Synthetic.md', 'reuse'); await Promise.resolve(); await Promise.resolve();
+  expect(requested).toEqual([['tab']]); expect(revealed.at(-1)).toBe(created);
+  view.openNote('Synthetic.md', 'tab'); view.openNote('Synthetic.md', 'split'); await Promise.resolve(); await Promise.resolve();
+  expect(requested.slice(-2)).toEqual([['tab'], ['split', 'vertical']]); expect(opened).not.toContain('pinned');
 });

@@ -15,9 +15,11 @@ export function focusLabels(focus: number, near: readonly number[], state: Uint8
   return list.length ? placeLabels(list.map(([n, r]) => box(n, r)), cell, budget).map(b => [b.node, ranks.get(b.node)!] as const) : [];
 }
 /** Visible touched notes as [node, rank] in priority order (capped), plus the visible direct-connection count. */
-export function rankFocus(focus: number, near: readonly number[], state: Uint8Array, visible: ArrayLike<number>, offsets: Uint32Array, cap: number) {
+export function rankFocus(focus: number, near: readonly number[], state: Uint8Array, visible: ArrayLike<number>, offsets: Uint32Array, cap: number, notes?: ArrayLike<number>) {
   const rank = (n: number) => n === focus ? 0 : state[n * 4 + 1]! > 200 ? 1 : 5 - (state[n * 4 + 1]! >> 6), degree = (n: number) => offsets[n + 1]! - offsets[n]!;
-  const list = near.filter(n => visible[n]).map(n => [n, rank(n)] as const).sort((a, b) => a[1] - b[1] || degree(b[0]) - degree(a[0]) || a[0] - b[0]);
+  // Transparent carrier dots are not direct neighbours in the card/legend. They must not
+  // consume its label slots or inflate the count offered by the card's '+N more' link.
+  const list = near.filter(n => visible[n] && (n === focus || !notes?.[n])).map(n => [n, rank(n)] as const).sort((a, b) => a[1] - b[1] || degree(b[0]) - degree(a[0]) || a[0] - b[0]);
   const direct = list.reduce((c, x) => c + +(x[1] === 1), 0); list.length = Math.min(list.length, cap);
   return { list, direct };
 }

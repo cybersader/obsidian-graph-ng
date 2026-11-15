@@ -74,3 +74,10 @@ test('card placement stays on screen: right of the note, else left; below, else 
   // Larger than the view: pinned to the margin, never off screen at the top or left.
   expect(placeCard(50, 50, 10, 200, 100, 300, 200)).toEqual({ x: 8, y: 8 });
 });
+
+test('history pruning preserves the current stop and both branches while dropping unavailable indices', () => {
+  const h = new NavHistory(); for (const n of [0, 1, 2, 3, 4]) h.visit(n);
+  h.go(-2); h.retain(n => n !== 1 && n !== 3);
+  expect(h.items).toEqual([0, 2, 4]); expect(h.at).toBe(1); expect(h.go(-1)).toBe(0); expect(h.go(2)).toBe(4);
+  h.retain(() => false); expect(h.items).toEqual([]); expect(h.at).toBe(-1);
+});

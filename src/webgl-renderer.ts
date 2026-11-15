@@ -391,6 +391,7 @@ export class DetailRenderer {
       this.ctx = this.canvas.getContext('2d'); if (!this.ctx) { this.canvas.remove(); this.overlay.remove(); throw new Error('CANVAS_UNAVAILABLE'); }
     }
     this.packState(); this.setView(visible, view, false); this.fitAll(0);
+    this.container.addEventListener('pointerleave', this.pointerLeave);
     this.canvas.addEventListener('webglcontextlost', this.contextLost); this.canvas.addEventListener('webglcontextrestored', this.contextRestored);
     this.canvas.addEventListener('pointerdown', this.pointerDown); this.canvas.addEventListener('pointermove', this.pointerMove); this.canvas.addEventListener('pointerup', this.pointerUp); this.canvas.addEventListener('pointercancel', this.pointerCancel); this.canvas.addEventListener('pointerleave', this.pointerLeave); this.canvas.addEventListener('keydown', this.keyDown); this.canvas.addEventListener('wheel', this.wheel, { passive: false });
     this.media.addEventListener('change', this.refreshTheme);
@@ -419,6 +420,7 @@ export class DetailRenderer {
     for (let i = 0; i < n; i++) { const o = i * 4; this.stateBytes[o] = filterVisible[i] ? 255 : 0; this.stateBytes[o + 2] = filterVisible[i] && !render[i] ? 255 : 0; this.stateBytes[o + 3] = notes[i] ? 255 : 0; if (render[i]) { this.visibleNodes++; if (notes[i]) this.visibleCarriers++; } }
     if (canvasEdges) this.canvasEdges = canvasEdges;
     const card = this.card;
+    card?.history.retain(n => !!this.baseVisible[n]);
     if (this.selectedEdges?.length ? !this.selectedEdges.every(this.edgeDrawn) : !filterVisible[this.selected]) { this.selectedEdges = []; this.edgeToken++; card?.hide(); }
     else if (card && card.node >= 0 && card.node === this.selected) card.render();
     if (this.near.length || this.selected >= 0 && this.ready) this.emphasize(true);
@@ -717,6 +719,7 @@ export class DetailRenderer {
     const changed = this.width !== Math.max(1, this.container.clientWidth) || this.height !== Math.max(1, this.container.clientHeight) || this.dpr !== (window.devicePixelRatio || 1);
     if (!changed && this.canvas.width === Math.round(this.width * this.dpr) && this.canvas.height === Math.round(this.height * this.dpr)) return false;
     this.width = Math.max(1, this.container.clientWidth); this.height = Math.max(1, this.container.clientHeight); this.dpr = window.devicePixelRatio || 1;
+    if (this.card) this.card.size = undefined;
     const started = performance.now(), width = Math.round(this.width * this.dpr), height = Math.round(this.height * this.dpr);
     // Even assigning the existing size resets the drawing buffer and can wait on
     // the GPU. A height-only panel change must not reset an unchanged width.
@@ -836,7 +839,15 @@ export class DetailRenderer {
   private uploadLens(changed?: Iterable<number>) {
     const gl = this.gl!; gl.activeTexture(gl.TEXTURE0 + 5); gl.bindTexture(gl.TEXTURE_2D, this.textures[5]!);
     if (!changed) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, this.positionWidth, this.positionHeight, 0, gl.RGBA, gl.FLOAT, this.lensBytes);
-    else for (const n of changed) gl.texSubImage2D(gl.TEXTURE_2D, 0, n % this.positionWidth, Math.floor(n / this.positionWidth), 1, 1, gl.RGBA, gl.FLOAT, this.lensBytes.subarray(n * 4, n * 4 + 4));
+    else {
+      // One span per touched texture row, not one driver call per displaced note.
+      const rows = new Map<number, [number, number]>(), width = this.positionWidth;
+      for (const n of changed) {
+        const row = Math.floor(n / width), x = n % width, span = rows.get(row);
+        if (span) { span[0] = Math.min(span[0], x); span[1] = Math.max(span[1], x); } else rows.set(row, [x, x]);
+      }
+      for (const [row, [lo, hi]] of rows) gl.texSubImage2D(gl.TEXTURE_2D, 0, lo, row, hi - lo + 1, 1, gl.RGBA, gl.FLOAT, this.lensBytes.subarray((row * width + lo) * 4, (row * width + hi + 1) * 4));
+    }
   }
   /** Effective render coordinate; never writes worker/layout or collapsed-view positions. */
   private renderCoordinate(id: number, axis: 0 | 1, amount = this.lensBlend) {
@@ -901,10 +912,12 @@ export class DetailRenderer {
         const d = segmentDistance(w.x, w.y, this.renderCoordinate(a, 0), this.renderCoordinate(a, 1), this.renderCoordinate(b, 0), this.renderCoordinate(b, 1)); if (d < distance) { best = e; distance = d; }
       }
     };
-    // Include moved endpoints outside the original grid; retain the existing incident budget.
-    if (this.lensAnchor >= 0) visit(this.lensAnchor);
+    // Nearby unchanged edges must get their existing budget before a distant lens cloud.
+    this.picker.visit(w.x, w.y, radius, node => { if (!this.lensPoints?.has(node)) visit(node); });
+    // Include moved endpoints outside the original grid with the remaining incident budget.
+    if (this.lensAnchor >= 0 && budget > 0) visit(this.lensAnchor);
     for (const node of this.lensPoints?.keys() ?? []) { if (budget <= 0) break; visit(node); }
-    this.picker.visit(w.x, w.y, radius, node => { if (node !== this.lensAnchor && !this.lensPoints?.has(node)) visit(node); }); return best;
+    return best;
   }
   private edgeDrawn = (e: number) => !!this.edgeOn[e] && !!this.filterVisible[this.projection.source[e]!] && !!this.filterVisible[this.projection.target[e]!];
   /** Drawn rows between the picked edge's endpoints, either direction, picked edge first (bounded). */
@@ -937,7 +950,7 @@ export class DetailRenderer {
    * explicit Open button (or Enter on the canvas) opens the note. */
   private selectNote(node: number, card?: boolean, keepLens = false) {
     if (node < 0 && this.lensAnchor >= 0 && !keepLens) this.setLens(-1);
-    this.selected = node; this.selectedEdges = []; this.edgeAnchor = -1; this.edgeToken++; this.cue = -1; if (card) this.hovered = -1; this.emphasize(); this.startRipple(node); this.refresh();
+    this.selected = node; this.selectedEdges = []; this.edgeAnchor = -1; this.edgeToken++; this.cue = -1; if (card || node < 0) this.hovered = -1; this.emphasize(); this.startRipple(node); this.refresh();
     if (card && node >= 0) this.card.show(node); else this.card.hide();
   }
   /** The navigator's view of the graph: every lookup is O(degree) over the incident-edge CSR. Rows
@@ -969,17 +982,20 @@ export class DetailRenderer {
   /** Fly to fit a node set (bounded by the caller: a focus and its connections). */
   private frameNodes(nodes: Iterable<number>) {
     let x = Infinity, y = Infinity, xx = -Infinity, yy = -Infinity;
-    for (const n of nodes) { const a = this.display[n * 2]!, b = this.display[n * 2 + 1]!; x = Math.min(x, a); y = Math.min(y, b); xx = Math.max(xx, a); yy = Math.max(yy, b); }
+    for (const n of nodes) { const a = this.renderCoordinate(n, 0), b = this.renderCoordinate(n, 1); x = Math.min(x, a); y = Math.min(y, b); xx = Math.max(xx, a); yy = Math.max(yy, b); }
     if (x !== Infinity) this.frame(x, y, xx, yy);
   }
   /** Travel from a Connections row or history: the note becomes focus and selection, the camera flies
    * to it (zooming in when far out) and an active "Show only connections" re-centres on it. */
   private travel(n: number) {
     if (!this.baseVisible[n]) return;
-    if (this.isolation && this.isolation.node !== n) this.isolate(n, this.isolation.hops, false);
-    // An open lens follows travel so the card and the rings describe the same note.
-    if (this.lensWanted >= 0 && this.lensWanted !== n) this.setLens(n);
+    // Select before re-centring isolation: its mask may exclude the old selection,
+    // but that transient state must not clear the history we are travelling through.
+    const lensed = this.lensWanted >= 0;
     this.selectNote(n, true);
+    if (this.isolation && this.isolation.node !== n) this.isolate(n, this.isolation.hops, false);
+    // Isolation may close the old lens while changing masks; preserve the travel intent.
+    if (lensed && this.lensWanted !== n) this.setLens(n);
     const f = this.cameraFrame; this.flyTo((this.display[n * 2]! - f.minX) / f.width, (this.display[n * 2 + 1]! - f.minY) / f.height, Math.min(this.camera.ratio, this.homeRatio * .5));
   }
   /** Temporary "Show only connections" view: the focus plus direct connections (hops 2 adds
@@ -1013,7 +1029,8 @@ export class DetailRenderer {
     this.describeEdges?.(this.selectedEdges).then(info => {
       if (token !== this.edgeToken || this.disposed) return;
       info.forEach((d, i) => { const row = rows[i]; if (!row) return; if (d.rule) row.append(el('small', 'Rule: ' + d.rule)); if (d.carrier) { const path = d.carrier; row.append(button('Open relationship note', 'Open relationship note ' + path, () => this.openPath?.(path))); if (this.openNote) row.append(button('Right', `Open relationship note ${path} to the right`, () => this.openNote?.(path, 'split'))); } });
-    }, () => { if (token === this.edgeToken && !this.disposed) box.append(el('small', 'Details unavailable')); });
+      this.card.size = undefined; this.refresh();
+    }, () => { if (token === this.edgeToken && !this.disposed) { box.append(el('small', 'Details unavailable')); this.card.size = undefined; this.refresh(); } });
   }
   /** Keyboard: step through the anchor note's drawn relationships, one stop per neighbour. O(degree). */
   private cycleEdge(step: number) {
@@ -1108,7 +1125,7 @@ export class DetailRenderer {
       // Placement measures each bounded candidate once with the font and text the DOM label then uses, at the radius offset it is shown with.
       const k = this.scale * this.camera.ratio / LABEL_RATIOS[lod]!, budget = Math.max(1, Math.min(s.labelsMaxPerViewport, FOCUS_LABELS, Math.floor(this.width * this.height / s.labelGridCellSize ** 2 * s.labelDensity))), m = this.measure ??= document.createElement('canvas').getContext('2d')!;
       const pad = v.labelPlates ? 16 : 4, text = (n: number, rank: number) => n === ego ? this.noteCaption(n) : middleTruncate(this.name(n), LABEL_CHARS[rank]!);
-      const { list, direct } = rankFocus(ego, this.near, this.stateBytes, this.visible, this.projection.offsets, budget * s.labelCandidateMultiplier);
+      const { list, direct } = rankFocus(ego, this.near, this.stateBytes, this.visible, this.projection.offsets, budget * s.labelCandidateMultiplier, this.projection.carrierNodes);
       const items = list.map(([n, rank]) => { m.font = tierFont(rank, s.labelSize, tier, this.theme.font); const h = tierType(rank, s.labelSize, tier).size * 1.5 + 4; return { node: n, rank, x: this.renderCoordinate(n, 0, 1) * k, y: this.renderCoordinate(n, 1, 1) * k, r: radius(n), w: m.measureText(text(n, rank)).width + pad, h }; });
       m.font = tierFont(1, s.labelSize, tier, this.theme.font);
       const layout = radialLabels(items, budget, DIRECT_LABELS, ego >= 0 ? direct : 0, m.measureText(`+${direct} more`).width + 24, 32);
@@ -1292,8 +1309,11 @@ export class DetailRenderer {
     }
     const rect = this.canvas.getBoundingClientRect(), x = e.clientX - rect.left, y = e.clientY - rect.top;
     const hub = this.pickHub(x, y), node = hub >= 0 ? -1 : this.pick(x, y), edge = node < 0 && hub < 0 ? this.pickEdge(x, y) : -1;
-    if (node === this.hovered && edge === this.hoveredEdge) return;
-    this.hovered = node; this.hoveredEdge = edge; this.emphasize();
+    // With no selection, keep the last hover focus across empty canvas so its controls
+    // can be reached. Another node, an empty click, or leaving the graph clears it.
+    const keep = node < 0 && hub < 0 && this.selected < 0 && this.focusNode >= 0 && this.settings.visuals.hoverHighlight, next = keep ? this.hovered : node;
+    if (next === this.hovered && edge === this.hoveredEdge) return;
+    this.hovered = next; this.hoveredEdge = edge; this.emphasize();
     this.container.title = hub >= 0 ? `${this.view.groupLabels?.[hub] ?? ''} (collapsed) — click to expand` : node >= 0 ? this.path(node) : edge >= 0 ? `${this.path(this.projection.source[edge]!)} → ${this.path(this.projection.target[edge]!)} [${this.projection.types[this.projection.type[edge]!]!}]` : '';
     this.canvas.style.cursor = node >= 0 || hub >= 0 || edge >= 0 ? 'pointer' : 'grab'; this.refresh();
   };
@@ -1320,6 +1340,7 @@ export class DetailRenderer {
     if (e.key === 'Escape' && (this.card.node >= 0 || this.selectedEdges.length)) { this.selectNote(-1, false, true); this.canvas.focus(); }
     else if (e.key === 'Escape' && this.lensWanted >= 0) { this.setLens(-1); this.canvas.focus(); }
     else if (e.key === 'Escape' && this.selected >= 0) { this.selectNote(-1); this.canvas.focus(); }
+    else if (e.key === 'Escape' && this.hovered >= 0) this.selectNote(-1);
     else if (e.key === 'Escape' && this.isolation) this.isolate(-1);
     else if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight') && this.card.step(e.key === 'ArrowLeft' ? -1 : 1)) { /* handled */ }
     else if (!e.altKey && !e.ctrlKey && !e.metaKey && !e.repeat && (e.key === 'l' || e.key === 'L')) { this.toggleLens(); }
@@ -1336,7 +1357,11 @@ export class DetailRenderer {
     e.preventDefault();
   };
   private pointerCancel = (e: PointerEvent) => { this.pointers.delete(e.pointerId); this.moved = true; };
-  private pointerLeave = () => { this.lastPointer = undefined; if (!this.pointers.size) { this.hovered = this.hoveredEdge = -1; this.emphasize(); this.container.title = ''; this.refresh(); } };
+  private pointerLeave = (e?: PointerEvent) => {
+    const next = e?.relatedTarget;
+    if (next && (next === this.canvas || this.overlay.contains(next as Node))) return;
+    this.lastPointer = undefined; if (!this.pointers.size) { this.hovered = this.hoveredEdge = -1; this.emphasize(); this.container.title = ''; this.refresh(); }
+  };
   private wheel = (e: WheelEvent) => {
     e.preventDefault(); if (this.disposed || this.lost) return; this.flight = undefined; const rect = this.canvas.getBoundingClientRect(), x = e.clientX - rect.left - this.width / 2, y = e.clientY - rect.top - this.height / 2, before = this.scale;
     this.camera.ratio = this.clampRatio(this.camera.ratio * Math.exp(Math.max(-1, Math.min(1, e.deltaY * .001))));
@@ -1354,6 +1379,7 @@ export class DetailRenderer {
   };
   dispose() { clearTimeout(this.sizingTimer);
     if (this.disposed) return; this.disposed = true; this.labelsRevision++; clearTimeout(this.restoreTimer); this.restoreTimer = undefined; cancelAnimationFrame(this.frameId); clearTimeout(this.frameTimer); this.frameTimer = undefined; this.observer.disconnect(); this.media.removeEventListener('change', this.refreshTheme);
+    this.container.removeEventListener('pointerleave', this.pointerLeave);
     this.canvas.removeEventListener('webglcontextlost', this.contextLost); this.canvas.removeEventListener('webglcontextrestored', this.contextRestored); this.canvas.removeEventListener('pointerdown', this.pointerDown); this.canvas.removeEventListener('pointermove', this.pointerMove); this.canvas.removeEventListener('pointerup', this.pointerUp); this.canvas.removeEventListener('pointercancel', this.pointerCancel); this.canvas.removeEventListener('pointerleave', this.pointerLeave); this.canvas.removeEventListener('keydown', this.keyDown); this.canvas.removeEventListener('wheel', this.wheel);
     const gl = this.gl; if (gl && !this.lost) { for (const p of this.programs) gl.deleteProgram(p.handle); for (const b of [...this.buffers, ...this.labelBuffers, ...this.discBuffers]) if (b) gl.deleteBuffer(b); for (const v of [...this.vaos, ...this.labelVaos]) gl.deleteVertexArray(v); for (const t of this.textures) gl.deleteTexture(t); }
     gl?.getExtension('WEBGL_lose_context')?.loseContext();

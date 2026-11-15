@@ -58,6 +58,11 @@ export class NavHistory {
   }
   /** Move by `step` (-1 back, 1 forward); undefined at either end. */
   go(step: number) { const i = this.at + step; if (i < 0 || i >= this.items.length) return undefined; this.at = i; return this.items[i]; }
+  /** Drop unavailable targets without moving away from the current history entry. */
+  retain(available: (n: number) => boolean) {
+    const before = this.items.slice(0, this.at + 1).filter(available).length;
+    this.items = this.items.filter(available); this.at = before - 1;
+  }
   clear() { this.items = []; this.at = -1; }
 }
 /** Keep a w×h card on screen beside a node at (x, y): right of it, else left; below, else above. */
@@ -100,7 +105,7 @@ export class ConnectionCard {
     if (n !== this.node) this.limit = ROWS;
     this.node = n; if (!this.moving) this.history.visit(n); this.render();
   }
-  hide() { this.node = -1; this.rows = []; this.history.clear(); this.root.textContent = ''; this.root.removeAttribute?.('aria-label'); }
+  hide() { this.node = -1; this.rows = []; this.size = undefined; this.lensToggle = undefined; this.history.clear(); this.root.textContent = ''; this.root.removeAttribute?.('aria-label'); }
   /** Back (-1) or forward (1) through visited notes. */
   step(step: number) {
     if (this.node < 0) return false;

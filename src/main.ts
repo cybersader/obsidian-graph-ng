@@ -522,8 +522,8 @@ export class GraphView extends ItemView {
   private openNote(path: string, mode: 'reuse' | 'tab' | 'split') {
     const file = this.app.vault.getAbstractFileByPath(path), w = this.app.workspace;
     if (!(file instanceof TFile)) { new Notice('The referenced note is not available locally.'); return; }
-    const leaf = mode === 'split' ? w.getLeaf('split', 'vertical') : (mode === 'reuse' && w.getLeavesOfType('markdown')[0]) || w.getLeaf('tab');
-    void leaf.openFile(file);
+    const leaf = mode === 'split' ? w.getLeaf('split', 'vertical') : (mode === 'reuse' && w.getLeavesOfType('markdown').find(l => !l.getViewState().pinned)) || w.getLeaf('tab');
+    void leaf.openFile(file).then(() => w.revealLeaf(leaf)).catch(() => new Notice('Could not open the note'));
   }
   private copyLink(path: string) {
     const file = this.app.vault.getAbstractFileByPath(path);
