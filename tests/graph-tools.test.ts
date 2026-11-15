@@ -209,11 +209,11 @@ test('UX representation buttons, saved views and workspace scope have distinct a
 });
 test('UX graph status uses structured phase, coverage and failures rather than English keyword guesses', () => {
   const view: any = Object.create(GraphView.prototype);
-  Object.assign(view, { contentEl: { dataset: { state: 'building' } }, status: new ControlElement(), statusSummary: new ControlElement(), plugin: { settings: {} }, provisional: true, statusIssues: '', gpu: { available: true } });
+  Object.assign(view, { contentEl: { dataset: { state: 'building' } }, status: new ControlElement(), statusSummary: new ControlElement(), plugin: { settings: {} }, provisional: true, gpu: { available: true } });
   view.statusText = 'partial, provisional, pending'; expect(view.statusSummary.textContent).toBe('Preparing graph…');
   view.contentEl.dataset.state = 'ready'; view.statusText = '0 unresolved'; expect(view.statusSummary.textContent).toContain('still loading');
   view.provisional = false; view.statusText = 'error is a note name, not a health signal'; expect(view.statusSummary.hidden).toBe(true);
-  view.statusIssues = '3 unresolved links'; view.statusText = 'details'; expect(view.statusSummary.textContent).toBe('3 unresolved links');
+  view.report = { nodes: 4, edges: 2, indexed: 4, listed: 4, linksPending: false, provisional: false, unresolved: 3, duplicates: 0 }; view.statusText = 'details'; expect(view.statusSummary.textContent).toBe('3 unresolved links'); view.report = undefined;
   view.contentEl.dataset.state = 'error'; view.statusText = 'Projection refresh failed: synthetic missing file'; expect(view.statusSummary.textContent).toContain('synthetic missing file'); expect(view.statusSummary.textContent).not.toContain('Retry');
   view.contentEl.dataset.state = 'ready'; view.plugin.settings.projectionFile = 'synthetic.json'; view.statusText = 'aggregate'; expect(view.statusSummary.textContent).toContain('not verified');
   view.plugin.settings.projectionFile = ''; view.gpu = { available: false, reason: 'Synthetic renderer unavailable' }; view.statusText = 'fallback'; expect(view.statusSummary.textContent).toContain('Synthetic renderer unavailable'); expect(view.statusSummary.textContent).toContain('Browse groups and members');

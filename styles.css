@@ -28,10 +28,41 @@
 .graph-ng-form > * { flex:1 1 90px; min-width:0; }
 .graph-ng-form select[multiple] { flex-basis:100%; }
 .graph-ng-form > button { flex:0 0 auto; }
-.graph-ng-chips { display:flex; flex-wrap:wrap; gap:4px; }
-.graph-ng-chip { display:flex; flex-wrap:wrap; align-items:center; gap:8px; width:100%; padding:4px; border-bottom:1px solid var(--background-modifier-border); }
-.graph-ng-chip > span { flex:1 1 100%; overflow-wrap:anywhere; }
-.graph-ng-chip button { min-height:32px; padding:4px 8px; height:auto; }
+/* Filters: summary tiles, readable pills with icon actions, one aligned add row. */
+.graph-ng-explore-counts { display:grid; gap:6px; }
+.graph-ng-scope { line-height:1.3; }
+.graph-ng-scope-name { font-weight:var(--font-semibold,600); }
+.graph-ng-scope-detail, .graph-ng-stat-total { color:var(--text-muted); font-size:var(--font-ui-smaller); }
+.graph-ng-stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:6px; }
+.graph-ng-stat { min-width:0; padding:6px 8px; background:var(--background-secondary); border:1px solid var(--background-modifier-border); border-radius:var(--radius-s,4px); }
+.graph-ng-stat-value { font-size:var(--font-ui-medium); font-weight:var(--font-semibold,600); }
+.graph-ng-stat-bar { height:3px; margin-top:4px; border-radius:2px; background:var(--background-modifier-border); overflow:hidden; }
+.graph-ng-stat-bar > div { height:100%; background:var(--interactive-accent); }
+.graph-ng-chips { display:flex; flex-direction:column; gap:4px; }
+.graph-ng-chip { display:flex; flex-wrap:wrap; align-items:center; gap:2px; min-width:0; padding:2px 2px 2px 10px; background:var(--background-secondary); border:1px solid var(--background-modifier-border); border-radius:var(--radius-m,8px); }
+.graph-ng-chip-text { flex:1 1 0; min-width:0; overflow-wrap:anywhere; line-height:1.35; padding:4px 0; }
+.graph-ng-chip-code { font-family:var(--font-monospace); font-size:var(--font-ui-smaller); }
+.graph-ng-explore .graph-ng-chip-action, .graph-ng-chip-json > summary { flex:none; display:inline-flex; align-items:center; justify-content:center; min-height:28px; min-width:28px; padding:4px; color:var(--text-muted); cursor:pointer; }
+.graph-ng-chip-action:hover:not(:disabled), .graph-ng-chip-json > summary:hover { color:var(--text-normal); }
+.graph-ng-remove:hover:not(:disabled) { color:var(--text-error); }
+.graph-ng-chip-action svg, .graph-ng-chip-json > summary svg { width:14px; height:14px; }
+.graph-ng-chip-json > summary { list-style:none; border-radius:var(--radius-s,4px); }
+.graph-ng-chip-json > summary::-webkit-details-marker { display:none; }
+.graph-ng-chip-json[open] { order:1; flex-basis:100%; display:grid; gap:6px; padding:0 8px 8px 0; }
+.graph-ng-chip-json textarea { width:100%; min-height:6em; font-family:var(--font-monospace); font-size:var(--font-ui-smaller); }
+.graph-ng-chip-json > button { justify-self:end; }
+.graph-ng-chip > .graph-ng-expression { order:2; flex-basis:100%; padding:0 8px 8px 0; }
+.graph-ng-builder { padding-top:8px; border-top:1px dashed var(--background-modifier-border); }
+.graph-ng-builder > select, .graph-ng-builder > input { flex:1 1 6.5em; }
+.graph-ng-builder > button { margin-left:auto; }
+.graph-ng-builder > .graph-ng-explore-error { flex-basis:100%; }
+.graph-ng-explore button.graph-ng-add { background:var(--interactive-normal); color:var(--text-accent); box-shadow:none; border:1px solid var(--background-modifier-border); }
+.graph-ng-explore button.graph-ng-add:hover { background:var(--interactive-hover); }
+.graph-ng-derive-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(9em,1fr)); gap:8px; align-items:end; padding-top:8px; }
+.graph-ng-field { display:grid; gap:2px; min-width:0; color:var(--text-muted); font-size:var(--font-ui-smaller); }
+.graph-ng-field > input, .graph-ng-field > select { width:100%; }
+.graph-ng-derive-grid > button { justify-self:start; }
+.graph-ng-explore summary { cursor:pointer; }
 .graph-ng-explore button:focus-visible,.graph-ng-status summary:focus-visible { outline:2px solid var(--interactive-accent); outline-offset:2px; }
 .graph-ng-legend { display:flex; flex-direction:column; gap:1px; max-height:240px; overflow:auto; }
 .graph-ng-legend-row { display:flex; align-items:center; gap:6px; min-height:24px; }
@@ -94,7 +125,19 @@
 .graph-ng-explore input[type=search] { width:100%; }
 .graph-ng-explore input[aria-invalid=true] { outline:2px solid var(--text-error); }
 .graph-ng-explore-body, .graph-ng-status, .graph-ng-panel { overflow:auto; overflow-wrap:anywhere; min-height:0; flex:1; }
-.graph-ng-status { white-space:pre-wrap; line-height:1.6; }
+.graph-ng-status { display:flex; flex-direction:column; gap:8px; line-height:1.45; }
+.graph-ng-status h4 { font-size:inherit; margin:8px 0 0; }
+.graph-ng-status-message { margin:0; white-space:pre-wrap; }
+.graph-ng-stat-label { color:var(--text-muted); font-size:var(--font-ui-smaller); }
+.graph-ng-issues { margin:0; padding:0; list-style:none; display:grid; gap:6px; }
+.graph-ng-issues > li { padding:6px 8px; border-left:3px solid var(--text-warning); background:var(--background-secondary); border-radius:0 var(--radius-s,4px) var(--radius-s,4px) 0; }
+.graph-ng-issues > li > div { color:var(--text-muted); font-size:var(--font-ui-smaller); }
+.graph-ng-rules { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; font-size:var(--font-ui-smaller); }
+.graph-ng-rules th, .graph-ng-rules td { padding:3px 4px; text-align:right; border-bottom:1px solid var(--background-modifier-border); }
+.graph-ng-rules th:first-child { text-align:left; overflow-wrap:anywhere; }
+.graph-ng-rules thead th { color:var(--text-muted); font-weight:var(--font-normal,400); }
+.graph-ng-summary { display:flex; flex-wrap:wrap; gap:4px; }
+.graph-ng-summary-chip { padding:0 6px; border-radius:var(--radius-s,4px); background:var(--background-modifier-hover); }
 .graph-ng-summary { position:absolute; left:8px; bottom:8px; z-index:2; max-width:calc(100% - 16px); white-space:normal; }
 .graph-ng-slider { display:grid; grid-template-columns:minmax(0,1fr) 6em; align-items:center; gap:8px; margin-block:8px; }
 .graph-ng-slider input { width:100%; }
@@ -123,3 +166,4 @@
 .graph-ng-focus-label { position:absolute; left:0; top:0; white-space:nowrap; pointer-events:none; color:var(--text-normal); font-size:var(--font-ui-small); text-shadow:0 0 3px var(--background-primary), 0 0 2px var(--background-primary); }
 .graph-ng-tier-1 { font-weight:var(--font-semibold, 600); }
 .graph-ng-tier-2 { font-size:var(--font-ui-smaller); color:var(--text-muted); }
+@media (pointer: coarse) { .graph-ng-toolbar button, .graph-ng-explore button, .graph-ng-explore input:not([type=checkbox]):not([type=range]), .graph-ng-explore select { min-height:44px; } .graph-ng-explore .graph-ng-chip-action, .graph-ng-chip-json > summary { min-height:44px; min-width:44px; } }

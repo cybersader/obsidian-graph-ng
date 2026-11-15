@@ -4,6 +4,7 @@ import { sizingValues, sizingSettings, MAX_NODE_RADIUS, type NodeSizingValues } 
 import { physicsSettings, physicsDefaults, presetValues, PHYSICS_FIELDS, PHYSICS_PRESETS, type PhysicsKey, type PhysicsValues } from './physics-controls';
 import { editAsExpression, builderPredicate, checked } from './core/expr/engine';
 import { validate } from './core/expr/syntax';
+import { filterSummary } from './filter-summary';
 import { suggestions } from './core/expr/autocomplete';
 import { declaredKeys } from './core/columns';
 import { describePredicate, groupLabel, NO_COLOR, VIEW_LIMITS, validateSaved, validateView, type ExploreResult, type ExploreView, type SavedView, type ViewCamera } from './core/explore';
@@ -182,8 +183,7 @@ export class ExplorePanel {
     this.search.title = external ? 'Note search is unavailable in aggregate graphs.' : 'Search note names and identities';
     this.search.setAttribute('aria-label', this.search.title);
     if (external) { clearTimeout(this.searchTimer); this.search.value = this.view.query; }
-    this.counts.textContent = external ? 'External aggregate' : r ? `${r.visible.reduce((n, v) => n + v, 0).toLocaleString()} of ${r.nodes.toLocaleString()} nodes · ${r.visibleEdges.toLocaleString()} of ${r.edges.toLocaleString()} edges` : 'Waiting for projection…';
-    this.counts.textContent = `${this.host.scope?.() ?? 'Current graph'} · ${this.counts.textContent}`;
+    this.summary(external, r);
     const named = this.settings.explore.savedViews.find(s => canonical(s.view) === canonical(this.settings.explore.view));
     this.buttons.get('views')!.title = named ? `Saved views · requested: ${named.name}` : 'Saved views · requested settings';
     this.buttons.get('filters')!.querySelector('.graph-ng-tool-label')!.textContent = `Filters${this.view.filters.length ? ` (${this.view.filters.length})` : ''}`;
@@ -206,6 +206,22 @@ export class ExplorePanel {
     this.body.scrollTop = scroll;
     if (focusName) { const replacement = [...this.body.querySelectorAll<HTMLElement>('button,input,select,summary')].find(e => !(e as HTMLButtonElement).disabled && (focusKey != null ? e.getAttribute('data-focus-key') === focusKey : name(e) === focusName)); replacement?.focus({ preventScroll: true }); if (replacement instanceof HTMLInputElement && selection && replacement.type === 'text') replacement.setSelectionRange(selection[0], selection[1]); }
   }
+  /** Scope heading over two shown-of-total tiles; text reads naturally ("1,200 of 1,500 nodes"). */
+  private summary(external: boolean, r?: ExploreResult) {
+    const filters = this.view.filters.length;
+    this.counts.empty();
+    const head = this.counts.createDiv({ cls: 'graph-ng-scope' });
+    head.createSpan({ cls: 'graph-ng-scope-name', text: this.host.scope?.() ?? 'Current graph' });
+    head.createSpan({ cls: 'graph-ng-scope-detail', text: filters ? `${filters} ${filters === 1 ? 'filter' : 'filters'} active` : 'No filters' });
+    if (external || !r) { this.counts.createDiv({ cls: 'graph-ng-scope-detail', text: external ? 'External aggregate' : 'Waiting for projection…' }); return; }
+    const stats = this.counts.createDiv({ cls: 'graph-ng-stats' });
+    for (const [shown, total, unit] of [[r.visible.reduce((n, v) => n + v, 0), r.nodes, 'nodes'], [r.visibleEdges, r.edges, 'edges']] as const) {
+      const tile = stats.createDiv({ cls: 'graph-ng-stat' });
+      tile.createSpan({ cls: 'graph-ng-stat-value', text: shown.toLocaleString() });
+      tile.createSpan({ cls: 'graph-ng-stat-total', text: ` of ${total.toLocaleString()} ${unit}` });
+      tile.createDiv({ cls: 'graph-ng-stat-bar', attr: { 'aria-hidden': 'true' } }).createDiv().style.width = `${total ? Math.min(100, shown / total * 100) : 0}%`;
+    }
+  }
   private note(host: HTMLElement, text: string) { return host.createDiv({ cls: 'graph-ng-explore-note', text }); }
   /** One bounded text editor serves filters, colours and custom group values. */
   private expressionField(host: HTMLElement, r: ExploreResult, label: string, context: 'filter' | 'group', submit: (expr: string) => void) {
@@ -222,11 +238,11 @@ export class ExplorePanel {
       const result = validate(input.value, context); apply.disabled = !result.ok; feedback.toggleClass('graph-ng-explore-error', !result.ok);
       if (!result.ok) { const error = result.errors[0]!; feedback.textContent = `At ${error.pos + 1}: ${error.message}\n${' '.repeat(Math.min(error.pos, 80))}^`; return; }
       const shape = context === 'filter' ? builderPredicate(result.ast) : undefined;
-      feedback.textContent = shape ? `Builder: ${describePredicate(shape)} · counting…` : 'Custom expression · counting…';
+      feedback.textContent = shape ? `Builder form: ${filterSummary(shape).text}. Counting…` : 'Custom expression. Counting…';
       const source = input.value, timer = setTimeout(() => {
         this.expressionTimers.delete(timer);
         void this.host.preview(source, context).then(count => {
-          if (input.isConnected && source === input.value) feedback.textContent = `${count.matched.toLocaleString()} / ${count.total.toLocaleString()} matched${count.groups === undefined ? '' : ` · ${count.groups.toLocaleString()} groups`}`;
+          if (input.isConnected && source === input.value) feedback.textContent = `${count.matched.toLocaleString()} / ${count.total.toLocaleString()} matched${count.groups === undefined ? '' : ` in ${count.groups.toLocaleString()} groups`}`;
         }).catch(e => { if (input.isConnected && source === input.value) feedback.textContent = String(e).includes('generation changed') ? 'Projection changed; edit to refresh count' : `Preview: ${String(e)}`; });
       }, 150); this.expressionTimers.add(timer);
     };
@@ -236,29 +252,34 @@ export class ExplorePanel {
     if (input.value) sync(); else apply.disabled = true;
   }
   private filters(host: HTMLElement, r: ExploreResult) {
-    const chips = host.createDiv({ cls: 'graph-ng-chips' });
+    const count = this.view.filters.length;
+    if (!count) this.note(host, 'No filters. Every note is shown.');
+    else this.note(host, count > 1 ? `Showing notes that match all ${count} filters.` : 'Showing notes that match this filter.');
+    // Pills: readable summary, then small labelled icon actions. Text is never a click target.
+    const chips = host.createDiv({ cls: 'graph-ng-chips', attr: { role: 'list', 'aria-label': 'Active filters' } });
+    const icon = (parent: HTMLElement, label: string, name: string, cls = '') => { const b = parent.createEl('button', { cls: `clickable-icon graph-ng-chip-action ${cls}`, attr: { 'aria-label': label, title: label } }); setIcon(b, name); return b; };
     this.view.filters.forEach((f, i) => {
-      const chip = chips.createDiv({ cls: 'graph-ng-chip' }), description = describePredicate(f);
-      chip.createSpan({ text: description });
-      const remove = chip.createEl('button', { cls: 'graph-ng-remove', text: 'Remove', attr: { 'aria-label': `Remove filter ${i + 1}: ${description}` } });
-      remove.onclick = () => { this.update({ filters: this.view.filters.filter((_, j) => j !== i) }); (this.body.querySelectorAll<HTMLButtonElement>('.graph-ng-remove')[i] ?? this.search).focus(); };
-      const converted = editAsExpression(f), edit = chip.createEl('button', { text: 'Edit as expression', attr: { 'aria-label': `Edit filter ${i + 1} as expression` } });
+      const chip = chips.createDiv({ cls: 'graph-ng-chip', attr: { role: 'listitem' } }), summary = filterSummary(f), description = describePredicate(f);
+      chip.createSpan({ cls: summary.code ? 'graph-ng-chip-text graph-ng-chip-code' : 'graph-ng-chip-text', text: summary.text, attr: { title: description } });
+      const converted = editAsExpression(f), edit = icon(chip, `Edit filter ${i + 1} as expression`, 'pencil');
       edit.disabled = !converted.text; if (converted.reason) edit.title = converted.reason;
       edit.onclick = () => { this.drafts.set(`Edit filter ${i + 1}`, converted.text!); this.render(); };
-      if (this.drafts.has(`Edit filter ${i + 1}`)) this.expressionField(host, r, `Edit filter ${i + 1}`, 'filter', expr => { this.drafts.delete(`Edit filter ${i + 1}`); this.update({ filters: this.view.filters.map((p, j) => j === i ? { kind: 'expr', expr } : p) }); });
       if (f.kind !== 'expr') {
-        const builder = host.createEl('details'); builder.createEl('summary', { text: `Edit builder filter ${i + 1}` });
+        const builder = chip.createEl('details', { cls: 'graph-ng-chip-json' });
+        setIcon(builder.createEl('summary', { cls: 'clickable-icon', attr: { 'aria-label': `Edit builder filter ${i + 1} as JSON`, title: 'Edit as JSON' } }), 'braces');
         const input = builder.createEl('textarea', { attr: { 'aria-label': `Builder filter ${i + 1}` } }); input.value = JSON.stringify(f, null, 2);
-        const error = builder.createDiv({ attr: { role: 'alert' } });
+        const error = builder.createDiv({ cls: 'graph-ng-explore-error', attr: { role: 'alert' } });
         builder.createEl('button', { text: 'Save builder entry' }).onclick = () => { try { const value: unknown = JSON.parse(input.value); validatePredicate(value); this.update({ filters: this.view.filters.map((p, j) => j === i ? value : p) }); } catch (e) { error.textContent = String(e); } };
       }
+      const remove = icon(chip, `Remove filter ${i + 1}: ${summary.text}`, 'x', 'graph-ng-remove');
+      remove.onclick = () => { this.update({ filters: this.view.filters.filter((_, j) => j !== i) }); (this.body.querySelectorAll<HTMLButtonElement>('.graph-ng-remove')[i] ?? this.search).focus(); };
+      if (this.drafts.has(`Edit filter ${i + 1}`)) this.expressionField(chip, r, `Edit filter ${i + 1}`, 'filter', expr => { this.drafts.delete(`Edit filter ${i + 1}`); this.update({ filters: this.view.filters.map((p, j) => j === i ? { kind: 'expr', expr } : p) }); });
     });
-    if (!this.view.filters.length) chips.createSpan({ cls: 'graph-ng-explore-note', text: 'No property filters. Filters combine with AND.' });
     this.predicateForm(host, r, 'Add filter', p => this.update({ filters: [...this.view.filters, p] }), true);
   }
   /** Property choices are exactly the materialized declared columns, plus folder prefixes. */
   private predicateForm(host: HTMLElement, r: ExploreResult, action: string, submit: (p: Predicate) => void, operators: boolean, extra?: (row: HTMLElement) => void) {
-    const form = host.createDiv({ cls: 'graph-ng-form' }); extra?.(form);
+    const filter = action === 'Add filter', form = host.createDiv({ cls: filter ? 'graph-ng-form graph-ng-builder' : 'graph-ng-form', attr: filter ? { role: 'group', 'aria-label': 'Add filter' } : {} }); extra?.(form);
     const property = form.createEl('select', { attr: { 'aria-label': 'Property' } });
     for (const f of r.facets) property.createEl('option', { value: `k:${f.key}`, text: f.key });
     property.createEl('option', { value: 'folder', text: 'Folder' });
@@ -273,7 +294,7 @@ export class ExplorePanel {
       if (facet && facet.distinct > facet.values.length) values.createEl('option', { text: `… ${facet.distinct - facet.values.length} more (raise facetValues)`, attr: { disabled: 'true' } });
     };
     property.onchange = op.onchange = sync; sync();
-    const add = form.createEl('button', { text: action, cls: 'mod-cta' }), error = form.createDiv({ cls: 'graph-ng-explore-error', attr: { role: 'alert' } });
+    const add = form.createEl('button', { text: action, cls: filter ? 'graph-ng-add' : 'mod-cta' }), error = form.createDiv({ cls: 'graph-ng-explore-error', attr: { role: 'alert' } });
     add.onclick = () => {
       try {
         const key = property.value.slice(2); let p: Predicate;
@@ -336,16 +357,20 @@ export class ExplorePanel {
   }
   /** Group by a bounded transform of an existing value; no note needs a new property. */
   private derivedForm(host: HTMLElement, r: ExploreResult) {
-    const details = host.createEl('details', { cls: 'graph-ng-derived' }); details.createEl('summary', { text: 'Derive groups from a value…' });
-    const form = details.createDiv({ cls: 'graph-ng-form' }), source = form.createEl('select', { attr: { 'aria-label': 'Derive from' } });
+    const details = host.createEl('details', { cls: 'graph-ng-derived' }); details.createEl('summary', { text: 'Group by part of a value…' });
+    // Visible labels; the stored transform keeps its 0-based segment index (-1 = last).
+    const form = details.createDiv({ cls: 'graph-ng-derive-grid' });
+    const field = <K extends 'select' | 'input'>(label: string, tag: K, attr: Record<string, string>) => { const l = form.createEl('label', { cls: 'graph-ng-field' }), caption = l.createSpan({ text: label }); return [l.createEl(tag, { attr: { 'aria-label': label, ...attr } }), caption] as const; };
+    const [source] = field('Derive from', 'select', {});
     source.createEl('option', { value: '$identity', text: 'Identity' }); source.createEl('option', { value: '$path', text: 'Path' });
     for (const f of r.facets) source.createEl('option', { value: f.key, text: f.key });
-    const kind = form.createEl('select', { attr: { 'aria-label': 'Transform' } });
-    for (const [v, t] of [['segment', 'Segment N'], ['prefix', 'First N segments']]) kind.createEl('option', { value: v, text: t });
-    const delimiter = form.createEl('input', { attr: { type: 'text', value: ':', maxlength: '8', 'aria-label': 'Delimiter' } }), n = form.createEl('input', { attr: { type: 'number', value: '0', min: '-64', max: '63', 'aria-label': 'N' } });
-    kind.onchange = () => { if (kind.value === 'prefix' && Number(n.value) < 1) n.value = '1'; };
+    const [kind] = field('Take', 'select', {});
+    for (const [v, t] of [['segment', 'One part'], ['prefix', 'First parts']]) kind.createEl('option', { value: v, text: t });
+    const [delimiter] = field('Split at', 'input', { type: 'text', value: ':', maxlength: '8' });
+    const [n, caption] = field('Part (0 = first, -1 = last)', 'input', { type: 'number', value: '0', min: '-64', max: '63' });
+    kind.onchange = () => { const prefix = kind.value === 'prefix', label = prefix ? 'Number of parts' : 'Part (0 = first, -1 = last)'; caption.textContent = label; n.setAttribute('aria-label', label); if (prefix && Number(n.value) < 1) n.value = '1'; };
     const error = details.createDiv({ cls: 'graph-ng-explore-error', attr: { role: 'alert' } });
-    form.createEl('button', { text: 'Group', cls: 'mod-cta' }).onclick = () => {
+    form.createEl('button', { text: 'Group', cls: 'graph-ng-add' }).onclick = () => {
       const transform = kind.value === 'prefix' ? { kind: 'prefix' as const, delimiter: delimiter.value, segments: Number(n.value) } : { kind: 'segment' as const, delimiter: delimiter.value, index: Number(n.value) };
       const group: GroupSource = { from: 'derived', key: source.value, transform };
       try { validateDerivedGroup(group); error.textContent = ''; this.update({ group, hiddenGroups: [], collapsedGroups: [] }); } catch (e) { error.textContent = e instanceof Error ? e.message : String(e); }

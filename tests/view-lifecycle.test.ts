@@ -36,16 +36,50 @@ test('filter text is non-destructive, removal is distinct and focused, expressio
   const label = f.panel.body.querySelector('span');
   expect(label.textContent).toContain('<synthetic>'); expect(label.onclick).toBeUndefined();
   expect(f.panel.view.filters).toEqual(filters);
-  const remove = control(f.panel.body, 'Remove'); expect(remove.getAttribute('aria-label')).toContain('Remove filter 1:');
+  // Pill actions are labelled icon buttons; find them by accessible name.
+  const labelled = (prefix: string) => { const found = f.panel.body.querySelectorAll('button').find((b: ControlElement) => b.getAttribute('aria-label')?.startsWith(prefix)); expect(found).toBeDefined(); return found!; };
+  const remove = labelled('Remove filter 1:'); expect(remove.getAttribute('aria-label')).toBe('Remove filter 1: category is “<synthetic>”'); expect(remove.textContent).toBe('');
   remove.focus(); remove.click(); expect(f.view().filters).toEqual([filters[1]]);
-  expect(ControlElement.active).toBe(control(f.panel.body, 'Remove'));
-  control(f.panel.body, 'Remove').click(); expect(f.view().filters).toEqual([]); expect(ControlElement.active).toBe(f.panel.search);
+  expect(ControlElement.active).toBe(labelled('Remove filter 1:'));
+  labelled('Remove filter 1:').click(); expect(f.view().filters).toEqual([]); expect(ControlElement.active).toBe(f.panel.search);
   f.panel.view = { ...emptyView(), filters: [filters[0]] }; f.panel.render();
   // Stop the synthetic editor after applying once, as a real submit closes its draft.
   const expressionField = f.panel.expressionField;
   f.panel.expressionField = (...args: any[]) => { f.panel.expressionField = () => {}; expressionField(...args); };
-  control(f.panel.body, 'Edit as expression').click();
+  labelled('Edit filter 1 as expression').click();
   expect(expression).toContain('note.category'); expect(f.view().filters[0]).toEqual({ kind: 'expr', expr: 'note.category == "changed"' });
+  f.panel.dispose();
+});
+
+test('filters inspector renders scope tiles, readable pills with labelled icon actions and an aligned add row', () => {
+  const f = controlsFixture(), result: any = { visible: [3, 4], nodes: 10, visibleEdges: 5, edges: 20, facets: [] };
+  f.panel.host.scope = () => 'Workspace';
+  f.panel.summary(false, result);
+  const counts = f.panel.counts;
+  expect(counts.querySelector('.graph-ng-scope-name').textContent).toBe('Workspace'); expect(counts.querySelector('.graph-ng-scope-detail').textContent).toBe('No filters');
+  expect(counts.textContent).not.toContain(' · ');
+  expect(counts.querySelectorAll('.graph-ng-stat').map((t: ControlElement) => t.textContent)).toEqual(['7 of 10 nodes', '5 of 20 edges']);
+  expect(counts.querySelectorAll('.graph-ng-stat-bar').map((b: ControlElement) => [b.getAttribute('aria-hidden'), b.children[0]!.style.width])).toEqual([['true', '70%'], ['true', '25%']]);
+  f.panel.summary(true, undefined); expect(counts.textContent).toContain('External aggregate'); expect(counts.querySelector('.graph-ng-stat')).toBeUndefined();
+  f.panel.view = { ...emptyView(), filters: [] }; f.panel.body.empty(); f.panel.filters(f.panel.body, result);
+  expect(f.panel.body.textContent).toContain('No filters. Every note is shown.');
+  const add = f.panel.body.querySelector('.graph-ng-builder');
+  expect(add.getAttribute('role')).toBe('group'); expect(add.getAttribute('aria-label')).toBe('Add filter');
+  expect(control(add, 'Add filter').classes.has('mod-cta')).toBe(false);
+  f.panel.view = { ...emptyView(), filters: [{ kind: 'expr', expr: '!file.hasProperty("kind")' }, { kind: 'expr', expr: 'note.rank > 2 || note.rank < 0' }, { kind: 'exists', key: 'rank' }] };
+  f.panel.body.empty(); f.panel.filters(f.panel.body, result);
+  expect(f.panel.body.textContent).toContain('match all 3 filters');
+  const list = f.panel.body.querySelector('.graph-ng-chips'); expect(list.getAttribute('role')).toBe('list'); expect(list.getAttribute('aria-label')).toBe('Active filters');
+  const chips = f.panel.body.querySelectorAll('.graph-ng-chip'); expect(chips.map((c: ControlElement) => c.getAttribute('role'))).toEqual(['listitem', 'listitem', 'listitem']);
+  const text = chips.map((c: ControlElement) => c.querySelector('.graph-ng-chip-text'));
+  expect(text.map((t: ControlElement) => t.textContent)).toEqual(['kind is missing', 'note.rank > 2 || note.rank < 0', 'rank exists']);
+  expect(text.map((t: ControlElement) => t.classes.has('graph-ng-chip-code'))).toEqual([false, true, false]);
+  expect(text[0]!.getAttribute('title')).toBe('!file.hasProperty("kind")');
+  const actions = chips.map((c: ControlElement) => c.querySelectorAll('button').map(b => [b.getAttribute('aria-label'), b.textContent, b.querySelector('svg')?.getAttribute('data-icon')]));
+  expect(actions[0]).toEqual([['Edit filter 1 as expression', '', 'pencil'], ['Remove filter 1: kind is missing', '', 'x']]);
+  // Builder filters keep the JSON editor as a compact labelled disclosure inside the pill.
+  const json = chips[2]!.querySelector('details'); expect(json.querySelector('summary').getAttribute('aria-label')).toBe('Edit builder filter 3 as JSON');
+  expect(actions[2]!.map((a: any) => a[0])).toEqual(['Edit filter 3 as expression', null, 'Remove filter 3: rank exists']);
   f.panel.dispose();
 });
 
@@ -159,11 +193,11 @@ test('fact groups paint before layout, pending links prevent exact caching, and 
     async migrate() {}, store: { async latest() {} }, async cache() { caches++; } };
   const view: any = Object.create(GraphView.prototype);
   Object.assign(view, { plugin, app, revision: 0, renderRevision: 0, closed: false, members: new Map(), contributions: new Map(), startupTrace: [], cacheTrace: [],
-    contributionPage: { clear() {}, suspend() {}, update() {} }, contentEl: { dataset: {} }, status: {}, statusSummary: {}, gpu: { available: false, reason: 'Not probed' },
+    contributionPage: { clear() {}, suspend() {}, update() {} }, contentEl: { dataset: {} }, status: new ControlElement(), statusSummary: new ControlElement(), gpu: { available: false, reason: 'Not probed' },
     showGroups() { painted++; expect(encoded).toBe(0); } });
   try {
     await view.refreshOnce(); expect(painted).toBe(1); expect(complete).toBe(false); expect(caches).toBe(0); expect(encoded).toBe(0);
-    expect(view.contentEl.dataset.verified).toBe('false'); expect(view.status.textContent).toContain('properties available; links pending');
+    expect(view.contentEl.dataset.verified).toBe('false'); expect(view.status.textContent).toContain('Links pending'); expect(view.status.textContent).toContain('Partial graph'); expect(view.statusSummary.textContent).toContain('Partial graph, still loading');
     links['a.md'] = {}; adapter.invalidate();
     await view.refreshOnce(); expect(complete).toBe(true); expect(encoded).toBe(1); expect(caches).toBe(1); expect(view.contentEl.dataset.verified).toBe('true');
     const request = pipeline.request;
@@ -195,7 +229,7 @@ test('refresh invalidates an in-flight carrier index before a replacement graph 
   Object.assign(view, {
     revision: 0, renderRevision: 0, closed: false, contributions: new Map(), members: new Map(), groupGraph: graph,
     contributionScope: JSON.stringify(['local', settings.projectionFile, settings.groupLevel, declaration.groups]),
-    contributionPage: { clear() {}, suspend() {} }, status: {}, statusSummary: {}, contentEl: { dataset: {} },
+    contributionPage: { clear() {}, suspend() {} }, status: new ControlElement(), statusSummary: new ControlElement(), contentEl: { dataset: {} },
     panel: { empty() {}, createEl() {}, createDiv() { return status; } },
     plugin: { settings, sourceIdentity: 'local', nextRevision: 0, adapter: { *values() { yield row; } }, pipeline: { async request() { return { groups: [], groupEdges: [] }; } } },
     app: { vault: { getAbstractFileByPath() { return new FixtureFile('aggregate.json'); }, read() { return read; } } },

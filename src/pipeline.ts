@@ -1,6 +1,5 @@
 import type { GraphDeclaration, Predicate } from './core/declaration';
 import type { RowColumns } from './core/columns';
-import type { Projection } from './core/projection';
 import { transferables } from './core/columns';
 import type { LayoutOptions } from './core/layout';
 import type { BinaryGeneration, GenerationMeta } from './core/binary-layout';
@@ -22,7 +21,9 @@ export type PipelineRequest =
   | { kind: 'expression-count'; expr: string; context: 'filter' | 'group'; budgetMs?: number }
   | { kind: 'explore'; view: ExploreView; colors?: GraphDeclaration['colors']; facetValues: number; budgetMs?: number }
   | { kind: 'contributions'; pair: string; offset: number; count: number; view: number };
-export interface ProjectResult { invalidSaved?: GenerationMeta; meta: GenerationMeta; nodes: number; edges: number; unresolved: number; quarantined: { path: string; id: string }[]; dropped?: Projection['dropped'] }
+export interface ProjectResult { invalidSaved?: GenerationMeta; meta: GenerationMeta; nodes: number; edges: number; unresolved: number; quarantined: { path: string; id: string }[]; dropped?: Record<string, EdgeRuleCounts> }
+/** Per edge rule: drawn relationships and those dropped (missing target, duplicate-ID endpoint, excluded relationship notes). */
+export interface EdgeRuleCounts { drawn: number; missing: number; excluded: number; carriers: number }
 export interface DetailResult { projection: RenderProjection; visible: Uint8Array; colors: Uint32Array; explore: ExploreResult; view: number }
 export interface ViewResult { explore: ExploreResult; colors: Uint32Array; groups: GroupProjection; view: number }
 export interface LayoutResult { positions: Float32Array; milliseconds: number; cached: boolean; stored?: string }

@@ -31,4 +31,5 @@ export function compileTransform(t: DerivedTransform): (text: string | undefined
     return parts.length > 1 ? parts.at(t.index) || NO_MATCH : NO_MATCH;
   };
 }
-export const describeTransform = (t: DerivedTransform) => t.kind === 'prefix' ? `first ${t.segments} “${t.delimiter}” segments` : `segment ${t.index} of “${t.delimiter}”`;
+/** Plain English: segment 0 is "part 1", -1 the last part. */
+export const describeTransform = (t: DerivedTransform) => t.kind === 'prefix' ? `first ${t.segments} part${t.segments === 1 ? '' : 's'}` : t.index >= 0 ? `part ${t.index + 1}` : t.index === -1 ? 'last part' : `part ${-t.index} from the end`;

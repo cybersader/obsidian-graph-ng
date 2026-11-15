@@ -91,7 +91,7 @@ describe('Graph NG explore controls and visuals', () => {
     assert.equal(after.mode, 'nodes'); assert.equal(after.chips, 1); assert.ok(after.samePositions); assert.equal(before.layoutMs, await view().getAttribute('data-layout-ms'));
     assert.equal(after.visible, family1);
     await settle(600); await shot('dark-filter');
-    await $('.graph-ng-chip').click(); await browser.waitUntil(async () => (await visibleNodes()) === Number(evidence.nodes), { timeout: 30000 });
+    await $('.graph-ng-remove').click(); await browser.waitUntil(async () => (await visibleNodes()) === Number(evidence.nodes), { timeout: 30000 });
   });
   it('collapses a group into a hub and expands it again', async function () {
     if ((await view().getAttribute('data-mode')) !== 'nodes') this.skip();
@@ -119,7 +119,7 @@ describe('Graph NG explore controls and visuals', () => {
     await $('.graph-ng-explore-views summary').click();
     await $('.graph-ng-explore-views input[aria-label="Saved view name"]').setValue('Two families');
     await $('.graph-ng-explore-views button.mod-cta').click();
-    await $('.graph-ng-chip').click(); await browser.waitUntil(async () => (await visibleNodes()) === Number(evidence.nodes));
+    await $('.graph-ng-remove').click(); await browser.waitUntil(async () => (await visibleNodes()) === Number(evidence.nodes));
     await browser.executeObsidian(({ app }) => (app.workspace.getLeavesOfType('graph-ng')[0]!.view as any).detailRenderer.fitAll(0));
     await $('button[aria-label="Apply view Two families"]').click();
     await browser.waitUntil(async () => (await visibleNodes()) === expected, { timeout: 30000 }); await settle(700);
@@ -129,7 +129,7 @@ describe('Graph NG explore controls and visuals', () => {
     const saved = await browser.executeObsidian(async ({ app }) => { const p = (app.workspace.getLeavesOfType('graph-ng')[0]!.view as any).plugin; await p.save(); const text = await app.vault.adapter.read(`${p.manifest.dir}/data.json`), data = JSON.parse(text); return { keys: Object.keys(data), views: data.settings.explore.savedViews, positions: text.includes('"positions"') }; });
     assert.deepEqual(saved.keys, ['settings']); assert.equal(saved.positions, false); assert.equal(saved.views.length, 1); assert.deepEqual(saved.views[0].view.filters, [{ kind: 'in', key: 'family', values: ['Family 2', 'Family 3'] }]);
     evidence.savedView = { expected, restored, persisted: saved.views[0] };
-    await $('.graph-ng-chip').click(); await browser.waitUntil(async () => (await visibleNodes()) === Number(evidence.nodes));
+    await $('.graph-ng-remove').click(); await browser.waitUntil(async () => (await visibleNodes()) === Number(evidence.nodes));
   });
   it('switches group source at runtime and keeps the group view usable', async () => {
     await $('.graph-ng-toolbar button').click();
@@ -142,7 +142,7 @@ describe('Graph NG explore controls and visuals', () => {
     await browser.execute(() => { (document.querySelector('.graph-ng-derived') as HTMLDetailsElement).open = true; });
     assert.ok(await choose('.graph-ng-derived select[aria-label="Derive from"]', '$identity'));
     assert.ok(await choose('.graph-ng-derived select[aria-label="Transform"]', 'segment'));
-    await $('.graph-ng-derived input[aria-label="N"]').setValue('0');
+    await $('.graph-ng-derived input[type="number"]').setValue('0');
     assert.ok(await clickText('.graph-ng-derived button', 'Group'));
     await browser.waitUntil(async () => (await view().getAttribute('data-group-source')) === 'derived:$identity', { timeout: 30000 }); await settle(300);
     evidence.derived = await browser.execute(() => [...document.querySelectorAll('.graph-ng-group-controls button')].map(b => b.textContent));
