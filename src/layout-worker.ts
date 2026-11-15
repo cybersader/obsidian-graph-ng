@@ -14,7 +14,7 @@ import { warmLayout, validSavedLayout } from './core/incremental';
 import { CACHE_FORMAT, decodeLayout, encodeLayout, type BinaryLayout, type GenerationMeta } from './core/binary-layout';
 import { edgeHashes, hashEdge, edgeHashSet } from './core/edge-hash';
 import { LAYOUT_PRODUCER, evaluation, type PipelineRequest, type PipelineConfig } from './pipeline';
-import { emptyView, explore, groupColumn, searchSteps, withoutTypes, type ExploreResult, type ExploreView } from './core/explore';
+import { emptyView, explore, groupColumn, hide, hiddenBy, relationshipNotes, searchSteps, withoutTypes, type ExploreResult, type ExploreView } from './core/explore';
 const rows = new Map<string, FactRow>();
 let config: PipelineConfig, meta: GenerationMeta, projection: Projection, visible: Uint8Array;
 let contracted: ReturnType<typeof contractGroups>, positions: Float32Array | undefined, saved: BinaryLayout | undefined;
@@ -25,22 +25,25 @@ let complete = true, projectionRevision = -1, colors: Uint32Array = new Uint32Ar
 /** Every applied view (project, regroup, filter, derived source) gets its own generation;
  * member/contribution reads must name it, so no lookup can cross groupings. */
 let viewGeneration = 0;
-function applyView(view: ExploreView, prepared?: { base: Uint8Array; group: DictionaryColumn }) {
+function applyView(view: ExploreView, prepared?: { base: Uint8Array; group: DictionaryColumn; hidden: number[] }) {
   viewGeneration++;
   const filters = config.predicate ? [...view.filters, config.predicate] : view.filters;
   explored = explore(projection, config.declaration, { ...view, filters }, colors, config.groupLevel, { facetValues: config.facetValues ?? 50 }, prepared);
   visible = explored.visible;
   const source = { values: explored.groupKeys, codes: explored.groupCodes, encoded: explored.groupLabels !== explored.groupKeys };
   contracted = contractGroups({ ...withoutTypes(projection, view.hiddenTypes), groups: [source] }, visible, 0);
+  if (filters.length) {
+    // Relationship notes alone, cached per projection, so a filter can say what it hides of them in either display.
+    if (carrierCache?.[0] !== projection) carrierCache = [projection, relationshipNotes(projection.carrierPaths.flatMap(path => rows.get(path) ?? []), config.declaration)];
+    explored.carrierHidden = carrierCache[1] && hiddenBy(carrierCache[1], filters);
+  }
   return explored;
 }
+let carrierCache: [Projection, Projection | undefined] | undefined;
 /** Prepare expression work cooperatively; only commit config/view state on success. */
-function* viewSteps(view: ExploreView, rules: PipelineConfig['declaration']['colors'] | undefined): Generator<void, { base: Uint8Array; group: DictionaryColumn; colors: Uint32Array }> {
-  const base = new Uint8Array(projection.paths.length).fill(1);
-  for (const predicate of [...view.filters, ...(config.predicate ? [config.predicate] : [])]) {
-    const bits = yield* filterSteps(projection, lowerPredicate(predicate));
-    for (let i = 0; i < base.length; i++) { base[i]! &= bits[i]!; if (i % 1024 === 1023) yield; }
-  }
+function* viewSteps(view: ExploreView, rules: PipelineConfig['declaration']['colors'] | undefined): Generator<void, { base: Uint8Array; group: DictionaryColumn; colors: Uint32Array; hidden: number[] }> {
+  const base = new Uint8Array(projection.paths.length).fill(1), hidden: number[] = [];
+  for (const predicate of [...view.filters, ...(config.predicate ? [config.predicate] : [])]) { hidden.push(hide(base, yield* filterSteps(projection, lowerPredicate(predicate)))); yield; }
   let nextColors = colors;
   if (rules) {
     nextColors = new Uint32Array(base.length).fill(rules.length);
@@ -51,7 +54,7 @@ function* viewSteps(view: ExploreView, rules: PipelineConfig['declaration']['col
   }
   const g = view.group;
   const group = g && (g.from === 'expr' || g.from === 'derived') ? yield* groupSteps(projection, lowerGroup(g)) : groupColumn(projection, config.declaration, g, config.groupLevel);
-  return { base, group, colors: nextColors };
+  return { base, group, colors: nextColors, hidden };
 }
 let declarationHash = '', layoutHash = '', hashes: Uint32Array = new Uint32Array();
 function matches(g: GenerationMeta) {
@@ -112,7 +115,7 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       hashes = edgeHashes(projection);
       let invalidSaved;
       if (saved && complete) { const current = new Set(projection.identities); if (saved.identities.some(id => !current.has(id))) { invalidSaved = saved.meta; saved = undefined; } }
-      return { invalidSaved, meta, nodes: projection.paths.length, edges: projection.source.length, unresolved: projection.unresolved, quarantined: projection.quarantined, dropped: projection.dropped };
+      return { invalidSaved, meta, nodes: projection.paths.length, edges: projection.source.length, unresolved: projection.unresolved, quarantined: projection.quarantined, dropped: projection.dropped, rows: projection.carrierPaths.length + projection.quarantined.length, ruleNotes: projection.ruleNotes };
     }
     case 'detail': {
       // Copies are made in the worker only: the renderer borrows transferred buffers;

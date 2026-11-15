@@ -2,7 +2,7 @@ import type { CoordinateToken } from './webgl-renderer';
 import { legacySizing, sizingSettings, type NodeSizingValues } from './node-sizing';
 import { generationCurrent, physicsSettings, type PhysicsValues } from './physics-controls';
 import { expressionPrelude } from './core/expr/expression-prelude';
-import { predicateColumn, groupColumn as sourceColumn } from './core/declaration';
+import { folderPath, predicateColumn, groupColumn as sourceColumn } from './core/declaration';
 import { ItemView, Menu, Plugin, PluginSettingTab, Setting, Notice, TFile, apiVersion, type WorkspaceLeaf } from 'obsidian';
 import { obsidianMenu } from './context-menu';
 import { LocalAdapter, type PropertySource } from './adapter/local';
@@ -20,7 +20,7 @@ import { yieldTask, sliced } from './core/scheduler';
 import { WorkerPipeline, LAYOUT_PRODUCER, currentDetailGeneration, type ProjectResult, type DetailResult, type LayoutResult, type ViewResult } from './pipeline';
 import { groupPages, page } from './core/group-page';
 import { ContributionPage, type ContributionContext } from './contribution-page';
-import { informationAlerts, renderInformation, type InformationReport } from './graph-information';
+import { accounting, renderInformation, renderReadout, type InformationReport } from './graph-information';
 import { canonicalExplore, loadSettings, settingsForSave, validateSettings, type Settings } from './settings';
 import { searchable } from './search';
 import { DetailRenderer, GroupRenderer, gpuStatus, type Renderer, type RenderView } from './renderer';
@@ -243,6 +243,11 @@ export class GraphView extends ItemView {
   private statusMessage = '';
   private report?: InformationReport;
   private viewFeedbackText = '';
+  /** Breakdown actions: the same Lines/Notes apply as Appearance, and removing one view filter. */
+  private informationActions = {
+    display: (nodes: boolean) => { setRelationshipDisplay(this.plugin, nodes).catch(e => new Notice(String(e))); },
+    remove: (i: number) => { if (i < this.view.filters.length) this.setView({ ...this.view, filters: this.view.filters.filter((_, j) => j !== i) }); },
+  };
   private viewFeedback(message = '', retry?: () => void) {
     this.viewFeedbackText = message; this.explorePanel?.operation?.(message, retry);
     if (this.status && this.statusSummary) this.statusText = this.statusText;
@@ -252,14 +257,15 @@ export class GraphView extends ItemView {
   private set statusText(text: string) {
     this.statusMessage = text;
     const state = this.contentEl.dataset.state;
-    renderInformation(this.status, text, state, this.report);
+    renderInformation(this.status, text, state, this.report, this.explored, this.informationActions);
     const health = state === 'error' ? [text] : state === 'building' ? ['Preparing graph…']
       : this.plugin.settings.projectionFile ? ['External aggregate, not verified']
       : this.gpu && !this.gpu.available && this.gpu.reason !== 'Not probed' ? [`Rendering fallback: ${this.gpu.reason}. Browse groups and members.`]
-      : this.report ? informationAlerts(this.report) : this.provisional ? ['Partial graph, still loading'] : [];
-    const chips = [this.viewFeedbackText, ...health].filter(Boolean);
-    this.statusSummary.empty(); for (const chip of chips) this.statusSummary.createSpan({ cls: 'graph-ng-summary-chip', text: chip });
-    this.statusSummary.hidden = !chips.length; this.statusSummary.title = [this.viewFeedbackText, text].filter(Boolean).join('\n');
+      : this.provisional ? ['Still loading'] : [];
+    const chips = [this.viewFeedbackText, ...health].filter(Boolean), readout = state !== 'error' && this.report;
+    this.statusSummary.empty(); if (readout) renderReadout(this.statusSummary, accounting(readout, this.explored));
+    for (const chip of chips) this.statusSummary.createSpan({ cls: 'graph-ng-summary-chip', text: chip });
+    this.statusSummary.hidden = !chips.length && !readout; this.statusSummary.title = [this.viewFeedbackText, text, readout ? 'Open note coverage' : ''].filter(Boolean).join('\n');
   }
   private stage!: HTMLElement;
   private panel!: HTMLElement;
@@ -460,13 +466,13 @@ export class GraphView extends ItemView {
       if (result.invalidSaved) await this.plugin.store.quarantine(result.invalidSaved);
       const coverage = this.plugin.adapter.coverage(); this.provisional = !this.plugin.adapter.factsComplete();
       this.contentEl.dataset.verified = String(!this.provisional);
-      const report: InformationReport = this.report = { nodes: result.nodes, edges: result.edges, indexed: coverage.indexed, listed: coverage.listed, linksPending: this.plugin.adapter.linksPending(), provisional: this.provisional, unresolved: result.unresolved, duplicates: result.quarantined.length, dropped: result.dropped };
+      const report: InformationReport = this.report = { nodes: result.nodes, edges: result.edges, indexed: coverage.indexed, listed: coverage.listed, linksPending: this.plugin.adapter.linksPending(), provisional: this.provisional, unresolved: result.unresolved, duplicates: result.quarantined.length, dropped: result.dropped, rows: result.rows, ruleNotes: result.ruleNotes, rules: settings.declaration.edges.map(e => e.name), relationshipNodes: settings.declaration.display.reifiedAsNodes, ...this.vaultCount(settings.declaration) };
       this.statusText = 'Building layout in worker…';
       this.contentEl.dataset.nodes = String(result.nodes); this.contentEl.dataset.edges = String(result.edges);
       await yieldTask();
       const detail = await this.plugin.pipeline.request<DetailResult>(revision, { kind: 'detail' });
       if (!current()) return;
-      this.projection = detail.projection; this.detailGeneration = revision; this.viewGeneration = detail.view; this.viewSource = configuredSource; this.visible = detail.visible; this.colors = detail.colors; this.explored = detail.explore; this.contentEl.dataset.visibleNodes = String(detail.explore.visible.reduce((n, v) => n + v, 0)); this.explorePanel?.render(); settled();
+      this.projection = detail.projection; this.detailGeneration = revision; this.viewGeneration = detail.view; this.viewSource = configuredSource; this.visible = detail.visible; this.colors = detail.colors; this.explored = detail.explore; this.contentEl.dataset.visibleNodes = String(detail.explore.visible.reduce((n, v) => n + v, 0)); this.explorePanel?.render(); this.statusText = this.statusText; settled();
       this.contributionPage.update(this.contributionContext());
       if (result.quarantined.length) this.showGroups(true);
       this.plugin.pipeline.onPositions = event => { if (event.revision === revision && current()) { if (this.positions && this.contentEl.dataset.mode === 'groups') this.plugin.pipeline.recycle(this.positions.buffer as ArrayBuffer); this.positions = event.positions; this.contentEl.dataset.streaming = 'true'; } };
@@ -781,7 +787,7 @@ export class GraphView extends ItemView {
         this.explored = result.explore; this.colors = result.colors; this.visible = result.explore.visible; this.groupGraph = result.groups; this.groupGeneration = revision;
         this.viewGeneration = result.view; this.viewSource = this.sourceKey(sent); this.members.clear(); this.contributions.clear();
         this.contentEl.dataset.exploreMs = String(performance.now() - started); const g = this.view.group; this.contentEl.dataset.groupSource = !g ? 'declared' : g.from === 'folder' ? `folder:${g.depth}` : g.from === 'expr' ? 'expression' : `${g.from}:${g.key}`; this.contentEl.dataset.visibleNodes = String(result.explore.visible.reduce((n, v) => n + v, 0));
-        this.contributionPage.update(this.contributionContext());
+        this.contributionPage.update(this.contributionContext()); this.statusText = this.statusText;
         if (detail && fits) detail.setView(this.detailVisible()!, this.renderView());
         else if (detail || this.contentEl.dataset.mode === 'groups') this.showGroups(true);
         this.explorePanel?.setState(this.view); after?.(); if (owns()) this.viewFeedback(fits ? '' : CANVAS_FALLBACK); finish();
@@ -796,6 +802,12 @@ export class GraphView extends ItemView {
       }
     };
     if (this.exploring) { this.exploreQueued = run; this.plugin.pipeline.cancelEvaluation('explore'); } else void run();
+  }
+  /** Markdown notes in the vault, and per declared excluded folder those under it (first match), as the adapter keeps them. */
+  private vaultCount(d: GraphDeclaration) {
+    const folders = (d.exclude ?? []).map(folderPath), counts = folders.map(() => 0), files = this.app.vault.getMarkdownFiles();
+    for (const f of files) { const i = folders.findIndex(x => f.path.startsWith(x + '/')); if (i >= 0) counts[i]!++; }
+    return { vault: files.length, excluded: folders.map((f, i): [string, number] => [f, counts[i]!]) };
   }
   private noteCount?: [RenderProjection, number];
   /** Distinct relationship-note rows behind loaded edges; the same count in Lines and Nodes. */

@@ -27,23 +27,34 @@ test('derived grouping labels use parts, not zero-based segment jargon', () => {
   expect(derived({ kind: 'prefix', delimiter: ':', segments: 2 })).toBe('First 2 parts of curie (split at “:”)');
 });
 
-test('graph information renders tiles, a plain-English issues list and a per-rule table without dot-joined text', async () => {
+test('graph information renders icon stat rows, a plain-English issues list and per-rule lines, with no bars or cards', async () => {
+  await import('./support/obsidian-fixture');
   const { ControlElement } = await import('./support/controls-dom');
-  const { renderInformation, informationAlerts } = await import('../src/graph-information');
+  const { renderInformation } = await import('../src/graph-information');
   const host: any = new ControlElement();
-  const report: any = { nodes: 16121, edges: 49534, indexed: 90, listed: 100, linksPending: true, provisional: true, unresolved: 1, duplicates: 2, dropped: { crosswalk: { drawn: 10, missing: 2, excluded: 1, carriers: 3 } } };
+  const report: any = { nodes: 16121, edges: 49534, indexed: 90, listed: 100, linksPending: true, provisional: true, unresolved: 1, duplicates: 2, rows: 100, rules: ['crosswalk'], dropped: { crosswalk: { drawn: 10, missing: 2, excluded: 1, carriers: 3 } } };
   renderInformation(host, 'Building layout in worker…', 'ready', report);
-  const tiles = host.querySelectorAll('.graph-ng-stat').map((t: any) => t.children.map((c: any) => c.textContent));
-  expect(tiles).toEqual([['Nodes', '16,121'], ['Edges', '49,534'], ['Properties loaded', '90 of 100', 'Still loading'], ['Layout', 'Building…']]);
+  const rows = host.querySelectorAll('.graph-ng-stat').map((t: any) => [t.children[0].children[0].getAttribute('data-icon'), t.children[1].textContent, t.children[2].textContent]);
+  expect(rows).toEqual([['circle-dot', 'Shown as dots', '16,121'], ['copy', 'Duplicate IDs, left out', '2'], ['files', 'Markdown notes in vault', '16,123'], ['spline', 'Lines drawn', '49,534'],
+    ['unlink', 'crosswalk: target note missing', '2'], ['copy', 'crosswalk: endpoint has a duplicate ID', '1'], ['file-check', 'Properties loaded', '90 of 100'], ['timer', 'Layout', 'Building…']]);
+  expect(host.querySelectorAll('.graph-ng-count').length).toBe(rows.length);
   const issues = host.querySelectorAll('li').map((li: any) => li.children[0].textContent);
   expect(issues).toEqual(['Partial graph', 'Links pending', '2 notes share an ID and are excluded', '1 unresolved link']);
-  const rows = host.querySelectorAll('tr').map((tr: any) => tr.children.map((c: any) => c.textContent));
-  expect(rows).toEqual([['Rule', 'Drawn', 'Missing', 'Dup. ID', 'Notes out'], ['crosswalk', '10', '2', '1', '3']]);
   expect(host.textContent).not.toContain(' · ');
-  expect(informationAlerts(report)).toEqual(['Partial graph, still loading', '1 unresolved link', '2 duplicate-ID notes excluded']);
-  renderInformation(host, '', 'ready', { ...report, provisional: false, linksPending: false, unresolved: 0, duplicates: 0, dropped: undefined, layout: { cached: false, ms: 412.4, totalMs: 900 } });
-  expect(host.textContent).toContain('No issues found.'); expect(host.querySelector('p')).toBeUndefined(); expect(host.querySelector('table')).toBeUndefined();
-  expect(host.querySelectorAll('.graph-ng-stat')[3].textContent).toBe('Layout412 msTotal 900 ms');
+  // The tile bar, card and table are gone.
+  for (const cls of ['.graph-ng-stat-bar', '.graph-ng-stat-value', '.graph-ng-rules']) expect(host.querySelector(cls)).toBeUndefined();
+  expect(host.querySelector('table')).toBeUndefined();
+  renderInformation(host, '', 'ready', { ...report, provisional: false, linksPending: false, unresolved: 0, duplicates: 0, rows: 100, dropped: undefined, layout: { cached: false, ms: 412.4, totalMs: 900 } });
+  expect(host.textContent).toContain('No issues found.'); expect(host.querySelector('p')).toBeUndefined();
+  expect(host.querySelectorAll('.graph-ng-stat').at(-1).textContent).toBe('Layout412 ms');
   renderInformation(host, 'Projection refresh failed: synthetic', 'error');
   expect(host.querySelector('p').classes.has('graph-ng-explore-error')).toBe(true); expect(host.querySelector('.graph-ng-stat')).toBeUndefined();
+});
+
+test('styles carry no stat bar, no stat card border and tabular counts', async () => {
+  const css = await Bun.file(new URL('../styles.css', import.meta.url)).text(), rule = (sel: string) => css.split('\n').filter(l => l.startsWith(sel)).join('\n');
+  expect(css).not.toContain('graph-ng-stat-bar'); expect(css).not.toContain('graph-ng-stat-value'); expect(css).not.toContain('graph-ng-rules');
+  expect(rule('.graph-ng-stat,')).not.toMatch(/border|background/); expect(rule('.graph-ng-stat,')).toContain('tabular-nums');
+  const src = await Bun.file(new URL('../src/explore-panel.ts', import.meta.url)).text();
+  expect(src).not.toContain('graph-ng-stat-bar'); expect(src).not.toContain('graph-ng-scope-detail');
 });

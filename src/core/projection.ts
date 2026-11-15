@@ -29,6 +29,8 @@ export interface Projection {
   quarantined: { path: string; id: string }[];
   /** Per edge rule: endpoints absent, endpoints excluded as duplicates, and relationship notes themselves excluded. */
   dropped?: Record<string, { drawn: number; missing: number; excluded: number; carriers: number }>;
+  /** Per reified rule: kept relationship notes, each counted once under the first rule it satisfies. */
+  ruleNotes?: Record<string, number>;
   /** Declared hierarchy, when bound: per node, the resolved parents in CSR form (self and
    * unresolved references dropped, duplicates collapsed). Presentation only. */
   up?: { offsets: Uint32Array; targets: Uint32Array };
@@ -43,6 +45,8 @@ const compare = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
 const scalar = (v: unknown): v is Scalar => v === null || typeof v === 'string' || typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v));
 const values = (v: unknown): string[] => (Array.isArray(v) ? v : [v]).filter(scalar).filter(x => x !== null).map(String);
 const has = (r: FactRow, k: string) => Object.hasOwn(r.properties, k);
+/** The first reified rule a row satisfies: the row is that rule's relationship note. */
+export const relationshipRule = (r: FactRow, d: GraphDeclaration) => d.edges.find(e => e.kind === 'reified' && has(r, e.sourceProperty) && has(r, e.targetProperty));
 function column(items: string[]): DictionaryColumn {
   const dict = [...new Set(items)].sort(compare), index = new Map(dict.map((x, i) => [x, i]));
   return { values: dict, codes: Uint32Array.from(items, x => index.get(x)!) };
@@ -67,12 +71,12 @@ export function buildProjection(input: readonly FactRow[], d: GraphDeclaration):
   const tally = (rule: string) => dropped[rule] ??= { drawn: 0, missing: 0, excluded: 0, carriers: 0 };
   const miss = (rule: string, ...refs: string[]) => { const t = tally(rule); if (refs.some(r => gone.has(r))) t.excluded++; else t.missing++; };
   // A quarantined source loses its inline/producer relationships too; each counts once, whatever its destination.
-  const carries = (r: FactRow) => d.edges.some(e => e.kind === 'reified' && has(r, e.sourceProperty) && has(r, e.targetProperty));
+  const carries = (r: FactRow) => !!relationshipRule(r, d);
   sorted.forEach((r, i) => { if (excluded.has(i)) for (const e of d.edges) if (e.kind === 'reified' && has(r, e.sourceProperty) && has(r, e.targetProperty)) tally(e.name).carriers++;
     else if (d.display.reifiedAsNodes || !carries(r)) tally(e.name).excluded += e.kind === 'inline' ? values(r.properties[e.key]).length : e.kind === 'producer' ? [...(r.links?.[e.producer] ?? [])].length : 0; });
   const rowIndex = new Map(rows.map((row, i) => [row.path, i]));
-  const carriers = new Set<string>();
-  for (const r of rows) for (const e of d.edges) if (e.kind === 'reified' && has(r, e.sourceProperty) && has(r, e.targetProperty)) carriers.add(r.path);
+  const carriers = new Set<string>(), ruleNotes: Record<string, number> = Object.create(null);
+  for (const r of rows) { const e = relationshipRule(r, d); if (e) { carriers.add(r.path); ruleNotes[e.name] = (ruleNotes[e.name] ?? 0) + 1; } }
   const nodes = rows.filter(r => d.display.reifiedAsNodes || !carriers.has(r.path));
   const paths = nodes.map(r => r.path), nodeIndex = new Map(paths.map((x, i) => [x, i]));
   const references = new Map<string, number>(), identities: string[] = [];
@@ -142,7 +146,7 @@ export function buildProjection(input: readonly FactRow[], d: GraphDeclaration):
   const ik = d.interest?.property;
   return { up, interest: ik === undefined ? undefined : interestColumn(nodes.map(r => r.properties[ik])), tint: tint.some(Boolean) ? Uint8Array.from(tint) : undefined, paths, identities, carrierPaths: rows.map(r => r.path), offsets, targets,
     source: Uint32Array.from(src), target: Uint32Array.from(dst), type: tc.codes, carrier: Uint32Array.from(carrier), rule: Uint32Array.from(rule), carrierNodes: Uint32Array.from(nodes, r => carriers.has(r.path) ? rowIndex.get(r.path)! + 1 : 0), types: tc.values,
-    columns, groups, folders, unresolved, quarantined, dropped };
+    columns, groups, folders, unresolved, quarantined, dropped, ruleNotes };
 }
 /** Rank-normalise finite numbers to [0, 1] (scale-free, outlier-proof); anything else is NaN. */
 export function interestColumn(values: readonly unknown[]): Float32Array {

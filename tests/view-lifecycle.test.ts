@@ -31,17 +31,17 @@ test('filter text is non-destructive, removal is distinct and focused, expressio
   let expression = '';
   f.panel.view = { ...emptyView(), filters }; f.panel.predicateForm = () => {};
   f.panel.expressionField = (_host: any, _result: any, _label: any, _context: any, submit: any) => { expression = f.panel.drafts.get('Edit filter 1'); submit('note.category == "changed"'); };
-  f.panel.render = () => { f.panel.body.empty(); f.panel.filters(f.panel.body, {}); };
+  f.panel.render = () => { f.panel.body.empty(); f.panel.filters(f.panel.body, { facets: [] }); };
   f.panel.render();
-  const label = f.panel.body.querySelector('span');
+  const label = f.panel.body.querySelector('.graph-ng-chip-text');
   expect(label.textContent).toContain('<synthetic>'); expect(label.onclick).toBeUndefined();
   expect(f.panel.view.filters).toEqual(filters);
   // Pill actions are labelled icon buttons; find them by accessible name.
   const labelled = (prefix: string) => { const found = f.panel.body.querySelectorAll('button').find((b: ControlElement) => b.getAttribute('aria-label')?.startsWith(prefix)); expect(found).toBeDefined(); return found!; };
-  const remove = labelled('Remove filter 1:'); expect(remove.getAttribute('aria-label')).toBe('Remove filter 1: category is “<synthetic>”'); expect(remove.textContent).toBe('');
+  const remove = labelled('Remove filter'); expect(remove.getAttribute('aria-label')).toBe('Remove filter'); expect(remove.title).toBe('Remove filter: category is “<synthetic>”'); expect(remove.textContent).toBe('');
   remove.focus(); remove.click(); expect(f.view().filters).toEqual([filters[1]]);
-  expect(ControlElement.active).toBe(labelled('Remove filter 1:'));
-  labelled('Remove filter 1:').click(); expect(f.view().filters).toEqual([]); expect(ControlElement.active).toBe(f.panel.search);
+  expect(ControlElement.active).toBe(labelled('Remove filter'));
+  labelled('Remove filter').click(); expect(f.view().filters).toEqual([]); expect(ControlElement.active).toBe(f.panel.search);
   f.panel.view = { ...emptyView(), filters: [filters[0]] }; f.panel.render();
   // Stop the synthetic editor after applying once, as a real submit closes its draft.
   const expressionField = f.panel.expressionField;
@@ -51,35 +51,65 @@ test('filter text is non-destructive, removal is distinct and focused, expressio
   f.panel.dispose();
 });
 
-test('filters inspector renders scope tiles, readable pills with labelled icon actions and an aligned add row', () => {
+test('filters inspector: inline stat rows, one plain sentence, removable chips with counts, facet toggles and an add control', () => {
   const f = controlsFixture(), result: any = { visible: [3, 4], nodes: 10, visibleEdges: 5, edges: 20, facets: [] };
-  f.panel.host.scope = () => 'Workspace';
+  f.panel.host.scope = () => 'Workspace'; f.panel.host.scoped = () => false;
   f.panel.summary(false, result);
-  const counts = f.panel.counts;
-  expect(counts.querySelector('.graph-ng-scope-name').textContent).toBe('Workspace'); expect(counts.querySelector('.graph-ng-scope-detail').textContent).toBe('No filters');
-  expect(counts.textContent).not.toContain(' · ');
-  expect(counts.querySelectorAll('.graph-ng-stat').map((t: ControlElement) => t.textContent)).toEqual(['7 of 10 nodes', '5 of 20 edges']);
-  expect(counts.querySelectorAll('.graph-ng-stat-bar').map((b: ControlElement) => [b.getAttribute('aria-hidden'), b.children[0]!.style.width])).toEqual([['true', '70%'], ['true', '25%']]);
+  const counts = f.panel.counts, row = (s: any) => [s.querySelector('svg')?.getAttribute('data-icon'), s.querySelector('.graph-ng-stat-label').textContent, s.querySelector('.graph-ng-count').textContent];
+  expect(counts.querySelector('.graph-ng-scope-name')).toBeUndefined(); expect(counts.textContent).not.toContain('filter');
+  expect(counts.querySelectorAll('.graph-ng-stat').map(row)).toEqual([['circle-dot', 'Notes', '7 of 10'], ['spline', 'Lines', '5 of 20']]);
+  f.panel.host.scoped = () => true; f.panel.host.scope = () => 'Group A'; f.panel.summary(false, result); expect(counts.querySelector('.graph-ng-scope-name').textContent).toBe('In Group A');
   f.panel.summary(true, undefined); expect(counts.textContent).toContain('External aggregate'); expect(counts.querySelector('.graph-ng-stat')).toBeUndefined();
   f.panel.view = { ...emptyView(), filters: [] }; f.panel.body.empty(); f.panel.filters(f.panel.body, result);
-  expect(f.panel.body.textContent).toContain('No filters. Every note is shown.');
+  expect(f.panel.body.querySelector('.graph-ng-filter-sentence').textContent).toBe('No filters. Every note is shown.');
+  const adder = f.panel.body.querySelector('.graph-ng-add-filter'); expect(adder.tagName).toBe('DETAILS'); expect(adder.querySelector('summary').textContent).toBe('Add filter');
   const add = f.panel.body.querySelector('.graph-ng-builder');
   expect(add.getAttribute('role')).toBe('group'); expect(add.getAttribute('aria-label')).toBe('Add filter');
   expect(control(add, 'Add filter').classes.has('mod-cta')).toBe(false);
-  f.panel.view = { ...emptyView(), filters: [{ kind: 'expr', expr: '!file.hasProperty("kind")' }, { kind: 'expr', expr: 'note.rank > 2 || note.rank < 0' }, { kind: 'exists', key: 'rank' }] };
-  f.panel.body.empty(); f.panel.filters(f.panel.body, result);
-  expect(f.panel.body.textContent).toContain('match all 3 filters');
+  const filters = [{ kind: 'expr', expr: '!file.hasProperty("kind")' }, { kind: 'expr', expr: 'note.rank > 2 || note.rank < 0' }, { kind: 'exists', key: 'rank' }];
+  f.panel.view = { ...emptyView(), filters };
+  const counted = { ...result, filters, filterHidden: [191, 12, 0] };
+  f.panel.body.empty(); f.panel.filters(f.panel.body, counted);
+  expect(f.panel.body.querySelector('.graph-ng-filter-sentence').textContent).toBe('Hiding 203 notes with 3 filters');
   const list = f.panel.body.querySelector('.graph-ng-chips'); expect(list.getAttribute('role')).toBe('list'); expect(list.getAttribute('aria-label')).toBe('Active filters');
   const chips = f.panel.body.querySelectorAll('.graph-ng-chip'); expect(chips.map((c: ControlElement) => c.getAttribute('role'))).toEqual(['listitem', 'listitem', 'listitem']);
   const text = chips.map((c: ControlElement) => c.querySelector('.graph-ng-chip-text'));
   expect(text.map((t: ControlElement) => t.textContent)).toEqual(['kind is missing', 'note.rank > 2 || note.rank < 0', 'rank exists']);
   expect(text.map((t: ControlElement) => t.classes.has('graph-ng-chip-code'))).toEqual([false, true, false]);
   expect(text[0]!.getAttribute('title')).toBe('!file.hasProperty("kind")');
+  expect(chips.map((c: any) => c.querySelector('.graph-ng-count').textContent)).toEqual(['191', '12', '0']);
   const actions = chips.map((c: ControlElement) => c.querySelectorAll('button').map(b => [b.getAttribute('aria-label'), b.textContent, b.querySelector('svg')?.getAttribute('data-icon')]));
-  expect(actions[0]).toEqual([['Edit filter 1 as expression', '', 'pencil'], ['Remove filter 1: kind is missing', '', 'x']]);
+  expect(actions[0]).toEqual([['Edit filter 1 as expression', '', 'pencil'], ['Remove filter', '', 'x']]);
   // Builder filters keep the JSON editor as a compact labelled disclosure inside the pill.
   const json = chips[2]!.querySelector('details'); expect(json.querySelector('summary').getAttribute('aria-label')).toBe('Edit builder filter 3 as JSON');
-  expect(actions[2]!.map((a: any) => a[0])).toEqual(['Edit filter 3 as expression', null, 'Remove filter 3: rank exists']);
+  expect(actions[2]!.map((a: any) => a[0])).toEqual(['Edit filter 3 as expression', null, 'Remove filter']);
+  // One filter reads as one sentence; counts from another filter list are not shown.
+  f.panel.view = { ...emptyView(), filters: [filters[0]] }; f.panel.body.empty(); f.panel.filters(f.panel.body, { ...counted, filters: [filters[0]], filterHidden: [191] });
+  expect(f.panel.body.querySelector('.graph-ng-filter-sentence').textContent).toBe('Hiding 191 notes where kind exists');
+  f.panel.body.empty(); f.panel.filters(f.panel.body, { ...counted, filters: [filters[1]] });
+  expect(f.panel.body.querySelector('.graph-ng-filter-sentence').textContent).toBe('Hiding notes where kind exists'); expect(f.panel.body.querySelector('.graph-ng-chip').querySelector('.graph-ng-count')).toBeUndefined();
+  // Removing a chip removes exactly that filter.
+  f.panel.view = { ...emptyView(), filters }; f.panel.body.empty(); f.panel.filters(f.panel.body, counted);
+  f.panel.body.querySelectorAll('.graph-ng-remove')[1].click(); expect(f.view().filters).toEqual([filters[0], filters[2]]);
+  expect(f.panel.body.textContent).not.toContain('·'); expect(f.panel.body.textContent).not.toContain('filter being used');
+  f.panel.dispose();
+});
+
+test('facet toggles: one checkbox and aligned count per value; unticking and reticking rewrite the room filter', () => {
+  const f = controlsFixture(), room = { kind: 'expr', expr: '!file.hasProperty("kind")' };
+  const facet = (key: string, values: [string, number][]) => ({ key, distinct: values.length, values: values.map(([raw, count]) => ({ raw, label: raw === 'undefined' ? '(missing)' : JSON.parse(raw), count, visible: 0 })) });
+  const result: any = { visible: [], nodes: 0, visibleEdges: 0, edges: 0, facets: [facet('kind', [['undefined', 16309], ['"mapping-set"', 89], ['"facet"', 81]]), facet('team', [['"A"', 3], ['"B"', 2]]), { ...facet('id', [['"x"', 1], ['"y"', 1]]), distinct: 900 }] };
+  f.panel.view = { ...emptyView(), filters: [room] }; f.panel.render = () => { f.panel.body.empty(); f.panel.filters(f.panel.body, result); }; f.panel.render();
+  const box = f.panel.body.querySelector('.graph-ng-toggles'); expect(box.getAttribute('aria-label')).toBe('Show notes by kind');
+  // Truncated facets (more values than listed) never offer toggles.
+  expect(box.querySelector('select').children.map((o: ControlElement) => o.value)).toEqual(['kind', 'team']);
+  const rows = () => f.panel.body.querySelectorAll('.graph-ng-toggle').map((r: any) => [r.querySelector('input').getAttribute('aria-label'), (r.querySelector('input') as any).checked, r.querySelector('.graph-ng-count').textContent]);
+  expect(rows()).toEqual([['Show (missing)', true, '16,309'], ['Show mapping-set', false, '89'], ['Show facet', false, '81']]);
+  const tick = (label: string) => { const input: any = f.panel.body.querySelectorAll('input').find((i: ControlElement) => i.getAttribute('aria-label') === label)!; input.checked = !input.checked; input.onchange(); };
+  tick('Show mapping-set'); expect(f.view().filters).toEqual([{ kind: 'expr', expr: '!["facet"].contains(note.kind)' }]);
+  expect(rows().map((r: any) => r[1])).toEqual([true, true, false]);
+  tick('Show mapping-set'); expect(f.view().filters).toEqual([room]);
+  tick('Show (missing)'); expect(f.view().filters).toEqual([{ kind: 'expr', expr: 'file.hasProperty("kind")' }, room]);
   f.panel.dispose();
 });
 
@@ -197,7 +227,7 @@ test('fact groups paint before layout, pending links prevent exact caching, and 
     showGroups() { painted++; expect(encoded).toBe(0); } });
   try {
     await view.refreshOnce(); expect(painted).toBe(1); expect(complete).toBe(false); expect(caches).toBe(0); expect(encoded).toBe(0);
-    expect(view.contentEl.dataset.verified).toBe('false'); expect(view.status.textContent).toContain('Links pending'); expect(view.status.textContent).toContain('Partial graph'); expect(view.statusSummary.textContent).toContain('Partial graph, still loading');
+    expect(view.contentEl.dataset.verified).toBe('false'); expect(view.status.textContent).toContain('Links pending'); expect(view.status.textContent).toContain('Partial graph'); expect(view.statusSummary.textContent).toContain('1 note0 linesof 1 in vault'); expect(view.statusSummary.textContent).toContain('Still loading');
     links['a.md'] = {}; adapter.invalidate();
     await view.refreshOnce(); expect(complete).toBe(true); expect(encoded).toBe(1); expect(caches).toBe(1); expect(view.contentEl.dataset.verified).toBe('true');
     const request = pipeline.request;

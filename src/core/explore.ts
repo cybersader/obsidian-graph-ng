@@ -1,7 +1,7 @@
 import { checked, expressionGroup, lowerGroup, print } from './expr/engine';
 import { canonical, canonicalPredicate, folderPath, validateDerivedGroup, validatePredicate, type FolderPath, type GraphDeclaration, type GroupSource, type Predicate } from './declaration';
 import { describeTransform } from './derive';
-import { filterNodes, type DictionaryColumn, type Projection } from './projection';
+import { buildProjection, filterNodes, relationshipRule, type DictionaryColumn, type FactRow, type Projection } from './projection';
 /** Runtime view state. Persisted in settings, never in frontmatter; every field is
  * a declared column, path segment, group key, rule name or relation type. */
 export interface ExploreView {
@@ -115,6 +115,15 @@ export interface ExploreResult {
   edges: number;
   visibleEdges: number;
   facets: Facet[];
+  /** The filters applied, and per filter the notes it hid that no earlier filter hid. */
+  filters: Predicate[];
+  filterHidden: number[];
+  /** Notes passing every filter that the search query hid. */
+  queryHidden: number;
+  /** Per declared edge rule: visible lines. */
+  ruleVisible: number[];
+  /** Per filter, the relationship notes it hides (or would hide, drawn as notes) that no earlier filter hides. */
+  carrierHidden?: number[];
 }
 export interface ExploreLimits { facetValues: number }
 const lowered = new WeakMap<Projection, string[]>();
@@ -164,11 +173,19 @@ export function* searchSteps(p: Projection, query: string, keep: Uint8Array, lim
 }
 /** Pure, worker-side compilation of a view to typed masks and bounded summaries.
  * Filters are ANDed columnar predicates; hidden groups/colors/types only hide. */
-export function explore(p: Projection, d: GraphDeclaration, view: ExploreView, colors: Uint32Array, level: number, limits: ExploreLimits, prepared?: { base: Uint8Array; group: DictionaryColumn }): ExploreResult {
-  const n = p.paths.length, base = prepared?.base ?? new Uint8Array(n).fill(1);
-  if (!prepared) for (const f of view.filters) { const bits = filterNodes(p, f); for (let i = 0; i < n; i++) base[i]! &= bits[i]!; }
-  const query = view.query.trim().toLowerCase();
-  if (query) { const text = searchText(p); for (let i = 0; i < n; i++) if (base[i] && !text[i]!.includes(query)) base[i] = 0; }
+/** AND one filter into `base`; returns how many notes it newly hid. */
+export function hide(base: Uint8Array, bits: Uint8Array) { let hidden = 0; for (let i = 0; i < base.length; i++) if (base[i] && !bits[i]) { base[i] = 0; hidden++; } return hidden; }
+/** Per filter, in order, the notes it hides that no earlier filter hides. */
+export const hiddenBy = (p: Projection, filters: readonly Predicate[]) => { const base = new Uint8Array(p.paths.length).fill(1); return filters.map(f => hide(base, filterNodes(p, f))); };
+/** The relationship notes among `rows` as a projection of notes only (no edges), so filters can be counted on them. */
+export function relationshipNotes(rows: readonly FactRow[], d: GraphDeclaration): Projection | undefined {
+  const notes = rows.filter(r => relationshipRule(r, d));
+  try { return notes.length ? buildProjection(notes, { ...d, edges: [], groups: [], colors: [], hierarchy: undefined, interest: undefined }) : undefined; } catch { return undefined; }
+}
+export function explore(p: Projection, d: GraphDeclaration, view: ExploreView, colors: Uint32Array, level: number, limits: ExploreLimits, prepared?: { base: Uint8Array; group: DictionaryColumn; hidden: number[] }): ExploreResult {
+  const n = p.paths.length, base = prepared?.base ?? new Uint8Array(n).fill(1), filterHidden = prepared?.hidden ?? view.filters.map(f => hide(base, filterNodes(p, f)));
+  const query = view.query.trim().toLowerCase(); let queryHidden = 0;
+  if (query) { const text = searchText(p); for (let i = 0; i < n; i++) if (base[i] && !text[i]!.includes(query)) { base[i] = 0; queryHidden++; } }
   const g = prepared?.group ?? groupColumn(p, d, view.group, level), hiddenGroup = new Uint8Array(g.values.length);
   const hidden = new Set(view.hiddenGroups); g.values.forEach((v, i) => { if (hidden.has(v)) hiddenGroup[i] = 1; });
   const hiddenColor = new Uint8Array(d.colors.length + 1), colorNames = new Set(view.hiddenColors);
@@ -181,10 +198,10 @@ export function explore(p: Projection, d: GraphDeclaration, view: ExploreView, c
     if (!hiddenGroup[code] && !hiddenColor[color]) { visible[i] = 1; groupVisible[code]!++; }
   }
   const hiddenTypes = new Set(view.hiddenTypes), typeTotals = new Uint32Array(p.types.length), typeVisible = new Uint32Array(p.types.length);
-  let visibleEdges = 0;
+  let visibleEdges = 0; const ruleVisible = d.edges.map(() => 0);
   for (let e = 0; e < p.source.length; e++) {
     const t = p.type[e]!; typeTotals[t]!++;
-    if (visible[p.source[e]!] && visible[p.target[e]!] && !hiddenTypes.has(p.types[t]!)) { typeVisible[t]!++; visibleEdges++; }
+    if (visible[p.source[e]!] && visible[p.target[e]!] && !hiddenTypes.has(p.types[t]!)) { typeVisible[t]!++; visibleEdges++; if (p.rule) ruleVisible[p.rule[e]!]!++; }
   }
   const facets: Facet[] = [];
   for (const key of Object.keys(p.columns).sort()) {
@@ -194,7 +211,7 @@ export function explore(p: Projection, d: GraphDeclaration, view: ExploreView, c
     facets.push({ key, distinct: c.values.length, values: order.map(i => ({ raw: c.values[i]!, label: valueLabel(c.values[i]!), count: total[i]!, visible: shown[i]! })) });
   }
   return { visible, groupCodes: g.codes, groupKeys: g.values, groupLabels: g.encoded ? g.values.map(valueLabel) : g.values, groupTotals, groupVisible,
-    types: p.types, typeTotals, typeVisible, colorCounts, matched, nodes: n, edges: p.source.length, visibleEdges, facets };
+    types: p.types, typeTotals, typeVisible, colorCounts, matched, nodes: n, edges: p.source.length, visibleEdges, facets, filters: view.filters, filterHidden, queryHidden, ruleVisible };
 }
 /** Projection view with hidden relation types removed, for group contraction. */
 export function withoutTypes<T extends Pick<Projection, 'source' | 'target' | 'type' | 'carrier' | 'types'>>(p: T, hiddenTypes: readonly string[]): T {

@@ -27,7 +27,7 @@ async function fixture() {
   const renderer = { gpu: true, camera, previewSizing() {}, calls: [] as string[], setView() { this.calls.push('display'); }, clearTrail() {}, flyTo(x: number, y: number, ratio: number) { this.calls.push('camera'); Object.assign(camera, { x, y, ratio }); }, policy: { reasons: [] }, carrierCount: 0 };
   f.plugin.pipeline = { async request(_revision: number, message: any) { f.calls.push(message.kind); return { explore: result(message.view), colors, groups: { groups: [], groupEdges: [] }, view: 2 }; }, cancelEvaluation() { f.calls.push('cancel'); } };
   f.plugin.subscribe = () => () => {};
-  Object.assign(view, { plugin: f.plugin, contentEl: new ControlElement(), view: emptyView(), projection, explored: result(emptyView()), colors, visible: new Uint8Array(4).fill(1), activeRevision: 1, detailGeneration: 1, groupGeneration: 1, renderRevision: 1, exploreRequest: 0, members: new Map(), contributions: new Map(), closed: false, provisional: false, detailRenderer: renderer, contributionPage: { update() {}, clear() {} }, app: { workspace: { on() {} } }, registerEvent() {}, groupColor() { return '#808080'; }, async refresh() {} });
+  Object.assign(view, { plugin: f.plugin, contentEl: new ControlElement(), view: emptyView(), projection, explored: result(emptyView()), colors, visible: new Uint8Array(4).fill(1), activeRevision: 1, detailGeneration: 1, groupGeneration: 1, renderRevision: 1, exploreRequest: 0, members: new Map(), contributions: new Map(), closed: false, provisional: false, detailRenderer: renderer, contributionPage: { update() {}, clear() {} }, app: { workspace: { on() {} }, vault: { getMarkdownFiles: () => [] } }, registerEvent() {}, groupColor() { return '#808080'; }, async refresh() {} });
   view.contentEl.dataset.mode = 'nodes'; await view.onOpen(); view.explorePanel.show('views');
   return { ...f, view, panel: view.explorePanel as any, renderer, camera, projection, result };
 }
@@ -85,10 +85,10 @@ test('scout R1 production apply rejection retains requested filter and retries o
   submitMissingFilter(f); await f.plugin.work.catch(() => {}); await tick();
   expect(writes).toBe(1); expect(notifications()).toBe(0); expect(f.view.projection).toBe(projection);
   expect(f.view.view.filters.length).toBe(1); expect(f.panel.alert.textContent).toContain('storage may be incomplete');
-  expect(f.view.statusSummary.textContent).toContain('Partial graph'); expect(f.view.statusText).toBe('Base coverage warning');
+  expect(f.view.statusSummary.textContent).toContain('Still loading'); expect(f.view.statusText).toBe('Base coverage warning');
   control(f.panel.alert, 'Retry view').click(); await f.plugin.work; await tick();
   expect(writes).toBe(2); expect(notifications()).toBe(1); expect(f.panel.alert.textContent).toBe('');
-  expect(f.view.statusSummary.textContent).toContain('Partial graph'); expect(f.renderer.calls).toEqual([]); f.panel.dispose();
+  expect(f.view.statusSummary.textContent).toContain('Still loading'); expect(f.renderer.calls).toEqual([]); f.panel.dispose();
 });
 for (const next of ['newer', 'closed']) test(`scout R1 late apply rejection is inert after ${next}`, async () => {
   const f = await fixture(), gate = deferred(); actualApply(f); f.plugin.saveData = () => gate.promise;
@@ -103,7 +103,7 @@ test('scout R2 current success retires view error while preserving base warnings
   f.view.setView({ ...emptyView(), query: 'a' }); await tick(); expect(f.view.statusSummary.textContent).toContain('View not applied');
   f.plugin.pipeline.request = request; f.view.setView({ ...emptyView(), query: 'b' }); await tick();
   expect(f.panel.alert.textContent).toBe(''); expect(f.view.statusSummary.textContent).not.toContain('View not applied');
-  expect(f.view.statusSummary.textContent).toContain('Partial graph'); expect(f.view.statusText).toBe('Base coverage warning');
+  expect(f.view.statusSummary.textContent).toContain('Still loading'); expect(f.view.statusText).toBe('Base coverage warning');
   expect([...f.view.visible]).toEqual([...f.result(f.view.view).visible]); f.panel.dispose();
 });
 test('scout R2 superseded rejection cannot overwrite a queued newer request', async () => {

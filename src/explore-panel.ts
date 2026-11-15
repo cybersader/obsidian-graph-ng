@@ -4,7 +4,8 @@ import { sizingValues, sizingSettings, MAX_NODE_RADIUS, type NodeSizingValues } 
 import { physicsSettings, presetValues, PHYSICS_FIELDS, PHYSICS_PRESETS, type PhysicsKey, type PhysicsValues } from './physics-controls';
 import { editAsExpression, builderPredicate, checked } from './core/expr/engine';
 import { validate } from './core/expr/syntax';
-import { filterSummary } from './filter-summary';
+import { filterSummary, hiddenClause, setToggles, toggledValues } from './filter-summary';
+import { statRow } from './graph-information';
 import { suggestions } from './core/expr/autocomplete';
 import { declaredKeys } from './core/columns';
 import { describePredicate, groupLabel, NO_COLOR, VIEW_LIMITS, validateSaved, validateView, type ExploreResult, type ExploreView, type SavedView, type ViewCamera } from './core/explore';
@@ -105,6 +106,8 @@ export class ExplorePanel {
   /** Draft before the last preset or reset; `applied` once Apply ran with the preset values. */
   private physicsUndo?: { values: Record<PhysicsKey, string | boolean>; name: string; applied: boolean };
   private disposed = false;
+  private adding = false;
+  private toggleKey?: string;
   private drafts = new Map<string, string>();
   private expressionTimers = new Set<ReturnType<typeof setTimeout>>();
   private counts: HTMLElement;
@@ -244,21 +247,14 @@ export class ExplorePanel {
     this.body.scrollTop = scroll;
     if (focusName) { const replacement = [...this.body.querySelectorAll<HTMLElement>('button,input,select,summary')].find(e => !(e as HTMLButtonElement).disabled && (focusKey != null ? e.getAttribute('data-focus-key') === focusKey : name(e) === focusName)); replacement?.focus({ preventScroll: true }); if (replacement instanceof HTMLInputElement && selection && replacement.type === 'text') replacement.setSelectionRange(selection[0], selection[1]); }
   }
-  /** Scope heading over two shown-of-total tiles; text reads naturally ("1,200 of 1,500 nodes"). */
+  /** Shown-of-total rows for notes and lines; the scope is named only inside a selected group. */
   private summary(external: boolean, r?: ExploreResult) {
-    const filters = this.view.filters.length;
     this.counts.empty();
-    const head = this.counts.createDiv({ cls: 'graph-ng-scope' });
-    head.createSpan({ cls: 'graph-ng-scope-name', text: this.host.scope?.() ?? 'Current graph' });
-    head.createSpan({ cls: 'graph-ng-scope-detail', text: filters ? `${filters} ${filters === 1 ? 'filter' : 'filters'} active` : 'No filters' });
-    if (external || !r) { this.counts.createDiv({ cls: 'graph-ng-scope-detail', text: external ? 'External aggregate' : 'Waiting for projection…' }); return; }
+    if (this.host.scoped?.()) this.counts.createDiv({ cls: 'graph-ng-scope-name', text: `In ${this.host.scope?.()}` });
+    if (external || !r) { this.note(this.counts, external ? 'External aggregate' : 'Waiting for projection…'); return; }
     const stats = this.counts.createDiv({ cls: 'graph-ng-stats' });
-    for (const [shown, total, unit] of [[r.visible.reduce((n, v) => n + v, 0), r.nodes, 'nodes'], [r.visibleEdges, r.edges, 'edges']] as const) {
-      const tile = stats.createDiv({ cls: 'graph-ng-stat' });
-      tile.createSpan({ cls: 'graph-ng-stat-value', text: shown.toLocaleString() });
-      tile.createSpan({ cls: 'graph-ng-stat-total', text: ` of ${total.toLocaleString()} ${unit}` });
-      tile.createDiv({ cls: 'graph-ng-stat-bar', attr: { 'aria-hidden': 'true' } }).createDiv().style.width = `${total ? Math.min(100, shown / total * 100) : 0}%`;
-    }
+    statRow(stats, 'circle-dot', 'Notes', `${r.visible.reduce((n, v) => n + v, 0).toLocaleString()} of ${r.nodes.toLocaleString()}`);
+    statRow(stats, 'spline', 'Lines', `${r.visibleEdges.toLocaleString()} of ${r.edges.toLocaleString()}`);
   }
   private note(host: HTMLElement, text: string) { return host.createDiv({ cls: 'graph-ng-explore-note', text }); }
   /** One bounded text editor serves filters, colours and custom group values. */
@@ -290,15 +286,23 @@ export class ExplorePanel {
     if (input.value) sync(); else apply.disabled = true;
   }
   private filters(host: HTMLElement, r: ExploreResult) {
-    const count = this.view.filters.length;
-    if (!count) this.note(host, 'No filters. Every note is shown.');
-    else this.note(host, count > 1 ? `Showing notes that match all ${count} filters.` : 'Showing notes that match this filter.');
+    const filters = this.view.filters, count = filters.length;
+    // Per-filter counts only when the result is for exactly these filters.
+    const hidden = r.filters && canonical(r.filters.slice(0, count)) === canonical(filters) ? r.filterHidden : undefined, total = hidden?.slice(0, count).reduce((a, b) => a + b, 0);
+    const sentence = host.createDiv({ cls: 'graph-ng-filter-sentence', attr: { role: 'status' } });
+    if (!count) sentence.textContent = 'No filters. Every note is shown.';
+    else {
+      const clause = hiddenClause(filters[0]!);
+      sentence.createSpan({ text: `Hiding ${total === undefined ? '' : `${total.toLocaleString()} `}${total === 1 ? 'note' : 'notes'} ${count > 1 ? `with ${count} filters` : clause.code ? 'not matching ' : clause.text}` });
+      if (count === 1 && clause.code) sentence.createEl('code', { text: clause.text });
+    }
     // Pills: readable summary, then small labelled icon actions. Text is never a click target.
     const chips = host.createDiv({ cls: 'graph-ng-chips', attr: { role: 'list', 'aria-label': 'Active filters' } });
     const icon = (parent: HTMLElement, label: string, name: string, cls = '') => { const b = parent.createEl('button', { cls: `clickable-icon graph-ng-chip-action ${cls}`, attr: { 'aria-label': label, title: label } }); setIcon(b, name); return b; };
     this.view.filters.forEach((f, i) => {
       const chip = chips.createDiv({ cls: 'graph-ng-chip', attr: { role: 'listitem' } }), summary = filterSummary(f), description = describePredicate(f);
       chip.createSpan({ cls: summary.code ? 'graph-ng-chip-text graph-ng-chip-code' : 'graph-ng-chip-text', text: summary.text, attr: { title: description } });
+      if (hidden) chip.createSpan({ cls: 'graph-ng-count', text: hidden[i]!.toLocaleString(), attr: { title: 'Notes this filter hides that no earlier filter hides' } });
       const converted = editAsExpression(f), edit = icon(chip, `Edit filter ${i + 1} as expression`, 'pencil');
       edit.disabled = !converted.text; if (converted.reason) edit.title = converted.reason;
       edit.onclick = () => { this.drafts.set(`Edit filter ${i + 1}`, converted.text!); this.render(); };
@@ -309,11 +313,34 @@ export class ExplorePanel {
         const error = builder.createDiv({ cls: 'graph-ng-explore-error', attr: { role: 'alert' } });
         builder.createEl('button', { text: 'Save builder entry' }).onclick = () => { try { const value: unknown = JSON.parse(input.value); validatePredicate(value); this.update({ filters: this.view.filters.map((p, j) => j === i ? value : p) }); } catch (e) { error.textContent = String(e); } };
       }
-      const remove = icon(chip, `Remove filter ${i + 1}: ${summary.text}`, 'x', 'graph-ng-remove');
+      const remove = icon(chip, 'Remove filter', 'x', 'graph-ng-remove'); remove.title = `Remove filter: ${summary.text}`;
       remove.onclick = () => { this.update({ filters: this.view.filters.filter((_, j) => j !== i) }); (this.body.querySelectorAll<HTMLButtonElement>('.graph-ng-remove')[i] ?? this.search).focus(); };
       if (this.drafts.has(`Edit filter ${i + 1}`)) this.expressionField(chip, r, `Edit filter ${i + 1}`, 'filter', expr => { this.drafts.delete(`Edit filter ${i + 1}`); this.update({ filters: this.view.filters.map((p, j) => j === i ? { kind: 'expr', expr } : p) }); });
     });
-    this.predicateForm(host, r, 'Add filter', p => this.update({ filters: [...this.view.filters, p] }), true);
+    this.filterToggles(host, r);
+    const add = host.createEl('details', { cls: 'graph-ng-add-filter' }); add.open = this.adding || this.drafts.has('Filter expression');
+    add.ontoggle = () => { this.adding = add.open; };
+    setIcon(add.createEl('summary', { text: 'Add filter' }).createSpan({ cls: 'graph-ng-stat-icon' }), 'plus');
+    this.predicateForm(add, r, 'Add filter', p => { this.adding = false; this.update({ filters: [...this.view.filters, p] }); }, true);
+  }
+  /** One checkbox per value of a small, complete facet; unticking hides the value through an ordinary filter. */
+  private filterToggles(host: HTMLElement, r: ExploreResult) {
+    const eligible = r.facets.filter(f => f.distinct === f.values.length && f.values.length > 1 && f.values.length <= 24);
+    const owner = eligible.find(f => toggledValues(this.view.filters, f.key, []).owned.length), g = this.view.group;
+    const facet = eligible.find(f => f.key === this.toggleKey) ?? owner ?? eligible.find(f => g?.from === 'key' && f.key === g.key) ?? eligible[0];
+    if (!facet) return;
+    const box = host.createDiv({ cls: 'graph-ng-toggles', attr: { role: 'group', 'aria-label': `Show notes by ${facet.key}` } }), head = box.createDiv({ cls: 'graph-ng-toggle-head' });
+    head.createSpan({ text: 'Show by' });
+    const select = head.createEl('select', { attr: { 'aria-label': 'Show by property' } });
+    for (const f of eligible) select.createEl('option', { value: f.key, text: f.key }).selected = f === facet;
+    select.onchange = () => { this.toggleKey = select.value; this.render(); };
+    const present = facet.values.map(v => v.raw).filter(v => v !== 'undefined'), { hidden } = toggledValues(this.view.filters, facet.key, present);
+    for (const v of facet.values) {
+      const row = box.createEl('label', { cls: 'graph-ng-toggle' }), tick = row.createEl('input', { attr: { type: 'checkbox', 'aria-label': `Show ${v.label}`, 'data-focus-key': `toggle:${facet.key}:${v.raw}` } });
+      tick.checked = !hidden.has(v.raw);
+      tick.onchange = () => { const next = new Set(hidden); if (tick.checked) next.delete(v.raw); else next.add(v.raw); this.update({ filters: setToggles(this.view.filters, facet.key, present, next) }); };
+      row.createSpan({ cls: 'graph-ng-stat-label', text: v.label }); row.createSpan({ cls: 'graph-ng-count', text: v.count.toLocaleString() });
+    }
   }
   /** Property choices are exactly the materialized declared columns, plus folder prefixes. */
   private predicateForm(host: HTMLElement, r: ExploreResult, action: string, submit: (p: Predicate) => void, operators: boolean, extra?: (row: HTMLElement) => void) {
@@ -324,14 +351,18 @@ export class ExplorePanel {
     const op = form.createEl('select', { attr: { 'aria-label': 'Operator' } });
     for (const [v, t] of operators ? [['eq', 'is'], ['in', 'is any of'], ['exists', 'exists']] : [['eq', 'is'], ['exists', 'exists']]) op.createEl('option', { value: v, text: t });
     const values = form.createEl('select', { attr: { 'aria-label': 'Value' } }), folder = form.createEl('input', { attr: { type: 'text', placeholder: 'Folder/Subfolder', 'aria-label': 'Folder prefix' } });
+    // Native options cannot align a count column; the selection's note count sits beside the picker.
+    const matched = form.createSpan({ cls: 'graph-ng-count', attr: { 'aria-live': 'polite' } });
+    const count = () => { const facet = r.facets.find(f => `k:${f.key}` === property.value), picked = new Set([...values.selectedOptions ?? []].map(o => o.value)), n = facet?.values.reduce((a, v) => a + (picked.has(v.raw) ? v.count : 0), 0) ?? 0; matched.textContent = values.hidden || !picked.size ? '' : `${n.toLocaleString()} ${n === 1 ? 'note' : 'notes'}`; };
     const sync = () => {
       const isFolder = property.value === 'folder'; op.hidden = isFolder; folder.hidden = !isFolder;
       values.hidden = isFolder || op.value === 'exists'; values.multiple = op.value === 'in'; values.size = op.value === 'in' ? 5 : 1; values.empty();
       const facet = r.facets.find(f => `k:${f.key}` === property.value);
-      for (const v of facet?.values ?? []) values.createEl('option', { value: v.raw, text: `${v.label} (${v.count.toLocaleString()})` });
+      for (const v of facet?.values ?? []) values.createEl('option', { value: v.raw, text: v.label });
       if (facet && facet.distinct > facet.values.length) values.createEl('option', { text: `… ${facet.distinct - facet.values.length} more (raise facetValues)`, attr: { disabled: 'true' } });
+      count();
     };
-    property.onchange = op.onchange = sync; sync();
+    property.onchange = op.onchange = sync; values.onchange = count; sync();
     const add = form.createEl('button', { text: action, cls: filter ? 'graph-ng-add' : 'mod-cta' }), error = form.createDiv({ cls: 'graph-ng-explore-error', attr: { role: 'alert' } });
     add.onclick = () => {
       try {
