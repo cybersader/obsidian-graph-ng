@@ -36,7 +36,7 @@ export function stickyLevel(prev: number, ratio: number, ratios: readonly number
 export interface LabelItem { node: number; rank: number; x: number; y: number; r: number; w: number; h: number }
 /** A placed label relative to its dot: `dx` to the label's left edge, `dy` to its vertical centre.
  * `leader` (from the dot rim to the label) is set only when the label was displaced. */
-export interface LabelSlot { node: number; rank: number; dx: number; dy: number; leader?: readonly [number, number, number, number] }
+export interface LabelSlot { node: number; rank: number; dx: number; dy: number; w: number; h: number; leader?: readonly [number, number, number, number] }
 export interface RadialLayout { slots: LabelSlot[]; hidden: number; more?: { dx: number; dy: number } }
 const TURNS = [0, 1, -1, 2, -2, 3, -3, 4];
 /** Radial collision-avoiding placement around a focus. `items` arrive in priority order (focus first).
@@ -62,7 +62,7 @@ export function radialLabels(items: readonly LabelItem[], budget: number, direct
       }
       if (!leader) continue;
     }
-    boxes.push(x, y, it.w, it.h); slots.push({ node: it.node, rank: it.rank, dx: x - it.x, dy: y + it.h / 2 - it.y, leader }); if (it.rank === 1) direct++;
+    boxes.push(x, y, it.w, it.h); slots.push({ node: it.node, rank: it.rank, dx: x - it.x, dy: y + it.h / 2 - it.y, w: it.w, h: it.h, leader }); if (it.rank === 1) direct++;
   }
   const hidden = Math.max(0, directTotal - direct);
   let more: RadialLayout['more'];

@@ -264,6 +264,14 @@ export class DetailRenderer {
   private ctx: CanvasRenderingContext2D | null = null;
   private theme: GraphTheme;
   private observer: ResizeObserver;
+  /** Overlay panels labels must avoid (Recent/legend stack, minimap) and their cached [x, y, w, h]
+   * rects: measured on resize and from their own ResizeObserver, never per frame. */
+  private panels: HTMLElement[] = [];
+  private panelRects: number[][] = [];
+  private panelObserver?: ResizeObserver;
+  /** The hover label's [key, width, height], measured once per caption/font change. */
+  private hoverBox: [string, number, number] = ['', 0, 0];
+  private moreSize = [0, 0];
   private media = matchMedia('(prefers-color-scheme: dark)');
   private programs: Program[] = [];
   private vaos: WebGLVertexArrayObject[] = [];
@@ -438,6 +446,7 @@ export class DetailRenderer {
     let stack: HTMLElement;
     ({ ripple: this.rippleEl, stack, legend: this.legend, rows: this.legendRows, counts: this.legendCounts, pips: this.pipEls, parts: this.pipParts } = highlightOverlay(this.overlay, i => { this.tierMask ^= 1 << i; this.updateLegend(); this.rankedKey = []; this.refresh(); }, i => this.panTo(this.pipTargets[i] ?? -1)));
     this.crumbTrail = new Breadcrumb(stack, n => this.name(n), by => this.card.step(by), () => this.clearTrail());
+    this.panels = [stack, this.miniMap.root];
     this.resize();
     this.gl = software ? null : this.canvas.getContext('webgl2', { antialias: false, alpha: false, preserveDrawingBuffer: false });
     this.timings.context = performance.now() - started;
@@ -451,6 +460,12 @@ export class DetailRenderer {
     input.attach(this.container);
     this.media.addEventListener('change', this.refreshTheme);
     this.observer = new ResizeObserver(() => { const changed = this.resize(); this.syncTools(); if (changed && this.ready) void this.prepareLabels(() => !this.disposed).catch(() => {}); }); this.observer.observe(container);
+    this.panelObserver = new ResizeObserver(() => { if (this.measurePanels()) this.refresh(); }); for (const el of this.panels) this.panelObserver.observe(el);
+  }
+  /** Cache overlay panel rects in overlay coordinates; true when any changed. */
+  private measurePanels() {
+    const next = (this.panels ?? []).map(el => [el.offsetLeft || 0, el.offsetTop || 0, el.offsetWidth || 0, el.offsetHeight || 0]), old = this.panelRects ?? [];
+    this.panelRects = next; return next.some((r, i) => r.some((v, j) => v !== old[i]?.[j]));
   }
   private packState() {
     const packed = positionTexture(this.positions); this.positionWidth = packed.width; this.positionHeight = packed.height;
@@ -786,7 +801,7 @@ export class DetailRenderer {
     if (!this.gl || this.ready || allowGpuResize) resizeDrawingBuffer(this.canvas, width, height);
     this.canvas.style.width = `${this.width}px`; this.canvas.style.height = `${this.height}px`;
     this.timings.maxResize = Math.max(this.timings.maxResize || 0, performance.now() - started);
-    this.fit = Math.min(this.width / (this.cameraFrame.width * 1.1), this.height / (this.cameraFrame.height * 1.1)); this.refresh(); return changed;
+    this.fit = Math.min(this.width / (this.cameraFrame.width * 1.1), this.height / (this.cameraFrame.height * 1.1)); this.measurePanels(); this.refresh(); return changed;
   }
   private get scale() { return this.fit / this.camera.ratio; }
   private get centerX() { return this.cameraFrame.minX + this.camera.x * this.cameraFrame.width; }
@@ -1278,15 +1293,23 @@ export class DetailRenderer {
     const radius = (n: number) => this.drawnRadius(n, true, focus);
     this.placeCard();
     this.placeHighlights(focus);
-    // Overlay text never shows through the card: a label anchored under it is hidden (the card also stacks above).
-    const [cx, cy, cw, ch] = this.cardRect, under = (x: number, y: number) => cw! > 0 && x >= cx! && x <= cx! + cw! && y >= cy! && y <= cy! + ch!;
-    if (node >= 0) { const s = this.screenPoint(node), x = s.x + radius(node) + 6; this.hoverLabel.textContent = this.noteCaption(node); this.hoverLabel.hidden = under(x, s.y); this.hoverLabel.className = 'graph-ng-hover-label' + (node === ego && focus ? ' graph-ng-focus' : ''); this.hoverLabel.style.transform = `translate(${Math.round(x)}px, ${Math.round(s.y - 10)}px)`; }
-    else this.hoverLabel.textContent = '';
+    // Overlay text never runs under the card or an overlay panel: each label's whole rectangle is
+    // tested against their cached rects (the opaque stack and card also sit above as a backstop).
+    const under = (x: number, y: number, w = 1, h = 1) => overlapsBox(x, y, w, h, this.cardRect) || this.panelRects.some(r => overlapsBox(x, y, w, h, r));
+    const lod = this.lodLevel(), s = this.settings, tier = v.labelTierScale, hover = this.hoverLabel;
+    if (node >= 0) {
+      const text = this.noteCaption(node), cls = 'graph-ng-hover-label' + (node === ego && focus ? ' graph-ng-focus' : ''), font = node === ego && focus ? tierFont(0, s.labelSize, tier, this.theme.font) : '', key = text + '\n' + cls + '\n' + font;
+      if (this.hoverBox[0] !== key) {
+        hover.textContent = text; hover.className = cls; hover.style.font = font; hover.hidden = false;
+        const m = this.measure ??= document.createElement('canvas').getContext('2d')!; m.font = font || `13px ${this.theme.font}`;
+        this.hoverBox = [key, hover.offsetWidth || m.measureText(text).width + 12, hover.offsetHeight || 22];
+      }
+      const p = this.screenPoint(node), x = p.x + radius(node) + 6, y = p.y - 10;
+      hover.hidden = under(x, y, this.hoverBox[1], this.hoverBox[2]); hover.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
+    } else { hover.textContent = ''; this.hoverBox[0] = ''; }
     // The previewed name fades in with the node's growth.
-    this.hoverLabel.style.opacity = node === this.hoverFx.n && node !== ego ? String((this.fx[0]! - 1) / .6) : '';
+    hover.style.opacity = node === this.hoverFx.n && node !== ego ? String((this.fx[0]! - 1) / .6) : '';
     // Graduated labels: placed once per focus or LOD change, translated per frame (bounded DOM).
-    const lod = this.lodLevel(), s = this.settings, tier = v.labelTierScale;
-    if (node >= 0) this.hoverLabel.style.font = node === ego && focus ? tierFont(0, s.labelSize, tier, this.theme.font) : '';
     if (!this.near.length) { this.ranked = []; this.moreAt = undefined; }
     else if ([lod, this.display, this.fit, this.width, this.height, this.lensRevision].some((x, i) => x !== this.rankedKey[i])) {
       // Placement measures each bounded candidate once with the font and text the DOM label then uses, at the radius offset it is shown with.
@@ -1294,8 +1317,8 @@ export class DetailRenderer {
       const pad = v.labelPlates ? 16 : 4, text = (n: number, rank: number) => n === ego ? this.noteCaption(n) : middleTruncate(this.name(n), LABEL_CHARS[rank]!);
       const { list, direct } = rankFocus(ego, this.near, this.stateBytes, this.visible, this.projection.offsets, budget * s.labelCandidateMultiplier, this.projection.carrierNodes, ego >= 0 ? this.interestOf(ego) : undefined);
       const items = list.map(([n, rank]) => { m.font = tierFont(rank, s.labelSize, tier, this.theme.font); const h = tierType(rank, s.labelSize, tier).size * 1.5 + 4; return { node: n, rank, x: this.renderCoordinate(n, 0, 1) * k, y: this.renderCoordinate(n, 1, 1) * k, r: radius(n), w: m.measureText(text(n, rank)).width + pad, h }; });
-      m.font = tierFont(1, s.labelSize, tier, this.theme.font);
-      const layout = radialLabels(direct > 50 ? items.filter(it => it.rank <= 1) : items, budget, direct > 50 ? 6 : DIRECT_LABELS, ego >= 0 ? direct : 0, m.measureText(`+${direct} more`).width + 24, 32);
+      m.font = tierFont(1, s.labelSize, tier, this.theme.font); this.moreSize = [m.measureText(`+${direct} more`).width + 24, 32];
+      const layout = radialLabels(direct > 50 ? items.filter(it => it.rank <= 1) : items, budget, direct > 50 ? 6 : DIRECT_LABELS, ego >= 0 ? direct : 0, this.moreSize[0]!, 32);
       this.ranked = layout.slots.filter(x => x.node !== ego); this.moreAt = layout.more;
       this.rankedKey = [lod, this.display, this.fit, this.width, this.height, this.lensRevision];
       this.overlay.className = 'graph-ng-overlay' + (v.labelPlates ? ' graph-ng-plates' : '');
@@ -1315,12 +1338,12 @@ export class DetailRenderer {
     }
     if (!this.ranked.length) { while (this.tierLabels.length) this.tierLabels.pop()!.remove(); while (this.tierLeaders.length) this.tierLeaders.pop()!.remove(); }
     let j = 0;
-    this.ranked.forEach(({ node: n, dx, dy, leader }, i) => {
-      const el = this.tierLabels[i]!, p = this.screenPoint(n), x = leader ? p.x + dx : p.x + radius(n) + 4, y = leader ? p.y + dy : p.y; el.hidden = under(x, y) || under(p.x, p.y); el.style.opacity = String(focus); el.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px) translateY(-50%)`;
+    this.ranked.forEach(({ node: n, dx, dy, w, h, leader }, i) => {
+      const el = this.tierLabels[i]!, p = this.screenPoint(n), x = leader ? p.x + dx : p.x + radius(n) + 4, y = leader ? p.y + dy : p.y; el.hidden = under(x, y - h / 2, w, h) || under(p.x, p.y); el.style.opacity = String(focus); el.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px) translateY(-50%)`;
       if (leader) { const line = this.tierLeaders[j++]!; line.hidden = el.hidden; line.style.opacity = String(focus); line.style.transform = `translate(${Math.round(p.x + leader[0])}px, ${Math.round(p.y + leader[1])}px) rotate(${Math.atan2(leader[3] - leader[1], leader[2] - leader[0])}rad)`; }
     });
     if (this.moreButton) {
-      const at = this.moreAt, p = ego >= 0 ? this.screenPoint(ego) : { x: 0, y: 0 }, show = !!at && ego >= 0 && focus > 0 && !under(p.x + at.dx, p.y + at.dy); this.moreButton.hidden = !show;
+      const at = this.moreAt, p = ego >= 0 ? this.screenPoint(ego) : { x: 0, y: 0 }, [mw, mh] = this.moreSize, show = !!at && ego >= 0 && focus > 0 && !under(p.x + at.dx, p.y + at.dy - mh! / 2, mw, mh); this.moreButton.hidden = !show;
       if (show) { this.moreButton.style.opacity = String(focus); this.moreButton.style.transform = `translate(${Math.round(p.x + at.dx)}px, ${Math.round(p.y + at.dy)}px) translateY(-50%)`; }
     }
     this.placePath(radius, focus);
@@ -1526,7 +1549,7 @@ export class DetailRenderer {
     void this.initialize().then(() => { if (!this.disposed && !this.lost) this.canvas.dataset.context = 'restored'; }).catch(() => { if (!this.disposed) { this.canvas.dataset.context = 'failed'; this.onUnavailable(); } });
   };
   dispose() { clearTimeout(this.sizingTimer);
-    if (this.disposed) return; this.disposed = true; this.labelsRevision++; clearTimeout(this.restoreTimer); this.restoreTimer = undefined; cancelAnimationFrame(this.frameId); clearTimeout(this.frameTimer); this.frameTimer = undefined; this.observer.disconnect(); this.media.removeEventListener('change', this.refreshTheme);
+    if (this.disposed) return; this.disposed = true; this.labelsRevision++; clearTimeout(this.restoreTimer); this.restoreTimer = undefined; cancelAnimationFrame(this.frameId); clearTimeout(this.frameTimer); this.frameTimer = undefined; this.observer.disconnect(); this.panelObserver?.disconnect(); this.media.removeEventListener('change', this.refreshTheme);
     this.input.detach(this.container); this.limitChip.stop(); disposeSearch(this.canvas); this.miniMap.dispose();
     this.canvas.removeEventListener('webglcontextlost', this.contextLost); this.canvas.removeEventListener('webglcontextrestored', this.contextRestored);
     const gl = this.gl; if (gl && !this.lost) { for (const p of this.programs) gl.deleteProgram(p.handle); for (const b of [...this.buffers, ...this.labelBuffers, ...this.discBuffers]) if (b) gl.deleteBuffer(b); for (const v of [...this.vaos, ...this.labelVaos]) gl.deleteVertexArray(v); for (const t of this.textures) gl.deleteTexture(t); }
