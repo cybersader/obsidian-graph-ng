@@ -89,6 +89,8 @@ test('density correction leaves node radius and edge geometry/direction/focus eq
   // graduated tier styling adds the focus ring/growth lines and the focus-incident edge width factor.
   const focusFree = (code: string) => code.replace(/\n tint = vec4\(c\.rgb,.*;/, '').replace(/\n if \(focus > 0\.\) alpha = .*;/, '').replace(/\n if \(tier == 254u.*/, '').replace('\nlayout(location=3) in uint tier;', '')
     .replace(/\n.*(\bego\b|Graduated tiers).*/g, '')
+    // The hover pulse grows and rings only the hovered note.
+    .replace(/\n.*\bpulse\b.*/g, '')
     // Finding aids (optional, setting-gated): tier floor (lift), contrast ring bands/ink, legend mask (shownTier/tierByte), strong focus edges.
     .replace(/\n.*\b(lift|bands|ink|shownTier|tierByte|strong)\b.*/g, '').replace('\nout float ring;', '').replace(/\n float wide = .*;/, '').replace('* wide)', '* max(.5, edgeSize))')
     // Screen-space ink budget, long-line fade, "Focus only" and the dither seed change alpha and visibility only, never geometry.

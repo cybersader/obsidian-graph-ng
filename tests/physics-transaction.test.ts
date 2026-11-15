@@ -1187,3 +1187,28 @@ test('review: denied minimap storage never prevents view creation, collapse or d
     expect(mini.root.listeners.has('keydown')).toBe(false); expect(r.canvas.listeners.size).toBe(0);
   } finally { rejectStorage = false; }
 });
+test('hover pulse: only the hovered note grows and rings, the graph is untouched, frames stop when idle, reduced motion is static', async () => {
+  const f = await graduated([[0, 1], [1, 2], [2, 3]]), { r, k } = f, fx = () => r[k('hoverFx')], scale = () => r[k('fx')][0], draw = () => r[k('draw')]();
+  const radius = (n: number) => r[k('drawnRadius')](n, true, r[k('focusLevel')]);
+  f.tap(0); r[k('ripple')] = undefined; r[k('focusLevel')] = r[k('focusTarget')]; draw(); expect(frameCallbacks.size).toBe(0);
+  const graph = JSON.stringify([f.actual(), r[k('focusNode')], r.selected, [...r[k('colorBytes')]], r.camera]), rest = radius(2), other = radius(1);
+  const arcs: number[][] = [], arc = ctx.arc; ctx.arc = (x: number, y: number, a: number) => arcs.push([x, y, a]);
+  try {
+    draw(); const plain = arcs.splice(0);
+    // Hover: only that note eases up; breathing keeps frames coming while the pointer rests.
+    f.hover(2); expect(r.hovered).toBe(2); draw(); expect(fx().n).toBe(2); expect(scale()).toBeLessThan(1.1); expect(frameCallbacks.size).toBe(1);
+    fx().at -= 150; arcs.length = 0; draw(); expect(scale()).toBeCloseTo(1.6, 2); expect(radius(2)).toBeGreaterThanOrEqual(rest * 1.6 - 1e-6); expect(radius(1)).toBe(other);
+    const p = r.screenPoint(2), q = r.screenPoint(1); expect(r.pick(p.x + rest * 1.45 + 4, p.y)).toBe(2);
+    // Canvas parity: every other circle is drawn exactly as before; the hovered note is bigger and gains a ring.
+    const at = (a: number[], s: { x: number; y: number }) => a[0] === s.x && a[1] === s.y;
+    expect(arcs.filter(a => !at(a, p))).toEqual(plain.filter(a => !at(a, p))); expect(arcs.filter(a => at(a, p)).length).toBe(plain.filter(a => at(a, p)).length + 1); expect(arcs.some(a => at(a, q))).toBe(true);
+    expect(JSON.stringify([f.actual(), r[k('focusNode')], r.selected, [...r[k('colorBytes')]], r.camera])).toBe(graph);
+    // Leave: eases back down, then the loop stops.
+    r[k('pointerLeave')](); draw(); expect(fx().out).toBe(true); expect(frameCallbacks.size).toBe(1);
+    fx().at -= 120; draw(); expect(fx().n).toBe(-1); expect(scale()).toBe(1); expect(frameCallbacks.size).toBe(0); expect(radius(2)).toBe(rest);
+    expect(JSON.stringify([f.actual(), r[k('focusNode')], r.selected, [...r[k('colorBytes')]], r.camera])).toBe(graph);
+    // Reduced motion: a static enlarged ring, no frame loop.
+    fixtureReducedMotion = true; f.hover(3); draw(); expect(r[k('fx')]).toEqual([1.6, .5]); expect(frameCallbacks.size).toBe(0);
+    r[k('pointerLeave')](); draw(); expect(fx().n).toBe(-1); expect(frameCallbacks.size).toBe(0);
+  } finally { ctx.arc = arc; fixtureReducedMotion = false; }
+});

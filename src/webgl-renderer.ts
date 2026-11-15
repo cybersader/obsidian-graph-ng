@@ -5,7 +5,7 @@ import { readTheme, type GraphTheme } from './render-theme';
 import { baseRadius, sizedRadius, sizingSettings, type NodeSizingValues } from './node-sizing';
 import { buildLabels, rankFocus, type LabelAtlas } from './render-labels';
 import { DIRECT_LABELS, LABEL_CHARS, middleTruncate, radialLabels, stickyLevel, tierFont, tierType, type LabelSlot } from './label-layout';
-import { carrierAlpha, carrierColors, carrierVisibility, categorical, degreeSizes, densityScale, edgeAlpha, edgeInk, overdraw, inkAlpha, unionAlpha, fadeLength, lengthFade, type EdgeInk, effectPolicy, prominenceKeep, zoomFade, neutralizeGroups, easeInOut, groupHalos, isDark, labelFade, nodeColors, type EffectPolicy, type Halo, type RGB } from './render-effects';
+import { carrierAlpha, carrierColors, carrierVisibility, categorical, degreeSizes, densityScale, edgeAlpha, edgeInk, overdraw, inkAlpha, unionAlpha, fadeLength, lengthFade, type EdgeInk, effectPolicy, prominenceKeep, zoomFade, neutralizeGroups, easeInOut, hoverPulse, groupHalos, isDark, labelFade, nodeColors, type EffectPolicy, type Halo, type RGB } from './render-effects';
 import { yieldTask } from './core/scheduler';
 import { generationCurrent } from './physics-controls';
 import { ConnectionCard, connectionGroups, isolationBar, dockCard, sheetCard, reach, button, closeButton, el, type CardAction, type CardHost } from './connection-card';
@@ -48,6 +48,7 @@ uniform vec2 viewport;
 uniform float scale;
 uniform float nodeSize;
 uniform int hovered;
+uniform vec2 pulse;
 uniform int selected;
 uniform int focusNode;
 uniform float focus;
@@ -102,6 +103,8 @@ void main() {
  // Screen-space floor per tier: lift (tierLift/liftRadius); contrast ring bands; edge notes are exempt.
  float lift = note ? 0. : minSize * focus * (ego || st.g > .9 ? 1. : st.g > .7 ? .75 : st.g > .4 ? .57 : 0.);
  if (lift > 0. && radius < 2. * lift) radius = lift + radius * radius / (4. * lift);
+ // Hover pulse: only the hovered note grows (to at least the tier floor) and rings.
+ if (id == hovered) { radius = max(radius * pulse.x, minSize * (pulse.x - 1.) / .6); ring = max(ring, pulse.y); spread = max(spread, 1.4); }
  bands = note ? vec2(0.) : rings * focus * vec2(!ego && st.g > .9 ? 1. : 0., ego ? 1. : 0.); if (bands.x > 0.) spread = max(spread, 1.32);
  ink = color(3).rgb;
  local = corners[gl_VertexID] * spread;
@@ -216,7 +219,7 @@ void main() {
  float core = 1. - smoothstep(.92, 1., d), ring = smoothstep(.74, .8, d);
  float a = core * tint.a * mix(.62, 1., ring); outputColor = vec4(tint.rgb * mix(.7, 1.08, ring) * a, a);
 }`;
-const UNIFORMS = ['lensPositions', 'lensBlend', 'lensAnchor', 'positions', 'palette', 'nodeColors', 'nodeState', 'positionWidth', 'center', 'viewport', 'scale', 'nodeSize', 'hovered', 'selected', 'focusNode', 'focus', 'dim', 'glow', 'edgeSize', 'edgeHovered', 'segments', 'curvature', 'edgeAlpha', 'direction', 'colorMix', 'inkAlpha', 'fadeLength', 'focusOnly', 'labelAlpha', 'labelCut', 'atlas', 'outline', 'texel', 'discAlpha', 'hub', 'carrierAlpha', 'carrierFold', 'carrierSize', 'layer', 'tierMask', 'minSize', 'rings', 'strong'];
+const UNIFORMS = ['lensPositions', 'lensBlend', 'lensAnchor', 'positions', 'palette', 'nodeColors', 'nodeState', 'positionWidth', 'center', 'viewport', 'scale', 'nodeSize', 'hovered', 'pulse', 'selected', 'focusNode', 'focus', 'dim', 'glow', 'edgeSize', 'edgeHovered', 'segments', 'curvature', 'edgeAlpha', 'direction', 'colorMix', 'inkAlpha', 'fadeLength', 'focusOnly', 'labelAlpha', 'labelCut', 'atlas', 'outline', 'texel', 'discAlpha', 'hub', 'carrierAlpha', 'carrierFold', 'carrierSize', 'layer', 'tierMask', 'minSize', 'rings', 'strong'];
 interface Program { handle: WebGLProgram; uniforms: Record<string, WebGLUniformLocation | null> }
 interface Camera { x: number; y: number; ratio: number }
 /** Runtime view masks from the worker's explore result; colors stay worker-computed. */
@@ -377,6 +380,8 @@ export class DetailRenderer {
   private pointerLeave: (e?: PointerEvent) => void;
   private keyDown: (e: KeyboardEvent) => void;
   private ripple?: { start: number; reach: number };
+  /** The previewed note (the hover, or the one easing back), when it changed, whether it is leaving; the current [scale, ring]. */
+  private hoverFx = { n: -1, at: 0, out: false }; private fx = [1, 0];
   /** "How are these connected?": endpoints, paths found so far (shown: `hops`), its rows and the outcome note. */
   private pathView?: { from: number; to: number; found: Hop[][]; hops: Hop[]; edges: number[]; note: string };
   /** Two endpoint rings, then numbered hop badges (at most MAX_HOPS). */
@@ -927,19 +932,21 @@ export class DetailRenderer {
       return pickLens(this.picker, this.lensPoints, w.x, w.y, radius, n => ({ x: this.renderCoordinate(n, 0), y: this.renderCoordinate(n, 1) }), n => legacy ? radius : (this.drawnRadius(n, n === this.selected || n === this.hovered, f) + 4) / this.scale, n => !!this.visible[n] && (carriers || !this.projection.carrierNodes[n]));
     }
     if (s.nodeSizing.policy === 'legacy') return this.picker.pick(w.x, w.y, (s.nodeSize * (1 + s.visuals.degreeSizing) * (1 + .6 * f) + 4) / this.scale, this.carrierCount && this.carrierLevel().visibility < .25 ? this.projection.carrierNodes : undefined);
-    const base = this.baseNodeRadius(), max = (base * (1 + s.visuals.degreeSizing) * Math.max(1, s.visuals.carrierSize) * (1 + .6 * f) + 6) / this.scale;
+    const base = this.baseNodeRadius(), max = (base * (1 + s.visuals.degreeSizing) * Math.max(1, s.visuals.carrierSize) * (1 + .6 * f) * 1.6 + 6 + s.visuals.tierMinSize) / this.scale;
     let picked = -1, distance = Infinity;
     this.picker.visit(w.x, w.y, max, node => {
       if (!this.visible[node] || (this.projection.carrierNodes[node] && this.carrierLevel().visibility < .25)) return;
       const p = this.screenPoint(node), d = (p.x - x) ** 2 + (p.y - y) ** 2;
-      if (d <= (this.nodeRadius(node, node === this.selected || node === this.hovered) * grow(node) + 4) ** 2 && d < distance) { picked = node; distance = d; }
+      if (d <= (this.grown(node, this.nodeRadius(node, node === this.selected || node === this.hovered) * grow(node)) + 4) ** 2 && d < distance) { picked = node; distance = d; }
     }); return picked;
   }
   /** Drawn radius including the graduated growth and the screen-space tier floor (pick, overlay and Canvas share it). */
   private drawnRadius(n: number, hot: boolean, focus: number) {
     const ego = n === this.focusNode, g = shownTier(this.stateBytes[n * 4 + 1]!, this.tierMask, ego) / 255, r = this.nodeRadius(n, hot) * tierNode(g, true, ego, focus, 0)[1];
-    return this.projection.carrierNodes[n] ? r : liftRadius(r, tierLift(g, ego, focus, this.settings.visuals.tierMinSize));
+    return this.grown(n, this.projection.carrierNodes[n] ? r : liftRadius(r, tierLift(g, ego, focus, this.settings.visuals.tierMinSize)));
   }
+  /** The hover preview's size (the node shader's pulse term). */
+  private grown(n: number, r: number) { const s = this.fx[0]!; return n === this.hoverFx.n ? Math.max(r * s, this.settings.visuals.tierMinSize * (s - 1) / .6) : r; }
   /** Tiered notes lifted to their screen-space floor win the pick wherever their enlarged disc covers the point. */
   private pickTiered(x: number, y: number, w: { x: number; y: number }, focus: number) {
     const px = this.settings.visuals.tierMinSize; if (!focus || !px || !this.near.length) return -1;
@@ -1194,6 +1201,11 @@ export class DetailRenderer {
       if (t >= 1) this.flight = undefined; else more = true;
     }
     if (this.ripple) { if (now - this.ripple.start >= RIPPLE_MS) this.ripple = undefined; else more = true; }
+    // O(1) per frame; frames are requested only while the preview moves.
+    const h = this.hovered, x = this.hoverFx;
+    if (h >= 0 ? h !== x.n || x.out : x.n >= 0 && !x.out) Object.assign(x, h >= 0 ? { n: h, out: false } : { out: true }, { at: now });
+    const [grow, ring, next] = x.n < 0 ? [1, 0, false] : hoverPulse(now - x.at, x.out, reducedMotion()); this.fx = [grow, ring];
+    if (x.out && !next) x.n = -1; more ||= next;
     if (this.focusLevel !== this.focusTarget) {
       const step = (now - this.focusAt) / (reducedMotion() ? 1 : 140); this.focusAt = now;
       this.focusLevel = this.focusTarget > this.focusLevel ? Math.min(1, this.focusLevel + step) : Math.max(0, this.focusLevel - step);
@@ -1227,7 +1239,7 @@ export class DetailRenderer {
     for (const [i, vaoIndex, hub, layer = 1] of passes) {
       const program = this.programs[i]!, u = program.uniforms;
       gl.useProgram(program.handle); gl.uniform1i(u.lensPositions!, 5); gl.uniform1f(u.lensBlend!, this.lensBlend); gl.uniform1i(u.lensAnchor!, this.lensAnchor); gl.uniform1i(u.positions!, 0); gl.uniform1i(u.palette!, 1); gl.uniform1i(u.atlas!, 2); gl.uniform1i(u.nodeColors!, 3); gl.uniform1i(u.nodeState!, 4); gl.uniform1i(u.positionWidth!, this.positionWidth);
-      gl.uniform2f(u.center!, this.centerX, this.centerY); gl.uniform2f(u.viewport!, this.width, this.height); gl.uniform1f(u.scale!, this.scale); gl.uniform1f(u.nodeSize!, nodeSize); gl.uniform1f(u.edgeSize!, edgeWidth); gl.uniform1i(u.hovered!, this.hovered); gl.uniform1i(u.selected!, this.selected); gl.uniform1i(u.focusNode!, this.focusNode); gl.uniform1i(u.edgeHovered!, this.hoveredEdge);
+      gl.uniform2f(u.center!, this.centerX, this.centerY); gl.uniform2f(u.viewport!, this.width, this.height); gl.uniform1f(u.scale!, this.scale); gl.uniform1f(u.nodeSize!, nodeSize); gl.uniform1f(u.edgeSize!, edgeWidth); gl.uniform1i(u.hovered!, this.hoverFx.n); gl.uniform2f(u.pulse!, this.fx[0]!, this.fx[1]!); gl.uniform1i(u.selected!, this.selected); gl.uniform1i(u.focusNode!, this.focusNode); gl.uniform1i(u.edgeHovered!, this.hoveredEdge);
       gl.uniform1f(u.focus!, focus); gl.uniform1f(u.dim!, v.dimOpacity); gl.uniform1f(u.glow!, layer ? policy.glow : 0);
       gl.uniform1f(u.carrierAlpha!, notes.alpha); gl.uniform1f(u.carrierFold!, notes.visibility); gl.uniform1f(u.carrierSize!, v.carrierSize); gl.uniform1i(u.layer!, layer);
       gl.uniform1i(u.tierMask!, this.tierMask); gl.uniform1f(u.minSize!, v.tierMinSize); gl.uniform1f(u.rings!, v.tierRings ? 1 : 0); gl.uniform1f(u.strong!, v.focusEdges ? 1 : 0);
@@ -1255,6 +1267,8 @@ export class DetailRenderer {
     const [cx, cy, cw, ch] = this.cardRect, under = (x: number, y: number) => cw! > 0 && x >= cx! && x <= cx! + cw! && y >= cy! && y <= cy! + ch!;
     if (node >= 0) { const s = this.screenPoint(node), x = s.x + radius(node) + 6; this.hoverLabel.textContent = this.noteCaption(node); this.hoverLabel.hidden = under(x, s.y); this.hoverLabel.className = 'graph-ng-hover-label' + (node === ego && focus ? ' graph-ng-focus' : ''); this.hoverLabel.style.transform = `translate(${Math.round(x)}px, ${Math.round(s.y - 10)}px)`; }
     else this.hoverLabel.textContent = '';
+    // The previewed name fades in with the node's growth.
+    this.hoverLabel.style.opacity = node === this.hoverFx.n && node !== ego ? String((this.fx[0]! - 1) / .6) : '';
     // Graduated labels: placed once per focus or LOD change, translated per frame (bounded DOM).
     const lod = this.lodLevel(), s = this.settings, tier = v.labelTierScale;
     if (node >= 0) this.hoverLabel.style.font = node === ego && focus ? tierFont(0, s.labelSize, tier, this.theme.font) : '';
@@ -1405,11 +1419,12 @@ export class DetailRenderer {
     const notes = this.projection.carrierNodes, level = this.carrierLevel();
     // Edge notes first (beneath), then the other nodes.
     for (const layer of [1, 0]) for (let n = 0; n < this.visible.length; n++) if (this.visible[n] && +!!notes[n] === layer) {
-      const hot = n === this.selected || n === this.hovered, k = n * 4, p = this.theme.palette, coverage = layer ? (hot ? level.visibility : level.alpha) : 1;
+      const hot = n === this.selected || n === this.hoverFx.n, k = n * 4, p = this.theme.palette, coverage = layer ? (hot ? level.visibility : level.alpha) : 1;
       const a = coverage * (hot ? p[19]! : c[k + 3]!) / 255;
       if (coverage < .004 || a <= 0) continue;
-      const ego = n === this.focusNode, shown = shownTier(g[k + 1]!, this.tierMask, ego) / 255, [fade, grow, ring] = tierNode(shown, hot, ego, focus, dim); let r = this.nodeRadius(n, hot) * grow;
+      const ego = n === this.focusNode, shown = shownTier(g[k + 1]!, this.tierMask, ego) / 255, [fade, grow, tr] = tierNode(shown, hot, ego, focus, dim); let r = this.nodeRadius(n, hot) * grow;
       if (!layer) r = liftRadius(r, tierLift(shown, ego, focus, s.visuals.tierMinSize));
+      r = this.grown(n, r); const ring = Math.max(tr, n === this.hoverFx.n ? this.fx[1]! : 0);
       ctx.globalAlpha = a * fade; ctx.fillStyle = ctx.strokeStyle = hot ? `rgb(${p[16]},${p[17]},${p[18]})` : `rgb(${c[k]},${c[k + 1]},${c[k + 2]})`; ctx.beginPath(); ctx.arc(x(n), y(n), r, 0, Math.PI * 2); ctx.fill();
       // The shader's outer ring band (1.1–1.34 radii) as one stroke.
       if (ring) { ctx.globalAlpha = a * ring; ctx.lineWidth = r * .2; ctx.beginPath(); ctx.arc(x(n), y(n), r * 1.22, 0, Math.PI * 2); ctx.stroke(); }
