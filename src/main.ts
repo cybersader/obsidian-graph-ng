@@ -415,8 +415,9 @@ export class GraphView extends ItemView {
       const coverage = this.plugin.adapter.coverage(); this.provisional = !this.plugin.adapter.factsComplete();
       this.contentEl.dataset.verified = String(!this.provisional);
       const base = `${result.nodes.toLocaleString()} nodes · ${result.edges.toLocaleString()} edges · ${coverage.indexed}/${coverage.listed} properties available${this.plugin.adapter.linksPending() ? '; links pending' : ''}${this.provisional ? ' (partial · filters and members provisional)' : ' · verified'} · ${result.unresolved} unresolved${result.quarantined.length ? ` · ${result.quarantined.length} notes share an ID (excluded)` : ''}`;
+      const n = (x: number) => x.toLocaleString(), breakdown = Object.entries(result.dropped ?? {}).map(([rule, t]) => `${rule}: ${n(t.drawn)} drawn${t.missing ? `, ${n(t.missing)} to missing notes` : ''}${t.excluded ? `, ${n(t.excluded)} to duplicate-ID notes` : ''}${t.carriers ? `, ${n(t.carriers)} relationship notes excluded as duplicates` : ''}`).join('; ');
       this.statusIssues = [result.unresolved ? `${result.unresolved} unresolved links` : '', result.quarantined.length ? `${result.quarantined.length} duplicate-ID notes excluded` : ''].filter(Boolean).join(' · ');
-      this.statusText = `${base} · building layout in worker`;
+      this.statusText = `${base}${breakdown ? ` · relationships by rule: ${breakdown}` : ''} · building layout in worker`;
       this.contentEl.dataset.nodes = String(result.nodes); this.contentEl.dataset.edges = String(result.edges);
       await yieldTask();
       const detail = await this.plugin.pipeline.request<DetailResult>(revision, { kind: 'detail' });
@@ -431,7 +432,7 @@ export class GraphView extends ItemView {
       if (!current()) return;
       this.positions = layout.positions;
       this.cacheTrace.push({ expected: result.meta.key, stored: layout.stored, nodes: result.nodes, ...coverage, valid: layout.cached }); if (this.cacheTrace.length > 16) this.cacheTrace.shift();
-      this.contentEl.dataset.state = 'ready'; this.statusText = `${base} · ${layout.cached ? 'cached layout' : `worker ${layout.milliseconds.toFixed(0)} ms`} · total ${(performance.now() - start).toFixed(0)} ms${this.gpu.available || this.gpu.reason === 'Not probed' ? '' : ' · GPU unavailable — group view and member lists remain available'}`;
+      this.contentEl.dataset.state = 'ready'; this.statusText = `${base}${breakdown ? ` · relationships by rule: ${breakdown}` : ''} · ${layout.cached ? 'cached layout' : `worker ${layout.milliseconds.toFixed(0)} ms`} · total ${(performance.now() - start).toFixed(0)} ms${this.gpu.available || this.gpu.reason === 'Not probed' ? '' : ' · GPU unavailable — group view and member lists remain available'}`;
       this.contentEl.dataset.layoutMs = String(layout.milliseconds); this.contentEl.dataset.cached = String(layout.cached);
       if (settings.persistLayout && !layout.cached && complete && !this.provisional && (!settings.declaration.edges.some(e => e.kind === 'producer') || this.plugin.adapter.linksResolved)) {
         const generation = await this.plugin.pipeline.request<BinaryGeneration>(revision, { kind: 'encode' });

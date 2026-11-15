@@ -25,6 +25,8 @@ export interface Projection {
   folders: Map<string, [number, number]>;
   unresolved: number;
   quarantined: { path: string; id: string }[];
+  /** Per edge rule: endpoints absent, endpoints excluded as duplicates, and relationship notes themselves excluded. */
+  dropped?: Record<string, { drawn: number; missing: number; excluded: number; carriers: number }>;
 }
 export const NONE = 0xffffffff;
 const compare = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
@@ -51,6 +53,10 @@ export function buildProjection(input: readonly FactRow[], d: GraphDeclaration):
   rowIds.forEach((id, i) => { const pathOwner = allPaths.get(id); if (pathOwner !== undefined && pathOwner !== i) { excluded.add(i); excluded.add(pathOwner); } });
   const quarantined = sorted.flatMap((r, i) => excluded.has(i) ? [{ path: r.path, id: rowIds[i]! }] : []);
   const rows = sorted.filter((_, i) => !excluded.has(i));
+  const gone = new Set(quarantined.flatMap(q => [q.id, q.path])), dropped: NonNullable<Projection['dropped']> = Object.create(null);
+  const tally = (rule: string) => dropped[rule] ??= { drawn: 0, missing: 0, excluded: 0, carriers: 0 };
+  const miss = (rule: string, ...refs: string[]) => { const t = tally(rule); if (refs.some(r => gone.has(r))) t.excluded++; else t.missing++; };
+  sorted.forEach((r, i) => { if (excluded.has(i)) for (const e of d.edges) if (e.kind === 'reified' && has(r, e.sourceProperty) && has(r, e.targetProperty)) tally(e.name).carriers++; });
   const rowIndex = new Map(rows.map((row, i) => [row.path, i]));
   const carriers = new Set<string>();
   for (const r of rows) for (const e of d.edges) if (e.kind === 'reified' && has(r, e.sourceProperty) && has(r, e.targetProperty)) carriers.add(r.path);
@@ -77,14 +83,15 @@ export function buildProjection(input: readonly FactRow[], d: GraphDeclaration):
       const t = types[0] ?? e.type ?? e.name;
       for (const a of values(r.properties[e.sourceProperty])) for (const b of values(r.properties[e.targetProperty])) {
         const s = references.get(a), tnode = references.get(b);
-        if (s === undefined || tnode === undefined) { unresolved++; continue; }
+        if (s === undefined || tnode === undefined) { unresolved++; miss(e.name, ...(s === undefined ? [a] : []), ...(tnode === undefined ? [b] : [])); continue; }
+        tally(e.name).drawn++;
         if (d.display.reifiedAsNodes) { edge(s, nodeIndex.get(r.path), t, rowIndex.get(r.path)!); edge(nodeIndex.get(r.path), tnode, t, rowIndex.get(r.path)!); }
         else edge(s, tnode, t, rowIndex.get(r.path)!);
       }
     } else if (e.kind === 'inline' && nodeIndex.has(r.path)) {
-      for (const ref of values(r.properties[e.key])) edge(nodeIndex.get(r.path), references.get(ref), e.type, NONE);
+      for (const ref of values(r.properties[e.key])) { const t = references.get(ref); if (t === undefined) miss(e.name, ref); else tally(e.name).drawn++; edge(nodeIndex.get(r.path), t, e.type, NONE); }
     } else if (e.kind === 'producer' && nodeIndex.has(r.path)) {
-      for (const ref of [...(r.links?.[e.producer] ?? [])].sort(compare)) edge(nodeIndex.get(r.path), nodeIndex.get(ref), e.type, NONE);
+      for (const ref of [...(r.links?.[e.producer] ?? [])].sort(compare)) { const t = nodeIndex.get(ref); if (t === undefined) miss(e.name, ref); else tally(e.name).drawn++; edge(nodeIndex.get(r.path), t, e.type, NONE); }
     }
   }
   const offsets = new Uint32Array(nodes.length + 1);
@@ -112,7 +119,7 @@ export function buildProjection(input: readonly FactRow[], d: GraphDeclaration):
   const tc = column(typ);
   return { paths, identities, carrierPaths: rows.map(r => r.path), offsets, targets,
     source: Uint32Array.from(src), target: Uint32Array.from(dst), type: tc.codes, carrier: Uint32Array.from(carrier), carrierNodes: Uint32Array.from(nodes, r => carriers.has(r.path) ? rowIndex.get(r.path)! + 1 : 0), types: tc.values,
-    columns, groups, folders, unresolved, quarantined };
+    columns, groups, folders, unresolved, quarantined, dropped };
 }
 export function filterNodes(p: Projection, predicate?: Predicate): Uint8Array {
   return predicate ? expressionFilter(p, lowerPredicate(predicate)) : new Uint8Array(p.paths.length).fill(1);

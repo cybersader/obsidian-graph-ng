@@ -112,7 +112,7 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       hashes = edgeHashes(projection);
       let invalidSaved;
       if (saved && complete) { const current = new Set(projection.identities); if (saved.identities.some(id => !current.has(id))) { invalidSaved = saved.meta; saved = undefined; } }
-      return { invalidSaved, meta, nodes: projection.paths.length, edges: projection.source.length, unresolved: projection.unresolved, quarantined: projection.quarantined };
+      return { invalidSaved, meta, nodes: projection.paths.length, edges: projection.source.length, unresolved: projection.unresolved, quarantined: projection.quarantined, dropped: projection.dropped };
     }
     case 'detail': {
       // Copies are made in the worker only: the renderer borrows transferred buffers;

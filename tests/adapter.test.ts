@@ -200,3 +200,15 @@ test('declared excluded folders never enter rows, coverage or identity, so archi
     expect(kept.map(r => r.path).sort()).toEqual(['_archived.md', 'live/a.md']); expect(p.quarantined).toEqual([]); expect(adapter.coverage()).toEqual({ indexed: 2, listed: 2 });
   } finally { adapter.index.dispose(); }
 });
+
+test('relationship accounting splits drawn, missing-endpoint, duplicate-endpoint and duplicate relationship-note drops per rule', () => {
+  const d = { ...defaultDeclaration('n@1'), identity: [{ key: 'curie' }], columns: ['curie'], edges: [{ name: 'crosswalk', kind: 'reified' as const, sourceProperty: 's', targetProperty: 'o' }] };
+  const row = (path: string, properties: Record<string, unknown>) => ({ path, properties, links: {} });
+  const p = buildProjection([
+    row('a.md', { curie: 'x:a' }), row('b.md', { curie: 'x:b' }), row('d1.md', { curie: 'x:d' }), row('d2.md', { curie: 'x:d' }),
+    row('m1.md', { curie: 'm:1', s: 'x:a', o: 'x:b' }), row('m2.md', { curie: 'm:2', s: 'x:a', o: 'x:zz' }), row('m3.md', { curie: 'm:3', s: 'x:a', o: 'x:d' }),
+    row('m4.md', { curie: 'm:4', s: 'x:b', o: 'x:a' }), row('_old/m4.md', { curie: 'm:4', s: 'x:b', o: 'x:a' }),
+  ], d);
+  expect(p.dropped!.crosswalk).toEqual({ drawn: 1, missing: 1, excluded: 1, carriers: 2 });
+  expect(p.unresolved).toBe(2); expect(p.source.length).toBe(1);
+});
