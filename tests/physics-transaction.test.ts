@@ -406,7 +406,7 @@ test('graduated labels fold unlabelled direct connections into a "+N more" butto
   expect(shown).toBeGreaterThan(0); expect(shown).toBeLessThanOrEqual(24); expect(more.hidden).toBe(false); expect(more.tagName).toBe('BUTTON');
   expect(more.textContent).toBe(`+${hidden} more`); expect(more.attributes['aria-label']).toBe(`Show ${hidden} more direct connections of ${r[k('name')](0)}`);
   // The default hook is a safe no-op; a host hook receives the focus.
-  more.click(); r.onMoreConnections = (n: number) => asked.push(n); more.click(); expect(asked).toEqual([0]); expect(f.opened).toEqual([0]);
+  more.click(); r.onMoreConnections = (n: number) => asked.push(n); more.click(); expect(asked).toEqual([0]); expect(f.opened).toEqual([]);
   // Labels carry the full name for tooltips and assistive technology.
   for (const el of r[k('tierLabels')]) expect(el.attributes['aria-label']).toBe(el.textContent);
   f.tap(EMPTY); paint(); expect(more.hidden).toBe(true); expect(r[k('tierLabels')]).toEqual([]);
@@ -483,8 +483,8 @@ test('connection card: grouped rows travel, history goes back and forward, keys 
   expect(rows().map((b: any) => b.textContent)).toEqual(['2', '0']); expect(rows()[1].attributes['aria-label']).toBe('Go to 0 (incoming)');
   expect(control(card(), '‹').disabled).toBe(true);
   // Hover/focus a row: ring and leader line to that note; leaving clears.
-  rows()[0].onmouseenter(); r[k('placeOverlay')](); expect(r.cueRing.hidden).toBe(false); expect(r.cueLine.style.transform).toContain('rotate(');
-  rows()[0].onmouseleave(); r[k('placeOverlay')](); expect(r.cueRing.hidden).toBe(true);
+  rows()[0].onmouseenter(); r[k('placeOverlay')](); expect(r[k('cueRing')].hidden).toBe(false); expect(r[k('cueLine')].style.transform).toContain('rotate(');
+  rows()[0].onmouseleave(); r[k('placeOverlay')](); expect(r[k('cueRing')].hidden).toBe(true);
   // Travel: focus and selection move, the camera flies, a history entry is added.
   rows()[1].click(); expect(r.selected).toBe(0); expect(f.actual()).toEqual(f.expected(0)); expect(r[k('flight')]).toBeDefined(); expect(f.opened).toEqual([]);
   expect(card().textContent).toContain('2 direct connections'); expect(control(card(), '1').attributes['aria-label']).toBe('Back to 1');
@@ -498,7 +498,7 @@ test('connection card: grouped rows travel, history goes back and forward, keys 
   f.tap(2); r[k('width')] = 400; r[k('placeOverlay')](); expect(card().className).toBe('graph-ng-card graph-ng-sheet');
 });
 test('connection card actions: open modes, copy link, focus here, and Show only connections with a 2-hop toggle and a way back', async () => {
-  const f = await graduated([[0, 1], [1, 2], [2, 3], [0, 4]]), { r, k } = f, card = () => r[k('noteCard')], bar = () => r.isolationBar, opens: string[][] = [], copies: string[] = [];
+  const f = await graduated([[0, 1], [1, 2], [2, 3], [0, 4]]), { r, k } = f, card = () => r[k('noteCard')], bar = () => r[k('isolationBar')], opens: string[][] = [], copies: string[] = [];
   f.tap(0); control(card(), 'Open').click(); control(card(), 'New tab').click(); expect(f.opened).toEqual([0, 0]);
   r.openNote = (path: string, mode: string) => opens.push([path, mode]); r.copyLink = (path: string) => copies.push(path);
   for (const name of ['Open', 'New tab', 'Right', 'Copy link']) control(card(), name).click();
@@ -652,4 +652,55 @@ test('lens production layout adoption and rollback retain a coherent overlay wit
   const token = await prepare(r, next, () => true); token.commit();
   expect(r.positions).toBe(next); expect(r.lensNode).toBe(0); const moved = r.screenPoint(1); expect(moved).not.toEqual(before); expect(r.pick(moved.x, moved.y)).toBe(1);
   token.rollback(); token.discard(); expect(r.positions).toBe(original); expect(r.screenPoint(1)).toEqual(before); expect(r.pick(before.x, before.y)).toBe(1);
+});
+
+// Wave-3 wiring through the compiled renderer (Canvas fixture, synthetic DOM): labels "+N more" ->
+// card, card Lens action, lens-displaced overlays/picking and the Escape/L/Alt+arrow key layers.
+test('wiring: "+N more" opens the connection card Connections list with Show all expanded', async () => {
+  const f = await graduated(Array.from({ length: 60 }, (_, i) => [0, i + 1] as [number, number]), 61), { r, k } = f, card = () => r[k('noteCard')];
+  const rows = () => card().querySelectorAll('button').filter((b: any) => b.className === 'graph-ng-connection');
+  expect(readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8')).toContain('onMoreConnections = focus => this.detailRenderer?.showConnections(focus)');
+  r.onMoreConnections = (n: number) => r.showConnections(n); // the main.ts hook
+  f.tap(0); r[k('focusLevel')] = 1; r[k('placeOverlay')](); expect(rows().length).toBe(50);
+  const more = r[k('moreButton')]; expect(more.hidden).toBe(false); more.click();
+  expect(r.selected).toBe(0); expect(rows().length).toBe(60); expect(card().textContent).not.toContain('Show all'); expect((ControlElement as any).active).toBe(rows()[0]);
+  // From no selection the hook selects the focus and opens its card; a hidden note is ignored.
+  f.tap(EMPTY); expect(card().textContent).toBe(''); r.showConnections(0); expect(r.selected).toBe(0); expect(rows().length).toBe(60);
+  r.showConnections(-1); r.showConnections(99); expect(r.selected).toBe(0);
+});
+test('wiring: card Lens action, lens-displaced picking/arrows/cue/labels, and Escape, L and Alt+arrow layers', async () => {
+  const f = await graduated([[0, 1], [0, 2], [1, 3]]), { r, k } = f, card = () => r[k('noteCard')];
+  const rows = () => card().querySelectorAll('button').filter((b: any) => b.className === 'graph-ng-connection');
+  const canvasKey = (key: string) => { let handled = false; r[k('keyDown')]({ key, target: r.canvas, preventDefault() { handled = true; } }); return handled; };
+  const cardKey = (key: string, target: any, altKey = false) => card().onkeydown({ key, altKey, target, preventDefault() {}, stopPropagation() {} });
+  const before = r.screenPoint(1);
+  try {
+    fixtureReducedMotion = true;
+    f.tap(0); const lens = control(card(), 'Lens'); expect(lens.attributes['aria-pressed']).toBe('false'); expect(lens.attributes['aria-label']).toBe('Connection lens for 0');
+    lens.click(); expect(r.lensNode).toBe(0); expect(control(card(), 'Lens').attributes['aria-pressed']).toBe('true');
+    const pulled = r.screenPoint(1); expect(pulled).not.toEqual(before);
+    // Tier-lifted picking (min size) finds the displaced note at its drawn position, not its grid cell.
+    r[k('focusLevel')] = 1; expect(r.pick(pulled.x, pulled.y)).toBe(1); expect(r.pick(before.x, before.y)).not.toBe(1);
+    expect(r[k('pickTiered')](pulled.x, pulled.y, r[k('worldPoint')](pulled.x, pulled.y), 1)).toBe(1);
+    // Off-screen arrows project the drawn positions; labels re-place on a lens change; the cue ring follows the row.
+    r[k('placeOverlay')](); const directs = r[k('directs')], xy = r[k('pipXY')];
+    directs.forEach((n: number, i: number) => { const q = r.screenPoint(n); expect([xy[i * 2], xy[i * 2 + 1]]).toEqual([q.x, q.y]); });
+    expect(r[k('rankedKey')][5]).toBe(r[k('lensRevision')]);
+    const row = rows().find((b: any) => b.textContent === '1'); row.onmouseenter(); r[k('placeOverlay')]();
+    expect(r[k('cueRing')].style.transform).toContain(`translate(${Math.round(pulled.x)}px, ${Math.round(pulled.y)}px)`);
+    // Travel moves the lens with the card; Alt+Left in the card goes back (and the lens follows).
+    row.click(); expect(r.selected).toBe(1); expect(r.lensNode).toBe(1); expect(r[k('lensAnchor')]).toBe(1); expect(control(card(), 'Lens').attributes['aria-pressed']).toBe('true');
+    cardKey('ArrowLeft', card(), true); expect(r.selected).toBe(0); expect(r.lensNode).toBe(0);
+    // L from inside the card toggles exactly once (card keys do not swallow it, nothing fires twice).
+    cardKey('l', rows()[0]); expect(r.lensNode).toBe(-1); expect(control(card(), 'Lens').attributes['aria-pressed']).toBe('false');
+    cardKey('L', rows()[0]); expect(r.lensNode).toBe(0);
+    // Escape layers: the card first (lens stays), then the lens, then nothing left to clear.
+    expect(canvasKey('Escape')).toBe(true); expect(card().textContent).toBe(''); expect(r.selected).toBe(-1); expect(r.lensNode).toBe(0);
+    expect(canvasKey('Escape')).toBe(true); expect(r.lensNode).toBe(-1); expect(r[k('lensPoints')].size).toBe(0);
+    { const d = r[k('display')]; expect(r.screenPoint(1)).toEqual({ x: (d[2] - r.centerX) * r.scale + r[k('width')] / 2, y: (d[3] - r.centerY) * r.scale + r[k('height')] / 2 }); }
+    // The card's own Escape also closes only the card.
+    f.tap(0); control(card(), 'Lens').click(); expect(r.lensNode).toBe(0); cardKey('Escape', rows()[0]); expect(card().textContent).toBe(''); expect(r.lensNode).toBe(0);
+    // A click on empty canvas still clears both.
+    f.tap(EMPTY); expect(r.lensNode).toBe(-1);
+  } finally { fixtureReducedMotion = false; }
 });

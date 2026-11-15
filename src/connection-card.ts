@@ -67,13 +67,15 @@ export function placeCard(x: number, y: number, gap: number, width: number, heig
   if (top + h > height - m) top = y - 14 - h;
   return { x: Math.round(Math.max(m, Math.min(left, width - m - w))), y: Math.round(Math.max(m, Math.min(top, height - m - h))) };
 }
-export type CardAction = 'open' | 'tab' | 'split' | 'focus' | 'isolate' | 'copy';
+export type CardAction = 'open' | 'tab' | 'split' | 'focus' | 'isolate' | 'lens' | 'copy';
 export interface CardHost {
   name(n: number): string;
   color(n: number): string;
   groups(n: number): { groups: ConnectionGroup[]; direct: number };
   secondHop(n: number): { second: number; truncated: boolean };
   isolated(): boolean;
+  /** Whether the connection lens is open on this note; hosts without a lens omit it (no Lens action). */
+  lensed?(n: number): boolean;
   act(action: CardAction, n: number): void;
   travel(n: number): void;
   cue(n: number): void;
@@ -92,6 +94,7 @@ export class ConnectionCard {
   size?: [number, number];
   private limit = ROWS;
   private moving = false;
+  private lensToggle?: HTMLElement;
   constructor(readonly root: HTMLElement, private host: CardHost) {}
   show(n: number) {
     if (n !== this.node) this.limit = ROWS;
@@ -128,6 +131,7 @@ export class ConnectionCard {
     actions.append(button('Open', 'Open ' + name, act('open')), button('New tab', `Open ${name} in a new tab`, act('tab')), button('Right', `Open ${name} to the right`, act('split')),
       button('Focus', `Focus here: fit ${name} and its direct connections`, act('focus')));
     const only = actions.appendChild(button('Only connections', 'Show only connections of ' + name, act('isolate'))); only.setAttribute('aria-pressed', String(h.isolated()));
+    this.lensToggle = h.lensed ? actions.appendChild(button('Lens', 'Connection lens for ' + name, act('lens'))) : undefined; this.syncLens();
     actions.append(button('Copy link', 'Copy link to ' + name, act('copy')));
     const list = c.appendChild(el('div', '', 'graph-ng-connections')); list.setAttribute('aria-label', 'Connections');
     if (!groups.length) list.append(el('div', 'No direct connections', 'graph-ng-explore-note'));
@@ -150,6 +154,15 @@ export class ConnectionCard {
       list.append(button(rest > 1000 ? `Show ${more.toLocaleString()} more` : `Show all (${total.toLocaleString()})`, `Show ${more} more connections`, () => { const at = this.rows.length; this.limit += more; this.render(at); }));
     }
     this.rows[focus]?.focus();
+  }
+  /** Reflect the host's lens state on the Lens action (aria-pressed). */
+  syncLens() { if (this.lensToggle && this.node >= 0) this.lensToggle.setAttribute('aria-pressed', String(!!this.host.lensed?.(this.node))); }
+  /** Expand the Connections list as "Show all" does (in chunks of at most 1000 rows) and focus its first row. */
+  showAll() {
+    if (this.node < 0) return;
+    const total = this.host.groups(this.node).groups.reduce((s, g) => s + g.nodes.length, 0);
+    if (total > this.limit) this.limit += Math.min(total - this.limit, 1000);
+    this.render(0);
   }
   /** Card keys: Escape closes, Alt+Left/Right go back/forward, arrows/Home/End move through rows.
    * Enter and Space on a focused row are the native button activation (travel). */

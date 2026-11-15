@@ -361,6 +361,8 @@ Select or hover a note and press **L**, or select a note and use **Appearance â†
 
 The rings keep screen-space spacing as you zoom and use more rings for large degrees. Edges and picking follow the moving notes on WebGL and Canvas2D; reduced motion swaps positions immediately. This is temporary view state: it never changes physics, saved layout positions or named views. The existing graduated-highlight switch still controls dimming. Labels retain their existing viewport budget, and very large rings may need panning; this is not a guarantee that hundreds of names fit on one screen. Native visual/performance acceptance remains pending.
 
+The connection card has a **Lens** button that shows whether the lens is on. With the lens open, moving to another note from the card moves the lens too. Rings, minimum sizes, edge-of-view arrows, row leader lines and focus labels all follow the moved notes. **Escape** closes the card first, then the lens.
+
 ### Graduated connection highlighting (unreleased)
 
 Also called *graduated relationship highlighting*. Terms used in this section and the code:

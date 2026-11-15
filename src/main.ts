@@ -859,6 +859,7 @@ export class GraphView extends ItemView {
       this.detailRenderer.copyLink = path => this.copyLink(path);
       this.detailRenderer.onSizingChange = () => { this.explorePanel?.updateSizingReadout(); this.explorePanel?.updateLensControl(); };
       this.detailRenderer.onLensChange = () => this.explorePanel?.updateLensControl();
+      this.detailRenderer.onMoreConnections = focus => this.detailRenderer?.showConnections(focus);
       this.detailRenderer.onHub = group => { const key = this.explored?.groupKeys[group]; if (key !== undefined) this.setView({ ...this.view, collapsedGroups: this.view.collapsedGroups.filter(k => k !== key) }, () => this.focusGroup(group)); };
       if (this.pendingCamera) { const c = this.pendingCamera; this.pendingCamera = undefined; this.detailRenderer.flyTo(c.x, c.y, c.ratio); }
       this.explorePanel?.render();

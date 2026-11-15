@@ -768,6 +768,13 @@ export class DetailRenderer {
   private name(n: number) { const path = this.path(n); return path.slice(path.lastIndexOf('/') + 1).replace(/\.md$/, '').slice(0, 128); }
   /** Temporary view state, deliberately not saved to named views or physics/layout state. */
   get lensNode() { return this.lensWanted; }
+  private lensChanged() { this.card.syncLens(); this.onLensChange?.(); }
+  /** Host seam for "+N more": open the focus's card with its whole Connections list and move keyboard focus into it. */
+  showConnections(n: number) {
+    if (!(n >= 0 && n < this.visible.length && this.filterVisible[n])) return;
+    if (this.selected !== n || this.card.node !== n) this.selectNote(n, true);
+    this.card.showAll();
+  }
   toggleLens() { this.setLens(this.lensWanted >= 0 ? -1 : this.hovered >= 0 ? this.hovered : this.selected); }
   setLens(node: number) {
     if (this.disposed) return;
@@ -784,7 +791,7 @@ export class DetailRenderer {
       if (node !== this.lensAnchor) { this.lensAnchor = node; this.rebuildLens(); }
       this.lensMotion = { from: this.lensBlend, to: node >= 0 ? 1 : 0, start: now };
     }
-    this.animateLens(now); this.emphasize(); this.onLensChange?.(); this.refresh();
+    this.animateLens(now); this.emphasize(); this.lensChanged(); this.refresh();
   }
   private animateLens(now: number): boolean {
     const motion = this.lensMotion; if (!motion) return false;
@@ -793,7 +800,7 @@ export class DetailRenderer {
     this.lensMotion = undefined;
     if (!motion.to) {
       this.lensAnchor = this.visible[this.lensWanted] ? this.lensWanted : -1;
-      this.lensWanted = this.lensAnchor; this.rebuildLens(); this.emphasize(); this.onLensChange?.();
+      this.lensWanted = this.lensAnchor; this.rebuildLens(); this.emphasize(); this.lensChanged();
       if (this.lensAnchor >= 0) {
         this.lensMotion = { from: 0, to: 1, start: now };
         return reducedMotion() ? this.animateLens(now) : true;
@@ -869,12 +876,17 @@ export class DetailRenderer {
   private pickTiered(x: number, y: number, w: { x: number; y: number }, focus: number) {
     const px = this.settings.visuals.tierMinSize; if (!focus || !px || !this.near.length) return -1;
     let picked = -1, distance = Infinity;
-    this.picker.visit(w.x, w.y, (2 * px + 4) / this.scale, node => {
+    const test = (node: number) => {
       if (!this.visible[node] || this.projection.carrierNodes[node]) return;
       const ego = node === this.focusNode; if (!tierLift(shownTier(this.stateBytes[node * 4 + 1]!, this.tierMask, ego) / 255, ego, focus, px)) return;
       const p = this.screenPoint(node), d = (p.x - x) ** 2 + (p.y - y) ** 2;
       if (d <= (this.drawnRadius(node, node === this.selected || node === this.hovered, focus) + 4) ** 2 && d < distance) { picked = node; distance = d; }
-    }); return picked;
+    };
+    // Lens-displaced notes leave their grid cells: skip them there and test their drawn positions (O(direct connections)).
+    const moved = this.lensAnchor >= 0 ? this.lensPoints : undefined;
+    this.picker.visit(w.x, w.y, (2 * px + 4) / this.scale, node => { if (!moved?.has(node)) test(node); });
+    if (moved) for (const node of moved.keys()) test(node);
+    return picked;
   }
   pickHub(x: number, y: number) {
     for (let i = this.hubs.length - 1; i >= 0; i--) { const h = this.hubs[i]!, sx = (h.x - this.centerX) * this.scale + this.width / 2, sy = (h.y - this.centerY) * this.scale + this.height / 2; if (Math.hypot(sx - x, sy - y) <= h.radius + 3) return h.group; }
@@ -938,6 +950,7 @@ export class DetailRenderer {
       groups: n => { const names = new Map<number, string>(), name = (m: number) => names.get(m) ?? names.set(m, this.name(m)).get(m)!; return connectionGroups(n, this.edges, p, on, this.baseVisible, (a, b) => degree(b) - degree(a) || name(a).localeCompare(name(b))); },
       secondHop: n => reach(n, this.edges, p, on, this.baseVisible, 2),
       isolated: () => !!this.isolation,
+      lensed: n => this.lensWanted >= 0 && this.lensWanted === n,
       act: (a, n) => this.cardAction(a, n),
       travel: n => this.travel(n),
       cue: n => { this.cue = n; this.refresh(); },
@@ -946,7 +959,8 @@ export class DetailRenderer {
   }
   private cardAction(action: CardAction, n: number) {
     const path = this.path(n);
-    if (action === 'focus') this.frameNodes(reach(n, this.edges, this.projection, e => !!this.edgeOn[e], this.filterVisible, 1).nodes);
+    if (action === 'lens') this.setLens(this.lensWanted === n ? -1 : n);
+    else if (action === 'focus') this.frameNodes(reach(n, this.edges, this.projection, e => !!this.edgeOn[e], this.filterVisible, 1).nodes);
     else if (action === 'isolate') this.isolate(this.isolation ? -1 : n);
     else if (action === 'copy') { if (this.copyLink) this.copyLink(path); else void navigator.clipboard?.writeText(`[[${this.name(n)}]]`).catch(() => {}); }
     else if (this.openNote) this.openNote(path, action === 'open' ? 'reuse' : action);
@@ -963,6 +977,8 @@ export class DetailRenderer {
   private travel(n: number) {
     if (!this.baseVisible[n]) return;
     if (this.isolation && this.isolation.node !== n) this.isolate(n, this.isolation.hops, false);
+    // An open lens follows travel so the card and the rings describe the same note.
+    if (this.lensWanted >= 0 && this.lensWanted !== n) this.setLens(n);
     this.selectNote(n, true);
     const f = this.cameraFrame; this.flyTo((this.display[n * 2]! - f.minX) / f.width, (this.display[n * 2 + 1]! - f.minY) / f.height, Math.min(this.camera.ratio, this.homeRatio * .5));
   }
@@ -1158,14 +1174,14 @@ export class DetailRenderer {
   /** Keep the zoom; centre the note. */
   private panTo(n: number) {
     if (n < 0 || !this.visible[n]) return;
-    this.flyTo((this.display[n * 2]! - this.cameraFrame.minX) / this.cameraFrame.width, (this.display[n * 2 + 1]! - this.cameraFrame.minY) / this.cameraFrame.height, this.camera.ratio);
+    this.flyTo((this.renderCoordinate(n, 0) - this.cameraFrame.minX) / this.cameraFrame.width, (this.renderCoordinate(n, 1) - this.cameraFrame.minY) / this.cameraFrame.height, this.camera.ratio);
   }
   /** One expanding ring from the focus to its farthest direct connection (world reach, O(degree)). */
   private startRipple(n: number) {
     const v = this.settings.visuals; this.ripple = undefined;
     if (n < 0 || n !== this.focusNode || !v.focusRipple || !v.hoverHighlight || !this.directs.length || reducedMotion()) return;
-    let reach = 0; const fx = this.display[n * 2]!, fy = this.display[n * 2 + 1]!;
-    for (const d of this.directs) reach = Math.max(reach, Math.hypot(this.display[d * 2]! - fx, this.display[d * 2 + 1]! - fy));
+    let reach = 0; const fx = this.renderCoordinate(n, 0), fy = this.renderCoordinate(n, 1);
+    for (const d of this.directs) reach = Math.max(reach, Math.hypot(this.renderCoordinate(d, 0) - fx, this.renderCoordinate(d, 1) - fy));
     this.ripple = { start: performance.now(), reach };
   }
   /** Per frame: O(direct connections) pip projection, legend visibility and the ripple ring. */
@@ -1174,8 +1190,8 @@ export class DetailRenderer {
     this.legend.hidden = !(on && v.tierLegend && this.tierTotals.some(Boolean));
     const ids = on && focus > 0 && v.offscreenPips && this.tierMask & 1 ? this.directs : [];
     if (this.pipXY.length < ids.length * 2) this.pipXY = new Float64Array(ids.length * 2);
-    const cx = this.centerX, cy = this.centerY, k = this.scale, d = this.display, xy = this.pipXY;
-    for (let i = 0; i < ids.length; i++) { const n = ids[i]!; xy[i * 2] = (d[n * 2]! - cx) * k + this.width / 2; xy[i * 2 + 1] = (d[n * 2 + 1]! - cy) * k + this.height / 2; }
+    const xy = this.pipXY;
+    for (let i = 0; i < ids.length; i++) { const p = this.screenPoint(ids[i]!); xy[i * 2] = p.x; xy[i * 2 + 1] = p.y; }
     const pips = ids.length ? offscreenPips(ids, this.pipXY, this.width, this.height, PIP_INSET) : [];
     this.pipEls.forEach((el, i) => {
       const pip = pips[i]; el.hidden = !pip; if (!pip) return;
