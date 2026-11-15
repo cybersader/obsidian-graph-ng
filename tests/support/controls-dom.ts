@@ -49,7 +49,8 @@ export class ControlElement {
   }
   querySelector(selector: string) { return this.querySelectorAll(selector)[0]; }
 }
+/** A button by its visible text, else (icon buttons) by its accessible name. */
 export function control(root: ControlElement, text: string) {
-  const found = root.querySelectorAll('button').find(child => child.textContent === text);
+  const buttons = root.querySelectorAll('button'), found = buttons.find(child => child.textContent === text) ?? buttons.find(child => child.attributes['aria-label'] === text);
   expect(found).toBeDefined(); return found!;
 }

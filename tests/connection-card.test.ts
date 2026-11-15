@@ -1,5 +1,5 @@
 import { test, expect } from 'bun:test';
-import { connectionGroups, reach, NavHistory, placeCard } from '../src/connection-card';
+import { connectionGroups, reach, NavHistory, dockCard, SHEET_WIDTH } from '../src/connection-card';
 import { incidentEdges } from '../src/render-data';
 
 // Synthetic graph. Types: 0 'cites', 1 'part of'. Node 9 is a relationship-note dot owned by row 0
@@ -67,12 +67,11 @@ test('navigation history: back, forward, a new visit drops the forward branch, r
   h.clear(); expect(h.go(-1)).toBeUndefined(); expect(h.items).toEqual([]);
 });
 
-test('card placement stays on screen: right of the note, else left; below, else above', () => {
-  expect(placeCard(100, 100, 10, 800, 600, 300, 200)).toEqual({ x: 110, y: 114 });
-  expect(placeCard(700, 100, 10, 800, 600, 300, 200)).toEqual({ x: 390, y: 114 });
-  expect(placeCard(100, 550, 10, 800, 600, 300, 200)).toEqual({ x: 110, y: 336 });
-  // Larger than the view: pinned to the margin, never off screen at the top or left.
-  expect(placeCard(50, 50, 10, 200, 100, 300, 200)).toEqual({ x: 8, y: 8 });
+test('the card docks to the top-right edge (no note position involved); narrow views get a bottom sheet', () => {
+  expect(dockCard(800, 600, 320, 200)).toEqual([472, 8, 320, 200]);
+  // Wider than the view: pinned to the left margin, never off screen.
+  expect(dockCard(600, 400, 700, 200)).toEqual([8, 8, 700, 200]);
+  expect(dockCard(SHEET_WIDTH - 1, 600, 300, 240)).toEqual([0, 360, SHEET_WIDTH - 1, 240]);
 });
 
 test('history pruning preserves the current stop and both branches while dropping unavailable indices', () => {

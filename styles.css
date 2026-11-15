@@ -79,16 +79,29 @@
 .graph-ng-overlay { position:absolute; inset:0; pointer-events:none; overflow:hidden; }
 .graph-ng-hover-label, .graph-ng-hub-label { position:absolute; left:0; top:0; white-space:nowrap; font-size:var(--font-ui-small); color:var(--text-normal); background:color-mix(in srgb, var(--background-primary) 82%, transparent); padding:1px 6px; border-radius:var(--radius-s, 4px); }
 .graph-ng-hover-label:empty { display:none; }
-.graph-ng-card { position:absolute; left:0; top:0; width:min(320px, calc(100% - 16px)); max-height:min(480px, calc(100% - 16px)); display:flex; flex-direction:column; gap:6px; pointer-events:auto; overflow-wrap:anywhere; font-size:var(--font-ui-small); color:var(--text-normal); background:var(--background-primary); border:1px solid var(--background-modifier-border); padding:8px; border-radius:var(--radius-m, 8px); box-shadow:var(--shadow-s); }
+/* The card docks to the right edge as a fixed side panel (placed by the renderer) and stacks above every overlay label. */
+.graph-ng-card { position:absolute; left:0; top:0; z-index:2; box-sizing:border-box; width:min(320px, calc(100% - 16px)); max-height:calc(100% - 16px); display:flex; flex-direction:column; gap:6px; pointer-events:auto; overflow-wrap:anywhere; font-size:var(--font-ui-small); color:var(--text-normal); background:var(--background-primary); border:1px solid var(--background-modifier-border); padding:8px; border-radius:var(--radius-m, 8px); box-shadow:var(--shadow-s); }
 .graph-ng-card:empty { display:none; }
 .graph-ng-card.graph-ng-sheet { top:auto; bottom:0; width:100%; max-height:55%; border-radius:var(--radius-m, 8px) var(--radius-m, 8px) 0 0; }
 .graph-ng-card button { min-height:32px; }
-.graph-ng-card-head { display:flex; align-items:center; gap:4px; }
+.graph-ng-card-head { display:flex; align-items:center; gap:2px; }
 .graph-ng-card-title { flex:1 1 auto; min-width:0; font-size:var(--font-ui-medium); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.graph-ng-card .graph-ng-card-nav { min-width:32px; padding:0 6px; }
+.graph-ng-card .graph-ng-card-nav { min-width:32px; padding:0 6px; background:none; box-shadow:none; color:var(--icon-color, var(--text-muted)); }
+.graph-ng-card .graph-ng-card-nav:hover:not(:disabled) { background:var(--background-modifier-hover); color:var(--text-normal); }
+.graph-ng-card-icon { display:inline-flex; flex:none; }
+.graph-ng-card-icon svg { width:16px; height:16px; }
 .graph-ng-card-trail { display:flex; flex-wrap:wrap; gap:4px; }
 .graph-ng-card-trail button { font-size:var(--font-ui-smaller); max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.graph-ng-card-chips, .graph-ng-card-actions { display:flex; flex-wrap:wrap; gap:4px; }
+.graph-ng-card-chips { display:flex; flex-wrap:wrap; gap:4px; }
+/* Segmented Open control: three equal segments sharing one outline. */
+.graph-ng-card-open { display:flex; }
+.graph-ng-card-open > button { flex:1 1 0; min-width:0; padding:0 6px; border-radius:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.graph-ng-card-open > button + button { margin-left:1px; }
+.graph-ng-card-open > button:first-child { border-radius:var(--radius-s, 4px) 0 0 var(--radius-s, 4px); }
+.graph-ng-card-open > button:last-child { border-radius:0 var(--radius-s, 4px) var(--radius-s, 4px) 0; }
+/* Icon+label grid: labels wrap rather than clip. */
+.graph-ng-card-actions { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:4px; }
+.graph-ng-card-actions > button { display:flex; align-items:center; justify-content:flex-start; gap:6px; min-width:0; height:auto; padding:4px 8px; white-space:normal; text-align:left; line-height:1.2; }
 .graph-ng-card-actions button[aria-pressed=true] { background:var(--interactive-accent); color:var(--text-on-accent); }
 .graph-ng-connections { display:flex; flex-direction:column; min-height:0; overflow:auto; border-top:1px solid var(--background-modifier-border); padding-top:4px; }
 .graph-ng-connection-group { display:flex; justify-content:space-between; gap:8px; padding:6px 4px 2px; color:var(--text-muted); font-size:var(--font-ui-smaller); }

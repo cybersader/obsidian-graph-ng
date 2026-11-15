@@ -1,3 +1,4 @@
+import { setIcon } from 'obsidian';
 import type { RenderProjection } from './render-projection';
 /** Incident-edge CSR (`incidentEdges`): per node, every edge row touching it. */
 export interface Incidence { offsets: Uint32Array; edges: Uint32Array }
@@ -65,14 +66,14 @@ export class NavHistory {
   }
   clear() { this.items = []; this.at = -1; }
 }
-/** Keep a w×h card on screen beside a node at (x, y): right of it, else left; below, else above. */
-export function placeCard(x: number, y: number, gap: number, width: number, height: number, w: number, h: number, m = 8) {
-  let left = x + gap, top = y + 14;
-  if (left + w > width - m) left = x - gap - w;
-  if (top + h > height - m) top = y - 14 - h;
-  return { x: Math.round(Math.max(m, Math.min(left, width - m - w))), y: Math.round(Math.max(m, Math.min(top, height - m - h))) };
+/** Views narrower than this show the card as a bottom sheet instead of a docked side panel. */
+export const SHEET_WIDTH = 520;
+/** The card's rectangle [x, y, w, h] in a width×height view: docked to the top-right edge (a fixed
+ * side panel that never follows the camera), or a full-width bottom sheet on narrow views. */
+export function dockCard(width: number, height: number, w: number, h: number, m = 8): [number, number, number, number] {
+  return width < SHEET_WIDTH ? [0, height - h, width, h] : [Math.max(m, width - m - w), m, w, h];
 }
-export type CardAction = 'open' | 'tab' | 'split' | 'focus' | 'isolate' | 'lens' | 'copy' | 'lock';
+export type CardAction = 'open' | 'tab' | 'split' | 'focus' | 'isolate' | 'lens' | 'copy';
 export interface CardHost {
   name(n: number): string;
   color(n: number): string;
@@ -81,8 +82,6 @@ export interface CardHost {
   isolated(): boolean;
   /** Whether the connection lens is open on this note; hosts without a lens omit it (no Lens action). */
   lensed?(n: number): boolean;
-  /** Whether hover is locked out of moving the highlight; hosts without a lock omit it. */
-  locked?(): boolean;
   act(action: CardAction, n: number): void;
   travel(n: number): void;
   cue(n: number): void;
@@ -91,6 +90,14 @@ export interface CardHost {
 const ROWS = 50;
 export const el = (tag: string, text = '', cls = '') => Object.assign(document.createElement(tag), { textContent: text, className: cls });
 export const button = (text: string, label: string, run: () => void, cls = '') => { const b = el('button', text, cls) as HTMLButtonElement; b.setAttribute('aria-label', label); b.onclick = run; return b; };
+/** An icon button (Obsidian `setIcon`), with an optional visible label beside the icon. */
+export const iconButton = (icon: string, label: string, run: () => void, text = '', cls = 'graph-ng-card-nav') => {
+  const b = button('', label, run, cls); setIcon(b.appendChild(el('span', '', 'graph-ng-card-icon')), icon);
+  if (text) b.append(el('span', text)); else b.title = label;
+  return b;
+};
+/** The X close control: an icon with the accessible name "Close", never a visible "Close" label. */
+export const closeButton = (run: () => void) => iconButton('x', 'Close', run);
 /** The connection navigator: header with counts, actions, and the grouped Connections list.
  * Text-only: note names are untrusted and only ever set through textContent. */
 export class ConnectionCard {
@@ -102,14 +109,13 @@ export class ConnectionCard {
   private limit = ROWS;
   private moving = false;
   private lensToggle?: HTMLElement;
-  private lockToggle?: HTMLElement;
   constructor(readonly root: HTMLElement, private host: CardHost) {}
   show(n: number) {
     if (n !== this.node) this.limit = ROWS;
     this.node = n; if (!this.moving) this.history.visit(n); this.render();
   }
   /** Closing keeps the visit history (the breadcrumb outlives the card); the renderer clears it on a view change. */
-  hide() { this.node = -1; this.rows = []; this.size = undefined; this.lensToggle = this.lockToggle = undefined; this.root.textContent = ''; this.root.removeAttribute?.('aria-label'); }
+  hide() { this.node = -1; this.rows = []; this.size = undefined; this.lensToggle = undefined; this.root.textContent = ''; this.root.removeAttribute?.('aria-label'); }
   /** Back (-1) or forward (1) through visited notes, also from a closed card (the breadcrumb). */
   step(step: number) {
     const n = this.history.go(step); if (n === undefined) return false;
@@ -124,24 +130,27 @@ export class ConnectionCard {
   render(focus = -1) {
     const n = this.node, h = this.host, c = this.root, name = h.name(n), { groups, direct } = h.groups(n), two = h.secondHop(n);
     c.textContent = ''; this.rows = []; this.size = undefined; c.setAttribute('role', 'region'); c.setAttribute('aria-label', 'Connections of ' + name);
+    // Header: the note name, then back, forward and close as icon buttons.
     const head = c.appendChild(el('div', '', 'graph-ng-card-head')), { items, at } = this.history;
-    const back = head.appendChild(button('‹', 'Back', () => this.step(-1), 'graph-ng-card-nav')), forward = head.appendChild(button('›', 'Forward', () => this.step(1), 'graph-ng-card-nav'));
+    const title = head.appendChild(el('strong', name, 'graph-ng-card-title')); title.setAttribute('aria-live', 'polite'); title.title = name;
+    const back = head.appendChild(iconButton('chevron-left', 'Back', () => this.step(-1))), forward = head.appendChild(iconButton('chevron-right', 'Forward', () => this.step(1)));
     back.disabled = at <= 0; forward.disabled = at >= items.length - 1;
-    const title = head.appendChild(el('strong', name, 'graph-ng-card-title')); title.setAttribute('aria-live', 'polite');
-    head.append(button('×', 'Close', () => h.close(), 'graph-ng-card-nav'));
+    head.append(closeButton(() => h.close()));
     if (at > 0) {
       const trail = c.appendChild(el('nav', '', 'graph-ng-card-trail')); trail.setAttribute('aria-label', 'Visited notes');
       for (let i = Math.max(0, at - 3); i < at; i++) trail.append(button(h.name(items[i]!), 'Back to ' + h.name(items[i]!), () => this.step(i - this.history.at)));
     }
     const chips = c.appendChild(el('div', '', 'graph-ng-card-chips'));
     chips.append(el('span', `${direct.toLocaleString()} direct connection${direct === 1 ? '' : 's'}`, 'graph-ng-summary-chip'), el('span', `${two.second.toLocaleString()}${two.truncated ? '+' : ''} neighbours of neighbours`, 'graph-ng-summary-chip'));
-    const actions = c.appendChild(el('div', '', 'graph-ng-card-actions')), act = (a: CardAction) => () => h.act(a, n);
-    actions.append(button('Open', 'Open ' + name, act('open')), button('New tab', `Open ${name} in a new tab`, act('tab')), button('Right', `Open ${name} to the right`, act('split')),
-      button('Focus', `Focus here: fit ${name} and its direct connections`, act('focus')));
-    const only = actions.appendChild(button('Only connections', 'Show only connections of ' + name, act('isolate'))); only.setAttribute('aria-pressed', String(h.isolated()));
-    this.lensToggle = h.lensed ? actions.appendChild(button('Lens', 'Connection lens for ' + name, act('lens'))) : undefined; this.syncLens();
-    this.lockToggle = h.locked ? actions.appendChild(button('', 'Lock focus: hover only previews other notes (K)', act('lock'))) : undefined; this.syncLock();
-    actions.append(button('Copy link', 'Copy link to ' + name, act('copy')));
+    // One segmented "Open" control, then an icon+label grid that wraps instead of clipping.
+    const act = (a: CardAction) => () => h.act(a, n), open = c.appendChild(el('div', '', 'graph-ng-card-open'));
+    open.setAttribute('role', 'group'); open.setAttribute('aria-label', 'Open ' + name);
+    open.append(button('Open', 'Open ' + name, act('open')), button('New tab', `Open ${name} in a new tab`, act('tab')), button('Right', `Open ${name} to the right`, act('split')));
+    const actions = c.appendChild(el('div', '', 'graph-ng-card-actions')), tool = (icon: string, text: string, label: string, a: CardAction) => actions.appendChild(iconButton(icon, label, act(a), text, ''));
+    tool('crosshair', 'Focus', `Focus here: fit ${name} and its direct connections`, 'focus');
+    tool('network', 'Only connections', 'Show only connections of ' + name, 'isolate').setAttribute('aria-pressed', String(h.isolated()));
+    this.lensToggle = h.lensed ? tool('search', 'Lens', 'Connection lens for ' + name, 'lens') : undefined; this.syncLens();
+    tool('link', 'Copy link', 'Copy link to ' + name, 'copy');
     const list = c.appendChild(el('div', '', 'graph-ng-connections')); list.setAttribute('aria-label', 'Connections');
     if (!groups.length) list.append(el('div', 'No direct connections', 'graph-ng-explore-note'));
     let left = this.limit; const total = groups.reduce((s, g) => s + g.nodes.length, 0);
@@ -166,8 +175,6 @@ export class ConnectionCard {
   }
   /** Reflect the host's lens state on the Lens action (aria-pressed). */
   syncLens() { if (this.lensToggle && this.node >= 0) this.lensToggle.setAttribute('aria-pressed', String(!!this.host.lensed?.(this.node))); }
-  /** Reflect the focus lock on its chip: "Focus locked" while on. */
-  syncLock() { const b = this.lockToggle, on = !!this.host.locked?.(); if (b && this.node >= 0) { b.textContent = on ? 'Focus locked' : 'Lock focus'; b.setAttribute('aria-pressed', String(on)); } }
   /** Expand the Connections list as "Show all" does (in chunks of at most 1000 rows) and focus its first row. */
   showAll() {
     if (this.node < 0) return;

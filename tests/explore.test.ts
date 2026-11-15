@@ -351,3 +351,10 @@ test('a density reference of 0 disables thinning for edge notes and edges', () =
   expect(carrierAlpha(v, 1e6, 1)).toBeLessThan(v.carrierOpacity);
   expect(edgeAlpha({ ...v, edgeDensityReference: 0 }, 1e6, 1, false)).toBeCloseTo(edgeAlpha(v, 1, 1, false), 6);
 });
+test('saved settings from before the click-to-focus model drop the removed hover delay and still validate', () => {
+  const saved = JSON.parse(JSON.stringify(defaults('t@1'))); saved.visuals.hoverDwellMs = 350;
+  const upgraded = upgradeSettings(saved, 't@1');
+  expect('hoverDwellMs' in upgraded.visuals).toBe(false); expect(upgraded.visuals.hoverHighlight).toBe(true);
+  expect(() => validateVisuals({ ...upgraded.visuals, hoverDwellMs: 350 })).toThrow('Unknown');
+  expect(saved.visuals.hoverDwellMs).toBe(350); // the caller's object is untouched
+});

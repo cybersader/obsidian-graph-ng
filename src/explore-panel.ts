@@ -599,7 +599,7 @@ export class ExplorePanel {
     this.flag(host, 'groupHalos', 'Group halos (faint tint behind groups at mid zoom)');
     this.guard(host, 'halos');
     this.flag(host, 'autoPalette', 'Color by group when no rule matches');
-    this.flag(host, 'hoverHighlight', 'Graduated connections on hover or selection');
+    this.flag(host, 'hoverHighlight', 'Graduated connections on the selected note');
     this.note(host, 'Direct connections brightest, then neighbours of neighbours; the rest fades. Ancestor or framework levels need declared structural relationships; none are inferred.');
     if (this.host.toggleLens) {
       this.lensButton = host.createEl('button', { cls: 'graph-ng-lens-toggle', attr: { 'aria-label': 'Connection lens', 'aria-pressed': 'false' } });
@@ -616,8 +616,6 @@ export class ExplorePanel {
     this.flag(find, 'tierLegend', 'Legend with counts per tier');
     this.flag(find, 'focusRipple', 'Ripple when selecting a note');
     this.flag(find, 'bridgesFirst', 'Bridges first: rank connections to other groups higher');
-    this.slider(find, 'Hover delay (ms)', { min: 0, max: 2000, k: 2 }, () => v.hoverDwellMs, x => { v.hoverDwellMs = Math.round(x); });
-    this.note(find, 'With a note selected, hover only rings others until you rest. Alt skips; K locks.');
     this.flag(find, 'breadcrumb', 'Trail of visited notes along the top');
     this.flag(find, 'minimap', 'Minimap (hidden under 500 px wide)');
     this.flag(host, 'labelFade', 'Fade labels by zoom and importance', true);

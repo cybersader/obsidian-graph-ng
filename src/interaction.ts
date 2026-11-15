@@ -38,8 +38,8 @@ export interface RendererControls {
   selectEdge(edge: number): void;
   /** Step through the selection's relationships; false when there is nothing to step. */
   cycleEdge(step: number): boolean;
-  /** Set hover state, re-emphasize and redraw. A preview rings and labels the note but keeps the highlight on the selection. */
-  setHover(node: number, edge: number, preview?: boolean): void;
+  /** Set the light hover preview (ring and name) and redraw. Hover never moves the graduated highlight. */
+  setHover(node: number, edge: number): void;
   /** Tooltip for what is under the pointer; also sets the cursor when `cursor` is true. */
   hint(hub: number, node: number, edge: number, cursor: boolean): void;
   /** Note is filter-visible and can be opened. */
@@ -65,7 +65,7 @@ export interface RendererControls {
   focusCanvas(): void;
   /** Go to a note as the card's Go to does: select it with its card and fly the camera there. */
   flyToNote(node: number): void;
-  /** A connection-card action on a note: open modes, focus, lens, only connections, copy, lock. */
+  /** A connection-card action on a note: open modes, focus, lens, only connections, copy. */
   act(action: CardAction, node: number): void;
   /** Select a note, show its card and fly to it. */
   travel(node: number): void;
@@ -135,11 +135,11 @@ export const registerAction = (action: Action) => actions.register(action);
 
 const ARROWS = ['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp'];
 // Escape layers: the card (or relationship card) first, then the lens, then a card-less selection, then "Only connections".
+// Hover holds no focus, so there is no hover layer.
 for (const action of [
   { id: 'close-card', label: 'Close card', key: 'Escape', order: 10, when: ({ host }) => host.cardNode >= 0 || host.edgeCard, run: ({ host }) => { host.selectNote(-1, false, true); host.focusCanvas(); } },
   { id: 'close-lens', label: 'Close connection lens', key: 'Escape', order: 20, when: ({ host }) => host.lensNode >= 0, run: ({ host }) => { host.setLens(-1); host.focusCanvas(); } },
   { id: 'clear-selection', label: 'Clear selection', key: 'Escape', order: 30, when: ({ host }) => host.selected >= 0, run: ({ host }) => { host.selectNote(-1); host.focusCanvas(); } },
-  { id: 'clear-hover', label: 'Clear highlight', key: 'Escape', order: 40, when: ({ host }) => host.hovered >= 0, run: ({ host }) => host.selectNote(-1) },
   { id: 'show-all', label: 'Show all notes', key: 'Escape', order: 50, when: ({ host }) => host.isolated, run: ({ host }) => host.isolate(-1) },
   { id: 'history-step', label: 'Back or forward', key: ['ArrowLeft', 'ArrowRight'], order: 60, when: ({ event }) => !!event?.altKey, run: ({ host, event }) => host.cardStep(event!.key === 'ArrowLeft' ? -1 : 1) },
   { id: 'toggle-lens', label: 'Toggle connection lens', key: ['l', 'L'], order: 70, when: ({ event: e }) => !e || !e.altKey && !e.ctrlKey && !e.metaKey && !e.repeat, run: ({ host }) => host.toggleLens() },
@@ -165,7 +165,7 @@ export class Interaction {
   private downX = 0;
   private downY = 0;
   private lastPointer?: { clientX: number; clientY: number };
-  /** Context menu, long-press and hover intent (src/context-menu.ts). */
+  /** Context menu and touch long-press (src/context-menu.ts). */
   readonly gestures: Gestures;
   constructor(private host: RendererControls, private registry = actions) { this.gestures = new Gestures(host, registry); }
   attach(container: HTMLElement) {
@@ -198,11 +198,9 @@ export class Interaction {
     }
     const rect = h.canvas.getBoundingClientRect(), x = e.clientX - rect.left, y = e.clientY - rect.top;
     const hub = h.pickHub(x, y), node = hub >= 0 ? -1 : h.pick(x, y), edge = node < 0 && hub < 0 ? h.pickEdge(x, y) : -1;
-    // With no selection, keep the last hover focus across empty canvas so its controls
-    // can be reached. Another node, an empty click, or leaving the graph clears it.
-    const keep = node < 0 && hub < 0 && h.selected < 0 && h.focusNode >= 0 && h.settings.visuals.hoverHighlight, next = keep ? h.hovered : node;
-    if (next === h.hovered && edge === h.hoveredEdge && !(e.altKey && this.gestures.previewing)) return;
-    this.gestures.hover(next, edge, e.altKey); h.hint(hub, node, edge, true);
+    // Hover is a light preview only: a ring and the name. Only a click moves the highlight and card.
+    if (node === h.hovered && edge === h.hoveredEdge) return;
+    h.setHover(node, edge); h.hint(hub, node, edge, true);
   };
   pointerUp = (e: PointerEvent) => {
     const h = this.host; if (!h.live) return;
@@ -233,7 +231,7 @@ export class Interaction {
   pointerLeave = (e?: PointerEvent) => {
     const h = this.host, next = e?.relatedTarget;
     if (next && h.owns(next)) return;
-    this.lastPointer = undefined; if (!this.pointers.size) { this.gestures.hover(-1, -1); h.hint(-1, -1, -1, false); }
+    this.lastPointer = undefined; if (!this.pointers.size) { h.setHover(-1, -1); h.hint(-1, -1, -1, false); }
   };
   wheel = (e: WheelEvent) => {
     e.preventDefault(); const h = this.host; if (!h.live) return;

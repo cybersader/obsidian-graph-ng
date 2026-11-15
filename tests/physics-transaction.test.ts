@@ -52,7 +52,7 @@ afterEach(() => {
 let fixtureReducedMotion = false;
 const rendererWindow = { devicePixelRatio: 1 };
 const module = { exports: {} as any };
-const obsidian = { ItemView: class {}, Menu: class {}, Plugin: class {}, PluginSettingTab: class {}, Setting: class {}, TFile: class {}, apiVersion: 'synthetic', Notice: class {} };
+const obsidian = { ItemView: class {}, Menu: class {}, Plugin: class {}, PluginSettingTab: class {}, Setting: class {}, TFile: class {}, apiVersion: 'synthetic', Notice: class {}, setIcon: (el: any, icon: string) => { el.dataset ??= {}; el.dataset.icon = icon; } };
 vm.runInNewContext(source + `\n;module.exports.__renderer=${rendererName};`, { module, exports: module.exports, require: () => obsidian, console, structuredClone, setTimeout: fixtureTimeout, clearTimeout: clearFixtureTimeout, performance, TextEncoder, TextDecoder, MessageChannel, document, window: rendererWindow, devicePixelRatio: 1, getComputedStyle: () => ({ getPropertyValue: () => '' }), matchMedia: (query: string) => ({ matches: query.includes('prefers-reduced-motion') && fixtureReducedMotion, addEventListener() {}, removeEventListener() {} }), ResizeObserver: class { observe() {} disconnect() {} }, requestAnimationFrame: requestFrame, cancelAnimationFrame: cancelFrame }, { filename: 'production-main.js' });
 const GraphPlugin = module.exports.default, GraphView = module.exports.GraphView, Renderer = module.exports.__renderer;
 const mangle = JSON.parse(readFileSync(new URL('../.workspace/evidence/main-mangle-cache.json', import.meta.url), 'utf8'));
@@ -295,8 +295,6 @@ test('zoom DPR-only change updates backing resolution on next production paint w
 // recorded GL upload calls only. No GPU raster, native visual quality, FPS or device input is claimed.
 async function graduated(pairs: [number, number][], n = 5, max = 0) {
   const settings = defaults('links'), opened: number[] = [], p: any = projection(n);
-  // Tier-authority tests retier on every hover; hover intent (dwell, preview, lock) has its own tests.
-  settings.visuals.hoverDwellMs = 0;
   if (max) { settings.canvasMaxDetailNodes = max; settings.canvasMaxDetailEdges = max; }
   Object.assign(p, { source: Uint32Array.from(pairs, x => x[0]), target: Uint32Array.from(pairs, x => x[1]), type: new Uint32Array(pairs.length), types: ['link'], carrier: new Uint32Array(pairs.length).fill(0xffffffff) });
   const positions = Float32Array.from({ length: n * 2 }, (_, i) => i % 2 ? (i >> 1) * 37 % 100 : (i >> 1) * 50);
@@ -311,22 +309,25 @@ async function graduated(pairs: [number, number][], n = 5, max = 0) {
   return { r, settings, opened, k, tap, hover, tiers, expected, actual: () => [tiers(), [...r[k('edgeTier')]]] };
 }
 const EMPTY = { x: 1, y: 599 };
-test('graduated production selection and hover drive one CPU tier authority; every reset path clears', async () => {
+test('graduated production: a click is the one CPU tier authority, hover never retiers; every reset path clears', async () => {
   const f = await graduated([[0, 1], [1, 2], [2, 3]]), { r, k } = f;
   const camera = { ...r.camera }, positions = r.positions, rows = r.projection.source, saved = JSON.stringify(f.settings);
   // A click selects and shows the connection card; it no longer opens by itself.
   f.tap(0); expect(f.opened).toEqual([]); expect(r.selected).toBe(0); expect(f.actual()).toEqual([[255, 255, 128, 0, 0], [255, 128, 0]]);
-  f.hover(3); expect(f.actual()).toEqual(f.expected(3)); expect(f.tiers()).toEqual([0, 128, 255, 255, 0]);
-  r[k('pointerLeave')](); expect(f.actual()).toEqual(f.expected(0));
-  for (const i of [1, 3, 1, 4, 2, 2, 0]) { f.hover(i); expect(f.actual()).toEqual(f.expected(i)); }
+  // Hover is a light preview: it rings the note but the tiers stay on the click.
+  for (const i of [3, 1, 4, 2]) { f.hover(i); expect(r.hovered).toBe(i); expect(f.actual()).toEqual(f.expected(0)); }
+  r[k('pointerLeave')](); expect(r.hovered).toBe(-1); expect(f.actual()).toEqual(f.expected(0));
+  for (const i of [1, 3, 1, 4, 2, 2, 0]) { f.tap(i); expect(f.actual()).toEqual(f.expected(i)); }
   f.hover(EMPTY); expect(f.actual()).toEqual(f.expected(0));
   const all = new Uint8Array(5).fill(1);
   r.setView(all, { typeHidden: new Uint8Array([1]) }); expect(f.actual()).toEqual(f.expected(0, new Uint8Array(3))); expect(f.tiers()).toEqual([255, 0, 0, 0, 0]);
   r.setView(new Uint8Array([1, 0, 1, 1, 1]), {}); expect(f.actual()).toEqual(f.expected(0, undefined, new Uint8Array([1, 0, 1, 1, 1])));
   r.setView(new Uint8Array([0, 1, 1, 1, 1]), {}); expect(f.actual()).toEqual([[0, 0, 0, 0, 0], [0, 0, 0]]);
   r.setView(all, {}); expect(f.actual()).toEqual(f.expected(0));
-  f.settings.visuals.hoverHighlight = false; f.hover(2); expect(f.actual()).toEqual([[0, 0, 0, 0, 0], [0, 0, 0]]);
-  f.settings.visuals.hoverHighlight = true; f.hover(1); expect(f.actual()).toEqual(f.expected(1));
+  f.settings.visuals.hoverHighlight = false; f.tap(2); expect(f.actual()).toEqual([[0, 0, 0, 0, 0], [0, 0, 0]]);
+  f.settings.visuals.hoverHighlight = true; f.tap(1); expect(f.actual()).toEqual(f.expected(1));
+  // With nothing selected, hover still only previews.
+  f.tap(EMPTY); f.hover(2); expect(r.hovered).toBe(2); expect(f.actual()).toEqual([[0, 0, 0, 0, 0], [0, 0, 0]]);
   r[k('pointerLeave')](); f.tap(EMPTY); expect(r.selected).toBe(-1); expect(f.actual()).toEqual([[0, 0, 0, 0, 0], [0, 0, 0]]); expect(f.opened).toEqual([]);
   expect(r.camera).toEqual(camera); expect(r.positions).toBe(positions); expect(r.projection.source).toBe(rows); expect(JSON.stringify(f.settings)).toBe(saved);
 });
@@ -400,8 +401,10 @@ test('graduated production labels: focus largest, direct then 2-hop by priority,
   f.settings.labelsMaxPerViewport = 1; f.tap(2); expect(paint()).toEqual([]); f.settings.labelsMaxPerViewport = 400;
   f.tap(3); expect(paint().map((x: string[]) => x[0])).toEqual([name(2), name(4), name(1)]);
   f.tap(EMPTY); expect(paint()).toEqual([]); expect(r[k('hoverLabel')].textContent).toBe('');
-  f.settings.visuals.hoverHighlight = false; f.hover(2); expect(paint()).toEqual([]); expect(r[k('hoverLabel')].className).toBe('graph-ng-hover-label');
-  f.settings.visuals.hoverHighlight = true; f.hover(3); expect(paint().length).toBe(3); r[k('pointerLeave')](); expect(paint()).toEqual([]);
+  f.settings.visuals.hoverHighlight = false; f.tap(2); f.hover(2); expect(paint()).toEqual([]); expect(r[k('hoverLabel')].className).toBe('graph-ng-hover-label');
+  // Hover shows only the name, never the graduated labels; a click shows them.
+  f.settings.visuals.hoverHighlight = true; f.tap(EMPTY); f.hover(3); expect(paint()).toEqual([]); expect(r[k('hoverLabel')].textContent).toBe(name(3));
+  f.tap(3); expect(paint().length).toBe(3); f.tap(EMPTY); expect(paint()).toEqual([]);
 });
 test('graduated labels fold unlabelled direct connections into a "+N more" button wired to onMoreConnections', async () => {
   const f = await graduated(Array.from({ length: 40 }, (_, i) => [0, i + 1] as [number, number]), 41), { r, k } = f, asked: number[] = [];
@@ -442,7 +445,7 @@ test('graduated production dense hub reports deterministic 2-hop truncation in t
   const pairs: [number, number][] = [[0, 1], [0, 2]]; let id = 3;
   for (const hub of [1, 2]) for (let i = 0; i < 33000; i++) pairs.push([hub, id++]);
   const f = await graduated(pairs, id, 70000), { r, k } = f, started = performance.now();
-  f.hover(0); const ms = performance.now() - started; r[k('placeOverlay')]();
+  f.tap(0); const ms = performance.now() - started; r[k('focusLevel')] = 1; r[k('placeOverlay')]();
   expect(r[k('hoverLabel')].textContent).toContain('2-hop context truncated'); expect(f.tiers().filter(v => v === 128).length).toBeLessThanOrEqual(65536);
   expect(f.actual()).toEqual(f.expected(0)); expect(ms).toBeLessThan(5000);
   f.hover(3); r[k('placeOverlay')](); expect(r[k('hoverLabel')].textContent).not.toContain('truncated');
@@ -486,7 +489,7 @@ test('connection card: grouped rows travel, history goes back and forward, keys 
   expect(card().textContent).toContain('2 direct connections'); expect(card().textContent).toContain('2 neighbours of neighbours'); expect(card().textContent).not.toContain('·');
   // Equal-size groups: outgoing first. Rows are text-only names with a swatch.
   expect(rows().map((b: any) => b.textContent)).toEqual(['2', '0']); expect(rows()[1].attributes['aria-label']).toBe('Go to 0 (incoming)');
-  expect(control(card(), '‹').disabled).toBe(true);
+  expect(control(card(), 'Back').disabled).toBe(true); expect(card().textContent).not.toContain('Close');
   // Hover/focus a row: ring and leader line to that note; leaving clears.
   rows()[0].onmouseenter(); r[k('placeOverlay')](); expect(r[k('cueRing')].hidden).toBe(false); expect(r[k('cueLine')].style.transform).toContain('rotate(');
   rows()[0].onmouseleave(); r[k('placeOverlay')](); expect(r[k('cueRing')].hidden).toBe(true);
@@ -494,7 +497,7 @@ test('connection card: grouped rows travel, history goes back and forward, keys 
   rows()[1].click(); expect(r.selected).toBe(0); expect(f.actual()).toEqual(f.expected(0)); expect(r[k('flight')]).toBeDefined(); expect(f.opened).toEqual([]);
   expect(card().textContent).toContain('2 direct connections'); expect(control(card(), '1').attributes['aria-label']).toBe('Back to 1');
   expect(r[k('keyDown')]({ key: 'ArrowLeft', altKey: true, target: r.canvas, preventDefault() {} })).toBeUndefined(); expect(r.selected).toBe(1);
-  expect(cardKey('ArrowRight', card(), true)).toBe(true); expect(r.selected).toBe(0); expect(control(card(), '›').disabled).toBe(true);
+  expect(cardKey('ArrowRight', card(), true)).toBe(true); expect(r.selected).toBe(0); expect(control(card(), 'Forward').disabled).toBe(true);
   // Arrow keys move through rows; Escape closes the card and returns focus to the canvas.
   rows()[0].focus(); expect(cardKey('ArrowDown', rows()[0])).toBe(true); expect((ControlElement as any).active).toBe(rows()[1]);
   expect(cardKey('End', rows()[1])).toBe(true); expect(cardKey('Home', rows()[1])).toBe(true); expect((ControlElement as any).active).toBe(rows()[0]);
@@ -736,18 +739,15 @@ test('wiring: card Lens action, lens-displaced picking/arrows/cue/labels, and Es
 });
 
 // Review regressions exercise the shipped class, not an alternate UI implementation.
-test('review: hover-only controls remain reachable across empty canvas and overlay entry, then dismiss and clean up', async () => {
+test('review: hover never shows the focus controls; a click does, and they stay when the pointer leaves for the overlay', async () => {
   const f = await graduated(Array.from({ length: 40 }, (_, i) => [0, i + 1] as [number, number]), 41), { r, k } = f;
   r.onMoreConnections = (n: number) => r.showConnections(n);
   f.hover(0); r[k('focusLevel')] = 1; r[k('placeOverlay')]();
-  const more = r[k('moreButton')]; expect(more.hidden).toBe(false); expect(r.selected).toBe(-1);
-  f.hover(EMPTY); expect(r[k('focusNode')]).toBe(0);
-  r[k('pointerLeave')]({ relatedTarget: more }); r[k('placeOverlay')]();
-  expect(more.hidden).toBe(false); expect(r[k('legend')].hidden).toBe(false);
-  more.click(); expect(r.selected).toBe(0); expect(r.card.node).toBe(0);
-  f.tap(EMPTY); f.hover(0); r[k('keyDown')]({ key: 'Escape', target: r.canvas, preventDefault() {} });
-  expect(r[k('focusNode')]).toBe(-1);
-  f.hover(0); r[k('pointerLeave')]({ relatedTarget: new Element() }); expect(r[k('focusNode')]).toBe(-1);
+  expect(r[k('focusNode')]).toBe(-1); expect(r[k('moreButton')]).toBeUndefined(); expect(r[k('legend')].hidden).toBe(true); expect(r.card.node).toBe(-1);
+  f.tap(0); r[k('focusLevel')] = 1; r[k('placeOverlay')]();
+  const more = r[k('moreButton')]; expect(more.hidden).toBe(false); expect(r[k('legend')].hidden).toBe(false);
+  r[k('pointerLeave')]({ relatedTarget: more }); f.hover(EMPTY); r[k('placeOverlay')](); expect(r[k('focusNode')]).toBe(0); expect(more.hidden).toBe(false);
+  r[k('keyDown')]({ key: 'Escape', target: r.canvas, preventDefault() {} }); expect(r[k('focusNode')]).toBe(-1);
   const container = r.container; expect(container.listeners.has('pointerleave')).toBe(true);
   r.dispose(); expect(container.listeners.has('pointerleave')).toBe(false);
 });
@@ -786,8 +786,8 @@ test('review: filtered history skips removed targets without drifting from the d
   expect(r.card.history.items).toEqual([0, 1, 2]);
   r.setView(new Uint8Array([1, 0, 1, 1, 1]), {});
   expect(r.card.history.items).toEqual([0, 2]); expect(r.card.history.at).toBe(1);
-  control(r[k('noteCard')], '‹').click(); expect(r.selected).toBe(0); expect(r.card.node).toBe(0); expect(r.card.history.at).toBe(0);
-  control(r[k('noteCard')], '›').click(); expect(r.selected).toBe(2); expect(r.card.history.at).toBe(1);
+  control(r[k('noteCard')], 'Back').click(); expect(r.selected).toBe(0); expect(r.card.node).toBe(0); expect(r.card.history.at).toBe(0);
+  control(r[k('noteCard')], 'Forward').click(); expect(r.selected).toBe(2); expect(r.card.history.at).toBe(1);
   // Local isolation does not discard history still available under the host filter.
   r.isolate(2, 1, false); expect(r.card.history.items).toEqual([0, 2]);
   r.card.step(-1); expect(r.selected).toBe(0); expect(r.card.node).toBe(0); expect(r.card.history.items).toEqual([0, 2]); expect(r.card.history.at).toBe(0);
@@ -843,26 +843,74 @@ test('review: Open reuses only unpinned notes and reveals the destination; expli
   expect(requested.slice(-2)).toEqual([['tab'], ['split', 'vertical']]); expect(opened).not.toContain('pinned');
 });
 
-// Wave-4 hover intent and context menu through the compiled renderer (Canvas fixture, synthetic DOM).
-// The Obsidian Menu itself is a host seam; native menu rendering is not claimed.
-test('hover intent: a selection makes hover a preview until the dwell or Alt; Lock focus (card chip, K) holds it until deselect', async () => {
+// Wave-5 focus model and docked card through the compiled renderer (Canvas fixture, synthetic DOM).
+// The Obsidian Menu itself is a host seam; native menu rendering and CSS stacking are not claimed.
+test('focus model: hover never retiers or opens the card; a click commits a sticky focus that only a click, row, history or Escape changes', async () => {
   const f = await graduated([[0, 1], [1, 2], [2, 3]]), { r, k } = f, card = () => r[k('noteCard')];
   const key = (key: string) => { let handled = false; r[k('keyDown')]({ key, target: r.canvas, preventDefault() { handled = true; } }); return handled; };
   const alt = (n: number) => { const p = r.screenPoint(n); r[k('pointerMove')]({ pointerId: 9, clientX: p.x, clientY: p.y, pointerType: 'mouse', altKey: true }); };
-  f.settings.visuals.hoverDwellMs = 30;
-  f.hover(3); expect(f.actual()).toEqual(f.expected(3)); // nothing selected: as before
-  r[k('pointerLeave')](); f.tap(0);
-  f.hover(3); expect(r.hovered).toBe(3); expect(f.actual()).toEqual(f.expected(0)); // preview: ring and label only
-  await Bun.sleep(60); expect(f.actual()).toEqual(f.expected(3)); // dwell retiers
-  f.hover(2); expect(f.actual()).toEqual(f.expected(0)); alt(2); expect(f.actual()).toEqual(f.expected(2)); // Alt retiers now
-  const chip = control(card(), 'Lock focus'); expect(chip.attributes['aria-pressed']).toBe('false');
-  chip.click(); expect(chip.textContent).toBe('Focus locked'); expect(chip.attributes['aria-pressed']).toBe('true'); expect(f.actual()).toEqual(f.expected(0));
-  f.hover(1); alt(1); await Bun.sleep(60); expect(r.hovered).toBe(1); expect(f.actual()).toEqual(f.expected(0));
-  expect(key('k')).toBe(true); expect(chip.textContent).toBe('Lock focus'); expect(f.actual()).toEqual(f.expected(0));
-  await Bun.sleep(60); expect(f.actual()).toEqual(f.expected(1)); // unlocked: the dwell resumes
-  expect(key('K')).toBe(true); expect(control(card(), 'Focus locked').attributes['aria-pressed']).toBe('true');
-  f.tap(EMPTY); expect(r.selected).toBe(-1); f.hover(3); expect(f.actual()).toEqual(f.expected(3)); // deselect released the lock
-  f.tap(0); expect(control(card(), 'Lock focus').attributes['aria-pressed']).toBe('false');
+  const none = [[0, 0, 0, 0, 0], [0, 0, 0]];
+  f.hover(3); expect(r.hovered).toBe(3); expect(f.actual()).toEqual(none); expect(r.card.node).toBe(-1);
+  f.tap(0); expect(f.actual()).toEqual(f.expected(0)); expect(r.card.node).toBe(0);
+  // Sticky: hovering, resting, Alt and leaving the graph keep the focus.
+  f.hover(3); alt(2); await Bun.sleep(40); r[k('pointerLeave')](); expect(f.actual()).toEqual(f.expected(0)); expect(r.card.node).toBe(0);
+  // There is no lock anymore: no K binding, no card chip.
+  expect(key('k')).toBe(false); expect(card().textContent).not.toContain('Lock'); expect(r.canvas.getAttribute('aria-label')).not.toContain('K ');
+  f.tap(2); expect(f.actual()).toEqual(f.expected(2));
+  card().querySelectorAll('button').find((b: any) => b.className === 'graph-ng-connection' && b.textContent === '3').click(); expect(f.actual()).toEqual(f.expected(3));
+  control(card(), 'Back').click(); expect(f.actual()).toEqual(f.expected(2));
+  expect(key('Escape')).toBe(true); expect(f.actual()).toEqual(none);
+  f.tap(1); f.tap(EMPTY); expect(f.actual()).toEqual(none);
+});
+test('docked card: a fixed right-edge panel that never moves with the camera; labels under it are hidden; framing fits beside it', async () => {
+  const f = await graduated([[0, 1], [1, 2], [2, 3], [0, 4]]), { r, k } = f, root = r[k('noteCard')];
+  root.offsetWidth = 320; root.offsetHeight = 300;
+  f.tap(1); r[k('focusLevel')] = 1; r[k('placeOverlay')]();
+  const docked = root.style.transform, rect = [...r[k('cardRect')]];
+  expect(rect).toEqual([800 - 8 - 320, 8, 320, 300]); expect(docked).toBe('translate(472px, 8px)');
+  // Header: name, then Back, Forward and an X icon named Close (never a visible "Close" label).
+  const head = root.children[0]; expect(head.children[0].textContent).toBe('1');
+  expect(head.children.slice(1).map((b: any) => [b.attributes['aria-label'], b.textContent])).toEqual([['Back', ''], ['Forward', ''], ['Close', '']]);
+  expect(head.children[3].children[0].dataset.icon).toBe('x');
+  // One segmented Open control, then the icon+label grid.
+  const open = root.children.find((c: any) => c.className === 'graph-ng-card-open'); expect(open.attributes.role).toBe('group'); expect(open.children.map((b: any) => b.textContent)).toEqual(['Open', 'New tab', 'Right']);
+  expect(root.children.find((c: any) => c.className === 'graph-ng-card-actions').children.map((b: any) => b.textContent)).toEqual(['Focus', 'Only connections', 'Lens', 'Copy link']);
+  // Panning and zooming never move the card.
+  r[k('pointerDown')]({ pointerId: 1, button: 0, clientX: 300, clientY: 300 }); r[k('pointerMove')]({ pointerId: 1, clientX: 120, clientY: 210 }); r[k('pointerUp')]({ pointerId: 1, clientX: 120, clientY: 210 });
+  r.setCamera(r.camera.x + .2, r.camera.y - .1, r.camera.ratio * .5); r[k('placeOverlay')]();
+  expect(r.selected).toBe(1); expect(root.style.transform).toBe(docked); expect([...r[k('cardRect')]]).toEqual(rect);
+  // A graduated label or hover name anchored under the card is hidden; outside it is shown.
+  r.setCamera(r.camera.x - .2, r.camera.y + .1, r.camera.ratio * 2); r[k('placeOverlay')]();
+  const inside = (q: { x: number; y: number }) => q.x >= rect[0]! && q.x <= rect[0]! + rect[2]! && q.y >= rect[1]! && q.y <= rect[1]! + rect[3]!;
+  const labels = () => r[k('ranked')].map((slot: any, i: number) => [inside(r.screenPoint(slot.node)), r[k('tierLabels')][i].hidden]);
+  const pan = (dx: number) => { const p = r.screenPoint(1); r.setCamera(r.camera.x + (p.x - (rect[0]! + 40 + dx)) / r.scale / r[k('cameraFrame')].width, r.camera.y + (p.y - 150) / r.scale / r[k('cameraFrame')].height, r.camera.ratio); r[k('placeOverlay')](); };
+  pan(0); const under = labels(); expect(under.some(([x]: boolean[]) => x)).toBe(true); for (const [x, hidden] of under) if (x) expect(hidden).toBe(true);
+  pan(-400); expect(labels().some(([, hidden]: boolean[]) => !hidden)).toBe(true);
+  f.hover(1); pan(0); expect(r[k('hoverLabel')].hidden).toBe(true); pan(-400); expect(r[k('hoverLabel')].hidden).toBe(false);
+  // The leader cue still runs from the docked card's edge to the cued row's note.
+  const row = root.querySelectorAll('button').find((b: any) => b.className === 'graph-ng-connection'); row.onmouseenter(); r[k('placeOverlay')]();
+  expect(r[k('cueRing')].hidden).toBe(false); expect(r[k('cueLine')].style.transform).toContain(`translate(${rect[0]}px,`);
+  // Focus here fits the box in the view minus the docked card, centred in the remaining area.
+  let box: number[] = []; const frame = r.frame; r.frame = (...args: number[]) => { box = args; }; control(root, 'Focus').click(); r.frame = frame;
+  expect(box.slice(5)).toEqual([336, 0]);
+  r.frame(0, 0, 100, 100, 0, 336, 0); expect((50 - r.centerX) * r.scale + 400).toBeCloseTo((800 - 336) / 2, 6); expect(100 * r.scale).toBeLessThanOrEqual(800 - 336);
+  // Narrow views keep the bottom sheet; framing then insets the bottom instead.
+  r[k('width')] = 400; r[k('placeOverlay')](); expect(root.className).toBe('graph-ng-card graph-ng-sheet'); expect(r[k('cardRect')][0]).toBe(0);
+});
+test('docked card: Only connections, Lens and path cards share the dock; labels never draw over them', async () => {
+  const f = await graduated([[0, 1], [1, 2], [2, 3], [0, 4], [4, 3]], 6), { r, k } = f, root = r[k('noteCard')];
+  root.offsetWidth = 320; root.offsetHeight = 260;
+  const dock = () => { r[k('placeOverlay')](); return root.style.transform; };
+  f.tap(0); const at = dock(); expect(at).toBe('translate(472px, 8px)');
+  control(root, 'Only connections').click(); expect(r[k('isolation')]).toBeDefined(); expect(dock()).toBe(at); expect(control(root, 'Only connections').attributes['aria-pressed']).toBe('true');
+  control(root, 'Lens').click(); expect(r.lensNode).toBe(0); expect(dock()).toBe(at);
+  r.isolate(-1); r.setLens(-1);
+  const shift = (n: number) => { const { x, y } = r.screenPoint(n), e = { pointerId: 1, clientX: x, clientY: y, pointerType: 'mouse', shiftKey: true }; r[k('pointerDown')](e); r[k('pointerUp')](e); };
+  f.tap(0); shift(3); expect(root.textContent).toContain('Path: 0 → 3'); expect(dock()).toBe(at);
+  expect(control(root, 'Close').textContent).toBe(''); expect(root.textContent).not.toContain('×');
+  // Path framing leaves room for the docked card.
+  let box: number[] = []; const frame = r.frame; r.frame = (...args: number[]) => { box = args; }; control(root, 'Another path').click(); r.frame = frame;
+  expect(box.slice(5)).toEqual([336, 0]);
 });
 test('context menu: right-click on a note, a line and empty canvas shows the registry entries through the host menu seam', async () => {
   const f = await graduated([[0, 1], [1, 2], [2, 3]]), { r, k } = f, menus: { ids: string[]; path?: string; run: (id: string) => void }[] = [];
@@ -870,9 +918,9 @@ test('context menu: right-click on a note, a line and empty canvas shows the reg
   const opens: [string, string][] = []; r.openNote = (path: string, mode: string) => opens.push([path, mode]);
   const right = async (q: { x: number; y: number }) => { let prevented = false; r.input.contextMenu({ clientX: q.x, clientY: q.y, preventDefault() { prevented = true; } }); expect(prevented).toBe(true); await Bun.sleep(0); };
   const a = r.screenPoint(1), b = r.screenPoint(2);
-  await right(a); expect(menus[0]!.ids).toEqual(['menu-open', 'menu-tab', 'menu-right', 'menu-focus', 'menu-lens', 'lock-focus', 'menu-only', 'menu-copy']); expect(typeof menus[0]!.path).toBe('string');
+  await right(a); expect(menus[0]!.ids).toEqual(['menu-open', 'menu-tab', 'menu-right', 'menu-focus', 'menu-lens', 'menu-only', 'menu-copy']); expect(typeof menus[0]!.path).toBe('string');
   menus[0]!.run('menu-right'); expect(opens).toEqual([[menus[0]!.path!, 'split']]);
-  menus[0]!.run('lock-focus'); expect(r.selected).toBe(1); expect(control(r[k('noteCard')], 'Focus locked').attributes['aria-pressed']).toBe('true');
+  menus[0]!.run('menu-focus'); expect(r.selected).toBe(1); expect(r.card.node).toBe(1);
   await Bun.sleep(850); await right({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
   expect(menus[1]!.ids).toEqual(['menu-source', 'menu-target']); expect(menus[1]!.path).toBeUndefined(); // no relationship note on this line
   menus[1]!.run('menu-target'); expect(r.selected).toBe(2);
@@ -934,9 +982,8 @@ test('wave-4 wiring: Find path to… in the menu; Escape clears path, card, lens
   r.setView(new Uint8Array([1, 0, 1, 1, 1, 1]), {}); expect(chips()).toEqual(['0', '2']);
   r[k('clearTrail')](); expect(chips()).toEqual([]);
 });
-test('wave-4 wiring: the hover dwell never moves a path highlight or a pinned lens', async () => {
+test('wave-4 wiring: hover never moves a path highlight or a pinned lens', async () => {
   const f = await graduated([[0, 1], [1, 2], [2, 3], [0, 4], [4, 3]], 6), { r, k } = f;
-  f.settings.visuals.hoverDwellMs = 20;
   const shift = (n: number) => { const { x, y } = r.screenPoint(n), e = { pointerId: 1, clientX: x, clientY: y, pointerType: 'mouse', shiftKey: true }; r[k('pointerDown')](e); r[k('pointerUp')](e); };
   f.tap(0); shift(3); const path = f.actual(); expect(path[1]).toEqual([0, 0, 0, 253, 253]);
   f.hover(1); await Bun.sleep(50); expect(r.hovered).toBe(1); expect(f.actual()).toEqual(path);

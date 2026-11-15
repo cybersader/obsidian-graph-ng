@@ -66,8 +66,6 @@ export interface Visuals {
   clickOpens: boolean;
   /** Interest ranking: connections in a different group from the focus rank higher. */
   bridgesFirst: boolean;
-  /** While a note is selected, hovering another only previews it until the pointer rests this long (Alt skips the wait). 0 moves the highlight at once. */
-  hoverDwellMs: number;
   /** Corner minimap with the viewport and focus dots; hidden when the canvas is under 500 px wide. */
   minimap: boolean;
   /** Chips for the last visited notes along the top edge. */
@@ -82,7 +80,7 @@ export const defaultVisuals = (): Visuals => ({
   curvedEdges: true, curvature: .12, curveSegments: 8, hoverHighlight: true, dimOpacity: .12, groupHalos: false, haloOpacity: .05,
   autoPalette: true, labelFade: true, cameraAnimationMs: 450, glowMaxNodes: 250000, curvesMaxEdges: 60000, halosMaxGroups: 48, hubsMaxGroups: 256, softwareEffects: false,
   carrierTint: true, carrierBridge: 'blend', carrierBridgeAccent: .35, carrierOpacity: .7, carrierSize: .6, carrierDensityReference: 8000, carrierLod: true, carrierLodNear: .3, carrierLodFar: .6, zoomAdapt: true, labelTierScale: 1.2, labelPlates: true,
-  tierMinSize: 7, tierRings: true, focusEdges: true, offscreenPips: true, focusRipple: true, tierLegend: true, clickOpens: false, bridgesFirst: true, hoverDwellMs: 350, minimap: true, breadcrumb: true,
+  tierMinSize: 7, tierRings: true, focusEdges: true, offscreenPips: true, focusRipple: true, tierLegend: true, clickOpens: false, bridgesFirst: true, minimap: true, breadcrumb: true,
 });
 export const defaultExplore = (): ExploreSettings => ({ panelOpen: true, facetValues: 50, legendPageSize: 40, view: emptyView(), savedViews: [], disabledDerived: [] });
 const flags = ['edgeDirection', 'curvedEdges', 'hoverHighlight', 'groupHalos', 'autoPalette', 'labelFade', 'softwareEffects', 'carrierTint', 'carrierLod', 'zoomAdapt', 'tierRings', 'focusEdges', 'offscreenPips', 'focusRipple', 'tierLegend', 'labelPlates', 'clickOpens', 'bridgesFirst', 'minimap', 'breadcrumb'] as const;
@@ -104,7 +102,6 @@ export function validateVisuals(v: unknown): asserts v is Visuals {
   if (![z, a, b].every(x => typeof x === 'number') || !(z! > 0 && z! <= 4 && a! > 0 && a! < b! && b! <= 8)) throw new Error('visuals: need 0 < carrierSize ≤ 4 and 0 < carrierLodNear < carrierLodFar ≤ 8');
   if (typeof o.labelTierScale !== 'number' || !(o.labelTierScale >= 1 && o.labelTierScale <= 1.6)) throw new Error('visuals.labelTierScale must be 1–1.6');
   if (typeof o.tierMinSize !== 'number' || !(o.tierMinSize >= 0 && o.tierMinSize <= 16)) throw new Error('visuals.tierMinSize must be 0–16');
-  if (typeof o.hoverDwellMs !== 'number' || !(o.hoverDwellMs >= 0 && o.hoverDwellMs <= 5000)) throw new Error('visuals.hoverDwellMs must be 0–5000');
   if (typeof o.cameraAnimationMs !== 'number' || !(o.cameraAnimationMs >= 0 && o.cameraAnimationMs <= 5000)) throw new Error('visuals.cameraAnimationMs must be 0–5000');
 }
 export function validateExplore(v: unknown): asserts v is ExploreSettings {
@@ -290,6 +287,8 @@ export function upgradeSettings(input: unknown, producer: string): Settings {
     else old.groupLevel = level! - removed.filter(i => i < level!).length;
   }
   if (disabled.length) explore.disabledDerived = [...(explore.disabledDerived ?? []), ...disabled].slice(-64);
+  // Hover no longer moves the highlight (wave 5): the old hover delay has no meaning and is dropped.
+  if (old.visuals && typeof old.visuals === 'object') delete (old.visuals as unknown as Record<string, unknown>).hoverDwellMs;
   // Saved settings predating degree curves (with or without a visuals block) keep the earlier log-radius appearance until explicit adoption;
   // fresh installs never reach this migration and use defaults().
   const settings = { ...base, ...old, layout: { ...base.layout, ...old.layout, force: { ...base.layout.force, ...old.layout?.force } }, ingest: { ...base.ingest, ...old.ingest }, cache: { ...base.cache, ...old.cache }, declaration: migrateDeclaration(old.declaration ?? base.declaration),
