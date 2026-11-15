@@ -1306,11 +1306,6 @@ export class DetailRenderer {
         const m = this.measure ??= document.createElement('canvas').getContext('2d')!; m.font = font || `13px ${this.theme.font}`;
         this.hoverBox = [key, hover.offsetWidth || m.measureText(text).width + 12, hover.offsetHeight || 22];
       }
-      // Right, left, above, then below the dot: the first spot clear of the card and panels wins.
-      const p = this.screenPoint(node), [, w, h] = this.hoverBox, gap = radius(node) + 6;
-      const spots = [[p.x + gap, p.y - 10], [p.x - gap - w, p.y - 10], [p.x - w / 2, p.y - gap - h], [p.x - w / 2, p.y + gap]].filter(([x, y]) => !under(x!, y!, w, h));
-      const at = spots.find(([x, y]) => x! >= 0 && y! >= 0 && x! + w <= this.width && y! + h <= this.height) ?? spots[0];
-      hover.hidden = !at; if (at) hover.style.transform = `translate(${Math.round(at[0]!)}px, ${Math.round(at[1]!)}px)`;
     } else { hover.textContent = ''; this.hoverBox[0] = ''; }
     // The previewed name fades in with the node's growth.
     hover.style.opacity = node === this.hoverFx.n && node !== ego ? String((this.fx[0]! - 1) / .6) : '';
@@ -1342,9 +1337,9 @@ export class DetailRenderer {
       }
     }
     if (!this.ranked.length) { while (this.tierLabels.length) this.tierLabels.pop()!.remove(); while (this.tierLeaders.length) this.tierLeaders.pop()!.remove(); }
-    let j = 0, shown = 0;
+    let j = 0, shown = 0; const taken: number[][] = [];
     this.ranked.forEach(({ node: n, rank, dx, dy, w, h, leader }, i) => {
-      const el = this.tierLabels[i]!, p = this.screenPoint(n), x = leader ? p.x + dx : p.x + radius(n) + 4, y = leader ? p.y + dy : p.y; el.hidden = under(x, y - h / 2, w, h) || under(p.x, p.y); if (rank === 1 && !el.hidden) shown++; el.style.opacity = String(focus); el.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px) translateY(-50%)`;
+      const el = this.tierLabels[i]!, p = this.screenPoint(n), x = leader ? p.x + dx : p.x + radius(n) + 4, y = leader ? p.y + dy : p.y; el.hidden = under(x, y - h / 2, w, h) || under(p.x, p.y); if (!el.hidden) { taken.push([x, y - h / 2, w, h]); shown += +(rank === 1); } el.style.opacity = String(focus); el.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px) translateY(-50%)`;
       if (leader) { const line = this.tierLeaders[j++]!; line.hidden = el.hidden; line.style.opacity = String(focus); line.style.transform = `translate(${Math.round(p.x + leader[0])}px, ${Math.round(p.y + leader[1])}px) rotate(${Math.atan2(leader[3] - leader[1], leader[2] - leader[0])}rad)`; }
     });
     if (this.moreButton) {
@@ -1352,7 +1347,16 @@ export class DetailRenderer {
       const b = this.moreButton, rest = this.moreTotal - shown, text = `+${rest} more`;
       if (b.textContent !== text) { b.textContent = text; b.setAttribute('aria-label', `Show ${rest} more direct connections of ${ego >= 0 ? this.name(ego) : ''}`); }
       const at = this.moreAt, p = ego >= 0 ? this.screenPoint(ego) : { x: 0, y: 0 }, [mw, mh] = this.moreSize, show = rest > 0 && !!at && ego >= 0 && focus > 0 && !under(p.x + at.dx, p.y + at.dy - mh! / 2, mw, mh); b.hidden = !show;
-      if (show) { this.moreButton.style.opacity = String(focus); this.moreButton.style.transform = `translate(${Math.round(p.x + at.dx)}px, ${Math.round(p.y + at.dy)}px) translateY(-50%)`; }
+      if (show) { taken.push([p.x + at.dx, p.y + at.dy - mh! / 2, mw!, mh!]); this.moreButton.style.opacity = String(focus); this.moreButton.style.transform = `translate(${Math.round(p.x + at.dx)}px, ${Math.round(p.y + at.dy)}px) translateY(-50%)`; }
+    }
+    if (node >= 0) {
+      // Right, left, above, then below the dot (centred, nudged into view). Never under the card or a
+      // panel; prefer a spot inside the view and clear of the labels and "+N more" already placed.
+      const p = this.screenPoint(node), [, w, h] = this.hoverBox, gap = radius(node) + 6, mid = Math.max(0, Math.min(this.width - w, p.x - w / 2));
+      const spots = [[p.x + gap, p.y - 10], [p.x - gap - w, p.y - 10], [mid, p.y - gap - h], [mid, p.y + gap]].filter(([x, y]) => !under(x!, y!, w, h));
+      const inView = ([x, y]: number[]) => x! >= 0 && y! >= 0 && x! + w <= this.width && y! + h <= this.height, free = ([x, y]: number[]) => !taken.some(b => overlapsBox(x!, y!, w, h, b));
+      const at = spots.find(q => inView(q) && free(q)) ?? spots.find(free) ?? spots.find(inView) ?? spots[0];
+      hover.hidden = !at; if (at) hover.style.transform = `translate(${Math.round(at[0]!)}px, ${Math.round(at[1]!)}px)`;
     }
     this.placePath(radius, focus);
     this.crumbTrail.update(v.breadcrumb, this.card.history);
