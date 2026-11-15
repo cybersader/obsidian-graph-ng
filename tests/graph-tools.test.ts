@@ -1,7 +1,7 @@
 import { test, expect, beforeEach, afterEach } from 'bun:test';
 import './support/obsidian-fixture';
 import { ControlElement, control } from './support/controls-dom';
-import { ExplorePanel } from '../src/explore-panel';
+import { ExplorePanel, setRelationshipDisplay } from '../src/explore-panel';
 import { defaults } from '../src/settings';
 import { emptyView, explore } from '../src/core/explore';
 import { buildProjection, colorGroups } from '../src/core/projection';
@@ -338,4 +338,21 @@ test('TBR-2R admitted software Workspace updates real Canvas edge membership in 
     expect(f.view.detailRenderer).toBe(f.renderer); expect(f.view.stage.children).toContain(f.canvas); expect(f.renderer.camera).toBe(camera); expect(f.renderer.selected).toBe(0);
     expect(f.counts()).toEqual({ clear: 0, disposed: 0, frames: 2, creates: 0 }); expect(f.requests).toEqual([]);
   } finally { f.restore(); }
+});
+test('UX relationship notes Lines | Nodes: shown only with reified rules; one apply flips display; failure keeps it', async () => {
+  const f = fixture(), buttons = () => f.panel.root.querySelectorAll('button').filter((b: any) => b.textContent === 'Lines' || b.textContent === 'Nodes');
+  let applies = 0, fail = false; const plugin = { settings: f.settings, apply: async (s: any) => { applies++; if (fail) throw new Error('synthetic save failure'); plugin.settings = s; } };
+  f.host.relationshipNotes = () => 44123; f.host.setRelationshipDisplay = (nodes: boolean) => setRelationshipDisplay(plugin, nodes);
+  f.state.view.query = 'kept'; f.settings.explore.view = f.state.view; f.panel.show('appearance');
+  expect(buttons().length).toBe(0);
+  f.settings.declaration.edges.push({ kind: 'reified', name: 'crosswalk', sourceProperty: 'from', targetProperty: 'to' }); f.panel.render();
+  const [lines, nodes] = buttons() as any[]; expect(lines.getAttribute('aria-pressed')).toBe('true'); expect(lines.disabled).toBe(true); expect(nodes.disabled).toBe(false);
+  const note = f.panel.root.querySelectorAll('div').find((e: any) => e.textContent.startsWith('Lines: each'))!; expect(note.textContent).toContain('adds 44,123 dots'); expect(note.textContent).not.toContain(' · ');
+  fail = true; await nodes.onclick(); expect(applies).toBe(1); expect(f.panel.root.textContent).toContain('Not switched: Error: synthetic save failure');
+  expect(plugin.settings.declaration.display.reifiedAsNodes).toBe(false);
+  fail = false; await (buttons()[1] as any).onclick(); expect(applies).toBe(2);
+  expect(plugin.settings.declaration.display.reifiedAsNodes).toBe(true); expect(plugin.settings.explore.view.query).toBe('kept');
+  expect(f.settings.declaration.display.reifiedAsNodes).toBe(false); // the previous settings object is not mutated
+  await setRelationshipDisplay(plugin, true); expect(applies).toBe(2); // no-op when already in that display
+  f.panel.dispose();
 });

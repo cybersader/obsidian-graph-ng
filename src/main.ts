@@ -7,7 +7,7 @@ import { ItemView, Plugin, PluginSettingTab, Setting, Notice, TFile, apiVersion,
 import { LocalAdapter, type PropertySource } from './adapter/local';
 import { canonical, digest, layoutDeclaration, migrateDeclaration, validateDeclaration, type GraphDeclaration, type Predicate } from './core/declaration';
 import { canonicalView, validateSaved, NO_COLOR, type SavedView, type ExploreResult, type ExploreView, type ViewCamera } from './core/explore';
-import { ExplorePanel } from './explore-panel';
+import { ExplorePanel, setRelationshipDisplay } from './explore-panel';
 import { graphStats, recommend, suggestionSettings, type GraphStats, type Suggestion } from './recommend';
 import { categorical, NEUTRAL_GROUPS } from './render-effects';
 import { readTheme } from './render-theme';
@@ -342,7 +342,7 @@ export class GraphView extends ItemView {
       commitSavedView: (saved, expected) => this.plugin.commitSavedView(saved, expected),
       savedViewIssue: saved => this.savedViewIssue(saved), openSavedView: saved => this.openSavedView(saved),
       applyLayout: values => this.applyLayout(values), settings: () => this.plugin.settings, result: () => this.explored, mode: () => this.contentEl.dataset.mode ?? 'groups',
-      policy: () => this.detailRenderer?.policy.reasons ?? [], carriers: () => this.detailRenderer?.carrierCount ?? 0, setView: (view, after) => this.setView(view, after), setColors: colors => this.setColors(colors), preview: (expr, context) => this.previewExpression(expr, context),
+      policy: () => this.detailRenderer?.policy.reasons ?? [], carriers: () => this.detailRenderer?.carrierCount ?? 0, relationshipNotes: () => this.relationshipNotes(), setRelationshipDisplay: nodes => setRelationshipDisplay(this.plugin, nodes), setView: (view, after) => this.setView(view, after), setColors: colors => this.setColors(colors), preview: (expr, context) => this.previewExpression(expr, context),
       visualsChanged: labels => { this.plugin.saveSoon(); this.detailRenderer?.refreshVisuals(labels); if (this.contentEl.dataset.mode === 'groups') this.showGroups(true); },
       groupColor: code => this.groupColor(code), focusGroup: code => this.focusGroup(code), fit: () => this.detailRenderer?.fitAll(),
       camera: () => this.detailRenderer ? { ...this.detailRenderer.camera } : null, restoreCamera: camera => this.restoreCamera(camera), persist: () => this.plugin.saveSoon(),
@@ -752,6 +752,13 @@ export class GraphView extends ItemView {
       }
     };
     if (this.exploring) { this.exploreQueued = run; this.plugin.pipeline.cancelEvaluation('explore'); } else void run();
+  }
+  private noteCount?: [RenderProjection, number];
+  /** Distinct relationship-note rows behind loaded edges; the same count in Lines and Nodes. */
+  private relationshipNotes() {
+    const p = this.projection; if (!p) return 0;
+    if (this.noteCount?.[0] !== p) { const rows = new Set<number>(); for (const c of p.carrier) if (c !== 0xffffffff) rows.add(c); this.noteCount = [p, rows.size]; }
+    return this.noteCount[1];
   }
   private statsCache?: [RenderProjection, GraphStats];
   /** Suggestions for the loaded note graph; null until one is open. Stats cached per projection. */

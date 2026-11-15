@@ -152,3 +152,18 @@ test('graduated labels rank focus > direct > 2-hop, then degree, under budget an
   // Deterministic and pure: same inputs, same placement, no tier byte written.
   const bytes = [...r.state]; expect(place(10)).toEqual(place(10)); expect([...r.state]).toEqual(bytes);
 });
+test('graduated tiers in Nodes display: relationship-note dots from a real projection are transparent hops', async () => {
+  const { buildProjection } = await import('../src/core/projection');
+  const { defaultDeclaration } = await import('../src/core/declaration');
+  const d = defaultDeclaration('links'); d.edges = [{ kind: 'reified', name: 'crosswalk', sourceProperty: 'from', targetProperty: 'to' }];
+  const rows = [{ path: 'a.md', properties: {} }, { path: 'b.md', properties: {} }, { path: 'c.md', properties: {} }, { path: 'x.md', properties: { from: 'a.md', to: 'b.md' } }, { path: 'y.md', properties: { from: 'b.md', to: 'c.md' } }];
+  for (const reifiedAsNodes of [false, true]) {
+    const p = buildProjection(rows, { ...d, display: { reifiedAsNodes } }), n = p.paths.length, m = p.source.length;
+    const g = { n, m, p, inc: incidentEdges({ nodeCount: n, source: p.source, target: p.target }) }, at = (path: string) => p.paths.indexOf(path);
+    const r = run(g as unknown as G, at('a.md'));
+    expect(n).toBe(reifiedAsNodes ? 5 : 3);
+    // a to b is direct in both displays (the dot x is transparent); c is two hops away.
+    expect([r.tiers[at('a.md')], r.tiers[at('b.md')], r.tiers[at('c.md')]]).toEqual([D, D, C]);
+    if (reifiedAsNodes) expect(r.tiers[at('x.md')]).toBe(D);
+  }
+});

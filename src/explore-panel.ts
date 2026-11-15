@@ -28,6 +28,10 @@ export interface PanelHost {
   policy(): string[];
   /** Edge notes (reified edges drawn as nodes) in the detail view; 0 otherwise. */
   carriers(): number;
+  /** Relationship notes (reified edge carriers) in the loaded projection, either display. */
+  relationshipNotes?(): number;
+  /** Lines/Nodes switch through the settings apply path; rejects leave the displayed graph. */
+  setRelationshipDisplay?(nodes: boolean): Promise<void>;
   setView(view: ExploreView, after?: () => void): void;
   commitSavedView?(saved: SavedView | null, expected: SavedView | null): Promise<void>;
   savedViewIssue?(saved: SavedView): string;
@@ -57,6 +61,13 @@ function toolButton(host: HTMLElement, text: string, icon: string) {
   return button;
 }
 const SECTIONS: Record<string, [Section, string][]> = { views: [['views', 'Saved views']], filters: [['filters', 'Filters'], ['groups', 'Grouping'], ['edges', 'Relationships']], appearance: [['display', 'Appearance'], ['colors', 'Color rules']], layout: [['physics', 'Layout']] };
+/** Reified rules make relationship notes; only then is Lines/Nodes a choice. */
+export const hasReified = (d: GraphDeclaration) => d.edges.some(e => e.kind === 'reified');
+/** One apply with only `display.reifiedAsNodes` flipped; query, filters and scope stay in settings. */
+export async function setRelationshipDisplay(plugin: { settings: Settings; apply(s: Settings): Promise<void> }, nodes: boolean) {
+  const s = plugin.settings; if (s.declaration.display.reifiedAsNodes === nodes) return;
+  await plugin.apply({ ...s, declaration: { ...s.declaration, display: { ...s.declaration.display, reifiedAsNodes: nodes } } });
+}
 let expressionPanelId = 0;
 const parseRaw = (raw: string): Scalar => { try { const v: unknown = JSON.parse(raw); return v === null || ['string', 'number', 'boolean'].includes(typeof v) ? v as Scalar : raw; } catch { return raw; } };
 /** One nonmodal overlay; opening tools never changes the canvas rectangle or graph. */
@@ -583,6 +594,7 @@ export class ExplorePanel {
     this.note(host, 'Direct connections brightest, then 2-hop neighbours; the rest fades. Ancestor or framework levels need declared structural relationships; none are inferred.');
     this.flag(host, 'labelFade', 'Fade labels by zoom and importance', true);
     this.flag(host, 'zoomAdapt', 'Adapt to zoom: fade crowded edges and shrink hubs when zoomed out');
+    if (this.host.setRelationshipDisplay && hasReified(s.declaration)) this.relationshipDisplay(host);
     if (this.host.carriers()) {
       slider('carrierOpacity', 'Edge-note opacity', { min: 0, max: 1, k: 2 });
       slider('carrierSize', 'Edge-note size', { min: .001, max: 4, k: 2 });
@@ -591,6 +603,24 @@ export class ExplorePanel {
     }
     this.note(host, 'Edge opacity 0 hides all edges, including highlights. Relationships remain available in Filters and group lists.');
     host.createEl('button', { text: 'Fit graph' }).onclick = () => this.host.fit();
+  }
+  private relationBusy = false;
+  private relationMessage = '';
+  private relationshipDisplay(host: HTMLElement) {
+    const nodes = this.settings.declaration.display.reifiedAsNodes, count = this.host.relationshipNotes?.() ?? 0;
+    const row = host.createDiv({ cls: 'graph-ng-row graph-ng-segmented', attr: { role: 'group', 'aria-label': 'Relationship notes' } });
+    row.createSpan({ text: 'Relationship notes' });
+    for (const [value, text] of [[false, 'Lines'], [true, 'Nodes']] as const) {
+      const button = row.createEl('button', { text, attr: { 'aria-pressed': String(nodes === value) } }); button.disabled = this.relationBusy || nodes === value;
+      button.onclick = async () => {
+        this.relationBusy = true; this.relationMessage = 'Rebuilding graph…'; this.render();
+        try { await this.host.setRelationshipDisplay!(value); this.relationMessage = ''; }
+        catch (e) { this.relationMessage = `Not switched: ${String(e)}. The displayed graph is unchanged.`; }
+        finally { this.relationBusy = false; if (!this.disposed) this.render(); }
+      };
+    }
+    this.note(host, `Lines: each relationship note is one line between its endpoints. Nodes: each is a clickable dot between them${count ? ` (adds ${count.toLocaleString()} dots)` : ''}. Switching re-projects and re-runs layout; this is a global setting, not part of saved views.`);
+    if (this.relationMessage) host.createDiv({ cls: 'graph-ng-explore-note', text: this.relationMessage, attr: { role: 'status' } });
   }
   private viewDefinition(host: HTMLElement, saved: SavedView) {
     const v = saved.view, none = (x: string[]) => x.join(', ') || '(none)';
