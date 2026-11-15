@@ -4,7 +4,7 @@ import { PickGrid, positionTexture, incidentEdges, focusTiers, tierNode, tierEdg
 import { readTheme, type GraphTheme } from './render-theme';
 import { baseRadius, sizedRadius, sizingSettings, type NodeSizingValues } from './node-sizing';
 import { buildLabels, focusLabels, type LabelAtlas } from './render-labels';
-import { carrierAlpha, carrierColors, carrierVisibility, categorical, degreeSizes, densityScale, edgeAlpha, effectPolicy, neutralizeGroups, easeInOut, groupHalos, isDark, labelFade, nodeColors, type EffectPolicy, type Halo, type RGB } from './render-effects';
+import { carrierAlpha, carrierColors, carrierVisibility, categorical, degreeSizes, densityScale, edgeAlpha, effectPolicy, prominenceKeep, zoomFade, neutralizeGroups, easeInOut, groupHalos, isDark, labelFade, nodeColors, type EffectPolicy, type Halo, type RGB } from './render-effects';
 import { yieldTask } from './core/scheduler';
 import { generationCurrent } from './physics-controls';
 /** Hard DOM bound for graduated focus labels, under `labelsMaxPerViewport`. */
@@ -277,7 +277,7 @@ export class DetailRenderer {
     this.filterVisible = visible; this.visible = visible; this.picker = this.grid; this.display = positions; this.colors = colors;
     this.carrierCount = projection.carrierNodes.reduce((n, v) => n + +!!v, 0);
     this.labelCarrierSize = settings.visuals.carrierSize;
-    this.sizes = degreeSizes(projection.offsets, settings.visuals.degreeSizing, settings.visuals.degreeCurve); this.edgeOn = new Uint8Array(projection.source.length).fill(1); this.edgeTier = new Uint8Array(projection.source.length);
+    this.keep = 1; this.sizes = degreeSizes(projection.offsets, settings.visuals.degreeSizing, settings.visuals.degreeCurve); this.edgeOn = new Uint8Array(projection.source.length).fill(1); this.edgeTier = new Uint8Array(projection.source.length);
     this.timings.grid = performance.now() - started; started = performance.now();
     this.theme = readTheme(container, settings);
     this.timings.theme = performance.now() - started; started = performance.now();
@@ -570,10 +570,21 @@ export class DetailRenderer {
     this.labelCarrierSize = this.settings.visuals.carrierSize;
     const rebuildCarrier = carrierChanged && this.sizingSettings().nodeSizing?.policy === 'predictable';
     if (rebuildCarrier) this.queueSizingLabels();
-    const sv = this.sizingSettings().visuals; this.sizes = degreeSizes(this.projection.offsets, sv.degreeSizing, sv.degreeCurve, this.sizes); this.recolor(); this.choosePolicy(); this.updateSizingRange(); if (this.ready) this.emphasize(true);
-    if (this.gl && this.ready && !this.lost) { const gl = this.gl; gl.bindBuffer(gl.ARRAY_BUFFER, this.buffers[4]!); gl.bufferData(gl.ARRAY_BUFFER, this.sizes, gl.STATIC_DRAW); this.uploadView(); }
+    this.uploadSizes(); this.recolor(); this.choosePolicy(); if (this.ready) this.emphasize(true);
+    if (this.gl && this.ready && !this.lost) this.uploadView();
     if (labels && !rebuildCarrier && this.ready) void this.prepareLabels(() => !this.disposed).catch(() => {});
     this.refresh();
+  }
+  /** Cached degree sizes at the current "Adapt to zoom" prominence step; drawing, picking and
+   * label offsets all read these. O(n) only when the step or sizing changes, never per frame. */
+  private keep = 1;
+  private uploadSizes() {
+    const sv = this.sizingSettings().visuals; this.sizes = degreeSizes(this.projection.offsets, sv.degreeSizing * this.keep, sv.degreeCurve, this.sizes); this.updateSizingRange();
+    if (this.gl && this.ready && !this.lost) { const gl = this.gl; gl.bindBuffer(gl.ARRAY_BUFFER, this.buffers[4]!); gl.bufferData(gl.ARRAY_BUFFER, this.sizes, gl.STATIC_DRAW); }
+  }
+  private adaptSizes(zoom: number) {
+    const s = this.sizingSettings(), keep = prominenceKeep(zoom, s.visuals.zoomAdapt && densityScale(this.width, this.height, this.visibleNodes, zoom, s.nodeSize, 0) < 1);
+    if (keep !== this.keep) { this.keep = keep; this.uploadSizes(); }
   }
   private async waitForResize() {
     this.resize();
@@ -656,7 +667,6 @@ export class DetailRenderer {
   /** Edge notes folded away by the level of detail are not pickable. */
   pick(x: number, y: number) {
     const w = this.worldPoint(x, y), s = this.sizingSettings();
-    if (s.nodeSizing.policy === 'legacy') return this.picker.pick(w.x, w.y, (s.nodeSize * (1 + s.visuals.degreeSizing) + 4) / this.scale, this.carrierCount && this.carrierLevel().visibility < .25 ? this.projection.carrierNodes : undefined);
     const base = this.baseNodeRadius(), max = (base * (1 + s.visuals.degreeSizing) * Math.max(1, s.visuals.carrierSize) + 6) / this.scale;
     let picked = -1, distance = Infinity;
     this.picker.visit(w.x, w.y, max, node => {
@@ -733,11 +743,12 @@ export class DetailRenderer {
     // DPR can change without a CSS-size observer notification; reconcile on the next paint.
     if (this.dpr !== (window.devicePixelRatio || 1)) this.resize();
     const drawStart = performance.now(), more = this.animate(drawStart);
-    const gl = this.gl, p = this.theme.palette;
+    const gl = this.gl, p = this.theme.palette, zoom = this.camera.ratio / this.homeRatio, v = this.settings.visuals;
+    this.adaptSizes(zoom);
     if (!gl) { this.drawCanvas(); this.placeOverlay(); if (more) this.refresh(); return; }
     gl.viewport(0, 0, this.canvas.width, this.canvas.height); gl.clearColor(p[8]! / 255, p[9]! / 255, p[10]! / 255, 1); gl.clear(gl.COLOR_BUFFER_BIT);
-    const lod = labelLOD(this.camera.ratio), v = this.settings.visuals, policy = this.policy, fade = labelFade(this.settings.nodeSize, this.settings.labelRenderedSizeThreshold, this.camera.ratio, LABEL_RATIOS, v.labelFade);
-    const zoom = this.camera.ratio / this.homeRatio, notes = this.carrierLevel(zoom);
+    const lod = labelLOD(this.camera.ratio), policy = this.policy, fade = labelFade(this.settings.nodeSize, this.settings.labelRenderedSizeThreshold, this.camera.ratio, LABEL_RATIOS, v.labelFade);
+    const notes = this.carrierLevel(zoom), edgeWidth = this.settings.edgeSize * zoomFade(v, this.visibleEdges, zoom, this.width, this.height), alpha = edgeAlpha(v, this.visibleEdges, zoom, policy.dark, this.width, this.height);
     const nodeSize = this.baseNodeRadius();
     const focus = v.hoverHighlight ? this.focusLevel : 0, haloAlpha = v.haloOpacity * Math.min(1, Math.max(0, (this.camera.ratio - .06) / .25));
     // Halos (under), edges, edge notes, other nodes, collapsed hubs, labels.
@@ -751,10 +762,10 @@ export class DetailRenderer {
     for (const [i, vaoIndex, hub, layer = 1] of passes) {
       const program = this.programs[i]!, u = program.uniforms;
       gl.useProgram(program.handle); gl.uniform1i(u.positions!, 0); gl.uniform1i(u.palette!, 1); gl.uniform1i(u.atlas!, 2); gl.uniform1i(u.nodeColors!, 3); gl.uniform1i(u.nodeState!, 4); gl.uniform1i(u.positionWidth!, this.positionWidth);
-      gl.uniform2f(u.center!, this.centerX, this.centerY); gl.uniform2f(u.viewport!, this.width, this.height); gl.uniform1f(u.scale!, this.scale); gl.uniform1f(u.nodeSize!, nodeSize); gl.uniform1f(u.edgeSize!, this.settings.edgeSize); gl.uniform1i(u.hovered!, this.hovered); gl.uniform1i(u.selected!, this.selected); gl.uniform1i(u.focusNode!, this.focusNode); gl.uniform1i(u.edgeHovered!, this.hoveredEdge);
+      gl.uniform2f(u.center!, this.centerX, this.centerY); gl.uniform2f(u.viewport!, this.width, this.height); gl.uniform1f(u.scale!, this.scale); gl.uniform1f(u.nodeSize!, nodeSize); gl.uniform1f(u.edgeSize!, edgeWidth); gl.uniform1i(u.hovered!, this.hovered); gl.uniform1i(u.selected!, this.selected); gl.uniform1i(u.focusNode!, this.focusNode); gl.uniform1i(u.edgeHovered!, this.hoveredEdge);
       gl.uniform1f(u.focus!, focus); gl.uniform1f(u.dim!, v.dimOpacity); gl.uniform1f(u.glow!, layer ? policy.glow : 0);
       gl.uniform1f(u.carrierAlpha!, notes.alpha); gl.uniform1f(u.carrierFold!, notes.visibility); gl.uniform1f(u.carrierSize!, v.carrierSize); gl.uniform1i(u.layer!, layer);
-      gl.uniform1i(u.segments!, policy.segments); gl.uniform1f(u.curvature!, policy.curves ? v.curvature : 0); gl.uniform1f(u.edgeAlpha!, edgeAlpha(v, this.visibleEdges, zoom, policy.dark)); gl.uniform1f(u.direction!, v.edgeDirection ? 1 : 0); gl.uniform1f(u.colorMix!, v.edgeColorMix);
+      gl.uniform1i(u.segments!, policy.segments); gl.uniform1f(u.curvature!, policy.curves ? v.curvature : 0); gl.uniform1f(u.edgeAlpha!, alpha); gl.uniform1f(u.direction!, v.edgeDirection ? 1 : 0); gl.uniform1f(u.colorMix!, v.edgeColorMix);
       gl.uniform1f(u.labelAlpha!, fade.alpha); gl.uniform1f(u.labelCut!, fade.cut); gl.uniform3f(u.outline!, p[8]! / 255, p[9]! / 255, p[10]! / 255); gl.uniform2f(u.texel!, 1 / 2048, 1 / 2048); gl.uniform1f(u.discAlpha!, hub ? 1 : haloAlpha); gl.uniform1f(u.hub!, hub);
       gl.bindVertexArray(vaoIndex < 0 ? this.labelVaos[lod]! : this.vaos[vaoIndex]!);
       if (i === 0) gl.drawArraysInstanced(gl.TRIANGLES, 0, 6 * policy.segments, this.projection.source.length);
@@ -769,7 +780,7 @@ export class DetailRenderer {
   private placeOverlay() {
     this.onSizingChange?.();
     const v = this.settings.visuals, focus = v.hoverHighlight ? this.focusLevel : 0, ego = this.focusNode, node = this.hovered < 0 && focus ? ego : this.hovered;
-    const radius = (n: number) => (this.sizingSettings().nodeSizing.policy === 'predictable' ? this.nodeRadius(n, true) : this.settings.nodeSize * this.sizes[n]!) * tierNode(this.stateBytes[n * 4 + 1]! / 255, true, n === ego, focus, 0)[1];
+    const radius = (n: number) => this.nodeRadius(n, true) * tierNode(this.stateBytes[n * 4 + 1]! / 255, true, n === ego, focus, 0)[1];
     if (node >= 0) { const s = this.screenPoint(node); this.hoverLabel.textContent = this.noteCaption(node); this.hoverLabel.className = 'graph-ng-hover-label' + (node === ego && focus ? ' graph-ng-focus' : ''); this.hoverLabel.style.transform = `translate(${Math.round(s.x + radius(node) + 6)}px, ${Math.round(s.y - 10)}px)`; }
     else this.hoverLabel.textContent = '';
     // Graduated labels: placed once per focus or LOD change, translated per frame (bounded DOM).
@@ -800,9 +811,9 @@ export class DetailRenderer {
     ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0); ctx.fillStyle = this.theme.background; ctx.fillRect(0, 0, this.width, this.height); ctx.strokeStyle = this.theme.edge; ctx.lineWidth = s.edgeSize;
     // The edge shader's tier weights: rest, neighbours of neighbours, then direct strokes on top.
-    const base = edgeAlpha(s.visuals, this.visibleEdges, this.camera.ratio / this.homeRatio, false);
+    const zoom = this.camera.ratio / this.homeRatio, base = edgeAlpha(s.visuals, this.visibleEdges, zoom, false, this.width, this.height), width = s.edgeSize * zoomFade(s.visuals, this.visibleEdges, zoom, this.width, this.height);
     for (const tier of focus ? [0, 128, 255] : [-1]) {
-      const [alpha, wide] = tierEdge(tier, base, tier < 0 ? 0 : focus, dim); ctx.globalAlpha = alpha; ctx.lineWidth = s.edgeSize * wide; ctx.beginPath(); let any = 0;
+      const [alpha, wide] = tierEdge(tier, base, tier < 0 ? 0 : focus, dim); ctx.globalAlpha = alpha; ctx.lineWidth = width * wide; ctx.beginPath(); let any = 0;
       for (const e of this.canvasEdges) { const a = this.projection.source[e]!, b = this.projection.target[e]!; if (!this.edgeOn[e] || !this.filterVisible[a] || !this.filterVisible[b] || tier >= 0 && this.edgeTier[e] !== tier) continue; ctx.moveTo(x(a), y(a)); ctx.lineTo(x(b), y(b)); any = 1; }
       if (s.visuals.edgeOpacity > 0 && any) ctx.stroke();
     }
@@ -820,7 +831,7 @@ export class DetailRenderer {
     ctx.globalAlpha = 1;
     for (const h of this.hubs) { ctx.fillStyle = this.groupColor(h.group); ctx.beginPath(); ctx.arc((h.x - this.centerX) * this.scale + this.width / 2, (h.y - this.centerY) * this.scale + this.height / 2, h.radius, 0, Math.PI * 2); ctx.fill(); }
     ctx.font = `${s.labelSize}px ${this.theme.font}`; ctx.fillStyle = this.theme.text;
-    if (this.atlas && s.nodeSize >= s.labelRenderedSizeThreshold * Math.sqrt(this.camera.ratio)) for (const n of this.atlas.nodes[labelLOD(this.camera.ratio)]!) { ctx.globalAlpha = tierLabel(g[n * 4 + 1]! / 255, 1, focus, dim); if (ctx.globalAlpha > .004) ctx.fillText(this.name(n), x(n) + (this.sizingSettings().nodeSizing.policy === 'predictable' ? this.nodeRadius(n) : s.nodeSize) + 4, y(n)); }
+    if (this.atlas && s.nodeSize >= s.labelRenderedSizeThreshold * Math.sqrt(this.camera.ratio)) for (const n of this.atlas.nodes[labelLOD(this.camera.ratio)]!) { ctx.globalAlpha = tierLabel(g[n * 4 + 1]! / 255, 1, focus, dim); if (ctx.globalAlpha > .004) ctx.fillText(this.name(n), x(n) + this.nodeRadius(n) + 4, y(n)); }
   }
   private pointerDown = (e: PointerEvent) => { if (this.disposed || this.lost || e.button > 0) return; this.flight = undefined; this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY }); this.canvas.setPointerCapture(e.pointerId); this.downX = e.clientX; this.downY = e.clientY; this.moved = this.pointers.size > 1; };
   private pointerMove = (e: PointerEvent) => {

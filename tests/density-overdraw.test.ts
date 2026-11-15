@@ -1,7 +1,7 @@
 import { test, expect, afterAll } from 'bun:test';
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { defaults } from '../src/settings';
-import { edgeAlpha, effectPolicy } from '../src/render-effects';
+import { edgeAlpha, effectPolicy, prominenceKeep, zoomFade } from '../src/render-effects';
 import { baseRadius } from '../src/node-sizing';
 import before from './support/compositing-before.json';
 const source = readFileSync(new URL('../src/webgl-renderer.ts', import.meta.url), 'utf8');
@@ -94,4 +94,30 @@ test('density correction leaves node radius and edge geometry/direction/focus eq
   const s = defaults('links'); s.nodeSizing = { policy: 'predictable', compensation: 1, floor: .3 };
   for (const zoom of [.02, 1, 8]) { const radius = baseRadius(s, 800, 600, 62230, zoom); expect(radius).toBeGreaterThanOrEqual(s.nodeSize * .3); expect(radius).toBeLessThanOrEqual(s.nodeSize); }
   expect(effectPolicy(s.visuals, 62230, 103058, 12, false, true).dark).toBe(true);
+});
+test('density zoom adaptation fades crowded edges as coverage, recovers zooming in, and never hides an edge', () => {
+  const v = defaults('links').visuals, off = { ...v, zoomAdapt: false }, zooms = [.02, .1, .5, 1, 2, 4, 16, 64];
+  expect(v.zoomAdapt).toBe(true);
+  for (const dark of [false, true]) for (const count of [1, 3000, 49534, 103058, 1e6]) {
+    let last = Infinity;
+    for (const zoom of zooms) {
+      const a = edgeAlpha(v, count, zoom, dark), plain = edgeAlpha(off, count, zoom, dark), f = zoomFade(v, count, zoom);
+      // Uniform scalar on top of the reviewed formula: never above it, never below the .35 floor.
+      expect(a).toBeLessThanOrEqual(plain + 1e-12); expect(a).toBeGreaterThanOrEqual(plain * .35 - 1e-12);
+      expect(a).toBeLessThanOrEqual(last + 1e-12); last = a; // zooming out never brightens
+      if (count <= 3000 && zoom <= 1) expect(f).toBe(1);
+      if (v.edgeOpacity) expect(a).toBeGreaterThan(0);
+      // Still coverage-preserving: 4096 local overlaps stay within the source/background hull.
+      accumulate([newEdge(colors[1]!, a, dark)], 4096).forEach((c, k) => expect(c).toBeLessThanOrEqual(Math.max(colors[1]![k]!, background[k]!) + 1e-12));
+    }
+  }
+  // Crowding is per pixel: the same graph in a smaller pane fades more; zero reference or off disables.
+  expect(zoomFade(v, 6000, 1, 640, 400)).toBeLessThan(zoomFade(v, 6000, 1, 2560, 1600));
+  expect(zoomFade({ ...v, edgeDensityReference: 0 }, 1e6, 64)).toBe(1); expect(zoomFade(off, 1e6, 64)).toBe(1);
+  expect(zoomFade(v, 49534, 1)).toBeCloseTo(.35, 12); expect(zoomFade(v, 6000, .5)).toBe(1); expect(zoomFade(v, 12000, 1)).toBeCloseTo(.5, 12);
+  // Hub prominence: unchanged at or inside home or uncrowded; zoom^-1/2 in half log2 steps, floored at 1/4.
+  for (const zoom of [.01, .5, 1, 1.1]) expect(prominenceKeep(zoom, true)).toBe(1);
+  expect(prominenceKeep(64, false)).toBe(1); expect(prominenceKeep(2, true)).toBeCloseTo(Math.SQRT1_2, 12); expect(prominenceKeep(4, true)).toBe(.5); expect(prominenceKeep(1e4, true)).toBe(.25);
+  expect(prominenceKeep(2.1, true)).toBe(prominenceKeep(1.9, true));
+  let previous = 1; for (const zoom of zooms) { const k = prominenceKeep(zoom, true); expect(k).toBeLessThanOrEqual(previous); previous = k; }
 });

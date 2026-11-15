@@ -83,10 +83,23 @@ export const thinning = (reference: number, count: number) => reference > 0 ? Ma
  * (fit) framing. Dark-theme artistic attenuation is independent of compositing.
  * Per-edge caps cannot bound accumulated light; fragments must conserve coverage.
  * `zoom` is camera ratio / home ratio. */
-export function edgeAlpha(v: Visuals, visibleEdges: number, zoom: number, dark: boolean): number {
-  const density = thinning(v.edgeDensityReference, visibleEdges), boost = Math.min(3, Math.max(1, 1 / Math.sqrt(Math.max(zoom, 1e-6))));
+export function edgeAlpha(v: Visuals, visibleEdges: number, zoom: number, dark: boolean, width?: number, height?: number): number {
+  const density = thinning(v.edgeDensityReference, visibleEdges) * zoomFade(v, visibleEdges, zoom, width, height), boost = Math.min(3, Math.max(1, 1 / Math.sqrt(Math.max(zoom, 1e-6))));
   return dark ? Math.min(.5, v.edgeOpacity * .45 * density * boost) : Math.min(1, v.edgeOpacity * 1.25 * density * boost);
 }
+/** "Adapt to zoom" edge factor in [.35, 1]. Pixel coverage of the drawn web grows with the
+ * visible edge count and with zoom (the footprint shrinks faster than edge length) and falls
+ * with pane size (reference 1280×800). Above `edgeDensityReference` the factor is
+ * 1/√crowding, floored so every edge stays drawn; 1 when off or with a reference of 0. */
+export function zoomFade(v: Pick<Visuals, 'zoomAdapt' | 'edgeDensityReference'>, visibleEdges: number, zoom: number, width = 1280, height = 800): number {
+  if (!v.zoomAdapt || !v.edgeDensityReference) return 1;
+  const crowd = visibleEdges * Math.max(zoom, 1e-6) * Math.sqrt(1024000 / Math.max(1, width * height)) / v.edgeDensityReference;
+  return Math.min(1, Math.max(.35, 1 / Math.sqrt(crowd)));
+}
+/** "Adapt to zoom" degree-prominence kept when zoomed out past home on a crowded view, so hubs
+ * stop covering neighbours: zoom^-½ in half-steps of log2 zoom (sizes are recomputed only when
+ * the step changes), at least ¼; 1 at or inside home or when marks would not touch. */
+export const prominenceKeep = (zoom: number, crowded: boolean) => crowded && zoom > 1 ? Math.max(.25, 2 ** (-Math.round(Math.log2(zoom) * 2) / 4)) : 1;
 /** Zoom-dependent label opacity and importance cut within the current label LOD band. */
 export function labelFade(nodeSize: number, threshold: number, ratio: number, ratios: readonly number[], fade: boolean): { alpha: number; cut: number } {
   const visibleAt = nodeSize / (threshold * Math.sqrt(ratio));

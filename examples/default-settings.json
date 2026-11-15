@@ -138,7 +138,8 @@
     "carrierDensityReference": 8000,
     "carrierLod": true,
     "carrierLodNear": 0.3,
-    "carrierLodFar": 0.6
+    "carrierLodFar": 0.6,
+    "zoomAdapt": true
   },
   "explore": {
     "panelOpen": true,

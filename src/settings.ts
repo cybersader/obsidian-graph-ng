@@ -44,6 +44,8 @@ export interface Visuals {
   carrierLod: boolean;
   carrierLodNear: number;
   carrierLodFar: number;
+  /** Fade crowded edges and shrink hub prominence as the view zooms out; restore zooming in. */
+  zoomAdapt: boolean;
 }
 /** A regex-derived group from an older version, kept visible (not silently dropped)
  * after regex transforms were removed; it no longer affects the graph. */
@@ -53,10 +55,10 @@ export const defaultVisuals = (): Visuals => ({
   degreeSizing: 4, degreeCurve: 'sqrt', edgeOpacity: .4, edgeDensityReference: 3000, edgeColorMix: .65, edgeDirection: false, glow: .3,
   curvedEdges: true, curvature: .12, curveSegments: 8, hoverHighlight: true, dimOpacity: .12, groupHalos: false, haloOpacity: .05,
   autoPalette: true, labelFade: true, cameraAnimationMs: 450, glowMaxNodes: 250000, curvesMaxEdges: 60000, halosMaxGroups: 48, hubsMaxGroups: 256, softwareEffects: false,
-  carrierTint: true, carrierBridge: 'blend', carrierBridgeAccent: .35, carrierOpacity: .7, carrierSize: .6, carrierDensityReference: 8000, carrierLod: true, carrierLodNear: .3, carrierLodFar: .6,
+  carrierTint: true, carrierBridge: 'blend', carrierBridgeAccent: .35, carrierOpacity: .7, carrierSize: .6, carrierDensityReference: 8000, carrierLod: true, carrierLodNear: .3, carrierLodFar: .6, zoomAdapt: true,
 });
 export const defaultExplore = (): ExploreSettings => ({ panelOpen: true, facetValues: 50, legendPageSize: 40, view: emptyView(), savedViews: [], disabledDerived: [] });
-const flags = ['edgeDirection', 'curvedEdges', 'hoverHighlight', 'groupHalos', 'autoPalette', 'labelFade', 'softwareEffects', 'carrierTint', 'carrierLod'] as const;
+const flags = ['edgeDirection', 'curvedEdges', 'hoverHighlight', 'groupHalos', 'autoPalette', 'labelFade', 'softwareEffects', 'carrierTint', 'carrierLod', 'zoomAdapt'] as const;
 const unit = ['edgeOpacity', 'edgeColorMix', 'glow', 'dimOpacity', 'haloOpacity', 'carrierOpacity', 'carrierBridgeAccent'] as const;
 const counts = ['edgeDensityReference', 'curveSegments', 'glowMaxNodes', 'curvesMaxEdges', 'halosMaxGroups', 'hubsMaxGroups', 'carrierDensityReference'] as const;
 export function validateVisuals(v: unknown): asserts v is Visuals {
