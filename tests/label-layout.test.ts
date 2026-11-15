@@ -49,7 +49,7 @@ test('radial placement: labels stay beside their dots when free; collisions push
   // Free: right of the dot, centred, no leader.
   const free = radialLabels([focus, item(1, 1, 200, 0), item(2, 3, 0, 200)], 10, DIRECT_LABELS, 1, 50, 32);
   expect(free.slots.map(s => [s.node, s.dx, s.dy, !!s.leader])).toEqual([[0, 7, 0, false], [1, 7, 0, false], [2, 7, 0, false]]);
-  expect(free.hidden).toBe(0); expect(free.more).toBeUndefined();
+  expect(free.hidden).toBe(0); expect(free.more).toBeDefined(); // reserved: an overlay may still hide a placed label
   // Dense: four direct dots stacked where their default boxes overlap.
   const dense = [focus, ...[1, 2, 3, 4].map(n => item(n, 1, 100, n * 2))], out = radialLabels(dense, 10, DIRECT_LABELS, 4, 50, 32);
   expect(out.slots.map(s => s.node)).toEqual([0, 1, 2, 3, 4]); expect(out.slots[1]!.leader).toBeUndefined();

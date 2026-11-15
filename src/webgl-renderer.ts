@@ -272,6 +272,8 @@ export class DetailRenderer {
   /** The hover label's [key, width, height], measured once per caption/font change. */
   private hoverBox: [string, number, number] = ['', 0, 0];
   private moreSize = [0, 0];
+  /** Direct connections the label layout ranked (the "+N more" total before shown labels). */
+  private moreTotal = 0;
   private media = matchMedia('(prefers-color-scheme: dark)');
   private programs: Program[] = [];
   private vaos: WebGLVertexArrayObject[] = [];
@@ -1304,8 +1306,11 @@ export class DetailRenderer {
         const m = this.measure ??= document.createElement('canvas').getContext('2d')!; m.font = font || `13px ${this.theme.font}`;
         this.hoverBox = [key, hover.offsetWidth || m.measureText(text).width + 12, hover.offsetHeight || 22];
       }
-      const p = this.screenPoint(node), x = p.x + radius(node) + 6, y = p.y - 10;
-      hover.hidden = under(x, y, this.hoverBox[1], this.hoverBox[2]); hover.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
+      // Right, left, above, then below the dot: the first spot clear of the card and panels wins.
+      const p = this.screenPoint(node), [, w, h] = this.hoverBox, gap = radius(node) + 6;
+      const spots = [[p.x + gap, p.y - 10], [p.x - gap - w, p.y - 10], [p.x - w / 2, p.y - gap - h], [p.x - w / 2, p.y + gap]].filter(([x, y]) => !under(x!, y!, w, h));
+      const at = spots.find(([x, y]) => x! >= 0 && y! >= 0 && x! + w <= this.width && y! + h <= this.height) ?? spots[0];
+      hover.hidden = !at; if (at) hover.style.transform = `translate(${Math.round(at[0]!)}px, ${Math.round(at[1]!)}px)`;
     } else { hover.textContent = ''; this.hoverBox[0] = ''; }
     // The previewed name fades in with the node's growth.
     hover.style.opacity = node === this.hoverFx.n && node !== ego ? String((this.fx[0]! - 1) / .6) : '';
@@ -1317,7 +1322,7 @@ export class DetailRenderer {
       const pad = v.labelPlates ? 16 : 4, text = (n: number, rank: number) => n === ego ? this.noteCaption(n) : middleTruncate(this.name(n), LABEL_CHARS[rank]!);
       const { list, direct } = rankFocus(ego, this.near, this.stateBytes, this.visible, this.projection.offsets, budget * s.labelCandidateMultiplier, this.projection.carrierNodes, ego >= 0 ? this.interestOf(ego) : undefined);
       const items = list.map(([n, rank]) => { m.font = tierFont(rank, s.labelSize, tier, this.theme.font); const h = tierType(rank, s.labelSize, tier).size * 1.5 + 4; return { node: n, rank, x: this.renderCoordinate(n, 0, 1) * k, y: this.renderCoordinate(n, 1, 1) * k, r: radius(n), w: m.measureText(text(n, rank)).width + pad, h }; });
-      m.font = tierFont(1, s.labelSize, tier, this.theme.font); this.moreSize = [m.measureText(`+${direct} more`).width + 24, 32];
+      m.font = tierFont(1, s.labelSize, tier, this.theme.font); this.moreSize = [m.measureText(`+${direct} more`).width + 24, 32]; this.moreTotal = direct;
       const layout = radialLabels(direct > 50 ? items.filter(it => it.rank <= 1) : items, budget, direct > 50 ? 6 : DIRECT_LABELS, ego >= 0 ? direct : 0, this.moreSize[0]!, 32);
       this.ranked = layout.slots.filter(x => x.node !== ego); this.moreAt = layout.more;
       this.rankedKey = [lod, this.display, this.fit, this.width, this.height, this.lensRevision];
@@ -1333,17 +1338,20 @@ export class DetailRenderer {
       });
       if (layout.more) {
         const b = this.moreButton ??= this.overlay.appendChild(Object.assign(document.createElement('button'), { className: 'graph-ng-more', onclick: () => { if (this.focusNode >= 0) this.onMoreConnections(this.focusNode); } }));
-        const name = this.name(ego); b.textContent = `+${layout.hidden} more`; b.setAttribute('aria-label', `Show ${layout.hidden} more direct connections of ${name}`); b.style.font = tierFont(1, s.labelSize, tier, this.theme.font);
+        b.style.font = tierFont(1, s.labelSize, tier, this.theme.font);
       }
     }
     if (!this.ranked.length) { while (this.tierLabels.length) this.tierLabels.pop()!.remove(); while (this.tierLeaders.length) this.tierLeaders.pop()!.remove(); }
-    let j = 0;
-    this.ranked.forEach(({ node: n, dx, dy, w, h, leader }, i) => {
-      const el = this.tierLabels[i]!, p = this.screenPoint(n), x = leader ? p.x + dx : p.x + radius(n) + 4, y = leader ? p.y + dy : p.y; el.hidden = under(x, y - h / 2, w, h) || under(p.x, p.y); el.style.opacity = String(focus); el.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px) translateY(-50%)`;
+    let j = 0, shown = 0;
+    this.ranked.forEach(({ node: n, rank, dx, dy, w, h, leader }, i) => {
+      const el = this.tierLabels[i]!, p = this.screenPoint(n), x = leader ? p.x + dx : p.x + radius(n) + 4, y = leader ? p.y + dy : p.y; el.hidden = under(x, y - h / 2, w, h) || under(p.x, p.y); if (rank === 1 && !el.hidden) shown++; el.style.opacity = String(focus); el.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px) translateY(-50%)`;
       if (leader) { const line = this.tierLeaders[j++]!; line.hidden = el.hidden; line.style.opacity = String(focus); line.style.transform = `translate(${Math.round(p.x + leader[0])}px, ${Math.round(p.y + leader[1])}px) rotate(${Math.atan2(leader[3] - leader[1], leader[2] - leader[0])}rad)`; }
     });
     if (this.moreButton) {
-      const at = this.moreAt, p = ego >= 0 ? this.screenPoint(ego) : { x: 0, y: 0 }, [mw, mh] = this.moreSize, show = !!at && ego >= 0 && focus > 0 && !under(p.x + at.dx, p.y + at.dy - mh! / 2, mw, mh); this.moreButton.hidden = !show;
+      // "+N more" counts the direct connections without a label actually shown this frame.
+      const b = this.moreButton, rest = this.moreTotal - shown, text = `+${rest} more`;
+      if (b.textContent !== text) { b.textContent = text; b.setAttribute('aria-label', `Show ${rest} more direct connections of ${ego >= 0 ? this.name(ego) : ''}`); }
+      const at = this.moreAt, p = ego >= 0 ? this.screenPoint(ego) : { x: 0, y: 0 }, [mw, mh] = this.moreSize, show = rest > 0 && !!at && ego >= 0 && focus > 0 && !under(p.x + at.dx, p.y + at.dy - mh! / 2, mw, mh); b.hidden = !show;
       if (show) { this.moreButton.style.opacity = String(focus); this.moreButton.style.transform = `translate(${Math.round(p.x + at.dx)}px, ${Math.round(p.y + at.dy)}px) translateY(-50%)`; }
     }
     this.placePath(radius, focus);

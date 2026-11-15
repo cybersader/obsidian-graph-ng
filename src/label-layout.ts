@@ -66,7 +66,8 @@ export function radialLabels(items: readonly LabelItem[], budget: number, direct
   }
   const hidden = Math.max(0, directTotal - direct);
   let more: RadialLayout['more'];
-  if (hidden && focus) {
+  // A "+N more" spot is reserved whenever the focus has direct connections: overlays may still hide a placed label.
+  if (directTotal && focus) {
     const left = focus.x + focus.r + 4, top = focus.y - focus.h / 2;
     const spots = [[left, top + focus.h + 2], [left, top - moreH - 2], [focus.x - focus.r - 4 - moreW, focus.y - moreH / 2], [left, top + focus.h + moreH + 6], [left, top - 2 * moreH - 6]];
     const [mx, my] = spots.find(([x, y]) => free(x!, y!, moreW, moreH)) ?? spots[0]!;

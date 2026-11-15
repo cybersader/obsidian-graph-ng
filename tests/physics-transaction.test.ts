@@ -4,6 +4,7 @@ import vm from 'node:vm';
 import { defaults } from '../src/settings';
 import { encodeStrings } from '../src/core/columns';
 import { ControlElement, control } from './support/controls-dom';
+import { topLeftHub } from './support/top-left-hub';
 import { focusTiers, incidentEdges } from '../src/render-data';
 import { miniFit, miniBounds, toCamera } from '../src/minimap';
 
@@ -305,11 +306,12 @@ test('zoom DPR-only change updates backing resolution on next production paint w
 
 // Graduated connection highlighting through the compiled renderer: Canvas fixture draw calls and
 // recorded GL upload calls only. No GPU raster, native visual quality, FPS or device input is claimed.
-async function graduated(pairs: [number, number][], n = 5, max = 0) {
+async function graduated(pairs: [number, number][], n = 5, max = 0, paths?: string[], xy?: Float32Array) {
   const settings = defaults('links'), opened: number[] = [], p: any = projection(n);
+  if (paths) p.paths = encodeStrings(paths);
   if (max) { settings.canvasMaxDetailNodes = max; settings.canvasMaxDetailEdges = max; }
   Object.assign(p, { source: Uint32Array.from(pairs, x => x[0]), target: Uint32Array.from(pairs, x => x[1]), type: new Uint32Array(pairs.length), types: ['link'], carrier: new Uint32Array(pairs.length).fill(0xffffffff) });
-  const positions = Float32Array.from({ length: n * 2 }, (_, i) => i % 2 ? (i >> 1) * 37 % 100 : (i >> 1) * 50);
+  const positions = xy ?? Float32Array.from({ length: n * 2 }, (_, i) => i % 2 ? (i >> 1) * 37 % 100 : (i >> 1) * 50);
   const r = await Renderer.create(new Element(), p, positions, new Uint8Array(n).fill(1), settings, (i: number) => opened.push(i), () => {}, new Uint32Array(n), () => true, true, () => {}, {});
   renderers.push(r);
   const k = (name: string) => typeof mangle[name] === 'string' ? mangle[name] : name;
@@ -424,7 +426,8 @@ test('graduated labels fold unlabelled direct connections into a "+N more" butto
   const f = await graduated(Array.from({ length: 40 }, (_, i) => [0, i + 1] as [number, number]), 41), { r, k } = f, asked: number[] = [];
   const paint = () => { r[k('focusLevel')] = 1; r[k('placeOverlay')](); };
   f.tap(0); paint();
-  const more = r[k('moreButton')], shown = r[k('tierLabels')].length, hidden = 40 - shown;
+  // "+N more" counts direct connections without a label shown this frame (one may sit under the card).
+  const more = r[k('moreButton')], shown = r[k('tierLabels')].filter((el: any, i: number) => !el.hidden && r[k('ranked')][i].rank === 1).length, hidden = 40 - shown;
   expect(shown).toBeGreaterThan(0); expect(shown).toBeLessThanOrEqual(24); expect(more.hidden).toBe(false); expect(more.tagName).toBe('BUTTON');
   expect(more.textContent).toBe(`+${hidden} more`); expect(more.attributes['aria-label']).toBe(`Show ${hidden} more direct connections of ${r[k('name')](0)}`);
   // The default hook is a safe no-op; a host hook receives the focus.
@@ -725,6 +728,41 @@ test('wiring: "+N more" opens a bounded group list and focuses its filter withou
   // From no selection the hook selects the focus and opens its card; a hidden note is ignored.
   f.tap(EMPTY); expect(card().textContent).toBe(''); r.showConnections(0); expect(r.selected).toBe(0); expect(rows().length).toBe(50);
   r.showConnections(-1); r.showConnections(99); expect(r.selected).toBe(0);
+});
+// The owner's case: a 221-connection hub near the top-left, its labels running under the Recent strip and
+// tier legend. Panel rects are injected (the synthetic DOM has no layout); the browser evidence harness
+// re-checks real DOM rectangles. Every visible label, the hover label and "+N more" must clear every panel.
+const STACK = [8, 8, 230, 120];
+const boxOf = (el: any, w: number, h: number, centred = false) => { const [, x, y] = /translate\((-?[\d.]+)px, (-?[\d.]+)px\)/.exec(el.style.transform)!.map(Number); return [x!, centred ? y! - h / 2 : y!, w, h]; };
+const meets = (a: number[], b: number[]) => b[2]! > 0 && b[3]! > 0 && a[0]! < b[0]! + b[2]! && a[0]! + a[2]! > b[0]! && a[1]! < b[1]! + b[3]! && a[1]! + a[3]! > b[1]!;
+test('top-left hub: no label, hover label or "+N more" meets the card, Recent strip or tier legend', async () => {
+  const h = topLeftHub(), f = await graduated(h.pairs, h.n, 0, h.paths, h.xy), { r, k } = f;
+  r.setView(new Uint8Array(h.n).fill(1), { groupCodes: h.groupCodes, groupLabels: h.groupLabels });
+  // One world unit per pixel, hub at (100, 80): the Recent/legend stack covers [8, 8, 230, 120].
+  const frame = r[k('cameraFrame')], ratio = r.fit; r.setCamera(r.camera.x, r.camera.y, ratio);
+  const cx = r.width / 2 - 100, cy = r.height / 2 - 80; r.setCamera((cx - frame.minX) / frame.width, (cy - frame.minY) / frame.height, ratio);
+  expect(r.screenPoint(0).x).toBeCloseTo(100, 3); expect(r.screenPoint(0).y).toBeCloseTo(80, 3);
+  f.tap(0); expect(r.selected).toBe(0); r[k('panelRects')] = [STACK, [0, 0, 0, 0]]; r[k('focusLevel')] = 1; r[k('placeOverlay')]();
+  const card = r[k('cardRect')], panels = [card, STACK], labels = r[k('tierLabels')], slots = r[k('ranked')];
+  expect(card[2]).toBeGreaterThan(0); expect(slots.length).toBeGreaterThan(0);
+  // The fixture reproduces the complaint: some label's dot and anchor clear the stack but its text would run under it.
+  const caught = slots.filter((s: any, i: number) => { const p = r.screenPoint(s.node); return labels[i].hidden && !panels.some(b => meets([p.x, p.y, 1, 1], b)); });
+  expect(caught.length).toBeGreaterThan(0);
+  let shown = 0;
+  slots.forEach((s: any, i: number) => { if (labels[i].hidden) return; if (s.rank === 1) shown++; const box = boxOf(labels[i], s.w, s.h, true); for (const b of panels) expect(meets(box, b)).toBe(false); });
+  // "+N more" counts the direct connections without a shown label, and clears every panel.
+  const more = r[k('moreButton')]; expect(more.textContent).toBe(`+${221 - shown} more`);
+  if (!more.hidden) { const [w, mh] = r[k('moreSize')], box = boxOf(more, w, mh, true); for (const b of panels) expect(meets(box, b)).toBe(false); }
+  // The hover label tries right, left, above and below; it never lands on a panel.
+  const hover = r[k('hoverLabel')];
+  for (const node of [0, 1, 2, 3, 4, 5, 6, 40, 90]) {
+    f.hover(node); r[k('placeOverlay')]();
+    if (hover.hidden) continue;
+    const [, w, hh] = r[k('hoverBox')], box = boxOf(hover, w, hh); for (const b of panels) expect(meets(box, b)).toBe(false);
+  }
+  // A dot whose right side is under the stack moves its name to a free side instead of hiding it.
+  f.hover(3); r[k('placeOverlay')](); const p = r.screenPoint(3);
+  expect(hover.hidden).toBe(false); expect(boxOf(hover, 1, 1)[1]).toBeGreaterThan(p.y);
 });
 test('hub sections: an open section lights only its notes, with an explicit neighbours-of-neighbours toggle', async () => {
   // Hub 0: Alpha holds 1..55, Beta 56..60; 61 hangs off Beta's 56 and 62 off Alpha's 1.
