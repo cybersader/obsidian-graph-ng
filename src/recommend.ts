@@ -28,14 +28,15 @@ export function recommend(t: GraphStats, s: Settings): Suggestion[] {
   // default 0.4 turns into a solid haze; past ~20k or ~12 it hides nodes. Tiny sparse graphs can
   // afford stronger edges because nothing overlaps.
   const heavy = e >= 20000 || d >= 12;
-  if (heavy || e >= 5000 || d >= 6) add('edgeOpacity', heavy ? .15 : .25, `${e} edges ${heavy ? 'overlap heavily' : 'start to haze'}`);
+  // Haze advice only ever lowers the opacity: a fainter hand-tuned value is never pushed back up.
+  if (heavy || e >= 5000 || d >= 6) { if (s.visuals.edgeOpacity > (heavy ? .15 : .25)) add('edgeOpacity', heavy ? .15 : .25, `${e.toLocaleString()} edges ${heavy ? 'overlap heavily' : 'start to haze'}`); }
   else if (e < 500 && d < 3) add('edgeOpacity', .6, 'sparse; easy to follow');
   // Degree prominence (log curve normalized to the biggest hub). Hub ratio = max degree / mean.
   // ≥ 25: a few hubs would dwarf everything, so soften. 4–25: a real but readable skew, so make
   // the connected notes stand out. < 4: degrees are nearly equal and size carries little meaning.
-  if (n >= 20) add('degreeSizing', h >= 25 ? 1 : h >= 4 ? 2.2 : .6, h >= 25 ? `hubs of degree ${t.maxDegree} dwarf the rest` : h >= 4 ? 'skewed; let hubs stand out' : 'even degrees; size says little');
+  if (n >= 20) add('degreeSizing', h >= 25 ? 1 : h >= 4 ? 2.2 : .6, h >= 25 ? `hubs of degree ${t.maxDegree.toLocaleString()} dwarf the rest` : h >= 4 ? 'skewed; let hubs stand out' : 'even degrees; size says little');
   // Labels: candidates scale with notes; thin them for big graphs, allow more for small ones.
-  if (n >= 5000) add('labelDensity', n >= 20000 ? .5 : .75, `${n} notes; declutter`);
+  if (n >= 5000) add('labelDensity', n >= 20000 ? .5 : .75, `${n.toLocaleString()} notes; declutter`);
   else if (n < 300) add('labelDensity', 1.5, 'few notes; room to label');
   // Glow is per-node overdraw; above ~5k notes it washes dense cores into a blob.
   if (n >= 5000) add('glow', 0, 'blurs dense cores');

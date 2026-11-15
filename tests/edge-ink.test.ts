@@ -1,7 +1,7 @@
 import { test, expect } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { defaults, validateVisuals, upgradeSettings, EDGE_MODES } from '../src/settings';
-import { edgeInk, overdraw, inkAlpha, unionAlpha, fadeLength, lengthFade, INK, LENGTH_FADE, type EdgeInk } from '../src/render-effects';
+import { edgeInk, overdraw, inkShare, unionAlpha, fadeLength, lengthFade, INK, LINES, LENGTH_FADE, type EdgeInk } from '../src/render-effects';
 const source = readFileSync(new URL('../src/webgl-renderer.ts', import.meta.url), 'utf8');
 const edgeShader = source.match(/const edgeVertex = common \+ glsl`([\s\S]*?)`;/)![1]!;
 const visuals = (o: Partial<ReturnType<typeof defaults>['visuals']> = {}) => ({ ...defaults('links').visuals, edgeOpacity: .155, ...o });
@@ -21,32 +21,27 @@ test('edge ink samples mean length, the long-line clip and the core area of the 
   expect(reads).toBeLessThanOrEqual(512);
 });
 
-test('density maths: per-line alpha spends a fixed ink budget, so core coverage is the same at every zoom', () => {
-  const ink: EdgeInk = { length: 40, clipped: 30, area: 1e6 }, v = visuals(), target = 1 - Math.exp(-INK * v.edgeOpacity);
+test('density maths: WebGL draws a share of whole lines, so the core keeps about LINES lines per pixel at every zoom', () => {
+  const ink: EdgeInk = { length: 40, clipped: 30, area: 1e6 }, v = visuals();
   let previous = Infinity;
   for (const scale of [.05, .2, 1, 4, 16]) {
     const layers = overdraw(ink, 50000, 1, scale);
     expect(layers).toBeCloseTo(50000 * 30 / (1e6 * scale), 9);
     expect(layers).toBeLessThan(previous); previous = layers; // zooming in thins the web as 1 / scale
-    const a = inkAlpha(v, layers), coverage = 1 - (1 - a) ** layers;
-    // Source-over coverage with a = budget / layers lies in [1 − e^(−budget), budget] for any layers ≥ 1.
-    if (a < 1 && layers >= 1) { expect(a * layers).toBeCloseTo(INK * v.edgeOpacity, 12); expect(coverage).toBeGreaterThanOrEqual(target - 1e-12); expect(coverage).toBeLessThanOrEqual(INK * v.edgeOpacity + 1e-12); }
+    const share = inkShare(v, layers);
+    if (share < 1) expect(share * layers).toBeCloseTo(LINES, 12); else expect(layers).toBeLessThanOrEqual(LINES);
   }
-  // More lines or wider strokes never add ink: the alpha shrinks in proportion.
-  expect(inkAlpha(v, overdraw(ink, 100000, 1, 1))).toBeCloseTo(inkAlpha(v, overdraw(ink, 50000, 1, 1)) / 2, 12);
-  expect(inkAlpha(v, overdraw(ink, 50000, 2, 1))).toBeCloseTo(inkAlpha(v, overdraw(ink, 50000, 1, 1)) / 2, 12);
-  // The opacity setting still scales the budget; off ("Adapt to zoom") or an empty web never caps.
-  expect(inkAlpha(visuals({ edgeOpacity: .4 }), 50)).toBeCloseTo(inkAlpha(visuals({ edgeOpacity: .2 }), 50) * 2, 12);
-  expect(inkAlpha(visuals({ zoomAdapt: false }), 1e4)).toBe(1); expect(inkAlpha(v, 0)).toBe(1); expect(overdraw({ length: 0, clipped: 0, area: 0 }, 9, 1, 1)).toBe(0);
-  expect(inkAlpha(visuals({ edgeOpacity: 0 }), 50)).toBe(0);
+  // More lines or wider strokes never add ink: the share shrinks in proportion.
+  expect(inkShare(v, overdraw(ink, 100000, 1, 1))).toBeCloseTo(inkShare(v, overdraw(ink, 50000, 1, 1)) / 2, 12);
+  expect(inkShare(v, overdraw(ink, 50000, 2, 1))).toBeCloseTo(inkShare(v, overdraw(ink, 50000, 1, 1)) / 2, 12);
+  // The share does not depend on opacity (opacity sets each line's alpha); off or an empty web keeps every line.
+  expect(inkShare(visuals({ edgeOpacity: .4 }), 50)).toBe(inkShare(visuals({ edgeOpacity: .2 }), 50));
+  expect(inkShare(visuals({ zoomAdapt: false }), 1e4)).toBe(1); expect(inkShare(v, 0)).toBe(1); expect(overdraw({ length: 0, clipped: 0, area: 0 }, 9, 1, 1)).toBe(0);
 });
 
-test('density maths: Canvas union alpha reaches the same core coverage as WebGL source-over', () => {
+test('density maths: Canvas union alpha reaches the budgeted core coverage', () => {
   const v = visuals(), budget = INK * v.edgeOpacity;
-  for (const layers of [2, 8, 64, 4096]) {
-    const webgl = 1 - (1 - inkAlpha(v, layers)) ** layers, canvas = unionAlpha(v, layers) * (1 - Math.exp(-layers));
-    expect(canvas).toBeCloseTo(1 - Math.exp(-budget), 12); expect(Math.abs(webgl - canvas)).toBeLessThan(.002);
-  }
+  for (const layers of [2, 8, 64, 4096]) expect(unionAlpha(v, layers) * (1 - Math.exp(-layers))).toBeCloseTo(1 - Math.exp(-budget), 12);
   expect(unionAlpha(visuals({ zoomAdapt: false }), 64)).toBe(1); expect(unionAlpha(v, .001)).toBe(1);
 });
 
@@ -61,18 +56,26 @@ test('length fade: a long line adds no more ink than a typical one, and only whi
   expect(lengthFade(0, 1)).toBe(1);
 });
 
-test('edge shader evaluates the same quieting as the maths, and focus tiers regain full alpha', () => {
-  const quiet = new Function('s', `with (s) { return (${edgeShader.match(/float quiet = (.*);/)![1]!}); }`) as (s: any) => number;
-  const scale = (line: string) => new Function('s', `with (s) { return (${line}); }`) as (s: any) => number;
-  const factor = scale(edgeShader.match(/alpha \*= (.*);/)![1]!.replace(/(\d)u\b/g, '$1'));
+// The shader's stable line rank, evaluated in 32-bit unsigned arithmetic like GLSL.
+const rankOf = (id: number) => { let k = Math.imul(id, 2654435769) >>> 0; k = (k ^ k >>> 15) >>> 0; k = Math.imul(k, 2246822519) >>> 0; return ((k ^ k >>> 13) >>> 0) >>> 8; };
+test('edge shader keeps a stable share of whole context lines; focus tiers fade back to full alpha', () => {
+  expect(edgeShader).toContain('uint k = uint(gl_InstanceID) * 2654435769u; k ^= k >> 15u; k *= 2246822519u; float quiet = share * 16777216. > float((k ^ k >> 13u) >> 8u) ? 1. : 0.;');
+  const fn = (line: string) => new Function('s', `with (s) { return (${line}); }`) as (s: any) => number;
   const env = { min: Math.min, max: Math.max, mix: (a: number, b: number, t: number) => a + (b - a) * t };
-  for (const [edgeAlpha, ink, f, len] of [[.02, .004, 300, 900], [.02, .5, 300, 100], [.3, .01, 1e9, 5000]] as const) {
-    const q = quiet({ ...env, edgeAlpha, inkAlpha: ink, fadeLength: f, len });
-    expect(q).toBeCloseTo(Math.min(1, ink / edgeAlpha) * lengthFade(len, f), 12);
-    expect(factor({ ...env, quiet: q, tier: 0, focus: 1, focusOnly: 0 })).toBeCloseTo(q, 12);
-    expect(factor({ ...env, quiet: q, tier: 255, focus: 1, focusOnly: 0 })).toBe(1);
-    expect(factor({ ...env, quiet: q, tier: 255, focus: .5, focusOnly: 1 })).toBeCloseTo((q + (1 - q) * .5) * .5, 12);
+  const share = fn(edgeShader.match(/float share = (.*);/)![1]!), factor = fn(edgeShader.match(/alpha \*= (.*);/)![1]!.replace(/(\d)u\b/g, '$1'));
+  for (const [ink, f, len] of [[.1, 300, 900], [.5, 300, 100], [1, 1e9, 5000]] as const) expect(share({ ...env, inkShare: ink, fadeLength: f, len })).toBeCloseTo(ink * lengthFade(len, f), 12);
+  // The kept fraction matches the share; a larger share keeps a superset (zooming in only adds lines).
+  const ids = 50000, kept = (s: number) => { const out: number[] = []; for (let i = 0; i < ids; i++) if (s * 16777216 > rankOf(i)) out.push(i); return out; };
+  for (const s of [.02, .1, .37, .8]) expect(Math.abs(kept(s).length / ids - s)).toBeLessThan(.01);
+  const few = kept(.05), many = new Set(kept(.3)); expect(few.every(i => many.has(i))).toBe(true);
+  expect(kept(1).length).toBe(ids); expect(kept(0).length).toBe(0);
+  // Kept context lines draw at full line alpha; dropped ones are not rasterized unless a focus tier fades them in.
+  for (const quiet of [0, 1]) {
+    expect(factor({ ...env, quiet, tier: 0, focus: 1, focusOnly: 0 })).toBe(quiet);
+    expect(factor({ ...env, quiet, tier: 255, focus: 1, focusOnly: 0 })).toBe(1);
+    expect(factor({ ...env, quiet, tier: 255, focus: .5, focusOnly: 1 })).toBeCloseTo((quiet + (1 - quiet) * .5) * .5, 12);
   }
+  expect(edgeShader).toContain('if (quiet < .5 && (tier == 0u || focus <= 0.) && gl_InstanceID != edgeHovered) { gl_Position = offscreen; return; }');
   // "Focus only" removes context lines before rasterizing (no zero-alpha fragments, no dither speckle).
   expect(edgeShader).toContain('focusOnly > 0. && tier == 0u) { gl_Position = offscreen; return; }');
 });

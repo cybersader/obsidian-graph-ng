@@ -29,6 +29,11 @@ test('hub-heavy graph: softer degree sizing; many groups and edge notes dimmed',
   const moderate = graphStats(offsets([20, ...new Array(99).fill(2)]), 109);
   expect(values(moderate).degreeSizing).toBe(2.2);
 });
+test('haze advice only lowers edge opacity: a fainter hand-tuned value is not pushed back up', () => {
+  const crowded = graphStats(offsets(new Array(3000).fill(8)), 12000), faint = defaults('links'); faint.visuals.edgeOpacity = .155;
+  expect(values(crowded).edgeOpacity).toBe(.25); expect(values(crowded, faint).edgeOpacity).toBeUndefined();
+  expect(recommend(crowded, defaults('links')).find(x => x.key === 'edgeOpacity')!.reason).toBe(`${(12000).toLocaleString()} edges start to haze`);
+});
 test('deterministic, valid, never mutates, idempotent after applying, empty graph silent', () => {
   for (const stats of [chain(50), chain(3), dense(), hub(), graphStats(offsets([]), 0)]) {
     const settings = defaults('links'), before = structuredClone(settings), list = recommend(stats, settings);

@@ -113,6 +113,21 @@ test('batch 4 L3 adjacent: Fit graph after filtering to nodes outside the constr
   const f = await fixture(), r = await Renderer.create(f.stage, f.view.projection, f.positions, new Uint8Array([1, 1, 0]), f.plugin.settings, () => {}, () => {}, new Uint32Array(3), () => true, true, () => {}, {});
   renderers.push(r); r.setView(new Uint8Array([0, 0, 1]), {}); r.fitAll(0); expect(onScreen(r, [2])).toBe(true);
 });
+test('Fit all frames the connected notes, not a far ring of unconnected ones; under 8 connected frames everything', async () => {
+  const fit = async (linkedCount: number) => {
+    const n = 40, p: any = projection(n), pairs = Array.from({ length: linkedCount - 1 }, (_, i) => [i, i + 1] as const), degree = new Array(n).fill(0);
+    for (const [a, b] of pairs) { degree[a]++; degree[b]++; }
+    Object.assign(p, { source: Uint32Array.from(pairs, x => x[0]), target: Uint32Array.from(pairs, x => x[1]), type: new Uint32Array(pairs.length), types: ['link'], carrier: new Uint32Array(pairs.length).fill(0xffffffff), offsets: Uint32Array.from({ length: n + 1 }, (_, i) => degree.slice(0, i).reduce((s, d) => s + d, 0)) });
+    // Connected notes in a small cluster; the rest on a ring 50 times wider, as a force layout leaves them.
+    const positions = Float32Array.from({ length: n * 2 }, (_, k) => { const i = k >> 1, angle = i * 2 * Math.PI / n; return i < linkedCount ? (k % 2 ? i % 3 : i) * 2 : (k % 2 ? Math.sin(angle) : Math.cos(angle)) * 1000; });
+    const r = await Renderer.create(new Element(), p, positions, new Uint8Array(n).fill(1), defaults('links'), () => {}, () => {}, new Uint32Array(n), () => true, true, () => {}, {});
+    renderers.push(r); r.fitAll(0); return { r, ring: Array.from({ length: n - linkedCount }, (_, i) => linkedCount + i) };
+  };
+  const web = await fit(12), span = web.r.screenPoint(11).x - web.r.screenPoint(0).x;
+  expect(onScreen(web.r, Array.from({ length: 12 }, (_, i) => i))).toBe(true); expect(span).toBeGreaterThan(web.r.width / 3);
+  expect(web.ring.every(i => !onScreen(web.r, [i]))).toBe(true);
+  const few = await fit(5); expect(onScreen(few.r, [...Array.from({ length: 5 }, (_, i) => i), ...few.ring])).toBe(true);
+});
 const originalFactory = Renderer.create;
 
 test('production same-context upload reuses position/atlas textures, buffers and programs', async () => {

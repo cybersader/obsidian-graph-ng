@@ -96,10 +96,11 @@ export function zoomFade(v: Pick<Visuals, 'zoomAdapt' | 'edgeDensityReference'>,
   const crowd = visibleEdges * Math.max(zoom, 1e-6) * Math.sqrt(1024000 / Math.max(1, width * height)) / v.edgeDensityReference;
   return Math.min(1, Math.max(.35, 1 / Math.sqrt(crowd)));
 }
-/** Screen-space edge ink: the context web's coverage per pixel stays near 1 − e^(−INK × opacity) at
- * every zoom instead of building into a grey fog. LENGTH_FADE × the mean edge length is the screen
- * length beyond which a line fades as ref / length, so a long line adds no more ink than a typical one. */
-export const INK = .3, LENGTH_FADE = 1.5;
+/** Screen-space edge ink. WebGL draws about LINES whole context lines per pixel in the core of the web
+ * (coverage near 1 − e^(−LINES)) at every zoom, at the normal line alpha; Canvas unions its strokes to
+ * 1 − e^(−INK × opacity). LENGTH_FADE × the mean edge length is the screen length beyond which a line is
+ * kept (WebGL) or faded (Canvas) as ref / length, so a long line adds no more ink than a typical one. */
+export const INK = .3, LINES = .2, LENGTH_FADE = 1.5;
 /** Sampled geometry of the drawn web in world units: mean edge length, mean length after the long-line
  * fade, and the core area (π × endpoint variance). Bounded: at most `samples` edges, recomputed only
  * when positions or the view change, never per frame. */
@@ -118,9 +119,9 @@ export function edgeInk(positions: ArrayLike<number>, source: ArrayLike<number>,
 /** Expected line layers per pixel in the core of the web: edges × faded length × stroke width (CSS px)
  * over the core area, at `scale` px per world unit. Falls as 1 / scale when zooming in. */
 export const overdraw = (ink: EdgeInk, edges: number, width: number, scale: number) => ink.area > 0 && scale > 0 ? edges * ink.clipped * width / (ink.area * scale) : 0;
-/** Per-line alpha that spends the ink budget across `layers` overlapping lines (source-over:
- * coverage 1 − (1 − a)^layers ≈ 1 − e^(−budget)). 1 (no cap) when off or sparse. */
-export const inkAlpha = (v: Pick<Visuals, 'zoomAdapt' | 'edgeOpacity'>, layers: number) => v.zoomAdapt && layers > 0 ? Math.min(1, INK * v.edgeOpacity / layers) : 1;
+/** Share of context lines WebGL draws when `layers` lines overlap a core pixel: LINES / layers, 1 when off or
+ * sparse. Lines too faint to resolve add up to a grey veil; the same budget as fewer whole lines reads as structure. */
+export const inkShare = (v: Pick<Visuals, 'zoomAdapt'>, layers: number) => v.zoomAdapt && layers > 0 ? Math.min(1, LINES / layers) : 1;
 /** Canvas2D strokes one path per tier, so overlaps union instead of accumulating: coverage is
  * alpha × (1 − e^(−layers)). This alpha gives the same core coverage as the WebGL budget. */
 export const unionAlpha = (v: Pick<Visuals, 'zoomAdapt' | 'edgeOpacity'>, layers: number) => v.zoomAdapt && layers > 0 ? Math.min(1, (1 - Math.exp(-INK * v.edgeOpacity)) / (1 - Math.exp(-layers))) : 1;

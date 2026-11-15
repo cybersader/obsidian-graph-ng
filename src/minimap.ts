@@ -137,7 +137,7 @@ export class Minimap {
     const r = viewMarker(viewRect(f, m, s.cx, s.cy, s.worldW, s.worldH, L), MINIMAP_W, MINIMAP_H);
     ctx.strokeStyle = ctx.fillStyle = s.accent; ctx.lineWidth = 1.5;
     if (r.tiny) { ctx.globalAlpha = .45; ctx.beginPath(); ctx.moveTo(0, r.cy); ctx.lineTo(MINIMAP_W, r.cy); ctx.moveTo(r.cx, 0); ctx.lineTo(r.cx, MINIMAP_H); ctx.lineWidth = 1; ctx.stroke(); ctx.lineWidth = 1.5; }
-    ctx.globalAlpha = .18; ctx.fillRect(r.x, r.y, r.w, r.h); ctx.globalAlpha = 1; ctx.strokeRect(r.x, r.y, r.w, r.h);
+    ctx.globalAlpha = .08; ctx.fillRect(r.x, r.y, r.w, r.h); ctx.globalAlpha = 1; ctx.strokeRect(r.x, r.y, r.w, r.h);
     const dot = (n: number, size: number) => { const [x, y] = toMini(f, m, s.positions[n * 2]!, s.positions[n * 2 + 1]!); ctx.fillRect(x - size / 2, y - size / 2, size, size); return [x, y] as const; };
     ctx.globalAlpha = .8; for (let i = 0; i < Math.min(DOTS, s.directs.length); i++) dot(s.directs[i]!, 2.5);
     ctx.globalAlpha = 1;

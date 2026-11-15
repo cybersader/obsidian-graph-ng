@@ -579,3 +579,20 @@ Verification ran on a Linux x86-64 development workstation. Every command below 
 | `gates` | All **six lanes pass**; zero runtime packages, unchanged lockfile/trust policy, unchanged size caps. |
 
 Independent review found no blocking issue in the allowlist, schema guard or compiled-test seam changes. This pass did not rerun native-host, browser, shader-driver or hardware-performance lanes; their existing acceptance gaps remain. No publication, real-vault access or deployment occurred. Private evidence is retained under `.workspace/evidence/size-reclaim/` (baseline/final profiles, prototype outputs, build/test/gate logs); `.workspace/evidence/bundle-size.json` records the current source commit, tree state and artifact hash.
+
+## Edge haze line share — 2026-11-15
+
+Real Obsidian 1.12.7 in the OpenClast browser-native harness (headless Playwright Chromium). The Notes view was forced onto WebGL2 by overriding the view's GPU probe, because the renderer is SwiftShader. Pixels and blending come from the real shader path; frame times are CPU rasterization, not GPU numbers. The vault is synthetic: 16,000 notes in 93 folder groups, 33,500 cross-group relationship notes (a third with two targets), in-group wikilinks and a parent hierarchy, for 52,511 drawn edges. Settings are the owner's edge settings (opacity 0.155, color mix 0.8, curved, Edges All, Adapt to zoom) with the shipped defaults otherwise. All three cameras are fixed world framings of the connected web, the same before and after.
+
+| Camera (world ratio) | Metric | Before (001e8ff) | Line share |
+|---|---|---:|---:|
+| 0.0237 (near) | field median luminance (background 0.0130) | 0.0267 | 0.0145 |
+| 0.0237 | pixels changed by the edge pass, ≥1 / ≥8 levels | 91.6% / 76.8% | 29.0% / 15.5% |
+| 0.0237 | edge-added mean luminance | 0.01162 | 0.00169 |
+| 0.0237 | SwiftShader frame (draw + 1 px readback) | 2,352 ms | 914 ms |
+| 0.0710 (mid) | pixels changed, ≥1 / ≥3 levels | 27.3% / 9.4% | 2.6% / 1.5% |
+| 0.213 (web fit) | pixels changed, ≥1 level | 0.7% | 0.04% |
+
+The before frame is a uniform veil: about 8 lines overlap each core pixel, each at roughly 1.5 eight-bit steps, and the dither turns them into grain. Node glow at the mid camera touches 71% of pixels but adds 0.0043 mean luminance, so it is not the field haze and was left unchanged.
+
+Verification is `build` and `test --timeout 10000` (532 pass / 0 fail), plus `gates`, where all six lanes pass. The bundle is 350,298 raw / 117,382 gzip against the 355,000 / 118,000 caps (+381 / +175 bytes). This is single-run, synthetic evidence on a software rasterizer, not native GPU, FPS or real-vault acceptance.

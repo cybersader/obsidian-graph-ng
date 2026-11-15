@@ -102,7 +102,7 @@
 .graph-ng-sheet .graph-ng-card-trail { display:none; }
 .graph-ng-sheet .graph-ng-card-actions { grid-template-columns:repeat(4, minmax(0, 1fr)); }
 .graph-ng-sheet .graph-ng-card-actions > button { font-size:var(--font-ui-smaller); padding:4px; gap:3px; }
-.graph-ng-card.graph-ng-sheet { top:auto; bottom:0; width:100%; max-height:55%; overflow-y:auto; border-radius:var(--radius-m, 8px) var(--radius-m, 8px) 0 0; }
+.graph-ng-card.graph-ng-sheet { z-index:3; top:auto; bottom:0; width:100%; max-height:55%; overflow-y:auto; border-radius:var(--radius-m, 8px) var(--radius-m, 8px) 0 0; }
 .graph-ng-sheet > * { flex-shrink:0; }
 .graph-ng-sheet .graph-ng-connections { max-height:200px; }
 .graph-ng-card button { min-height:32px; }

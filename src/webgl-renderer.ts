@@ -5,7 +5,7 @@ import { readTheme, type GraphTheme } from './render-theme';
 import { baseRadius, sizedRadius, sizingSettings, type NodeSizingValues } from './node-sizing';
 import { buildLabels, rankFocus, type LabelAtlas } from './render-labels';
 import { DIRECT_LABELS, LABEL_CHARS, middleTruncate, radialLabels, stickyLevel, tierFont, tierType, type LabelSlot } from './label-layout';
-import { carrierAlpha, carrierColors, carrierVisibility, categorical, degreeSizes, densityScale, edgeAlpha, edgeInk, overdraw, inkAlpha, unionAlpha, fadeLength, lengthFade, type EdgeInk, effectPolicy, prominenceKeep, zoomFade, neutralizeGroups, easeInOut, hoverPulse, groupHalos, isDark, labelFade, nodeColors, type EffectPolicy, type Halo, type RGB } from './render-effects';
+import { carrierAlpha, carrierColors, carrierVisibility, categorical, degreeSizes, densityScale, edgeAlpha, edgeInk, overdraw, inkShare, unionAlpha, fadeLength, lengthFade, type EdgeInk, effectPolicy, prominenceKeep, zoomFade, neutralizeGroups, easeInOut, hoverPulse, groupHalos, isDark, labelFade, nodeColors, type EffectPolicy, type Halo, type RGB } from './render-effects';
 import { yieldTask } from './core/scheduler';
 import { generationCurrent } from './physics-controls';
 import { ConnectionCard, connectionGroups, isolationBar, dockCard, sheetCard, reach, neighbourhood, button, closeButton, el, type CardAction, type CardHost } from './connection-card';
@@ -140,7 +140,7 @@ uniform float curvature;
 uniform float edgeAlpha;
 uniform float direction;
 uniform float colorMix;
-uniform float inkAlpha;
+uniform float inkShare;
 uniform float fadeLength;
 uniform float focusOnly;
 out vec4 tint;
@@ -162,8 +162,11 @@ void main() {
  gl_Position = clip(mix(mix(a, q, u), mix(q, b, u), u) + side * c.y * wide);
  vec3 rgb = mix(color(1).rgb, mix(nodeColor(s).rgb, nodeColor(t).rgb, u), colorMix);
  float alpha = edgeAlpha * (direction > .5 ? mix(.12, 1., u) : 1.);
- // Screen-space ink budget (inkAlpha) and long-line fade (fadeLength, CSS px) quiet the context web; focus tiers regain full alpha.
- float quiet = min(1., inkAlpha / edgeAlpha) * min(1., fadeLength / max(len, 1.));
+ // Ink budget: inkShare of the context lines, kept while their stable rank is under inkShare × the long-line fade
+ // (fadeLength, CSS px), draw whole; zooming in only adds lines. Dropped (quiet 0) lines are not rasterized.
+ float share = inkShare * min(1., fadeLength / max(len, 1.));
+ uint k = uint(gl_InstanceID) * 2654435769u; k ^= k >> 15u; k *= 2246822519u; float quiet = share * 16777216. > float((k ^ k >> 13u) >> 8u) ? 1. : 0.;
+ if (quiet < .5 && (tier == 0u || focus <= 0.) && gl_InstanceID != edgeHovered) { gl_Position = offscreen; return; }
  alpha *= (tier > 0u ? mix(quiet, 1., focus) : quiet) * (focusOnly > 0. ? focus : 1.);
  if (focus > 0.) alpha = mix(alpha, tier > 200u ? min(1., alpha * 3.) : tier > 0u ? alpha : alpha * dim * .6, focus);
  // strong focus edges (strongEdge): direct near-opaque, the rest fades further; direct strokes ramp source to target.
@@ -220,7 +223,7 @@ void main() {
  float core = 1. - smoothstep(.92, 1., d), ring = smoothstep(.74, .8, d);
  float a = core * tint.a * mix(.62, 1., ring); outputColor = vec4(tint.rgb * mix(.7, 1.08, ring) * a, a);
 }`;
-const UNIFORMS = ['lensPositions', 'lensBlend', 'lensAnchor', 'positions', 'palette', 'nodeColors', 'nodeState', 'positionWidth', 'center', 'viewport', 'scale', 'nodeSize', 'hovered', 'pulse', 'selected', 'focusNode', 'focus', 'dim', 'glow', 'edgeSize', 'edgeHovered', 'segments', 'curvature', 'edgeAlpha', 'direction', 'colorMix', 'inkAlpha', 'fadeLength', 'focusOnly', 'labelAlpha', 'labelCut', 'atlas', 'outline', 'texel', 'discAlpha', 'hub', 'carrierAlpha', 'carrierFold', 'carrierSize', 'layer', 'tierMask', 'minSize', 'rings', 'strong'];
+const UNIFORMS = ['lensPositions', 'lensBlend', 'lensAnchor', 'positions', 'palette', 'nodeColors', 'nodeState', 'positionWidth', 'center', 'viewport', 'scale', 'nodeSize', 'hovered', 'pulse', 'selected', 'focusNode', 'focus', 'dim', 'glow', 'edgeSize', 'edgeHovered', 'segments', 'curvature', 'edgeAlpha', 'direction', 'colorMix', 'inkShare', 'fadeLength', 'focusOnly', 'labelAlpha', 'labelCut', 'atlas', 'outline', 'texel', 'discAlpha', 'hub', 'carrierAlpha', 'carrierFold', 'carrierSize', 'layer', 'tierMask', 'minSize', 'rings', 'strong'];
 interface Program { handle: WebGLProgram; uniforms: Record<string, WebGLUniformLocation | null> }
 interface Camera { x: number; y: number; ratio: number }
 /** Runtime view masks from the worker's explore result; colors stay worker-computed. */
@@ -845,8 +848,10 @@ export class DetailRenderer {
   /** Frame the 1st–99th percentile of visible nodes so a few isolated outliers do not shrink the web;
    * fewer than 8 nodes are framed exactly. Only an empty view falls back to the preserved frame. */
   fitAll(ms?: number) {
-    const xs: number[] = [], ys: number[] = [], step = Math.max(1, Math.floor(this.visible.length / 8192));
-    for (let i = 0; i < this.visible.length; i += step) if (this.visible[i]) { xs.push(this.display[i * 2]!); ys.push(this.display[i * 2 + 1]!); }
+    // Frame connected notes when there are enough: unconnected ones settle on a far ring that would shrink the web.
+    const all: [number[], number[]] = [[], []], linked: [number[], number[]] = [[], []], o = this.projection.offsets, step = Math.max(1, Math.floor(this.visible.length / 8192));
+    for (let i = 0; i < this.visible.length; i += step) if (this.visible[i]) for (const list of o[i + 1]! > o[i]! ? [all, linked] : [all]) { list[0].push(this.display[i * 2]!); list[1].push(this.display[i * 2 + 1]!); }
+    const [xs, ys] = linked[0].length < 8 ? all : linked;
     for (const h of this.hubs) { xs.push(h.x); ys.push(h.y); }
     if (!xs.length) { this.homeRatio = 1; this.flyTo(.5, .5, 1, ms); return; }
     xs.sort((a, b) => a - b); ys.sort((a, b) => a - b);
@@ -1012,13 +1017,13 @@ export class DetailRenderer {
   }
   /** Sampled web geometry for the ink budget; recomputed when positions or the view change, not per frame. */
   private ink?: EdgeInk & { display: Float32Array };
-  /** Context-line quieting for this frame: [ink-budget alpha cap, long-line fade length in CSS px]. */
+  /** Context-line quieting for this frame: [WebGL line share or Canvas alpha cap, long-line fade length in CSS px]. */
   private edgeQuiet(width: number, union: boolean) {
     const v = this.settings.visuals, edges = this.visibleEdges;
     if (!v.zoomAdapt || !v.edgeOpacity || v.edgeMode === 'off') return [1, Infinity] as const;
     if (this.ink?.display !== this.display) this.ink = { ...edgeInk(this.display, this.projection.source, this.projection.target, this.edgeDrawn), display: this.display };
     const layers = overdraw(this.ink, edges, width, this.scale);
-    return [(union ? unionAlpha : inkAlpha)(v, layers), fadeLength(v, this.ink, this.scale, layers)] as const;
+    return [(union ? unionAlpha : inkShare)(v, layers), fadeLength(v, this.ink, this.scale, layers)] as const;
   }
   private edgeDrawn = (e: number) => !!this.edgeOn[e] && !!this.filterVisible[this.projection.source[e]!] && !!this.filterVisible[this.projection.target[e]!];
   /** Drawn rows between the picked edge's endpoints, either direction, picked edge first (bounded). */
@@ -1305,7 +1310,7 @@ export class DetailRenderer {
       gl.uniform1f(u.focus!, focus); gl.uniform1f(u.dim!, this.isolation ? 1 : v.dimOpacity); gl.uniform1f(u.glow!, layer ? policy.glow : 0);
       gl.uniform1f(u.carrierAlpha!, notes.alpha); gl.uniform1f(u.carrierFold!, notes.visibility); gl.uniform1f(u.carrierSize!, v.carrierSize); gl.uniform1i(u.layer!, layer);
       gl.uniform1i(u.tierMask!, this.tierMask); gl.uniform1f(u.minSize!, v.tierMinSize); gl.uniform1f(u.rings!, v.tierRings ? (this.directs.length > 50 ? .5 : 1) : 0); gl.uniform1f(u.strong!, v.focusEdges && this.directs.length <= 50 ? 1 : 0);
-      gl.uniform1i(u.segments!, policy.segments); gl.uniform1f(u.curvature!, policy.curves ? v.curvature : 0); gl.uniform1f(u.edgeAlpha!, alpha); gl.uniform1f(u.direction!, v.edgeDirection ? 1 : 0); gl.uniform1f(u.colorMix!, v.edgeColorMix); gl.uniform1f(u.inkAlpha!, ink); gl.uniform1f(u.fadeLength!, Math.min(reach, 1e9)); gl.uniform1f(u.focusOnly!, v.edgeMode === 'focus' ? 1 : 0);
+      gl.uniform1i(u.segments!, policy.segments); gl.uniform1f(u.curvature!, policy.curves ? v.curvature : 0); gl.uniform1f(u.edgeAlpha!, alpha); gl.uniform1f(u.direction!, v.edgeDirection ? 1 : 0); gl.uniform1f(u.colorMix!, v.edgeColorMix); gl.uniform1f(u.inkShare!, ink); gl.uniform1f(u.fadeLength!, Math.min(reach, 1e9)); gl.uniform1f(u.focusOnly!, v.edgeMode === 'focus' ? 1 : 0);
       gl.uniform1f(u.labelAlpha!, fade.alpha); gl.uniform1f(u.labelCut!, fade.cut); gl.uniform3f(u.outline!, p[8]! / 255, p[9]! / 255, p[10]! / 255); gl.uniform2f(u.texel!, 1 / 2048, 1 / 2048); gl.uniform1f(u.discAlpha!, hub ? 1 : haloAlpha); gl.uniform1f(u.hub!, hub);
       gl.bindVertexArray(vaoIndex < 0 ? this.labelVaos[lod]! : this.vaos[vaoIndex]!);
       if (i === 0) gl.drawArraysInstanced(gl.TRIANGLES, 0, 6 * policy.segments, this.projection.source.length);
