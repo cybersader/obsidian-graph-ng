@@ -177,10 +177,15 @@ export function* searchSteps(p: Projection, query: string, keep: Uint8Array, lim
 export function hide(base: Uint8Array, bits: Uint8Array) { let hidden = 0; for (let i = 0; i < base.length; i++) if (base[i] && !bits[i]) { base[i] = 0; hidden++; } return hidden; }
 /** Per filter, in order, the notes it hides that no earlier filter hides. */
 export const hiddenBy = (p: Projection, filters: readonly Predicate[]) => { const base = new Uint8Array(p.paths.length).fill(1); return filters.map(f => hide(base, filterNodes(p, f))); };
-/** The relationship notes among `rows` as a projection of notes only (no edges), so filters can be counted on them. */
+/** The relationship notes among `rows` as a projection of notes only (no edges), so filters can be counted on them.
+ * Groups and colour rules stay declared: they materialize columns a filter may name. */
 export function relationshipNotes(rows: readonly FactRow[], d: GraphDeclaration): Projection | undefined {
   const notes = rows.filter(r => relationshipRule(r, d));
-  try { return notes.length ? buildProjection(notes, { ...d, edges: [], groups: [], colors: [], hierarchy: undefined, interest: undefined }) : undefined; } catch { return undefined; }
+  try { return notes.length ? buildProjection(notes, { ...d, edges: [], hierarchy: undefined, interest: undefined }) : undefined; } catch { return undefined; }
+}
+/** Per filter, the relationship notes it newly hides; undefined (never a thrown view) when a filter cannot be evaluated on them. */
+export function carrierHiddenBy(carriers: Projection | undefined, filters: readonly Predicate[]) {
+  try { return carriers && hiddenBy(carriers, filters); } catch { return undefined; }
 }
 export function explore(p: Projection, d: GraphDeclaration, view: ExploreView, colors: Uint32Array, level: number, limits: ExploreLimits, prepared?: { base: Uint8Array; group: DictionaryColumn; hidden: number[] }): ExploreResult {
   const n = p.paths.length, base = prepared?.base ?? new Uint8Array(n).fill(1), filterHidden = prepared?.hidden ?? view.filters.map(f => hide(base, filterNodes(p, f)));

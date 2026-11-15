@@ -4,7 +4,7 @@ import { sizingValues, sizingSettings, MAX_NODE_RADIUS, type NodeSizingValues } 
 import { physicsSettings, presetValues, PHYSICS_FIELDS, PHYSICS_PRESETS, type PhysicsKey, type PhysicsValues } from './physics-controls';
 import { editAsExpression, builderPredicate, checked } from './core/expr/engine';
 import { validate } from './core/expr/syntax';
-import { filterSummary, hiddenClause, setToggles, toggledValues } from './filter-summary';
+import { filterSummary, hiddenClause, setToggles, toggleable, toggledValues } from './filter-summary';
 import { countSpan, num, plural, statRow, sum } from './graph-information';
 import { suggestions } from './core/expr/autocomplete';
 import { declaredKeys } from './core/columns';
@@ -325,7 +325,7 @@ export class ExplorePanel {
   }
   /** One checkbox per value of a small, complete facet; unticking hides the value through an ordinary filter. */
   private filterToggles(host: HTMLElement, r: ExploreResult) {
-    const eligible = r.facets.filter(f => f.distinct === f.values.length && f.values.length > 1 && f.values.length <= 24);
+    const eligible = r.facets.filter(f => f.distinct === f.values.length && f.values.length > 1 && f.values.length <= 24 && toggleable(f.values.map(v => v.raw)));
     const owner = eligible.find(f => toggledValues(this.view.filters, f.key, []).owned.length), g = this.view.group;
     const facet = eligible.find(f => f.key === this.toggleKey) ?? owner ?? eligible.find(f => g?.from === 'key' && f.key === g.key) ?? eligible[0];
     if (!facet) return;

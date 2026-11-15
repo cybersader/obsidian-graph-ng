@@ -2,10 +2,10 @@ import { test, expect } from 'bun:test';
 import './support/obsidian-fixture';
 import { ControlElement } from './support/controls-dom';
 import { buildProjection, type FactRow } from '../src/core/projection';
-import { emptyView, explore, hiddenBy, relationshipNotes } from '../src/core/explore';
+import { carrierHiddenBy, emptyView, explore, hiddenBy, relationshipNotes } from '../src/core/explore';
 import type { GraphDeclaration } from '../src/core/declaration';
 import { accounting, renderInformation, renderReadout, type InformationReport } from '../src/graph-information';
-import { hiddenClause, setToggles, toggledValues } from '../src/filter-summary';
+import { hiddenClause, setToggles, toggleable, toggledValues } from '../src/filter-summary';
 
 const d: GraphDeclaration = {
   version: 2, identity: [{ key: 'id' }], display: { reifiedAsNodes: false }, columns: ['kind', 'team'], colors: [],
@@ -127,4 +127,30 @@ test('relationship notes drawn as lines offer "Show as notes", and name the filt
   expect(nodesHost.textContent).toContain('crosswalk notes, drawn as dots');
   // No filter hides them: no warning.
   const clear: any = new ControlElement(); renderInformation(clear, '', 'ready', r, { ...e, carrierHidden: [0] }, act); expect(clear.querySelector('.graph-ng-stat-warning')).toBeUndefined();
+});
+
+test('review regression: a filter on a group-only or colour-only column still counts relationship notes instead of throwing', () => {
+  // `team` is materialized only by the declared group, `tone` only by a colour rule.
+  const g: GraphDeclaration = { ...d, columns: ['kind'], colors: [{ name: 'warm', color: '#f00', predicate: { kind: 'exists', key: 'tone' } }] };
+  const rows: FactRow[] = [{ path: 'a.md', properties: { id: 'a', team: 'A' } }, { path: 'b.md', properties: { id: 'b', team: 'B' } },
+    { path: 'e.md', properties: { id: 'e', team: 'A', tone: 'x', from: 'a', to: 'b' } }];
+  const carriers = relationshipNotes(rows, g)!;
+  expect(carrierHiddenBy(carriers, [{ kind: 'expr', expr: '!["A"].contains(note.team)' }, { kind: 'exists', key: 'tone' }])).toEqual([1, 0]);
+  // A filter that cannot be evaluated on them yields no warning count, never a failed view.
+  expect(carrierHiddenBy(carriers, [{ kind: 'expr', expr: 'note.nowhere == 1' }])).toBeUndefined();
+});
+
+test('review regression: "!=" toggles also hide missing values, and multi-valued facets never write a broken filter', () => {
+  const present = ['"p"', '"q"'], strict = { kind: 'expr' as const, expr: 'note.kind != "p"' };
+  // `kind != "p"` is false for a note without kind, so it hides missing notes too; a toggle rewrite keeps that.
+  expect(toggledValues([strict], 'kind', present).hidden).toEqual(new Set(['"p"', 'undefined']));
+  const rows: FactRow[] = [{ path: 'p.md', properties: { id: 'p', kind: 'p' } }, { path: 'q.md', properties: { id: 'q', kind: 'q' } }, { path: 'm.md', properties: { id: 'm' } }];
+  const plain: GraphDeclaration = { ...d, edges: [], groups: [], exclude: [] }, p = buildProjection(rows, plain);
+  const shown = (filters: any[]) => { const e = explore(p, plain, { ...emptyView(), filters }, new Uint32Array(p.paths.length), 0, { facetValues: 50 }); return p.paths.filter((_, i) => e.visible[i]); };
+  const { hidden } = toggledValues([strict], 'kind', present);
+  expect(shown(setToggles([strict], 'kind', present, hidden))).toEqual(shown([strict]));
+  // A list value cannot be a value-list filter: the facet is not offered, and a direct call leaves filters untouched.
+  expect(toggleable(['"x"', '["x","y"]', 'undefined'])).toBe(false); expect(toggleable(['"x"', '3', 'undefined'])).toBe(true);
+  const list = ['"x"', '["x","y"]'], kept = [strict];
+  expect(setToggles(kept, 'tags', list, new Set(['["x","y"]']))).toEqual(kept);
 });

@@ -786,6 +786,12 @@ test('hub sections: an open section lights only its notes, with an explicit neig
   // Selecting another note and coming back starts from the whole hub again.
   control(card(), 'Beta, 5 connections').click(); f.tap(EMPTY); expect(lit()).toEqual([]);
   f.tap(0, 'touch'); expect(lit()).toEqual(range(0, 62));
+  // Review regression: section keys are group codes. A regroup that gives Beta's code to Alpha must not
+  // leave "Alpha" open (and lit) because Beta was; open state for a renamed code is dropped.
+  control(card(), 'Beta, 5 connections').click(); expect(lit()).toEqual([0, ...range(56, 60)]);
+  r.setView(new Uint8Array(63).fill(1), { groupCodes: Uint32Array.from({ length: 63 }, (_, i) => i > 55 && i !== 62 ? 0 : 1), groupLabels: ['Beta', 'Alpha'] });
+  expect(control(card(), 'Alpha, 55 connections').attributes['aria-expanded']).toBe('false');
+  expect(control(card(), 'Beta, 5 connections').attributes['aria-expanded']).toBe('false'); expect(lit()).toEqual(range(0, 62));
 });
 test('wiring: card Lens action, lens-displaced picking/arrows/cue/labels, and Escape, L and Alt+arrow layers', async () => {
   const f = await graduated([[0, 1], [0, 2], [1, 3]]), { r, k } = f, card = () => r[k('noteCard')];

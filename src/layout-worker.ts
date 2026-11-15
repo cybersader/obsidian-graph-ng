@@ -14,7 +14,7 @@ import { warmLayout, validSavedLayout } from './core/incremental';
 import { CACHE_FORMAT, decodeLayout, encodeLayout, type BinaryLayout, type GenerationMeta } from './core/binary-layout';
 import { edgeHashes, hashEdge, edgeHashSet } from './core/edge-hash';
 import { LAYOUT_PRODUCER, evaluation, type PipelineRequest, type PipelineConfig } from './pipeline';
-import { emptyView, explore, groupColumn, hide, hiddenBy, relationshipNotes, searchSteps, withoutTypes, type ExploreResult, type ExploreView } from './core/explore';
+import { carrierHiddenBy, emptyView, explore, groupColumn, hide, relationshipNotes, searchSteps, withoutTypes, type ExploreResult, type ExploreView } from './core/explore';
 const rows = new Map<string, FactRow>();
 let config: PipelineConfig, meta: GenerationMeta, projection: Projection, visible: Uint8Array;
 let contracted: ReturnType<typeof contractGroups>, positions: Float32Array | undefined, saved: BinaryLayout | undefined;
@@ -35,7 +35,7 @@ function applyView(view: ExploreView, prepared?: { base: Uint8Array; group: Dict
   if (filters.length) {
     // Relationship notes alone, cached per projection, so a filter can say what it hides of them in either display.
     if (carrierCache?.[0] !== projection) carrierCache = [projection, relationshipNotes(projection.carrierPaths.flatMap(path => rows.get(path) ?? []), config.declaration)];
-    explored.carrierHidden = carrierCache[1] && hiddenBy(carrierCache[1], filters);
+    explored.carrierHidden = carrierHiddenBy(carrierCache[1], filters);
   }
   return explored;
 }

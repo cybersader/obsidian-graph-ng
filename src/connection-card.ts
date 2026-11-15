@@ -176,7 +176,11 @@ export class ConnectionCard {
   }
   render() {
     const n = this.node, h = this.host, c = this.root, name = h.name(n), { groups, direct } = h.groups(n);
-    const initial = !this.navSections.length; this.navSections = navigatorSections(groups, h);
+    const before = this.navSections, initial = !before.length; this.navSections = navigatorSections(groups, h);
+    // Section keys are group codes: after a regroup a code may name another group, so drop open/closed/page state
+    // for any key whose group label changed or vanished (the graph would otherwise light the wrong section).
+    const labels = new Map(this.navSections.map(s => [s.key, s.label]));
+    for (const s of before) if (labels.get(s.key) !== s.label) for (const state of [this.navOpen, this.navClosed, this.navSecond, this.navPages]) state.delete(s.key);
     c.textContent = ''; this.rows = []; this.size = undefined; c.setAttribute('role', 'region'); c.setAttribute('aria-label', 'Connections of ' + name);
     // Header: the note name, then back, forward and close as icon buttons.
     const head = c.appendChild(el('div', '', 'graph-ng-card-head')), { items, at } = this.history;
