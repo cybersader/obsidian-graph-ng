@@ -591,7 +591,15 @@ export class ExplorePanel {
     this.guard(host, 'halos');
     this.flag(host, 'autoPalette', 'Color by group when no rule matches');
     this.flag(host, 'hoverHighlight', 'Graduated connections on hover or selection');
-    this.note(host, 'Direct connections brightest, then 2-hop neighbours; the rest fades. Ancestor or framework levels need declared structural relationships; none are inferred.');
+    this.note(host, 'Direct connections brightest, then neighbours of neighbours; the rest fades. Ancestor or framework levels need declared structural relationships; none are inferred.');
+    const find = host.createEl('details', { cls: 'graph-ng-highlight-options' }); find.createEl('summary', { text: 'Finding connections' });
+    this.slider(find, 'Minimum highlighted size (px)', { min: 0, max: 16, k: 1.5 }, () => v.tierMinSize, x => { v.tierMinSize = x; });
+    this.note(find, 'Direct connections never draw smaller than this at any zoom; neighbours of neighbours get a bit over half. 0 turns it off.');
+    this.flag(find, 'tierRings', 'Rings around the focus and direct connections');
+    this.flag(find, 'focusEdges', 'Strong focus lines (fade the rest)');
+    this.flag(find, 'offscreenPips', 'Arrows to off-screen direct connections');
+    this.flag(find, 'tierLegend', 'Legend with counts per tier');
+    this.flag(find, 'focusRipple', 'Ripple when selecting a note');
     this.flag(host, 'labelFade', 'Fade labels by zoom and importance', true);
     this.slider(host, 'Label scale by tier', { min: 1, max: 1.6, k: 1.5 }, () => v.labelTierScale, x => { v.labelTierScale = x; }, true);
     this.flag(host, 'labelPlates', 'Label plates');

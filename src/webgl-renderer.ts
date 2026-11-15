@@ -1,6 +1,6 @@
 import { renderPath, type RenderProjection } from './render-projection';
 import type { Settings } from './settings';
-import { PickGrid, positionTexture, incidentEdges, focusTiers, tintedEdge, edgeBucket, tierNode, tierEdge, tierLabel, segmentDistance, canvasDetailEdges, resizeDrawingBuffer, LABEL_RATIOS } from './render-data';
+import { PickGrid, positionTexture, incidentEdges, focusTiers, tintedEdge, edgeBucket, tierNode, tierEdge, tierLabel, segmentDistance, shownTier, shownEdgeTier, tierCounts, tierLift, liftRadius, strongEdge, offscreenPips, TIERS, ALL_TIERS, PIP_DIRECTIONS, canvasDetailEdges, resizeDrawingBuffer, LABEL_RATIOS } from './render-data';
 import { readTheme, type GraphTheme } from './render-theme';
 import { baseRadius, sizedRadius, sizingSettings, type NodeSizingValues } from './node-sizing';
 import { buildLabels, rankFocus, type LabelAtlas } from './render-labels';
@@ -10,6 +10,8 @@ import { yieldTask } from './core/scheduler';
 import { generationCurrent } from './physics-controls';
 /** Hard DOM bound for graduated focus labels, under `labelsMaxPerViewport`. */
 const FOCUS_LABELS = 64;
+/** Selection ripple length (ms), and the inset of off-screen pips from the view border (CSS px). */
+const RIPPLE_MS = 250, PIP_INSET = 20;
 export interface CoordinateToken { current(): boolean; commit(): void; rollback(): void; discard(): void }
 
 /** Identity tag; the production build strips GLSL whitespace/comments at load time. */
@@ -38,6 +40,10 @@ uniform float carrierAlpha;
 uniform float carrierFold;
 uniform float carrierSize;
 uniform int layer;
+uniform int tierMask;
+uniform float minSize;
+uniform float rings;
+uniform float strong;
 ivec2 cell(int id) { return ivec2(id % positionWidth, id / positionWidth); }
 vec2 point(int id) { return (texelFetch(positions, cell(id), 0).xy - center) * scale; }
 vec4 color(int id) { return texelFetch(palette, ivec2(id % 256, id / 256), 0); }
@@ -46,6 +52,8 @@ vec4 state(int id) { return texelFetch(nodeState, cell(id), 0); }
 vec4 clip(vec2 p) { return vec4(p / viewport * vec2(2., -2.), 0., 1.); }
 const vec2 corners[6] = vec2[6](vec2(-1.,-1.),vec2(1.,-1.),vec2(-1.,1.),vec2(-1.,1.),vec2(1.,-1.),vec2(1.,1.));
 const vec4 offscreen = vec4(2.,2.,0.,1.);
+// Legend toggles: a tier switched off draws as context (shownTier/shownEdgeTier).
+float shownTier(float g, bool ego) { int b = int(g * 255. + .5); return ego || b == 255 && (tierMask & 1) != 0 || b == 192 && (tierMask & 2) != 0 || b == 128 && (tierMask & 4) != 0 || b == 64 && (tierMask & 8) != 0 || b != 255 && b != 192 && b != 128 && b != 64 ? g : 0.; }
 `;
 const nodeVertex = common + glsl`
 layout(location=0) in float size;
@@ -54,8 +62,11 @@ out vec2 local;
 out vec4 tint;
 out float spread;
 out float ring;
+out vec2 bands;
+out vec3 ink;
 void main() {
  int id = gl_InstanceID; vec4 st = state(id);
+ st.g = shownTier(st.g, id == focusNode);
  bool hot = id == hovered || id == selected, note = st.a > .5;
  // Edge notes (state alpha) draw in their own pass beneath the other nodes.
  // A highlighted edge note keeps its highlight but folds with the level of detail.
@@ -63,8 +74,13 @@ void main() {
  float radius = nodeSize * size * (note ? carrierSize : 1.) + (hot ? 2. : 0.);
  spread = glow > 0. ? 2.3 : 1.;
  // Graduated tiers: the focus grows 60% with an outer ring, direct notes grow 25%.
- bool ego = id == focusNode; ring = ego ? focus : 0.; if (ego) spread = max(spread, 1.4);
+ bool ego = id == focusNode; ring = ego ? focus : 0.; if (ego) spread = max(spread, rings > 0. ? 1.72 : 1.4);
  radius *= 1. + focus * (ego ? .6 : st.g > .9 ? .25 : 0.); // ego
+ // Screen-space floor per tier: lift (tierLift/liftRadius); contrast ring bands; edge notes are exempt.
+ float lift = note ? 0. : minSize * focus * (ego || st.g > .9 ? 1. : st.g > .7 ? .75 : st.g > .4 ? .57 : 0.);
+ if (lift > 0. && radius < 2. * lift) radius = lift + radius * radius / (4. * lift);
+ bands = note ? vec2(0.) : rings * focus * vec2(!ego && st.g > .9 ? 1. : 0., ego ? 1. : 0.); if (bands.x > 0.) spread = max(spread, 1.32);
+ ink = color(3).rgb;
  local = corners[gl_VertexID] * spread;
  gl_Position = st.r < .5 || st.b > .5 || note != (layer == 0) || k < .004 ? offscreen : clip(point(id) + local * radius);
  vec4 c = hot ? color(4) : nodeColor(id);
@@ -73,7 +89,7 @@ void main() {
 const nodeFragment = glsl`#version 300 es
 precision highp float;
 uniform float glow;
-in vec2 local; in vec4 tint; in float spread; in float ring; out vec4 outputColor;
+in vec2 local; in vec4 tint; in float spread; in float ring; in vec2 bands; in vec3 ink; out vec4 outputColor;
 void main() {
  float d = length(local); if (d > spread) discard;
  float core = 1. - smoothstep(.82, 1., d);
@@ -81,12 +97,15 @@ void main() {
  float rim = max(halo, ring * (smoothstep(1.1, 1.16, d) - smoothstep(1.28, 1.34, d)));
  vec3 shade = tint.rgb * (1. - .14 * smoothstep(.5, 1., d));
  outputColor = vec4((shade * core + tint.rgb * rim) * tint.a, (core + rim) * tint.a);
+ // Contrast ring bands in the ink (text) colour, source-over inside the fragment: never toward white.
+ float o = tint.a * min(1., bands.x * (smoothstep(1.04, 1.1, d) - smoothstep(1.22, 1.28, d)) + bands.y * (smoothstep(1.46, 1.52, d) - smoothstep(1.62, 1.68, d)));
+ if (o > 0.) outputColor = mix(outputColor, vec4(ink, 1.), o);
 }`;
 const edgeVertex = common + glsl`
 layout(location=0) in uint source;
 layout(location=1) in uint target;
 layout(location=2) in uint typeOn;
-layout(location=3) in uint tier;
+layout(location=3) in uint tierByte;
 uniform float edgeSize;
 uniform int edgeHovered;
 uniform int segments;
@@ -97,6 +116,7 @@ uniform float colorMix;
 out vec4 tint;
 void main() {
  int s = int(source), t = int(target); vec4 sa = state(s), sb = state(t);
+ uint tier = tierByte > 200u ? ((tierMask & 1) != 0 ? tierByte : 0u) : tierByte > 0u && (tierMask & 4) != 0 ? tierByte : 0u;
  tint = vec4(0.);
  if (edgeAlpha <= 0. || typeOn == 0u || sa.r < .5 || sb.r < .5) { gl_Position = offscreen; return; }
  int segment = gl_VertexID / 6; vec2 c = corners[gl_VertexID % 6];
@@ -107,10 +127,14 @@ void main() {
  vec2 tangent = mix(q - a, b - q, u); float tl = length(tangent);
  vec2 side = tl > 0. ? vec2(-tangent.y, tangent.x) / tl : normal;
  float wide = max(.5, edgeSize) * (1. + focus * (tier > 200u ? .6 : 0.));
+ if (strong > 0.) wide *= 1. + focus * (tier > 200u ? .6 : 0.);
  gl_Position = clip(mix(mix(a, q, u), mix(q, b, u), u) + side * c.y * wide);
  vec3 rgb = mix(color(1).rgb, mix(nodeColor(s).rgb, nodeColor(t).rgb, u), colorMix);
  float alpha = edgeAlpha * (direction > .5 ? mix(.12, 1., u) : 1.);
  if (focus > 0.) alpha = mix(alpha, tier > 200u ? min(1., alpha * 3.) : tier > 0u ? alpha : alpha * dim * .6, focus);
+ // strong focus edges (strongEdge): direct near-opaque, the rest fades further; direct strokes ramp source to target.
+ if (strong > 0.) alpha = tier > 200u ? alpha + ((alpha > 0. ? .95 : 0.) - alpha) * focus : alpha * (1. - focus * (tier > 0u ? .5 : .65));
+ if (strong > 0. && tier > 200u) alpha *= mix(1., mix(.35, 1., u), focus);
  if (tier == 254u || tier == 127u) rgb = mix(rgb, color(4).rgb, focus * .5);
  if (gl_InstanceID == edgeHovered) { rgb = color(4).rgb; alpha = min(1., alpha * 3.); }
  tint = vec4(rgb * alpha, alpha);
@@ -156,7 +180,7 @@ void main() {
  float core = 1. - smoothstep(.92, 1., d), ring = smoothstep(.74, .8, d);
  float a = core * tint.a * mix(.62, 1., ring); outputColor = vec4(tint.rgb * mix(.7, 1.08, ring) * a, a);
 }`;
-const UNIFORMS = ['positions', 'palette', 'nodeColors', 'nodeState', 'positionWidth', 'center', 'viewport', 'scale', 'nodeSize', 'hovered', 'selected', 'focusNode', 'focus', 'dim', 'glow', 'edgeSize', 'edgeHovered', 'segments', 'curvature', 'edgeAlpha', 'direction', 'colorMix', 'labelAlpha', 'labelCut', 'atlas', 'outline', 'texel', 'discAlpha', 'hub', 'carrierAlpha', 'carrierFold', 'carrierSize', 'layer'];
+const UNIFORMS = ['positions', 'palette', 'nodeColors', 'nodeState', 'positionWidth', 'center', 'viewport', 'scale', 'nodeSize', 'hovered', 'selected', 'focusNode', 'focus', 'dim', 'glow', 'edgeSize', 'edgeHovered', 'segments', 'curvature', 'edgeAlpha', 'direction', 'colorMix', 'labelAlpha', 'labelCut', 'atlas', 'outline', 'texel', 'discAlpha', 'hub', 'carrierAlpha', 'carrierFold', 'carrierSize', 'layer', 'tierMask', 'minSize', 'rings', 'strong'];
 interface Program { handle: WebGLProgram; uniforms: Record<string, WebGLUniformLocation | null> }
 interface Camera { x: number; y: number; ratio: number }
 /** Runtime view masks from the worker's explore result; colors stay worker-computed. */
@@ -272,6 +296,19 @@ export class DetailRenderer {
   onMoreConnections: (focus: number) => void = () => {};
   private rankedKey: unknown[] = [];
   private measure?: CanvasRenderingContext2D;
+  /** Legend emphasis switches (bit per TIERS row), per-tier counts and the cached direct list (O(degree) per frame). */
+  private tierMask = ALL_TIERS;
+  private tierTotals = [0, 0, 0, 0];
+  private directs: number[] = [];
+  private pipXY = new Float64Array();
+  private pipTargets: number[] = [];
+  private pipEls: HTMLElement[] = [];
+  private legend!: HTMLElement;
+  private legendRows: HTMLElement[] = [];
+  private legendCounts: HTMLElement[] = [];
+  private pipParts: [HTMLElement, HTMLElement][] = [];
+  private rippleEl!: HTMLElement;
+  private ripple?: { start: number; reach: number };
   static async create(container: HTMLElement, p: RenderProjection, positions: Float32Array, visible: Uint8Array, settings: Settings, onNode: (i: number) => void, onZoomOut: () => void, colors: Uint32Array, current = () => true, software = false, onUnavailable = onZoomOut, view: RenderView = {}) {
     await yieldTask(); if (!current()) throw new Error('Renderer superseded');
     let renderer: DetailRenderer | undefined;
@@ -304,6 +341,7 @@ export class DetailRenderer {
     this.overlay = container.createDiv ? container.createDiv({ cls: 'graph-ng-overlay' }) : container.appendChild(Object.assign(document.createElement('div'), { className: 'graph-ng-overlay' }));
     this.hoverLabel = this.overlay.appendChild(Object.assign(document.createElement('div'), { className: 'graph-ng-hover-label' }));
     this.noteCard = this.overlay.appendChild(Object.assign(document.createElement('div'), { className: 'graph-ng-card', onkeydown: this.keyDown, ariaLive: 'polite' }));
+    this.buildHighlightOverlay();
     this.resize();
     this.gl = software ? null : this.canvas.getContext('webgl2', { antialias: false, alpha: false, preserveDrawingBuffer: false });
     this.timings.context = performance.now() - started;
@@ -688,6 +726,7 @@ export class DetailRenderer {
     const w = this.worldPoint(x, y), s = this.sizingSettings();
     // The graduated focus grows 60% (direct notes 25%): hit targets follow the drawn size.
     const f = s.visuals.hoverHighlight ? this.focusLevel : 0, grow = (n: number) => tierNode(this.stateBytes[n * 4 + 1]! / 255, true, n === this.focusNode, f, 0)[1];
+    const lifted = this.pickTiered(x, y, w, f); if (lifted >= 0) return lifted;
     if (s.nodeSizing.policy === 'legacy') return this.picker.pick(w.x, w.y, (s.nodeSize * (1 + s.visuals.degreeSizing) * (1 + .6 * f) + 4) / this.scale, this.carrierCount && this.carrierLevel().visibility < .25 ? this.projection.carrierNodes : undefined);
     const base = this.baseNodeRadius(), max = (base * (1 + s.visuals.degreeSizing) * Math.max(1, s.visuals.carrierSize) * (1 + .6 * f) + 6) / this.scale;
     let picked = -1, distance = Infinity;
@@ -695,6 +734,22 @@ export class DetailRenderer {
       if (!this.visible[node] || (this.projection.carrierNodes[node] && this.carrierLevel().visibility < .25)) return;
       const p = this.screenPoint(node), d = (p.x - x) ** 2 + (p.y - y) ** 2;
       if (d <= (this.nodeRadius(node, node === this.selected || node === this.hovered) * grow(node) + 4) ** 2 && d < distance) { picked = node; distance = d; }
+    }); return picked;
+  }
+  /** Drawn radius including the graduated growth and the screen-space tier floor (pick, overlay and Canvas share it). */
+  private drawnRadius(n: number, hot: boolean, focus: number) {
+    const ego = n === this.focusNode, g = shownTier(this.stateBytes[n * 4 + 1]!, this.tierMask, ego) / 255, r = this.nodeRadius(n, hot) * tierNode(g, true, ego, focus, 0)[1];
+    return this.projection.carrierNodes[n] ? r : liftRadius(r, tierLift(g, ego, focus, this.settings.visuals.tierMinSize));
+  }
+  /** Tiered notes lifted to their screen-space floor win the pick wherever their enlarged disc covers the point. */
+  private pickTiered(x: number, y: number, w: { x: number; y: number }, focus: number) {
+    const px = this.settings.visuals.tierMinSize; if (!focus || !px || !this.near.length) return -1;
+    let picked = -1, distance = Infinity;
+    this.picker.visit(w.x, w.y, (2 * px + 4) / this.scale, node => {
+      if (!this.visible[node] || this.projection.carrierNodes[node]) return;
+      const ego = node === this.focusNode; if (!tierLift(shownTier(this.stateBytes[node * 4 + 1]!, this.tierMask, ego) / 255, ego, focus, px)) return;
+      const p = this.screenPoint(node), d = (p.x - x) ** 2 + (p.y - y) ** 2;
+      if (d <= (this.drawnRadius(node, node === this.selected || node === this.hovered, focus) + 4) ** 2 && d < distance) { picked = node; distance = d; }
     }); return picked;
   }
   pickHub(x: number, y: number) {
@@ -730,6 +785,9 @@ export class DetailRenderer {
       if (edges) for (const e of edges) { t[e] = 255; this.tierEdges.push(e); for (const n of [this.projection.source[e]!, this.projection.target[e]!]) if (!s[n * 4 + 1]) { s[n * 4 + 1] = 255; this.near.push(n); } }
       else this.tierPartial = focusTiers(node, this.edges, this.projection, this.edgeOn, this.filterVisible, s, t, this.near, this.tierEdges, 65536, this.settings.declaration.groupContext ? this.view.groupCodes : undefined);
       if (this.gl && this.ready && !this.lost) this.uploadTiers();
+      const notes = this.projection.carrierNodes; this.tierTotals = tierCounts(this.focusNode, this.near, s, notes);
+      if (edges) this.tierTotals[0] = this.near.filter(n => !notes[n]).length;
+      this.directs = this.near.filter(n => n !== this.focusNode && s[n * 4 + 1] === 255 && !notes[n]); this.updateLegend();
     }
     this.focusTarget = this.near.length ? 1 : 0; this.focusAt = performance.now();
     if (immediate) this.focusLevel = this.focusTarget;
@@ -738,7 +796,7 @@ export class DetailRenderer {
   /** Selection drives the persistent focus. Touch and keyboard selections show the card; only its
    * explicit Open button (or Enter on the canvas) opens the note. */
   private selectNote(node: number, card?: boolean) {
-    const c = this.noteCard; this.selected = node; this.selectedEdges = []; this.edgeAnchor = -1; this.edgeToken++; if (card) this.hovered = -1; this.emphasize(); this.refresh(); c.textContent = '';
+    const c = this.noteCard; this.selected = node; this.selectedEdges = []; this.edgeAnchor = -1; this.edgeToken++; if (card) this.hovered = -1; this.emphasize(); this.startRipple(node); this.refresh(); c.textContent = '';
     if (card && node >= 0) { const b = document.createElement('button'), name = this.noteCaption(node); c.textContent = name; b.textContent = 'Open'; b.setAttribute('aria-label', 'Open ' + name); b.onclick = () => this.onNode(node); c.append(b); }
   }
   /** Hover outranks the persistent selection; the hover-highlight switch turns both off. */
@@ -786,6 +844,7 @@ export class DetailRenderer {
       this.camera.ratio = Math.exp(Math.log(f.from.ratio) + (Math.log(f.to.ratio) - Math.log(f.from.ratio)) * e);
       if (t >= 1) this.flight = undefined; else more = true;
     }
+    if (this.ripple) { if (now - this.ripple.start >= RIPPLE_MS) this.ripple = undefined; else more = true; }
     if (this.focusLevel !== this.focusTarget) {
       const step = (now - this.focusAt) / (reducedMotion() ? 1 : 140); this.focusAt = now;
       this.focusLevel = this.focusTarget > this.focusLevel ? Math.min(1, this.focusLevel + step) : Math.max(0, this.focusLevel - step);
@@ -821,6 +880,7 @@ export class DetailRenderer {
       gl.uniform2f(u.center!, this.centerX, this.centerY); gl.uniform2f(u.viewport!, this.width, this.height); gl.uniform1f(u.scale!, this.scale); gl.uniform1f(u.nodeSize!, nodeSize); gl.uniform1f(u.edgeSize!, edgeWidth); gl.uniform1i(u.hovered!, this.hovered); gl.uniform1i(u.selected!, this.selected); gl.uniform1i(u.focusNode!, this.focusNode); gl.uniform1i(u.edgeHovered!, this.hoveredEdge);
       gl.uniform1f(u.focus!, focus); gl.uniform1f(u.dim!, v.dimOpacity); gl.uniform1f(u.glow!, layer ? policy.glow : 0);
       gl.uniform1f(u.carrierAlpha!, notes.alpha); gl.uniform1f(u.carrierFold!, notes.visibility); gl.uniform1f(u.carrierSize!, v.carrierSize); gl.uniform1i(u.layer!, layer);
+      gl.uniform1i(u.tierMask!, this.tierMask); gl.uniform1f(u.minSize!, v.tierMinSize); gl.uniform1f(u.rings!, v.tierRings ? 1 : 0); gl.uniform1f(u.strong!, v.focusEdges ? 1 : 0);
       gl.uniform1i(u.segments!, policy.segments); gl.uniform1f(u.curvature!, policy.curves ? v.curvature : 0); gl.uniform1f(u.edgeAlpha!, alpha); gl.uniform1f(u.direction!, v.edgeDirection ? 1 : 0); gl.uniform1f(u.colorMix!, v.edgeColorMix);
       gl.uniform1f(u.labelAlpha!, fade.alpha); gl.uniform1f(u.labelCut!, fade.cut); gl.uniform3f(u.outline!, p[8]! / 255, p[9]! / 255, p[10]! / 255); gl.uniform2f(u.texel!, 1 / 2048, 1 / 2048); gl.uniform1f(u.discAlpha!, hub ? 1 : haloAlpha); gl.uniform1f(u.hub!, hub);
       gl.bindVertexArray(vaoIndex < 0 ? this.labelVaos[lod]! : this.vaos[vaoIndex]!);
@@ -838,7 +898,8 @@ export class DetailRenderer {
   private placeOverlay() {
     this.onSizingChange?.();
     const v = this.settings.visuals, focus = v.hoverHighlight ? this.focusLevel : 0, ego = this.focusNode, node = this.hovered < 0 && focus ? ego : this.hovered;
-    const radius = (n: number) => this.nodeRadius(n, true) * tierNode(this.stateBytes[n * 4 + 1]! / 255, true, n === ego, focus, 0)[1];
+    const radius = (n: number) => this.drawnRadius(n, true, focus);
+    this.placeHighlights(focus);
     if (node >= 0) { const s = this.screenPoint(node); this.hoverLabel.textContent = this.noteCaption(node); this.hoverLabel.className = 'graph-ng-hover-label' + (node === ego && focus ? ' graph-ng-focus' : ''); this.hoverLabel.style.transform = `translate(${Math.round(s.x + radius(node) + 6)}px, ${Math.round(s.y - 10)}px)`; }
     else this.hoverLabel.textContent = '';
     // Graduated labels: placed once per focus or LOD change, translated per frame (bounded DOM).
@@ -889,6 +950,66 @@ export class DetailRenderer {
       placed.push([x, y, half]); el.style.transform = `translate(-50%, 0) translate(${Math.round(x)}px, ${Math.round(y)}px)`;
     });
   }
+  /** Bounded, text-only highlight overlay: tier legend (4 toggle rows), 8 off-screen pips and one ripple ring. */
+  private buildHighlightOverlay() {
+    const make = (tag: string, cls: string, parent: HTMLElement = this.overlay) => parent.appendChild(Object.assign(document.createElement(tag), { className: cls }));
+    this.rippleEl = make('div', 'graph-ng-ripple'); this.rippleEl.hidden = true; this.rippleEl.setAttribute('aria-hidden', 'true');
+    this.legend = make('div', 'graph-ng-tier-legend'); this.legend.hidden = true; this.legend.setAttribute('role', 'group'); this.legend.setAttribute('aria-label', 'Graduated connection highlighting');
+    this.legendRows = TIERS.map(([name], i) => {
+      const row = make('button', 'graph-ng-tier-row', this.legend); row.hidden = true;
+      make('span', 'graph-ng-tier-key graph-ng-tier-key-' + i, row); make('span', 'graph-ng-tier-name', row).textContent = name; this.legendCounts.push(make('span', 'graph-ng-legend-count', row));
+      row.onclick = () => { this.tierMask ^= 1 << i; this.updateLegend(); this.rankedKey = []; this.refresh(); };
+      return row;
+    });
+    for (let i = 0; i < 8; i++) {
+      const pip = make('button', 'graph-ng-pip'), arrow = make('span', 'graph-ng-pip-arrow', pip); pip.hidden = true; arrow.setAttribute('aria-hidden', 'true'); this.pipParts.push([arrow, make('span', 'graph-ng-pip-count', pip)]);
+      pip.onclick = () => this.panTo(this.pipTargets[i] ?? -1); this.pipEls.push(pip);
+    }
+  }
+  private updateLegend() {
+    this.legendRows.forEach((row, i) => {
+      const on = !!(this.tierMask & 1 << i); row.hidden = !this.tierTotals[i]; row.setAttribute('aria-pressed', String(on)); row.className = 'graph-ng-tier-row' + (on ? '' : ' graph-ng-tier-off');
+      this.legendCounts[i]!.textContent = this.tierTotals[i]!.toLocaleString();
+    });
+  }
+  /** Keep the zoom; centre the note. */
+  private panTo(n: number) {
+    if (n < 0 || !this.visible[n]) return;
+    this.flyTo((this.display[n * 2]! - this.cameraFrame.minX) / this.cameraFrame.width, (this.display[n * 2 + 1]! - this.cameraFrame.minY) / this.cameraFrame.height, this.camera.ratio);
+  }
+  /** One expanding ring from the focus to its farthest direct connection (world reach, O(degree)). */
+  private startRipple(n: number) {
+    const v = this.settings.visuals; this.ripple = undefined;
+    if (n < 0 || n !== this.focusNode || !v.focusRipple || !v.hoverHighlight || !this.directs.length || reducedMotion()) return;
+    let reach = 0; const fx = this.display[n * 2]!, fy = this.display[n * 2 + 1]!;
+    for (const d of this.directs) reach = Math.max(reach, Math.hypot(this.display[d * 2]! - fx, this.display[d * 2 + 1]! - fy));
+    this.ripple = { start: performance.now(), reach };
+  }
+  /** Per frame: O(direct connections) pip projection, legend visibility and the ripple ring. */
+  private placeHighlights(focus: number) {
+    const v = this.settings.visuals, on = v.hoverHighlight && this.focusTarget > 0;
+    this.legend.hidden = !(on && v.tierLegend && this.tierTotals.some(Boolean));
+    const ids = on && focus > 0 && v.offscreenPips && this.tierMask & 1 ? this.directs : [];
+    if (this.pipXY.length < ids.length * 2) this.pipXY = new Float64Array(ids.length * 2);
+    const cx = this.centerX, cy = this.centerY, k = this.scale, d = this.display, xy = this.pipXY;
+    for (let i = 0; i < ids.length; i++) { const n = ids[i]!; xy[i * 2] = (d[n * 2]! - cx) * k + this.width / 2; xy[i * 2 + 1] = (d[n * 2 + 1]! - cy) * k + this.height / 2; }
+    const pips = ids.length ? offscreenPips(ids, this.pipXY, this.width, this.height, PIP_INSET) : [];
+    this.pipEls.forEach((el, i) => {
+      const pip = pips[i]; el.hidden = !pip; if (!pip) return;
+      this.pipTargets[i] = pip.node; el.style.transform = `translate(${Math.round(pip.x - 16)}px, ${Math.round(pip.y - 16)}px)`; el.style.opacity = String(focus);
+      const [arrow, count] = this.pipParts[i]!; arrow.style.transform = `rotate(${pip.sector * 45}deg)`;
+      const text = pip.count > 999 ? '999+' : String(pip.count), label = `${pip.count.toLocaleString()} direct connection${pip.count === 1 ? '' : 's'} ${PIP_DIRECTIONS[pip.sector]}. Go to the nearest.`;
+      if (count.textContent !== text) count.textContent = text;
+      if (el.getAttribute('aria-label') !== label) { el.setAttribute('aria-label', label); el.title = label; }
+    });
+    const r = this.ripple, ego = this.focusNode;
+    this.rippleEl.hidden = !r || ego < 0;
+    if (r && ego >= 0) {
+      const t = Math.min(1, (performance.now() - r.start) / RIPPLE_MS), e = 1 - (1 - t) ** 3, p = this.screenPoint(ego), from = this.drawnRadius(ego, true, focus);
+      const size = from + (Math.min(Math.hypot(this.width, this.height) / 2, r.reach * this.scale) - from) * e;
+      Object.assign(this.rippleEl.style, { width: `${2 * size}px`, height: `${2 * size}px`, transform: `translate(${Math.round(p.x - size)}px, ${Math.round(p.y - size)}px)`, opacity: String(.9 * (1 - t)) });
+    }
+  }
   private drawCanvas() {
     const ctx = this.ctx!, s = this.settings, c = this.colorBytes, focus = s.visuals.hoverHighlight ? this.focusLevel : 0, dim = s.visuals.dimOpacity, g = this.stateBytes;
     const x = (n: number) => (this.display[n * 2]! - this.centerX) * this.scale + this.width / 2, y = (n: number) => (this.display[n * 2 + 1]! - this.centerY) * this.scale + this.height / 2;
@@ -896,10 +1017,19 @@ export class DetailRenderer {
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0); ctx.fillStyle = this.theme.background; ctx.fillRect(0, 0, this.width, this.height); ctx.strokeStyle = this.theme.edge; ctx.lineWidth = s.edgeSize;
     // The edge shader's tier weights: rest, neighbours of neighbours, then direct strokes on top.
     const zoom = this.camera.ratio / this.homeRatio, base = edgeAlpha(s.visuals, this.visibleEdges, zoom, false, this.width, this.height), width = s.edgeSize * zoomFade(s.visuals, this.visibleEdges, zoom, this.width, this.height);
+    const mask = this.tierMask, strong = s.visuals.focusEdges, ep = this.theme.palette;
     for (const tier of focus ? [0, 128, 255] : [-1]) {
-      const [alpha, wide] = tierEdge(tier, base, tier < 0 ? 0 : focus, dim); ctx.globalAlpha = alpha; ctx.lineWidth = width * wide; ctx.beginPath(); let any = 0; const hue: number[] = [], line = (e: number) => { const a = this.projection.source[e]!, b = this.projection.target[e]!; ctx.moveTo(x(a), y(a)); ctx.lineTo(x(b), y(b)); };
-      for (const e of this.canvasEdges) { const a = this.projection.source[e]!, b = this.projection.target[e]!, t = this.edgeTier[e]!; if (!this.edgeOn[e] || !this.filterVisible[a] || !this.filterVisible[b] || tier >= 0 && edgeBucket(t) !== tier) continue; line(e); any = 1; if (tier >= 0 && tintedEdge(t)) hue.push(e); }
+      let [alpha, wide] = tierEdge(tier, base, tier < 0 ? 0 : focus, dim);
+      if (strong && tier >= 0) { const [a2, w2] = strongEdge(tier, alpha, focus); alpha = a2; wide *= w2; }
+      ctx.globalAlpha = alpha; ctx.lineWidth = width * wide; ctx.beginPath(); let any = 0; const hue: number[] = [], ramp: number[] = [], line = (e: number) => { const a = this.projection.source[e]!, b = this.projection.target[e]!; ctx.moveTo(x(a), y(a)); ctx.lineTo(x(b), y(b)); };
+      for (const e of this.canvasEdges) { const a = this.projection.source[e]!, b = this.projection.target[e]!, t = shownEdgeTier(this.edgeTier[e]!, mask); if (!this.edgeOn[e] || !this.filterVisible[a] || !this.filterVisible[b] || tier >= 0 && edgeBucket(t) !== tier) continue; if (tier >= 0 && tintedEdge(t)) hue.push(e); if (strong && tier === 255) { ramp.push(e); continue; } line(e); any = 1; }
       if (s.visuals.edgeOpacity > 0 && any) ctx.stroke();
+      // Strong focus strokes ramp source to target like the shader's mix(.35, 1, u) (bounded by degree).
+      if (s.visuals.edgeOpacity > 0) for (const e of ramp) {
+        const a = this.projection.source[e]!, b = this.projection.target[e]!, gr = ctx.createLinearGradient?.(x(a), y(a), x(b), y(b)), rgb = `${ep[4]},${ep[5]},${ep[6]}`;
+        if (gr) { gr.addColorStop(0, `rgba(${rgb},${1 - .65 * focus})`); gr.addColorStop(1, `rgba(${rgb},1)`); ctx.strokeStyle = gr; }
+        ctx.beginPath(); line(e); ctx.stroke(); ctx.strokeStyle = this.theme.edge;
+      }
       // Tinted relationship layer: the shader mixes the accent by focus / 2 at the same weight.
       if (s.visuals.edgeOpacity > 0 && hue.length) { ctx.strokeStyle = this.theme.accent; ctx.globalAlpha = alpha * focus * .5; ctx.beginPath(); hue.forEach(line); ctx.stroke(); ctx.strokeStyle = this.theme.edge; }
     }
@@ -909,10 +1039,14 @@ export class DetailRenderer {
       const hot = n === this.selected || n === this.hovered, k = n * 4, p = this.theme.palette, coverage = layer ? (hot ? level.visibility : level.alpha) : 1;
       const a = coverage * (hot ? p[19]! : c[k + 3]!) / 255;
       if (coverage < .004 || a <= 0) continue;
-      const [fade, grow, ring] = tierNode(g[k + 1]! / 255, hot, n === this.focusNode, focus, dim), r = this.nodeRadius(n, hot) * grow;
+      const ego = n === this.focusNode, shown = shownTier(g[k + 1]!, this.tierMask, ego) / 255, [fade, grow, ring] = tierNode(shown, hot, ego, focus, dim); let r = this.nodeRadius(n, hot) * grow;
+      if (!layer) r = liftRadius(r, tierLift(shown, ego, focus, s.visuals.tierMinSize));
       ctx.globalAlpha = a * fade; ctx.fillStyle = ctx.strokeStyle = hot ? `rgb(${p[16]},${p[17]},${p[18]})` : `rgb(${c[k]},${c[k + 1]},${c[k + 2]})`; ctx.beginPath(); ctx.arc(x(n), y(n), r, 0, Math.PI * 2); ctx.fill();
       // The shader's outer ring band (1.1–1.34 radii) as one stroke.
       if (ring) { ctx.globalAlpha = a * ring; ctx.lineWidth = r * .2; ctx.beginPath(); ctx.arc(x(n), y(n), r * 1.22, 0, Math.PI * 2); ctx.stroke(); }
+      // Contrast rings in the text colour: direct band 1.07–1.25, focus outer band 1.49–1.65 radii.
+      const band = !layer && s.visuals.tierRings && focus ? (ego ? 1.57 : shown > .9 ? 1.16 : 0) : 0;
+      if (band) { ctx.globalAlpha = a * fade * focus; ctx.strokeStyle = this.theme.text; ctx.lineWidth = r * (ego ? .16 : .18); ctx.beginPath(); ctx.arc(x(n), y(n), r * band, 0, Math.PI * 2); ctx.stroke(); }
     }
     ctx.globalAlpha = 1;
     for (const h of this.hubs) { ctx.fillStyle = this.groupColor(h.group); ctx.beginPath(); ctx.arc((h.x - this.centerX) * this.scale + this.width / 2, (h.y - this.centerY) * this.scale + this.height / 2, h.radius, 0, Math.PI * 2); ctx.fill(); }

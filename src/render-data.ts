@@ -119,6 +119,45 @@ export const tierEdge = (tier: number, a: number, f: number, dim: number) => [a 
 /** Atlas label alpha: tiered notes hand over to the graduated focus labels; context labels fade to
  * half the dim opacity. */
 export const tierLabel = (g: number, a: number, f: number, dim: number) => a + ((g > .1 ? 0 : a * dim * .5) - a) * f;
+/** Legend tiers in precedence order with their state bytes; the mask bit is 1 << index. */
+export const TIERS = [['Direct connections', 255], ['Ancestors', 192], ['Neighbours of neighbours', 128], ['Same group', 64]] as const;
+export const ALL_TIERS = 15;
+/** The tier byte as drawn: a tier switched off in the legend draws as context. The focus is never masked. */
+export const shownTier = (byte: number, mask: number, isFocus = false) => isFocus ? byte : byte === 255 ? (mask & 1 ? byte : 0) : byte === 192 ? (mask & 2 ? byte : 0) : byte === 128 ? (mask & 4 ? byte : 0) : byte === 64 ? (mask & 8 ? byte : 0) : byte;
+/** Edge bytes: focus-incident (254/255) follow direct, lit (127/128) follow neighbours of neighbours. */
+export const shownEdgeTier = (t: number, mask: number) => t > 200 ? (mask & 1 ? t : 0) : t ? (mask & 4 ? t : 0) : 0;
+/** Per-tier counts for the legend from the touched list only (O(cloud), once per focus change).
+ * The focus and edge notes are not counted. */
+export function tierCounts(focus: number, nodes: readonly number[], state: Uint8Array, notes?: ArrayLike<number>) {
+  const out = [0, 0, 0, 0];
+  for (const n of nodes) { if (n === focus || notes?.[n]) continue; const i = TIERS.findIndex(t => t[1] === state[n * 4 + 1]); if (i >= 0) out[i]!++; }
+  return out;
+}
+/** Screen-space floor (CSS px) for a tier at eased focus `f`: the focus and direct connections
+ * reach `px`, ancestors 75%, neighbours of neighbours 57% (7 px gives 4 px), others none. */
+export const tierLift = (g: number, isFocus: boolean, f: number, px: number) => px * f * (isFocus || g > .9 ? 1 : g > .7 ? .75 : g > .4 ? .57 : 0);
+/** Smooth minimum radius: unchanged at or above 2 * lift, never below lift, C1-continuous between. */
+export const liftRadius = (r: number, lift: number) => lift > 0 && r < 2 * lift ? lift + r * r / (4 * lift) : r;
+/** Strong focus edges, applied after `tierEdge` when on: focus-incident strokes go near-opaque and
+ * widen a further 60%, neighbours-of-neighbours strokes halve, context strokes keep 35%. Zero stays zero. */
+export const strongEdge = (tier: number, alpha: number, f: number) => [tier > 200 ? alpha + ((alpha > 0 ? .95 : 0) - alpha) * f : alpha * (1 - f * (tier ? .5 : .65)), 1 + f * (tier > 200 ? .6 : 0)] as const;
+export interface Pip { x: number; y: number; sector: number; count: number; node: number }
+/** Off-screen indicators: points outside the w × h viewport are binned into `sectors` directions
+ * around its centre; each bin yields one pip on the inset border along the ray to its nearest
+ * point, with the count. `xy` holds screen coordinates for `ids`. O(ids). */
+export function offscreenPips(ids: ArrayLike<number>, xy: ArrayLike<number>, w: number, h: number, inset: number, sectors = 8): Pip[] {
+  const cx = w / 2, cy = h / 2, best = new Float64Array(sectors).fill(Infinity), pips: (Pip | undefined)[] = [];
+  for (let i = 0; i < ids.length; i++) {
+    const x = xy[i * 2]!, y = xy[i * 2 + 1]!;
+    if (!Number.isFinite(x) || !Number.isFinite(y) || x >= 0 && x <= w && y >= 0 && y <= h) continue;
+    const dx = x - cx, dy = y - cy, s = ((Math.round(Math.atan2(dy, dx) / (2 * Math.PI) * sectors) % sectors) + sectors) % sectors, d = dx * dx + dy * dy;
+    const t = Math.min(Math.max(0, cx - inset) / (Math.abs(dx) || 1e-9), Math.max(0, cy - inset) / (Math.abs(dy) || 1e-9));
+    const pip = pips[s] ??= { x: 0, y: 0, sector: s, count: 0, node: -1 }; pip.count++;
+    if (d < best[s]!) { best[s] = d; pip.node = ids[i]!; pip.x = cx + dx * t; pip.y = cy + dy * t; }
+  }
+  return pips.filter((p): p is Pip => !!p);
+}
+export const PIP_DIRECTIONS = ['right', 'lower right', 'below', 'lower left', 'left', 'upper left', 'above', 'upper right'] as const;
 /** Bound software draw work by both visible nodes and visible edges; never silently truncate. */
 export function canvasDetailEdges(p: Pick<Projection, 'source' | 'target'>, visible: Uint8Array, maxNodes: number, maxEdges: number) {
   if (visible.reduce((n, v) => n + (v ? 1 : 0), 0) > maxNodes) throw new Error('CANVAS_DETAIL_NODE_LIMIT: use group member lists');

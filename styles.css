@@ -178,3 +178,24 @@
 @media (pointer: coarse) { .graph-ng-toolbar button, .graph-ng-explore button, .graph-ng-explore input:not([type=checkbox]):not([type=range]), .graph-ng-explore select { min-height:44px; } .graph-ng-explore .graph-ng-chip-action, .graph-ng-chip-json > summary { min-height:44px; min-width:44px; } }
 .graph-ng-suggestion { flex: 1; min-width: 0; }
 .graph-ng-segmented button[aria-pressed=true] { background:var(--interactive-accent); color:var(--text-on-accent); }
+/* Graduated connection highlighting: legend, off-screen pips and the selection ripple (theme variables only). */
+.graph-ng-tier-legend { position:absolute; top:8px; left:8px; display:flex; flex-direction:column; gap:2px; pointer-events:auto; padding:4px; font-size:var(--font-ui-smaller); background:color-mix(in srgb, var(--background-primary) 88%, transparent); border:1px solid var(--background-modifier-border); border-radius:var(--radius-s, 4px); }
+.graph-ng-tier-legend[hidden], .graph-ng-tier-legend button.graph-ng-tier-row[hidden], .graph-ng-pip[hidden], .graph-ng-ripple[hidden] { display:none; }
+.graph-ng-tier-legend button.graph-ng-tier-row { display:flex; align-items:center; gap:6px; min-height:32px; height:auto; padding:2px 8px; background:none; box-shadow:none; border:none; color:var(--text-normal); justify-content:flex-start; font-size:inherit; }
+.graph-ng-tier-legend button.graph-ng-tier-row:hover { background:var(--background-modifier-hover); }
+.graph-ng-tier-row.graph-ng-tier-off { color:var(--text-faint); text-decoration:line-through; }
+.graph-ng-tier-name { flex:1 1 auto; text-align:left; }
+.graph-ng-tier-key { flex:none; width:10px; height:10px; border-radius:50%; background:var(--text-normal); }
+.graph-ng-tier-key-0 { box-shadow:0 0 0 2px var(--background-primary), 0 0 0 3px var(--text-normal); }
+.graph-ng-tier-key-1 { opacity:.75; }
+.graph-ng-tier-key-2 { width:7px; height:7px; margin:0 1.5px; opacity:.55; }
+.graph-ng-tier-key-3 { width:6px; height:6px; margin:0 2px; opacity:.35; }
+.graph-ng-tier-off .graph-ng-tier-key { opacity:.2; }
+.graph-ng-pip { position:absolute; left:0; top:0; width:32px; height:32px; min-height:32px; padding:0; display:flex; align-items:center; justify-content:center; pointer-events:auto; border-radius:50%; color:var(--text-on-accent); background:var(--interactive-accent); border:2px solid var(--background-primary); box-shadow:0 1px 3px rgba(0,0,0,.3); font-size:var(--font-ui-smaller); font-variant-numeric:tabular-nums; cursor:pointer; }
+.graph-ng-pip:hover { background:var(--interactive-accent-hover, var(--interactive-accent)); }
+.graph-ng-pip:focus-visible { outline:2px solid var(--text-normal); outline-offset:2px; }
+.graph-ng-pip-arrow { position:absolute; inset:0; pointer-events:none; }
+.graph-ng-pip-arrow::after { content:''; position:absolute; right:-7px; top:50%; margin-top:-5px; border-left:7px solid var(--interactive-accent); border-top:5px solid transparent; border-bottom:5px solid transparent; }
+.graph-ng-pip-count { position:relative; font-weight:var(--font-semibold, 600); }
+.graph-ng-ripple { position:absolute; left:0; top:0; pointer-events:none; border-radius:50%; border:2px solid var(--interactive-accent); box-sizing:border-box; }
+@media (prefers-reduced-motion: reduce) { .graph-ng-ripple { display:none; } }

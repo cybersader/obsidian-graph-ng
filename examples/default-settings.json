@@ -141,7 +141,13 @@
     "carrierLodFar": 0.6,
     "zoomAdapt": true,
     "labelTierScale": 1.2,
-    "labelPlates": true
+    "labelPlates": true,
+    "tierMinSize": 7,
+    "tierRings": true,
+    "focusEdges": true,
+    "offscreenPips": true,
+    "focusRipple": true,
+    "tierLegend": true
   },
   "explore": {
     "panelOpen": true,

@@ -330,6 +330,8 @@ test('graduated production Canvas parity: tier batches, graded nodes and labels,
   Object.assign(ctx, { beginPath: () => { segments = 0; }, moveTo: () => { segments++; }, stroke: () => strokes.push([ctx.globalAlpha, segments]), fill: () => fills.push(ctx.globalAlpha), fillText: (t: string) => labels.push([t, ctx.globalAlpha]) });
   const paint = (level: number) => { strokes = []; fills = []; labels = []; r[k('focusLevel')] = level; r[k('drawCanvas')](); return { strokes, fills, labels }; };
   try {
+    // The reviewed tier weights, with the optional finding aids (strong focus lines, rings) off.
+    Object.assign(f.settings.visuals, { focusEdges: false, tierRings: false });
     f.tap(0); const plain = paint(0); expect(plain.strokes.length).toBe(1); expect(plain.strokes[0]![1]).toBe(3);
     const a = plain.strokes[0]![0], lit = paint(1);
     // Three edge batches, then the focus ring (an arc stroke with no line segments) at full focus.
@@ -340,9 +342,42 @@ test('graduated production Canvas parity: tier batches, graded nodes and labels,
     // Tiered atlas labels hand over to the graduated DOM labels; context labels go very faint.
     for (const [text, alpha] of lit.labels) { expect(+text).toBeGreaterThanOrEqual(3); expect(alpha).toBeCloseTo(dim * .5, 12); }
     expect(plain.labels.every(([, alpha]) => alpha === 1)).toBe(true);
+    // Finding aids on: the direct line is its own near-opaque stroke, 2-hop and context strokes fade
+    // further (strongEdge), then the focus ring plus the contrast rings (direct, focus outer).
+    Object.assign(f.settings.visuals, { focusEdges: true, tierRings: true }); const strong = paint(1);
+    expect(strong.strokes.map(s => s[1])).toEqual([1, 1, 1, 0, 0, 0]);
+    [a * dim * .6 * .35, a * .5, .95].forEach((v, i) => expect(strong.strokes[i]![0]).toBeCloseTo(v, 12));
+    expect(strong.fills).toEqual(lit.fills);
     f.settings.visuals.edgeOpacity = 0; const hidden = paint(1);
     expect(hidden.strokes.filter(s => s[1])).toEqual([]); expect(hidden.fills.map((v, i) => v / plain.fills[i]!)).toEqual(ratio);
   } finally { Object.assign(ctx, saved); }
+});
+test('finding connections in production: legend counts and toggles, off-screen pip pans, ripple, lifted pick', async () => {
+  // 0 focus; 1, 2 direct; 3 neighbour of neighbour; 4 context.
+  const f = await graduated([[0, 1], [0, 2], [1, 3]]), { r, k } = f, v = f.settings.visuals;
+  const frame = () => { r[k('focusLevel')] = 1; r[k('placeOverlay')](); };
+  const legend = r.legend, rows = r[k('legendRows')], counts = r[k('legendCounts')], pips = r[k('pipEls')];
+  expect(legend.hidden).toBe(true); expect(pips.every((p: any) => p.hidden)).toBe(true);
+  f.tap(0); frame();
+  expect(legend.hidden).toBe(false); expect(rows.map((x: any) => x.hidden)).toEqual([false, true, false, true]);
+  expect(counts.map((x: any) => x.textContent)).toEqual(['2', '0', '1', '0']); expect(rows[0].attributes['aria-pressed']).toBe('true');
+  // Selecting starts one ripple; the frame loop ends after it.
+  expect(r[k('ripple')]).toBeDefined(); expect(r[k('rippleEl')].hidden).toBe(false);
+  // A legend row switches that tier's emphasis off and back on (focus never masked).
+  rows[0].onclick(); expect(rows[0].attributes['aria-pressed']).toBe('false'); expect(r.tierMask).toBe(14); rows[0].onclick(); expect(r.tierMask).toBe(15);
+  v.tierLegend = false; frame(); expect(legend.hidden).toBe(true); v.tierLegend = true;
+  // All on screen: no pips. Zoomed in on the focus: one lower-right pip for both direct connections.
+  expect(pips.every((p: any) => p.hidden)).toBe(true);
+  v.cameraAnimationMs = 0; r.setCamera(0, 0, .02); frame();
+  const shown = pips.filter((p: any) => !p.hidden); expect(shown.length).toBe(1);
+  expect(shown[0].attributes['aria-label']).toBe('2 direct connections lower right. Go to the nearest.');
+  shown[0].onclick(); const at = r.screenPoint(1); expect(at.x).toBeCloseTo(400, 6); expect(at.y).toBeCloseTo(300, 6);
+  v.offscreenPips = false; r.setCamera(0, 0, .02); frame(); expect(pips.every((p: any) => p.hidden)).toBe(true);
+  // Minimum highlighted size: at overview zoom a direct connection is pickable within its 7 px floor.
+  Object.assign(f.settings, { nodeSize: 1, nodeSizing: { policy: 'predictable', compensation: 0, floor: 1 } });
+  r.setCamera(.5, .5, 8); r[k('focusLevel')] = 1; const p1 = r.screenPoint(1);
+  expect(r.pick(p1.x + 9, p1.y)).toBe(1); v.tierMinSize = 0; expect(r.pick(p1.x + 9, p1.y)).not.toBe(1);
+  f.tap(EMPTY); frame(); expect(legend.hidden).toBe(true);
 });
 test('graduated production labels: focus largest, direct then 2-hop by priority, placed once per focus or LOD change, every reset clears', async () => {
   const f = await graduated([[0, 1], [1, 2], [2, 3], [3, 4]]), { r, k } = f;
