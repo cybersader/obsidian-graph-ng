@@ -9,6 +9,15 @@ import { contractGroups, validateGroupProjection, resolveCarrier } from '../src/
 import { SpatialGrid } from '../src/core/grid';
 import { defaults, validateSettings } from '../src/settings';
 import { exampleDeclaration, fixture } from '../scripts/fixture';
+test('key groups reuse dictionary work without aliasing mutable columns or sibling groups', () => {
+  const declaration = defaultDeclaration('links'); declaration.columns = []; declaration.groups = [{ from: 'key', key: 'group' }, { from: 'key', key: 'group' }];
+  const values = [undefined, null, false, 7, '7', ['a', 'b'], { key: 'value' }];
+  const p = buildProjection(values.map((group, i) => ({ path: `${i}.md`, properties: { group } })), declaration), column = p.columns.group!;
+  for (const g of p.groups) { expect(g.encoded).toBe(true); expect(g.values).toEqual(column.values); expect(g.codes).toEqual(column.codes); expect(g.values).not.toBe(column.values); expect(g.codes.buffer).not.toBe(column.codes.buffer); }
+  expect(p.groups[0]!.codes.buffer).not.toBe(p.groups[1]!.codes.buffer);
+  const original = [...column.values]; p.groups[0]!.values[0] = 'changed'; p.groups[0]!.codes.fill(999);
+  expect(column.values).toEqual(original); expect(p.groups[1]!.values).toEqual(original); expect(p.groups[1]!.codes).toEqual(column.codes);
+});
 const d = structuredClone(exampleDeclaration);
 const rows: FactRow[] = [
   { path: 'a/one.md', properties: { id: 'one', family: 'Family 1' } },

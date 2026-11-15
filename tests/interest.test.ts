@@ -92,3 +92,20 @@ test('declared interest: validated, optional, ingested, rank-normalised and out 
   expect([...p.interest!].map(x => Number.isNaN(x) ? 'none' : x)).toEqual([0, 'none', 1]);
   expect(buildProjection(rows, base).interest).toBeUndefined();
 });
+
+test('tier-bucket ranking matches full-sort oracle and never scores discarded tiers', () => {
+  const n = 1200, state = new Uint8Array(n * 4), visible = new Uint8Array(n).fill(1), notes = new Uint32Array(n), offsets = csr(Array.from({ length: n }, (_, i) => i % 73));
+  const near = Array.from({ length: n }, (_, i) => (i * 797) % n), bytes = [255, 192, 128, 64, 0];
+  for (let i = 0; i < n; i++) { state[i * 4 + 1] = bytes[i % 5]!; visible[i] = +(i % 7 !== 0); notes[i] = +(i % 11 === 0); }
+  for (const focus of [-1, 5, 11]) for (const cap of [0, 1, 20, 300, 2000]) for (const scored of [false, true]) {
+    const score = scored ? (i: number) => i % 13 : undefined;
+    const rank = (i: number) => i === focus ? 0 : state[i * 4 + 1]! > 200 ? 1 : 5 - (state[i * 4 + 1]! >> 6);
+    const all = near.filter(i => visible[i] && (i === focus || !notes[i])).map(i => [i, rank(i)] as const).sort((a, b) => a[1] - b[1] || (score ? score(b[0]) - score(a[0]) : offsets[b[0] + 1]! - offsets[b[0]]! - offsets[a[0] + 1]! + offsets[a[0]]!) || a[0] - b[0]);
+    const direct = all.filter(x => x[1] === 1).length, list = all.slice(0, cap);
+    expect(rankFocus(focus, near, state, visible, offsets, cap, notes, score)).toEqual({ list, direct });
+    for (const limit of [50, 1000]) expect(rankFocus(focus, near, state, visible, offsets, cap, notes, score, limit)).toEqual({ list: direct > limit ? list.filter(x => x[1] <= 1) : list, direct });
+  }
+  const visited = new Set<number>();
+  rankFocus(5, near, state, visible, offsets, 20, notes, i => { visited.add(i); return i; });
+  expect(visited.size).toBeGreaterThan(0); expect([...visited].every(i => state[i * 4 + 1] === 255)).toBe(true);
+});

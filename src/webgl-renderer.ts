@@ -735,7 +735,7 @@ export class DetailRenderer {
     const notes = this.carrierLevel(), s = this.sizingSettings();
     return baseRadius(s, this.width, this.height, this.visibleNodes - this.visibleCarriers * (1 - notes.visibility), this.camera.ratio / this.homeRatio, !this.gl);
   }
-  private nodeRadius(node: number, hot = false) { return sizedRadius(this.baseNodeRadius(), this.sizes[node]!, this.projection.carrierNodes[node] ? this.settings.visuals.carrierSize : 1, hot); }
+  private nodeRadius(node: number, hot = false, base = this.baseNodeRadius()) { return sizedRadius(base, this.sizes[node]!, this.projection.carrierNodes[node] ? this.settings.visuals.carrierSize : 1, hot); }
   private sizingRange: [number, number] = [0, 0];
   private updateSizingRange() {
     let lo = Infinity, hi = 0;
@@ -1356,10 +1356,10 @@ export class DetailRenderer {
       // Placement measures each bounded candidate once with the font and text the DOM label then uses, at the radius offset it is shown with.
       const k = this.scale * this.camera.ratio / LABEL_RATIOS[lod]!, budget = Math.max(1, Math.min(s.labelsMaxPerViewport, FOCUS_LABELS, Math.floor(this.width * this.height / s.labelGridCellSize ** 2 * s.labelDensity))), m = this.measure ??= document.createElement('canvas').getContext('2d')!;
       const pad = v.labelPlates ? 16 : 4, text = (n: number, rank: number) => n === ego ? this.noteCaption(n) : middleTruncate(this.name(n), LABEL_CHARS[rank]!);
-      const { list, direct } = rankFocus(ego, this.near, this.stateBytes, this.visible, this.projection.offsets, budget * s.labelCandidateMultiplier, this.projection.carrierNodes, ego >= 0 ? this.interestOf(ego) : undefined);
+      const { list, direct } = rankFocus(ego, this.near, this.stateBytes, this.visible, this.projection.offsets, budget * s.labelCandidateMultiplier, this.projection.carrierNodes, ego >= 0 ? this.interestOf(ego) : undefined, 50);
       const items = list.map(([n, rank]) => { m.font = tierFont(rank, s.labelSize, tier, this.theme.font); const h = tierType(rank, s.labelSize, tier).size * 1.5 + 4; return { node: n, rank, x: this.renderCoordinate(n, 0, 1) * k, y: this.renderCoordinate(n, 1, 1) * k, r: radius(n), w: m.measureText(text(n, rank)).width + pad, h }; });
       m.font = tierFont(1, s.labelSize, tier, this.theme.font); this.moreSize = [m.measureText(`+${direct} more`).width + 24, 32]; this.moreTotal = direct;
-      const layout = radialLabels(direct > 50 ? items.filter(it => it.rank <= 1) : items, budget, direct > 50 ? 6 : DIRECT_LABELS, ego >= 0 ? direct : 0, this.moreSize[0]!, 32);
+      const layout = radialLabels(items, budget, direct > 50 ? 6 : DIRECT_LABELS, ego >= 0 ? direct : 0, this.moreSize[0]!, 32);
       this.ranked = layout.slots.filter(x => x.node !== ego); this.moreAt = layout.more;
       this.rankedKey = [lod, this.display, this.fit, this.width, this.height, this.lensRevision];
       this.overlay.className = 'graph-ng-overlay' + (v.labelPlates ? ' graph-ng-plates' : '');
@@ -1483,7 +1483,9 @@ export class DetailRenderer {
   }
   private drawCanvas() {
     const ctx = this.ctx!, s = this.settings, c = this.colorBytes, focus = s.visuals.hoverHighlight ? this.focusLevel : 0, dim = this.isolation ? 1 : s.visuals.dimOpacity, g = this.stateBytes;
-    const x = (n: number) => (this.renderCoordinate(n, 0) - this.centerX) * this.scale + this.width / 2, y = (n: number) => (this.renderCoordinate(n, 1) - this.centerY) * this.scale + this.height / 2;
+    // Frame invariants, not per endpoint/node work (including an unsaved sizing preview).
+    const cx = this.centerX, cy = this.centerY, scale = this.scale, hw = this.width / 2, hh = this.height / 2, radius = this.baseNodeRadius();
+    const x = (n: number) => (this.renderCoordinate(n, 0) - cx) * scale + hw, y = (n: number) => (this.renderCoordinate(n, 1) - cy) * scale + hh;
     ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0); ctx.fillStyle = this.theme.background; ctx.fillRect(0, 0, this.width, this.height); ctx.strokeStyle = this.theme.edge; ctx.lineWidth = s.edgeSize;
     // The edge shader's tier weights: rest, neighbours of neighbours, then direct strokes on top.
@@ -1513,7 +1515,7 @@ export class DetailRenderer {
       const hot = n === this.selected || n === this.hoverFx.n, k = n * 4, p = this.theme.palette, coverage = layer ? (hot ? level.visibility : level.alpha) : 1;
       const a = coverage * (hot ? p[19]! : c[k + 3]!) / 255;
       if (coverage < .004 || a <= 0) continue;
-      const ego = n === this.focusNode, shown = shownTier(g[k + 1]!, this.tierMask, ego) / 255, [fade, grow, tr] = tierNode(shown, hot, ego, focus, dim); let r = this.nodeRadius(n, hot) * grow;
+      const ego = n === this.focusNode, shown = shownTier(g[k + 1]!, this.tierMask, ego) / 255, [fade, grow, tr] = tierNode(shown, hot, ego, focus, dim); let r = this.nodeRadius(n, hot, radius) * grow;
       if (!layer) r = liftRadius(r, tierLift(shown, ego, focus, s.visuals.tierMinSize));
       r = this.grown(n, r); const ring = Math.max(tr, n === this.hoverFx.n ? this.fx[1]! : 0);
       ctx.globalAlpha = a * fade; ctx.fillStyle = ctx.strokeStyle = hot ? `rgb(${p[16]},${p[17]},${p[18]})` : `rgb(${c[k]},${c[k + 1]},${c[k + 2]})`; ctx.beginPath(); ctx.arc(x(n), y(n), r, 0, Math.PI * 2); ctx.fill();
@@ -1531,7 +1533,7 @@ export class DetailRenderer {
     if (nodes && scales && fade.alpha > .004) nodes.forEach((n, i) => {
       const cut = Math.min(1, Math.max(0, (1 - i / nodes.length - fade.cut) / .15)); ctx.globalAlpha = tierLabel(g[n * 4 + 1]! / 255, fade.alpha * cut * cut * (3 - 2 * cut), focus, dim);
       if (ctx.globalAlpha <= .004) return; ctx.font = `${s.labelSize * scales[i]!}px ${this.theme.font}`;
-      const name = this.name(n), lx = x(n) + this.nodeRadius(n) + 4; if (s.visuals.labelPlates) ctx.strokeText(name, lx, y(n)); ctx.fillText(name, lx, y(n));
+      const name = this.name(n), lx = x(n) + this.nodeRadius(n, false, radius) + 4; if (s.visuals.labelPlates) ctx.strokeText(name, lx, y(n)); ctx.fillText(name, lx, y(n));
     });
   }
   /** The explicit renderer surface src/interaction.ts drives (and future input streams extend). */

@@ -44,7 +44,7 @@ export function viewMarker(r: MiniRect, w: number, h: number, min = MINI_MARKER)
 export function densityGrid(positions: ArrayLike<number>, visible: ArrayLike<number>, f: MiniFrame, m: MiniFit, w: number, h: number) {
   const grid = new Uint32Array(w * h);
   for (let i = 0; i < visible.length; i++) if (visible[i]) {
-    const [x, y] = toMini(f, m, positions[i * 2]!, positions[i * 2 + 1]!), cx = Math.floor(x), cy = Math.floor(y);
+    const cx = Math.floor(m.ox + (positions[i * 2]! - f.minX) * m.s), cy = Math.floor(m.oy + (positions[i * 2 + 1]! - f.minY) * m.s);
     if (cx >= 0 && cy >= 0 && cx < w && cy < h) grid[cy * w + cx]!++;
   }
   return grid;

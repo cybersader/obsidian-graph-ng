@@ -2,6 +2,106 @@
 
 Results belong to an exact invocation, fixture, source revision and hardware class. They do not establish all-scale acceptance. Original slice-1 source is `041e1382` (2026-11-10); release-readiness baseline is `9b8cc07`. Historical tables below remain dated evidence. The slice-2 section records the new worker/browser/native invocations and unmet targets separately. Raw receipts remain ignored and local; publish only scrubbed summaries without hostnames, usernames, real-vault paths or private projections.
 
+## Bounded CPU performance pass — 2026-11-15
+
+The main win is less work on hub selection, not a faster layout algorithm. Against `001e8ff00f50480194166e680c60cd1fa7c053f4`, full-scene compiled-renderer hub selection drops **14.13 → 5.34 ms** at 16k nodes and **12.16 → 7.17 ms** at 61k. These are synthetic JavaScript CPU measurements, not native interaction latency or GPU frame rates. No layout default, traversal budget, visibility rule or Canvas limit changes.
+
+### Method and reproduction
+
+Measured on a Linux x86-64 desktop CPU (Intel Core i9-12900K, 24 logical CPUs), Bun 1.3.14. No browser, real vault, shader compilation, GPU rasterization or host metadata IO was used. `tests/performance-benchmark.test.ts` runs the production solver in a real worker and the compiled production renderer against synthetic DOM/Canvas/WebGL command drivers. Canvas retains its 2,000-visible-node / 10,000-visible-edge limits and shows the hub neighbourhood; full-prefixed metrics show the entire projection through the fake WebGL driver. Text metrics are deterministic approximations. First-frame values include renderer setup and submission, not pixels becoming visible. Minimap measures density-bin construction, not raster upload.
+
+The seeded fixtures contain 16,000 nodes / 55,000 edges, or 61,000 nodes / 100,000 edges including 44,552 relationship-note nodes. They approximate a heavy-tailed graph: degree-591 hub, 84 ordinary nodes above degree 100, ordinary-node degree p50/p90/p99 = 1/13/69, 13% ordinary isolates, 93 groups (largest 1,468, median 97), cross-group relationship endpoints and hierarchy depth at most three. The requested p90 was 11; the fixture achieves 13, not an exact reconstruction. All paths, names and declarations are synthetic. A separate startup fixture uses 16,309 / 46,400.
+
+Run from the checkout root after a frozen, script-disabled install. `./scripts/run.sh` retains the shared containment lock; the outer lock is distinct. Each command is one invocation:
+
+| Purpose | Command |
+| --- | --- |
+| Build | `flock -w 3000 -E 75 /tmp/openclast-bun.lock timeout --kill-after=5s 1800s ./scripts/run.sh build` |
+| CPU receipt | `PERF_LABEL=current flock -w 3000 -E 75 /tmp/openclast-bun.lock timeout --kill-after=5s 1800s ./scripts/run.sh bench:performance` |
+| Startup receipt | `flock -w 3000 -E 75 /tmp/openclast-bun.lock timeout --kill-after=5s 1800s ./scripts/run.sh bench:startup` |
+| Full unit suite | `flock -w 3000 -E 75 /tmp/openclast-bun.lock timeout --kill-after=5s 1800s ./scripts/run.sh test --timeout 10000` |
+| Gates | `flock -w 3000 -E 75 /tmp/openclast-bun.lock timeout --kill-after=5s 1800s ./scripts/run.sh gates` |
+
+Receipts remain ignored at `.workspace/evidence/performance-before.json`, `performance-after.json` and `performance-startup.json`. Before/after receipts record their compiled bundle hash; the measured candidate was uncommitted on the baseline, so its recorded HEAD alone does not identify the runtime. Baseline bundle SHA-256: `2e475cc00e430482e3db5839ec83d43e07813877d6bb4833271294e04bf46e15`. Candidate bundle SHA-256: `33b15de9d34a8fd8360c4d431c9b6468b8e268cf42af888890370f482542885e`. To reproduce the baseline, use these benchmark/test-support files with baseline runtime source and rebuild; benchmark files were not present in that baseline commit.
+
+Packing, decoding, projection and coverage construction use five samples after one warmup; other repeated computations use nine, frame submission uses 60. Tables use medians except rows marked single. Raw samples and empirical p95 remain in receipts; these small samples are not confidence intervals. Independent runs vary with JIT, GC and host load. Untouched operations are controls, not claimed optimization gains.
+
+### Before / after CPU time
+
+All values are milliseconds. Hub measurements explicitly select the degree-591 note.
+
+| Operation | 16k before | 16k after | 61k before | 61k after |
+| --- | ---: | ---: | ---: | ---: |
+| Pack ingest | 28.924 | 24.561 | 27.176 | 24.930 |
+| Decode ingest | 26.184 | 25.245 | 22.536 | 23.095 |
+| Projection | 110.580 | 88.808 | 181.386 | 155.525 |
+| Worker solver, single | 1208.943 | 1179.153 | 5354.270 | 5068.765 |
+| Hub focus tiers | 2.386 | 2.120 | 3.658 | 2.978 |
+| Hub groups + interest scoring | 0.376 | 0.281 | 0.263 | 0.372 |
+| Hub label ranking, 240-candidate microbenchmark | 5.917 | 0.367 | 2.791 | 0.389 |
+| Full-scene hub selection + draw submission | 14.131 | 5.339 | 12.155 | 7.174 |
+| Bounded Canvas navigator selection/card | 2.559 | 2.474 | 2.147 | 2.322 |
+| Only connections, reach 3 | 4.910 | 5.261 | 10.681 | 8.729 |
+| Relationship coverage cold projection | 60.744 | 61.568 | 59.187 | 51.549 |
+| Relationship coverage filter evaluation | 0.665 | 0.710 | 0.658 | 0.641 |
+| Minimap density rebuild | 0.458 | 0.115 | 0.932 | 0.226 |
+| Search cold, single | 5.001 | 4.135 | 20.314 | 13.735 |
+| Search warm | 0.267 | 0.264 | 1.335 | 1.263 |
+| Bounded Canvas first frame, single | 35.791 | 29.465 | 44.859 | 46.409 |
+| Bounded Canvas hover frame | 1.558 | 1.156 | 1.256 | 0.855 |
+| Bounded Canvas pan frame | 1.648 | 1.092 | 1.280 | 0.901 |
+| Full-scene first-frame submission, single | 51.628 | 44.818 | 77.567 | 69.143 |
+| Full-scene hover submission | 0.080 | 0.079 | 0.117 | 0.073 |
+| Full-scene pan submission | 0.099 | 0.114 | 0.109 | 0.092 |
+| Full-scene label-atlas build, single | 20.262 | 13.487 | 18.370 | 14.845 |
+
+The solver is unchanged: both before/after position hashes match exactly, both stop at 100 iterations, and terminal RMS movement remains 22.54 / 17.59 layout units. Convergence checking is disabled by default, so these timings do **not** demonstrate convergence. Both reach-3 runs exhaust the unchanged 200,000-entry budget and report partial results (13,920 / 56,623 visible nodes); no incomplete frontier count is presented. Steady full-scene hover/pan performs zero buffer/texture uploads in both runs. Canvas command counts also match before/after.
+
+### Changes and memory
+
+1. Bucket focus labels by their existing tier, sorting/scoring only tiers with available slots. For hubs above 50 direct connections, omit secondary tiers before scoring and text measurement instead of filtering them immediately before radial placement. Preserve the existing tier, interest/degree and node-ID tie order, direct count, cap and six-label dense-hub policy. The 240-candidate microbenchmark is distinct from the renderer's default 2,048-candidate cap; full-scene selection exercises the latter.
+2. Hoist Canvas base radius and camera-derived frame invariants outside per-node/per-edge loops. Saved and unsaved sizing previews, focus growth and final radii remain covered by a compiled-bundle regression.
+3. Bin minimap coordinates with scalars rather than allocating a two-element tuple for every visible node. A tuple-based oracle verifies exact bins and boundaries.
+4. Reuse already-canonicalized declared-key dictionaries when constructing groups, with independent copies of values and codes. Mutation/ownership tests prevent column or sibling-group aliasing. This avoids a redundant canonicalization/intern pass without changing projection validation.
+
+Candidate bundle: **350,170 raw / 117,369 gzip bytes**, versus **349,917 / 117,207** at baseline: **+253 / +162 bytes**. This is small growth, not size-neutral. The unchanged **355,000 / 118,000** caps leave **4,830 raw / 631 gzip bytes** of headroom.
+
+| Typed buffers, bytes (unchanged) | 16k | 61k |
+| --- | ---: | ---: |
+| Actual distinct projection buffers | 2,035,996 | 4,557,340 |
+| Legacy `storageBytes` accounting | 1,576,004 | 3,376,004 |
+| Packed ingest buffers | 6,152,908 | 6,190,904 |
+| Renderer column buffers | 1,552,000 | 4,384,760 |
+| Positions | 128,000 | 488,000 |
+
+Renderer/core buffers overlap: do not sum these rows as independent allocations. Legacy accounting misses newer columns. Interaction heap observations after 200 Canvas frames were noisy: baseline post-GC deltas were −157,403 / +60,936 bytes; candidate −26,110 / −70,332,189 bytes. The large negative value reflects collection of earlier workload state, not a 70 MB optimization. Pre-GC candidate deltas were +665,612 / −70,132,186 bytes. This harness neither isolates all allocation traffic nor proves leak freedom; no retained-heap improvement is claimed. The minimap tuple removal and once-per-frame radius work are deterministic work-count changes rather than inferred GC wins.
+
+### Cold startup and safest next option
+
+Three repetitions of `bench:startup` use the actual `runLayoutStream` scheduler and worker messages, plus compiled-renderer setup. The following medians are **CPU-path lower bounds, not measured user-visible stable-layout latency**; host metadata/cache IO, cache hashing/decoding/validation, CSS layout, shader compilation and rasterization are excluded. “Stable” means positions freeze at the 100-iteration budget, not numerical convergence.
+
+| Startup component | 16,309 / 46,400 | 61,000 / 100,000 |
+| --- | ---: | ---: |
+| Pack/decode ingest | 77.17 ms | 71.66 ms |
+| Projection | 148.30 ms | 194.85 ms |
+| Worker computation with streaming/yields | 1242.27 ms | 5483.57 ms |
+| Worker round trip | 1251.12 ms | 5488.56 ms |
+| Initial random-position snapshot received | 9.61 ms | 22.38 ms |
+| Iteration-5 snapshot received | 105.26 ms | 366.19 ms |
+| Iteration-95 snapshot received | 1191.11 ms | 5221.31 ms |
+| Renderer setup/submission | 57.42 ms | 61.97 ms |
+| Combined measured cold CPU path | **1513.02 ms** | **5816.13 ms** |
+| Valid exact-cache identity comparison + coordinate copy only | 0.27 ms | 0.27 ms |
+| Unchanged warm-layout preparation only | 3.12 ms | 8.97 ms |
+
+Startup receipt predates the final dense-hub cutoff; it uses the same solver and does not select a hub. Component medians need not sum to the median total. Cache rows isolate operations after existing validity checks, not end-to-end warm-open timing.
+
+**Safest proposal: verify and improve use of the existing validated cached-layout path first**, including evidence about cache-miss reasons. Exact compatible caches already return saved positions without solving; compatible non-exact caches use the existing identity-based warm start and changed-neighbour relaxation. Do not weaken source/declaration/layout/generation or ordered-identity checks. This is a proposal, not an implemented startup-default change.
+
+Worker streaming already emits the initial positions and every five iterations (20 intermediate snapshots). The main view stores these snapshots but awaits completion before its normal ready/detail path; enabling worker streaming again would not fix perceived delay. Progressive detail display needs a separately reviewed renderer lifecycle/upload design. Turning convergence on by default requires threshold and layout-quality evidence first, since it changes numerical behaviour and these runs still move substantially at termination.
+
+Remaining expensive work: cold layout; full-atlas candidate sorting/text work; cold relationship-coverage projection; the same-group O(n) focus scan; budget-limited reach-3 traversal; and Canvas scans over full indices despite a bounded visible mask. Actual native DOM/GPU latency, integrated/mobile hardware and visual acceptance remain unmeasured. Deterministic equivalence tests and local gates do not replace independent merge review or release acceptance.
+
 ## Hardware classes and scope
 
 | Class | Evidence |

@@ -89,7 +89,7 @@ test('numeric drafts preview/apply/cancel, invalid blank never reaches renderer 
 });
 test('shared rendering source contract keeps appearance out of layout and uses dynamic label offsets', () => {
   const renderer = readFileSync(new URL('../src/webgl-renderer.ts', import.meta.url), 'utf8');
-  expect(renderer).toContain('const nodeSize = this.baseNodeRadius()'); expect(renderer).toContain('r = this.nodeRadius(n, hot) * grow'); expect(renderer).toContain('ctx.arc(x(n), y(n), r, 0');
+  expect(renderer).toContain('const nodeSize = this.baseNodeRadius()'); expect(renderer).toContain('r = this.nodeRadius(n, hot, radius) * grow'); expect(renderer).toContain('ctx.arc(x(n), y(n), r, 0');
   expect(renderer).toContain('extra.z * nodeSize'); expect(renderer).toContain('this.nodeRadius(node, node === this.selected');
   const main = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8'); const body = main.split('commitSizing(values:')[1]!.split('private saveTimer')[0]!;
   expect(body).not.toContain('pipeline'); expect(body).not.toContain('positions'); expect(body).not.toContain('camera');

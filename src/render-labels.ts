@@ -16,12 +16,20 @@ export function focusLabels(focus: number, near: readonly number[], state: Uint8
 }
 /** Visible touched notes as [node, rank] in priority order (capped), plus the visible direct-connection count.
  * Within a tier, `score` (degree of interest, see interest.ts) orders when given; otherwise degree. */
-export function rankFocus(focus: number, near: readonly number[], state: Uint8Array, visible: ArrayLike<number>, offsets: Uint32Array, cap: number, notes?: ArrayLike<number>, score?: (n: number) => number) {
+export function rankFocus(focus: number, near: readonly number[], state: Uint8Array, visible: ArrayLike<number>, offsets: Uint32Array, cap: number, notes?: ArrayLike<number>, score?: (n: number) => number, directOnlyAbove = Infinity) {
   const rank = (n: number) => n === focus ? 0 : state[n * 4 + 1]! > 200 ? 1 : 5 - (state[n * 4 + 1]! >> 6), degree = (n: number) => offsets[n + 1]! - offsets[n]!;
   // Transparent carrier dots are not direct neighbours in the card/legend. They must not
   // consume its label slots or inflate the count offered by the card's '+N more' link.
-  const list = near.filter(n => visible[n] && (n === focus || !notes?.[n])).map(n => [n, rank(n)] as const).sort((a, b) => a[1] - b[1] || (score ? score(b[0]) - score(a[0]) : degree(b[0]) - degree(a[0])) || a[0] - b[0]);
-  const direct = list.reduce((c, x) => c + +(x[1] === 1), 0); list.length = Math.min(list.length, cap);
+  const tiers: number[][] = [[], [], [], [], [], []], list: (readonly [number, number])[] = [];
+  for (const n of near) if (visible[n] && (n === focus || !notes?.[n])) tiers[rank(n)]!.push(n);
+  // A full higher tier leaves no slots for lower tiers: never score/sort those discarded notes.
+  const direct = tiers[1]!.length;
+  // Dense-hub radial placement only shows focus/direct labels; discard other tiers before scoring or measuring.
+  if (direct > directOnlyAbove) tiers.length = 2;
+  for (let r = 0; r < tiers.length && list.length < cap; r++) {
+    const nodes = tiers[r]!; nodes.sort((a, b) => (score ? score(b) - score(a) : degree(b) - degree(a)) || a - b);
+    for (let i = 0; i < nodes.length && list.length < cap; i++) list.push([nodes[i]!, r]);
+  }
   return { list, direct };
 }
 /** Rasterize codepoints once, then place bounded lists at each LOD. No per-frame text work. */

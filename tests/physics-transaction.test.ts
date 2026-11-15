@@ -78,6 +78,20 @@ async function fixture(renderView: any = {}) {
   renderer.camera = { x: .25, y: .4, ratio: 2 }; renderer.selected = 2;
   return { plugin, view, stage, renderer, writes, next, positions, requests: () => requests };
 }
+test('compiled Canvas computes base radius once and preserves radii across zoom and preview', async () => {
+  const { renderer: r } = await fixture(), baseKey = compiled('baseNodeRadius'), original = r[baseKey], oldArc = ctx.arc;
+  let calls = 0; const arcs: number[][] = [];
+  r[baseKey] = function() { calls++; return original.call(this); }; ctx.arc = (...a: number[]) => { arcs.push(a); };
+  try {
+    for (const ratio of [.25, 1, 4]) for (const preview of [false, true]) {
+      r.camera.ratio = ratio;
+      r[compiled('previewSizing')](preview ? { radius: 4, prominence: 2, compensation: .5, floor: .3, curve: 'log' } : null);
+      const expected = [0, 1, 2].map(n => r[compiled('drawnRadius')](n, n === r.selected, r[compiled('focusLevel')]));
+      calls = 0; arcs.length = 0; r[compiled('drawCanvas')]();
+      expect(calls).toBe(1); expect(arcs.slice(0, 3).map(a => a[2])).toEqual(expected);
+    }
+  } finally { r[baseKey] = original; ctx.arc = oldArc; }
+});
 function driver(r: any) {
   let error = 0, lost = false, mode = '', allocations = 0;
   const calls: any[] = [];

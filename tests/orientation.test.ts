@@ -4,6 +4,14 @@ import { miniFit, toMini, toCamera, viewRect, densityGrid, miniBounds, viewMarke
 import { crumbs, trail, crumbFade } from '../src/breadcrumb';
 import { NavHistory } from '../src/connection-card';
 
+test('density scalar loop exactly matches point-transform oracle including grid boundaries', () => {
+  const positions = new Float32Array(4000), visible = new Uint8Array(2000), frame = { minX: -50, minY: -30, width: 100, height: 60 }, fit = miniFit(frame, 160, 120);
+  for (let i = 0; i < visible.length; i++) { positions[i * 2] = (i * 31 % 200) - 100; positions[i * 2 + 1] = (i * 43 % 120) - 60; visible[i] = +(i % 3 !== 0); }
+  const expected = new Uint32Array(160 * 120);
+  for (let i = 0; i < visible.length; i++) if (visible[i]) { const [x, y] = toMini(frame, fit, positions[i * 2]!, positions[i * 2 + 1]!), cx = Math.floor(x), cy = Math.floor(y); if (cx >= 0 && cy >= 0 && cx < 160 && cy < 120) expected[cy * 160 + cx]!++; }
+  expect(densityGrid(positions, visible, frame, fit, 160, 120)).toEqual(expected);
+});
+
 test('zoom out clamps at the limit and never hands over to Group overview', () => {
   // min .02, limit 1.8.
   const step = (ratio: number, factor: number) => zoomStep(ratio, factor, .02, 1.8);

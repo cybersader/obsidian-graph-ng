@@ -132,7 +132,8 @@ export function buildProjection(input: readonly FactRow[], d: GraphDeclaration):
   });
   const groups = d.groups.map(g => {
     if (g.from === 'expr') return expressionGroup({ paths, identities, columns, offsets, folders } as Projection, lowerGroup(g));
-    if (g.from === 'key') return { ...column(nodes.map(r => canonical(r.properties[g.key]))), encoded: true };
+    // Already canonicalised and interned above; preserve independent mutable column ownership.
+    if (g.from === 'key') { const c = columns[g.key]!; return { values: c.values.slice(), codes: c.codes.slice(), encoded: true }; }
     if (g.from === 'folder') return { ...column(nodes.map(r => folderGroup(r.path, g.depth, g.prefix))), encoded: false };
     return expressionGroup({ paths, identities, columns, offsets, folders } as Projection, lowerGroup(g));
   });
