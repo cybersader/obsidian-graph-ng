@@ -1,12 +1,12 @@
 /** Shared progressive range slider: curve-mapped position, exact numeric input, fine scrubbing. Stored values keep their own units. */
-export interface Curve { min: number; max: number; /** power curve exponent; >1 adds resolution near min */ k?: number; /** logarithmic (min > 0) */ log?: boolean }
+export interface Curve { min: number; max: number; /** power curve exponent; >1 adds resolution near min */ k?: number; /** logarithmic (min > 0) */ log?: boolean; /** whole numbers only */ int?: boolean }
 export const STEPS = 1000;
 const clamp01 = (t: number) => t > 0 ? t < 1 ? t : 1 : 0;
 /** Slider position 0–1 → value; endpoints exact, interior rounded to 4 significant digits. */
 export function toValue(c: Curve, t: number): number {
   t = clamp01(t); if (t === 0) return c.min; if (t === 1) return c.max;
   const v = c.log ? c.min * (c.max / c.min) ** t : c.min + (c.max - c.min) * t ** (c.k ?? 1);
-  return Math.min(c.max, Math.max(c.min, Number(v.toPrecision(4))));
+  return Math.min(c.max, Math.max(c.min, c.int ? Math.round(v) : Number(v.toPrecision(4))));
 }
 /** Value → slider position 0–1; out-of-range values pin to an end without changing the value. */
 export function toPosition(c: Curve, v: number): number {

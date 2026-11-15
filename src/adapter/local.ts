@@ -46,7 +46,7 @@ export class LocalAdapter {
     this.linksResolved = files.every(f => Object.hasOwn(app.metadataCache.resolvedLinks, f.path));
     const change = (file: TFile) => { if (file.extension === 'md' && this.kept(file.path)) { this.paths.add(file.path); this.linksResolved = false; this.index.change(file.path); } };
     plugin.registerEvent(app.metadataCache.on('changed', change));
-    plugin.registerEvent(app.metadataCache.on('resolve', file => { if (file.extension === 'md') this.index.change(file.path); }));
+    plugin.registerEvent(app.metadataCache.on('resolve', file => { if (file.extension === 'md' && this.kept(file.path)) this.index.change(file.path); }));
     // Property coverage cannot substitute for the native resolver's per-source readiness.
     plugin.registerEvent(app.metadataCache.on('resolved', () => { const wasReady = this.linksResolved; this.linksResolved = !this.streaming || (this.indexed.size === this.paths.size && (!this.propertySource || [...this.paths].every(path => Object.hasOwn(app.metadataCache.resolvedLinks, path)))); if (!wasReady && this.linksResolved) this.index.notify(); }));
     plugin.registerEvent(app.vault.on('create', file => { for (const child of markdownFiles(file)) change(child); }));
@@ -135,7 +135,7 @@ export class LocalAdapter {
   factsComplete() { return this.propertyVerified.size === this.paths.size && !this.linksPending(); }
   private read(path: string): FactRow | undefined {
     const file = this.app.vault.getAbstractFileByPath(path);
-    if (!(file instanceof TFile) || file.extension !== 'md') { this.indexed.delete(path); this.propertyVerified.delete(path); return undefined; }
+    if (!(file instanceof TFile) || file.extension !== 'md' || !this.kept(path)) { this.indexed.delete(path); this.propertyVerified.delete(path); return undefined; }
     const fact = this.propertySource?.get(path);
     const usable = fact?.source === 'derived' && fact.state === 'current' && !fact.parseError && !fact.truncated;
     const cache = usable ? null : this.app.metadataCache.getFileCache(file);

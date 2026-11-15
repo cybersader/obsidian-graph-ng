@@ -46,3 +46,8 @@ test('pointer drag scrubs at reduced speed away from the track and shows the hin
   m.range.onpointerup(ev(140, 200)); expect(m.hint.hidden).toBe(true); expect(m.commits()).toBe(1);
   m.range.onpointerdown(ev(0, 10)); expect(m.number.value).toBe('0'); m.range.onpointercancel(ev(0, 10)); expect(m.commits()).toBe(2);
 });
+
+test('integer curves only produce whole numbers', async () => {
+  const { toValue } = await import('../src/progressive-slider');
+  for (let t = 0; t <= 1; t += 0.037) expect(Number.isInteger(toValue({ min: 1, max: 1000, log: true, int: true }, t))).toBe(true);
+});

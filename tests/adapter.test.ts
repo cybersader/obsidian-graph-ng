@@ -212,3 +212,17 @@ test('relationship accounting splits drawn, missing-endpoint, duplicate-endpoint
   expect(p.dropped!.crosswalk).toEqual({ drawn: 1, missing: 1, excluded: 1, carriers: 2 });
   expect(p.unresolved).toBe(2); expect(p.source.length).toBe(1);
 });
+
+test('an excluded note resolving after the initial load never enters rows or coverage', async () => {
+  const { LocalAdapter } = await import('../src/adapter/local');
+  const files = ['live/a.md', '_archive/a.md'].map(p => new FixtureFile(p)), events = new Map<string, (...a: any[]) => void>();
+  const app = { vault: { getMarkdownFiles: () => files, getAbstractFileByPath: (p: string) => files.find(f => f.path === p), on() {}, read() { throw new Error('body read forbidden'); } },
+    metadataCache: { getFileCache: () => ({ frontmatter: { curie: 'x:1' } }), resolvedLinks: {}, on: (n: string, fn: (...a: any[]) => void) => events.set(n, fn) } } as unknown as App;
+  const d = { ...defaultDeclaration('n@1'), identity: [{ key: 'curie' }], columns: ['curie'], edges: [], exclude: [['_archive']] };
+  const adapter = new LocalAdapter(app, { register() {}, registerEvent() {} } as unknown as Plugin, 'n@1', 1, () => {}, true, d);
+  const rows = async (reset: boolean) => { const all: FactRow[] = []; for await (const b of adapter.columns(reset, { chunkRows: 8, budgetMs: 8 })) all.push(...unpackRows(b.columns)); return all; };
+  try {
+    await rows(true); events.get('resolve')!(files[1]); events.get('changed')!(files[1]);
+    expect((await rows(false)).map(r => r.path)).toEqual([]); expect(adapter.coverage()).toEqual({ indexed: 1, listed: 1 });
+  } finally { adapter.index.dispose(); }
+});

@@ -12,7 +12,7 @@ import { canonical, validateDerivedGroup, validatePredicate, type GraphDeclarati
 import type { DegreeCurve, Settings, Visuals } from './settings';
 import { progressiveSlider, type Curve } from './progressive-slider';
 /** Slider travel per numeric layout control; typed values outside the span stay unclamped. */
-const PHYSICS_CURVES: Partial<Record<PhysicsKey, Curve>> = { scalingRatio: { min: .1, max: 100, log: true }, gravity: { min: 0, max: 20, k: 3 }, slowDown: { min: .1, max: 100, log: true }, iterations: { min: 1, max: 1000, log: true }, barnesHutTheta: { min: .1, max: 3, k: 2 } };
+const PHYSICS_CURVES: Partial<Record<PhysicsKey, Curve>> = { scalingRatio: { min: .1, max: 100, log: true }, gravity: { min: 0, max: 20, k: 3 }, slowDown: { min: .1, max: 100, log: true }, iterations: { min: 1, max: 1000, log: true, int: true }, barnesHutTheta: { min: .1, max: 3, k: 2 } };
 import type { Suggestion } from './recommend';
 /** The view owns the worker, renderer and persistence; the panel only edits state. */
 export interface PanelHost {
