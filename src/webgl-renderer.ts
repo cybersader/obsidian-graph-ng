@@ -18,7 +18,7 @@ import { highlightOverlay, paintLegend } from './overlays';
 import { discloseTiers, overlapsBox } from './hub-disclosure';
 import { findPath, alternatePath, hopRows, pathNotes, OUTCOME, MAX_ALTERNATES, MAX_HOPS, type Hop } from './path-finder';
 import { Minimap, MINIMAP_H, MINIMAP_W, MINIMAP_MIN_CANVAS } from './minimap';
-import { Breadcrumb } from './breadcrumb';
+import { Breadcrumb, trimHistory } from './breadcrumb';
 import { zoomStep, zoomChip, ZOOM_OUT_LIMIT } from './zoom-limit';
 /** Narrowest view left of the graph tools panel that still docks the card beside it (CSS px). */
 const TOOLS_MIN_ROOM = 240;
@@ -504,7 +504,13 @@ export class DetailRenderer {
     let stack: HTMLElement;
     ({ ripple: this.rippleEl, stack, legend: this.legend, rows: this.legendRows, counts: this.legendCounts, pips: this.pipEls, parts: this.pipParts } = highlightOverlay(this.overlay, i => { this.tierMask ^= 1 << i; this.updateLegend(); this.rankedKey = []; this.anchorKey = []; this.refresh(); }, i => this.panTo(this.pipTargets[i] ?? -1)));
     stack.appendChild(this.isolationBar);
-    this.crumbTrail = new Breadcrumb(stack, n => this.name(n), by => this.card.step(by), () => this.clearTrail());
+    this.crumbTrail = new Breadcrumb(stack, n => this.path(n).split('/').pop()!.replace(/\.md$/, ''), by => this.card.step(by), () => { this.clearTrail(); this.canvas.focus(); }, (index, newer) => {
+      const h = this.card.history;
+      if (newer && h.at > index) this.card.step(index - h.at);
+      else if (!newer && h.at === index) this.card.step(index ? -1 : 1);
+      trimHistory(h, index, newer); this.card.render(); this.refresh();
+      if (h.items.length < 2) this.canvas.focus();
+    });
     this.panels = [stack, this.miniMap.root];
     this.resize();
     this.gl = software ? null : this.canvas.getContext('webgl2', { antialias: false, alpha: false, preserveDrawingBuffer: false });
@@ -1543,7 +1549,7 @@ export class DetailRenderer {
     }
     }
     this.placePath(radius, focus);
-    this.crumbTrail.update(v.breadcrumb, this.card.history, this.selected);
+    this.crumbTrail.update(v.breadcrumb, this.card.history, this.selected, this.width);
     this.miniMap.update({ on: v.minimap && this.width >= MINIMAP_MIN_CANVAS, positions: this.display, visible: this.visible, cx: this.camera.x, cy: this.camera.y, worldW: this.width / this.scale, worldH: this.height / this.scale, focus: this.visible[this.focusNode] ? this.focusNode : -1, directs: this.directs, ink: this.theme.text, accent: this.theme.accent });
     // Greedy vertical nudge keeps coincident hub labels legible (hubs are bounded).
     const placed: [number, number, number][] = [];
@@ -1603,12 +1609,12 @@ export class DetailRenderer {
     }
     return taken;
   }
-  /** Where Group overview leads back to: the selection (or lens), its group and the camera. */
+  /** Where Groups leads back to: the selection (or lens), its group and the camera. */
   returnPoint() {
     const n = this.lensWanted >= 0 ? this.lensWanted : this.selected;
     return n < 0 ? undefined : { node: n, name: this.name(n), group: this.view.groupCodes?.[n], lens: this.lensWanted === n, camera: { ...this.camera } };
   }
-  /** Select a note and show its card, optionally with the lens (Back from Group overview). */
+  /** Select a note and show its card, optionally with the lens (Back from Groups). */
   focusNote(n: number, lens = false) {
     if (!(n >= 0 && n < this.visible.length && this.filterVisible[n])) return;
     this.selectNote(n, true); if (lens) this.setLens(n);

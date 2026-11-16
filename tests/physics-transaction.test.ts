@@ -56,7 +56,7 @@ let fixtureReducedMotion = false, rejectStorage = false;
 const rendererStorage = { getItem() { if (rejectStorage) throw new Error('storage denied'); return null; }, setItem() { if (rejectStorage) throw new Error('storage denied'); } };
 const rendererWindow = { devicePixelRatio: 1 };
 const module = { exports: {} as any };
-const obsidian = { ItemView: class {}, Menu: class {}, Plugin: class {}, PluginSettingTab: class {}, Setting: class {}, TFile: class {}, apiVersion: 'synthetic', Notice: class {}, setIcon: (el: any, icon: string) => { el.dataset ??= {}; el.dataset.icon = icon; el.icon = icon; } };
+const obsidian = { ItemView: class {}, Menu: class {}, Plugin: class {}, PluginSettingTab: class {}, Setting: class {}, TFile: class {}, apiVersion: 'synthetic', Notice: class {}, setIcon: (el: any, icon: string) => { el.empty(); el.dataset ??= {}; el.dataset.icon = icon; el.icon = icon; } };
 vm.runInNewContext(source + `\n;module.exports.__renderer=${rendererName};`, { module, exports: module.exports, require: () => obsidian, console, structuredClone, setTimeout: fixtureTimeout, clearTimeout: clearFixtureTimeout, performance, TextEncoder, TextDecoder, MessageChannel, document, localStorage: rendererStorage, window: rendererWindow, devicePixelRatio: 1, getComputedStyle: () => ({ getPropertyValue: () => '' }), matchMedia: (query: string) => ({ get matches() { return query.includes('prefers-reduced-motion') && fixtureReducedMotion; }, addEventListener() {}, removeEventListener() {} }), ResizeObserver: class { observe() {} disconnect() {} }, requestAnimationFrame: requestFrame, cancelAnimationFrame: cancelFrame }, { filename: 'production-main.js' });
 const GraphPlugin = module.exports.default, GraphView = module.exports.GraphView, Renderer = module.exports.__renderer;
 const mangle = JSON.parse(readFileSync(new URL('../.workspace/evidence/main-mangle-cache.json', import.meta.url), 'utf8'));
@@ -1204,7 +1204,7 @@ test('context menu: right-click on a note, a line and empty canvas shows the reg
   await Bun.sleep(850); await right(EMPTY); expect(menus[2]!.ids).toEqual(['menu-fit', 'menu-clear']);
   menus[2]!.run('menu-clear'); expect(r.selected).toBe(-1);
 });
-test('orientation: wheel and pinch zoom-out clamp with a brief Group overview chip, never a switch; breadcrumb and minimap travel', async () => {
+test('orientation: wheel and pinch zoom-out clamp with a brief Groups chip, never a switch; breadcrumb and minimap travel', async () => {
   const f = await graduated([[0, 1], [1, 2], [2, 3]], 4), { r, k } = f, chip = r[k('limitChip')].chip, crumbs = r[k('crumbTrail')].root, mini = r[k('miniMap')].root;
   const home = r[k('homeRatio')], limit = Math.max(1, home) * 1.8; expect(home).toBeLessThan(limit); // Fit all is inside the limit
   let overviews = 0; r[k('onZoomOut')] = () => { overviews++; };
@@ -1214,7 +1214,7 @@ test('orientation: wheel and pinch zoom-out clamp with a brief Group overview ch
   expect(overviews).toBe(0); expect(r.camera.ratio).toBeCloseTo(limit); expect(chip.hidden).toBe(false);
   chip.hidden = true; wheel(); expect(chip.hidden).toBe(true); // same gesture: not again
   await Bun.sleep(450); wheel(); expect(chip.hidden).toBe(false); expect(overviews).toBe(0); // a new gesture shows it again
-  control(chip, 'Group overview').click(); expect(overviews).toBe(1); expect(chip.hidden).toBe(true);
+  control(chip, 'Groups').click(); expect(overviews).toBe(1); expect(chip.hidden).toBe(true);
   // With a selection, the wheel and a pinch stop at the same limit.
   f.tap(0); r.setCamera(r.camera.x, r.camera.y, 1); for (let i = 0; i < 6; i++) wheel(); expect(r.camera.ratio).toBeCloseTo(limit);
   r.setCamera(r.camera.x, r.camera.y, 1); r[k('pointerDown')]({ pointerId: 1, button: 0, clientX: 300, clientY: 300 }); r[k('pointerDown')]({ pointerId: 2, button: 0, clientX: 500, clientY: 300 });
@@ -1238,12 +1238,13 @@ test('orientation: wheel and pinch zoom-out clamp with a brief Group overview ch
   canvas.listeners.get('pointerdown')({ button: 0, pointerId: 3, clientX: 400, clientY: 300 });
   const [x, y] = toCamera(bounds, fit, 80, 60, frame); expect(r.camera.x).toBeCloseTo(x); expect(r.camera.y).toBeCloseTo(y);
   // Collapse: an icon button hides the map; the choice is the minimap's own state.
-  const toggle = mini.children[1]; expect(toggle.textContent).toBe(''); expect(toggle.getAttribute('aria-label')).toBe('Hide minimap'); expect(mini.tabIndex).toBe(0);
-  toggle.onclick(); expect(canvas.hidden).toBe(true); expect(toggle.getAttribute('aria-label')).toBe('Show minimap'); expect(mini.tabIndex).toBe(-1);
+  const toggle = mini.children[1]; expect(toggle.textContent).toBe('Hide minimap'); expect(toggle.getAttribute('title')).toBeNull(); expect(mini.tabIndex).toBe(0);
+  toggle.onclick(); expect(canvas.hidden).toBe(true); expect(toggle.textContent).toBe('Show minimap'); expect(mini.tabIndex).toBe(-1);
   toggle.onclick(); expect(canvas.hidden).toBe(false); expect(mini.tabIndex).toBe(0);
   mini.listeners.get('keydown')({ key: 'ArrowRight', preventDefault() {}, stopPropagation() {} }); expect(r.camera.x).toBeGreaterThan(x);
-  r[k('width')] = 400; r[k('placeOverlay')](); expect(mini.hidden).toBe(true);
-  r[k('width')] = 800; f.settings.visuals.minimap = false; r[k('placeOverlay')](); expect(mini.hidden).toBe(true);
+  r[k('width')] = 400; r[k('placeOverlay')](); expect(mini.hidden).toBe(false); expect(canvas.hidden).toBe(true); expect(toggle.hidden).toBe(true);
+  r[k('width')] = 800; f.settings.visuals.minimap = false; r[k('placeOverlay')](); expect(mini.hidden).toBe(false); expect(canvas.hidden).toBe(true); expect(toggle.hidden).toBe(true);
+  let fits = 0; r.fitAll = () => fits++; const fitButton = control(mini, 'Fit graph'); fitButton.click(); expect(fits).toBe(1); expect(fitButton.getAttribute('title')).toBeNull();
 });
 // Wave-4 wiring through the compiled renderer: menu path start, Escape layers, breadcrumb lifetime, hover intent vs. lens and path.
 test('wave-4 wiring: Find path to… in the menu; Escape clears path, card, lens, isolation in order; the trail outlives the card and prunes on filter', async () => {
@@ -1825,4 +1826,37 @@ test('anchored production labels pool opaque uniform names, preserve tier toggle
   expect([...r[k('anchorPrevious')].keys()]).toEqual([0]);
   f.settings.visuals.labelStyle = 'ranked'; r[k('rankedKey')] = []; r[k('placeOverlay')]();
   expect(r[k('anchorPool')].every((p: any) => p.hidden)).toBe(true);
+});
+
+test('Recent keyboard edits keep card and renderer selection aligned, including removing current and hidden history', async () => {
+  const f = await graduated([[0, 1], [1, 2], [2, 3]], 4), { r, k } = f, trail = r[k('crumbTrail')].root;
+  [0, 1, 2, 3].forEach(n => f.tap(n)); r[k('placeOverlay')]();
+  const chips = () => trail.querySelectorAll('button').filter((b: any) => b.className === 'graph-ng-crumb');
+  const key = (el: any, key: string) => el.onkeydown({ key, preventDefault() {}, stopPropagation() {} });
+  control(trail, '1').click(); r[k('placeOverlay')](); expect(r.card.history.at).toBe(1);
+  key(control(trail, '1'), 'Backspace'); r[k('placeOverlay')]();
+  expect(r.card.history.items).toEqual([0, 1]); expect(r.card.node).toBe(1); expect(r.selected).toBe(1);
+  key(control(trail, '1'), 'Delete'); r[k('placeOverlay')]();
+  expect(r.card.history.items).toEqual([0]); expect(r.card.node).toBe(0); expect(r.selected).toBe(0); expect(trail.hidden).toBe(true);
+  expect(ControlElement.active).toBe(r.canvas);
+});
+
+test('Recent current visit reopens a closed card rather than opening edit actions', async () => {
+  const f = await graduated([[0, 1]], 2), { r, k } = f;
+  f.tap(0); f.tap(1); r[k('selectNote')](-1); r[k('placeOverlay')]();
+  control(r[k('crumbTrail')].root, '1').click();
+  expect(r.selected).toBe(1); expect(r.card.node).toBe(1); expect(r.card.history.items).toEqual([0, 1]);
+});
+
+test('Recent exposes complete untrusted names as text and renders fewer chips on narrow panes', async () => {
+  const f = await graduated([[0, 1], [1, 2]], 3), { r, k } = f;
+  const long = 'start-' + 'x'.repeat(180) + '-<img>-ending';
+  r.projection.paths = encodeStrings([long + '.md', 'Second.md', 'Third.md']);
+  [0, 1, 2].forEach(n => f.tap(n)); r[k('placeOverlay')]();
+  const root = r[k('crumbTrail')].root, chips = () => root.querySelectorAll('button').filter((b: any) => b.className === 'graph-ng-crumb');
+  const first = chips()[0]; expect(first.getAttribute('aria-label')).toBe(long);
+  expect(first.textContent).toStartWith('start-'); expect(first.textContent).toEndWith('-ending'); expect(first.textContent).toContain('…');
+  expect(first.children.every((e: any) => e.tagName === 'SPAN')).toBe(true);
+  r[k('width')] = 420; r[k('placeOverlay')](); expect(chips().length).toBe(2);
+  expect(root.querySelectorAll('button').some((b: any) => b.getAttribute('aria-label') === '1 other recent visits')).toBe(true);
 });

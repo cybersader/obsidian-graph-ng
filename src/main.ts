@@ -327,7 +327,7 @@ export class GraphView extends ItemView {
   private detailScope?: Uint8Array;
   private scopeName = 'Selected group';
   private pendingCamera?: ViewCamera;
-  /** Focus to return to from Group overview ("Back to" chip), bound to the projection it indexes. */
+  /** Focus to return to from Groups ("Back to" chip), bound to the projection it indexes. */
   private returnTo?: ReturnPoint;
   private pendingFocus?: ReturnPoint;
   private body!: HTMLElement;
@@ -527,7 +527,7 @@ export class GraphView extends ItemView {
         const renderer = await DetailRenderer.create(this.stage, this.projection!, positions, bits, settings, () => {}, () => {}, this.colors!, () => active() && renderRevision === this.renderRevision, !this.gpu.available, () => {}, { loading: true, typeHidden: this.renderView().typeHidden });
         this.renderer = renderer; return renderer;
       }, recycle, () => current() && this.presentation === 'nodes', error => {
-        this.detailFallback ||= `Layout preview unavailable: ${String(error)}. Showing Group overview.`;
+        this.detailFallback ||= `Layout preview unavailable: ${String(error)}. Showing Groups.`;
         this.showGroups(true); this.statusText = this.statusText;
       });
       this.plugin.pipeline.onPositions = event => {
@@ -564,7 +564,7 @@ export class GraphView extends ItemView {
       if (!current()) { this.plugin.adapter.invalidate(); this.plugin.ingestedHash = ''; this.contentEl.dataset.verified = 'false'; }
     }
   }
-  /** Group overview from Notes: remember the held focus so its group is ringed and a chip leads back. */
+  /** Groups from Notes: remember the held focus so its group is ringed and a chip leads back. */
   private toGroups() {
     this.detailFallback = ''; this.statusText = this.statusText;
     this.rememberPresentation('groups');
@@ -959,7 +959,7 @@ export class GraphView extends ItemView {
   async showDetails(bits = this.detailVisible(), clearPanel = true) {
     const focus = this.pendingFocus; this.pendingFocus = undefined;
     if (this.contentEl.dataset.state === 'building') { this.rememberPresentation('nodes'); return; }
-    if (!this.projection || !this.positions || !bits) { new Notice('Notes are not ready; Group overview remains usable.'); return; }
+    if (!this.projection || !this.positions || !bits) { new Notice('Notes are not ready; Groups remains usable.'); return; }
     this.rememberPresentation('nodes');
     const renderRevision = ++this.renderRevision; this.contentEl.dataset.mode = 'nodes-building'; this.returnTo = undefined;
     try {
@@ -996,10 +996,10 @@ export class GraphView extends ItemView {
       else this.detailRenderer.fitAll(0);
       if (focus?.projection === this.projection) this.detailRenderer.focusNote(focus.node, focus.lens);
       this.explorePanel?.render();
-    } catch (e) { if (renderRevision !== this.renderRevision) return; this.gpu = { available: false, reason: String(e) }; this.detailFallback = `Notes could not be drawn: ${String(e)}. Showing Group overview.`; this.showGroups(); this.statusText = ''; }
+    } catch (e) { if (renderRevision !== this.renderRevision) return; this.gpu = { available: false, reason: String(e) }; this.detailFallback = `Notes could not be drawn: ${String(e)}. Showing Groups.`; this.showGroups(); this.statusText = ''; }
   }
 }
-const CANVAS_FALLBACK = 'Showing Group overview. Narrow filters to see notes.';
+const CANVAS_FALLBACK = 'Showing Groups. Narrow filters to see notes.';
 /** Whether a view hides anything relative to the unfiltered declared grouping. */
 const viewNarrows = (v: ExploreView) => Boolean(v.query.trim() || v.filters.length || v.group || v.hiddenGroups.length || v.hiddenColors.length || v.hiddenTypes.length);
 class GraphSettings extends PluginSettingTab {

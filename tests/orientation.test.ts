@@ -1,7 +1,7 @@
 import { test, expect } from 'bun:test';
 import { zoomStep, ZOOM_OUT_LIMIT } from '../src/zoom-limit';
 import { miniFit, toMini, toCamera, viewRect, densityGrid, miniBounds, viewMarker, MINI_MARKER } from '../src/minimap';
-import { crumbs, trail } from '../src/breadcrumb';
+import { crumbs, trail, trimHistory } from '../src/breadcrumb';
 import { NavHistory } from '../src/connection-card';
 
 test('density scalar loop exactly matches point-transform oracle including grid boundaries', () => {
@@ -12,7 +12,7 @@ test('density scalar loop exactly matches point-transform oracle including grid 
   expect(densityGrid(positions, visible, frame, fit, 160, 120)).toEqual(expected);
 });
 
-test('zoom out clamps at the limit and never hands over to Group overview', () => {
+test('zoom out clamps at the limit and never hands over to Groups', () => {
   // min .02, limit 1.8.
   const step = (ratio: number, factor: number) => zoomStep(ratio, factor, .02, 1.8);
   expect(step(1, 1.5)).toEqual({ ratio: 1.5, clamped: false });
@@ -98,6 +98,25 @@ test('trail: hidden under two visits, current emphasised, older visits overflow 
   const items = [10, 11, 12, 13, 14, 15, 16], last = trail(items, 6);
   expect(last.shown.map(c => c.node)).toEqual([13, 14, 15, 16]); expect(last.older.map(c => c.node)).toEqual([12, 11, 10]);
   // Gone back: the window keeps the current entry with a forward one after it; older still collapse.
-  const back = trail(items, 2); expect(back.shown.map(c => [c.node, c.current])).toEqual([[12, true], [13, false], [14, false], [15, false]]); expect(back.older.map(c => c.index)).toEqual([1, 0]);
-  expect(trail(Array.from({ length: 40 }, (_, i) => i), 39).older.length).toBe(12);
+  const back = trail(items, 2); expect(back.shown.map(c => [c.node, c.current])).toEqual([[12, true], [13, false], [14, false], [15, false]]); expect(back.older.map(c => c.index)).toEqual([6, 1, 0]);
+  expect(trail(Array.from({ length: 40 }, (_, i) => i), 39).older.length).toBe(32);
+});
+
+test('every retained history visit stays reachable, even when current is near the oldest entry', () => {
+  const h = new NavHistory(); for (let n = 0; n < 1000; n++) h.visit(n);
+  expect(h.items.length).toBe(32); expect(h.items[0]).toBe(968);
+  for (let at = 0; at < h.items.length; at++) {
+    const t = trail(h.items, at), indices = [...t.shown, ...t.older].map(c => c.index).sort((a, b) => a - b);
+    expect(indices).toEqual(Array.from({ length: 32 }, (_, n) => n));
+    expect(t.shown.some(c => c.current)).toBe(true);
+  }
+});
+test('history trim and remove edit the original authority while preserving the selected visit', () => {
+  const h = new NavHistory(); [10, 20, 30, 40, 50].forEach(n => h.visit(n));
+  h.go(-2); const items = h.items; trimHistory(h, h.at, true);
+  expect(h.items).toBe(items); expect(h.items).toEqual([10, 20, 30]); expect(h.at).toBe(2);
+  trimHistory(h, 0, false); expect(h.items).toEqual([20, 30]); expect(h.at).toBe(1);
+  h.go(-1); trimHistory(h, 1, false); expect(h.items).toEqual([20]); expect(h.at).toBe(0);
+  trimHistory(h, -1, false); trimHistory(h, 99, true); expect(h.items).toEqual([20]);
+  trimHistory(h, 0, false); expect(h.at).toBe(-1); expect(h.items).toEqual([]);
 });

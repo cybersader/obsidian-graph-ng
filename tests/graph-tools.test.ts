@@ -10,6 +10,7 @@ import { edgeAlpha, effectPolicy } from '../src/render-effects';
 import { GroupRenderer, DetailRenderer } from '../src/renderer';
 import { GraphView } from '../src/main';
 import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 const old = new Map<string, any>();
 beforeEach(() => {
   for (const key of ['document', 'HTMLElement', 'HTMLInputElement', 'window']) old.set(key, (globalThis as any)[key]);
@@ -64,8 +65,8 @@ test('UX named view opening is inert; only explicit Open restores existing recor
 test('UX honest empty picker and explicit presentation choices preserve opening mode', () => {
   const f = fixture(); const text = f.panel.root.querySelectorAll('*').map((e: any) => e.textContent).join(' ');
   expect(text).toContain('No saved views yet'); expect(text).toContain('not files'); expect(f.state.presentation).toBe('');
-  expect(f.panel.root.querySelectorAll('button').some((button: any) => ['Notes', 'Group overview'].includes(button.textContent))).toBe(false);
-  control(f.toolbar, 'Notes').click(); expect(f.state.presentation).toBe('nodes'); control(f.toolbar, 'Group overview').click(); expect(f.state.presentation).toBe('groups'); f.panel.dispose();
+  expect(f.panel.root.querySelectorAll('button').some((button: any) => ['Notes', 'Groups'].includes(button.textContent))).toBe(false);
+  control(f.toolbar, 'Notes').click(); expect(f.state.presentation).toBe('nodes'); control(f.toolbar, 'Groups').click(); expect(f.state.presentation).toBe('groups'); f.panel.dispose();
 });
 test('UX exact low-opacity input preserves zero; invalid input never saves and guards sit by controls', () => {
   const f = fixture(); f.panel.show('appearance'); const opacity = input(f.panel.root, 'Edge opacity');
@@ -263,11 +264,11 @@ test('group circles, labels and hit targets fit the available canvas, not the co
 
 test('UX representation buttons, saved views and workspace scope have distinct accessible destinations', () => {
   const f = fixture(); f.host.scoped = () => true; f.panel.render();
-  for (const label of ['Notes', 'Group overview', 'Saved views', 'Members', 'Workspace scope']) {
+  for (const label of ['Notes', 'Groups', 'Saved views', 'Members', 'Workspace scope']) {
     const button = control(f.toolbar, label); expect(button.getAttribute('aria-label')).toBe(label); expect(button.querySelector('svg')).toBeDefined();
   }
   expect(control(f.toolbar, 'Notes').getAttribute('aria-pressed')).toBe('true');
-  expect(control(f.toolbar, 'Group overview').getAttribute('aria-pressed')).toBe('false');
+  expect(control(f.toolbar, 'Groups').getAttribute('aria-pressed')).toBe('false');
   f.panel.close(); control(f.toolbar, 'Saved views').click(); expect(f.state.presentation).toBe(''); expect(f.state.viewCalls).toBe(0);
   f.panel.close(); expect(ControlElement.active).toBe(control(f.toolbar, 'Saved views'));
   control(f.toolbar, 'Workspace scope').click(); expect(f.state.presentation).toBe('workspace'); expect(f.state.viewCalls).toBe(0);
@@ -310,7 +311,7 @@ test('UX graph status uses structured phase, coverage and failures rather than E
   view.report = { nodes: 4, edges: 2, indexed: 4, listed: 4, linksPending: false, provisional: false, unresolved: 3, duplicates: 0 }; view.statusText = 'details'; expect(view.statusSummary.textContent).toBe('4 notes2 edges'); expect(view.statusSummary.hidden).toBe(false); view.report = undefined;
   view.contentEl.dataset.state = 'error'; view.statusText = 'Projection refresh failed: synthetic missing file'; expect(view.statusSummary.textContent).toContain('synthetic missing file'); expect(view.statusSummary.textContent).not.toContain('Retry');
   view.contentEl.dataset.state = 'ready'; view.plugin.settings.projectionFile = 'synthetic.json'; view.statusText = 'aggregate'; expect(view.statusSummary.textContent).toContain('not verified');
-  view.plugin.settings.projectionFile = ''; view.gpu = { available: false, reason: 'Synthetic renderer unavailable' }; view.detailFallback = 'Synthetic renderer unavailable. Showing Group overview.'; view.statusText = 'fallback'; expect(view.statusSummary.textContent).toContain('Synthetic renderer unavailable'); expect(view.statusSummary.textContent).toContain('Showing Group overview');
+  view.plugin.settings.projectionFile = ''; view.gpu = { available: false, reason: 'Synthetic renderer unavailable' }; view.detailFallback = 'Synthetic renderer unavailable. Showing Groups.'; view.statusText = 'fallback'; expect(view.statusSummary.textContent).toContain('Synthetic renderer unavailable'); expect(view.statusSummary.textContent).toContain('Showing Groups');
 });
 
 /** Production shell/Notes transition and renderer visibility; only graphics/boot boundaries are fake. */
@@ -334,7 +335,7 @@ async function navigationFixture() {
   (DetailRenderer as any).create = async (...args: any[]) => { creates++; renderer.setView(args[3], args[11]); return renderer; };
   return { view, renderer, canvas, context, requests, counts: () => ({ clear, disposed, frames, creates }), restore() { DetailRenderer.create = originalCreate; view.explorePanel.dispose(); } };
 }
-test('TBR-1 production Notes transition from group overview intersects group scope with active filters', async () => {
+test('TBR-1 production Notes transition from groups intersects group scope with active filters', async () => {
   const f = await navigationFixture();
   try {
     const scope = f.view.detailScope, query = JSON.stringify(f.view.view);
@@ -388,13 +389,13 @@ for (const [nodes, edges, reason] of [[2, 3, 'CANVAS_DETAIL_NODE_LIMIT'], [3, 1,
       expect(f.renderer.canvasEdges).toBe(oldEdges); expect([...oldEdges]).toEqual([0]); expect(f.renderer.visibleEdges).toBe(1); expect([...f.renderer.stateBytes]).toEqual(state);
       expect(f.renderer.camera).toBe(camera); expect(camera).toEqual({ x: .3, y: .4, ratio: .2 }); expect(f.renderer.selected).toBe(0);
       expect(f.view.stage.children).toContain(f.canvas); expect(f.renderer.canvas).toBe(f.canvas); expect(f.counts()).toEqual(counts); expect(f.requests).toEqual([]);
-      expect(JSON.stringify(f.view.view)).toBe(query); expect(f.view.status.textContent).toContain('limit'); expect(f.view.status.textContent).not.toContain('Showing Group overview');
+      expect(JSON.stringify(f.view.view)).toBe(query); expect(f.view.status.textContent).toContain('limit'); expect(f.view.status.textContent).not.toContain('Showing Groups');
     } finally { f.restore(); }
   });
 }
 const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
 for (const [nodes, edges, reason] of [[2, 3, 'CANVAS_DETAIL_NODE_LIMIT'], [3, 1, 'CANVAS_DETAIL_EDGE_LIMIT']] as const) {
-  test(`batch 4 L1 ordinary software view over ${reason} is applied but shown as Group overview, never drawn or truncated`, async () => {
+  test(`batch 4 L1 ordinary software view over ${reason} is applied but shown as Groups, never drawn or truncated`, async () => {
     const f = await softwareNavigationFixture(nodes, edges);
     try {
       const shown = new Uint8Array([1, 1, 0]), dictionary = { groupKeys: ['A'], groupCodes: new Uint32Array(3), groupLabels: ['A'], types: [], facets: [{ key: 'category', values: [] }], nodes: 3, edges: 3 };
@@ -411,7 +412,7 @@ for (const [nodes, edges, reason] of [[2, 3, 'CANVAS_DETAIL_NODE_LIMIT'], [3, 1,
       expect(f.renderer.visibleNodes).toBe(2); expect([...f.renderer.stateBytes]).toEqual(state);
       expect(f.view.statusSummary.textContent).toContain('limit'); expect(f.view.statusSummary.textContent).toContain('Narrow filters to see notes');
       expect(f.view.explorePanel.alert.querySelectorAll('button').length).toBe(0); expect(f.view.status.textContent).toContain('limit');
-      // Narrowing a refused Notes view retries Notes; explicit Group overview does not.
+      // Narrowing a refused Notes view retries Notes; explicit Groups does not.
       result.visible = shown; result.visibleEdges = 1; let notes = 0;
       f.view.showDetails = async () => { expect(f.view.admitDetail(f.view.visible, true)).toBe(true); notes++; };
       f.view.presentation = 'nodes'; f.view.setView({ ...f.view.view, query: 'narrow' }); await flush(); expect(notes).toBe(1);
@@ -644,4 +645,16 @@ test('Graph information reserves one action slot for counts and disclosure chevr
   expect(css).toContain('.graph-ng-status summary > .graph-ng-stat { display:contents; }');
   expect(css).toContain('.graph-ng-status summary > .graph-ng-chevron { grid-column:4; grid-row:1;');
   expect((css.match(/@keyframes gng-working/g) ?? []).length).toBe(1);
+});
+
+// Browser measurements complement the non-layout control fixture and synthetic native screenshots.
+test.skipIf(!process.env.CHROME_BIN)('search left edge is identical in Notes and Groups at wide and narrow widths', () => {
+  const f = fixture(), escape = (text: string) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  const html = (e: ControlElement): string => `<${e.tagName.toLowerCase()} class="${escape(e.className)}" ${e.hidden ? 'hidden' : ''} ${Object.entries(e.attributes).map(([k, v]) => `${k}="${escape(v)}"`).join(' ')}>${e.children.length ? e.children.map(html).join('') : escape(e.textContent)}</${e.tagName.toLowerCase()}>`;
+  f.toolbar.className = 'graph-ng-toolbar';
+  const snapshots = ['nodes', 'groups'].map(mode => { f.host.mode = () => mode; f.panel.render(); return html(f.toolbar); });
+  const rows = JSON.parse(execFileSync('node', [new URL('./support/toolbar-geometry.mjs', import.meta.url).pathname], { input: JSON.stringify(snapshots), encoding: 'utf8', timeout: 9000 }));
+  expect(rows.map((r: any) => r.width)).toEqual([1100, 760, 420, 320, 240]);
+  for (const row of rows) expect(row.notes).toBe(row.groups);
+  f.panel.dispose();
 });

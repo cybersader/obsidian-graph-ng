@@ -82,10 +82,12 @@ export class Minimap {
   constructor(parent: HTMLElement, private miniFrame: MiniFrame, private panCamera: (x: number, y: number) => void, private fitCamera: () => void, private miniChanged = () => {}) {
     const make = (tag: string, cls = '') => Object.assign(document.createElement(tag), { className: cls });
     this.root = parent.appendChild(make('div', 'graph-ng-minimap')); this.root.hidden = true;
-    this.root.setAttribute('role', 'group'); this.root.setAttribute('aria-label', 'Minimap. Arrow keys pan, Home fits all.');
+    this.root.setAttribute('role', 'group'); this.root.setAttribute('aria-label', 'Graph navigation. Arrow keys pan the minimap, Home fits all.');
     this.miniCanvas = this.root.appendChild(make('canvas') as HTMLCanvasElement); this.miniCanvas.setAttribute('aria-hidden', 'true');
-    this.miniToggle = this.root.appendChild(make('button', 'clickable-icon graph-ng-minimap-toggle'));
+    this.miniToggle = this.root.appendChild(make('button', 'clickable-icon graph-ng-corner graph-ng-minimap-toggle'));
     this.miniToggle.onclick = () => { this.miniFolded = !this.miniFolded; try { globalThis.localStorage?.setItem(STORE, this.miniFolded ? '1' : '0'); } catch { /* not persisted */ } this.paintToggle(); this.miniDrawn = []; this.miniChanged(); if (this.miniLast) this.update(this.miniLast); };
+    const fit = this.root.appendChild(make('button', 'clickable-icon graph-ng-corner graph-ng-fit'));
+    setIcon(fit, 'maximize'); fit.appendChild(Object.assign(make('span', 'graph-ng-corner-label'), { textContent: 'Fit graph' })); fit.onclick = () => this.fitCamera();
     this.densityCanvas = make('canvas') as HTMLCanvasElement;
     this.miniCanvas.width = this.densityCanvas.width = MINIMAP_W; this.miniCanvas.height = this.densityCanvas.height = MINIMAP_H;
     this.fitting = miniFit(miniFrame, MINIMAP_W, MINIMAP_H); this.miniShown = [miniFrame, this.fitting];
@@ -98,16 +100,18 @@ export class Minimap {
     this.paintToggle();
   }
   /** Collapsed to its corner button (the card then only keeps clear of the button). */
-  get folded() { return this.miniFolded; }
+  get folded() { return this.miniFolded || this.miniLast?.on === false; }
   private paintToggle() {
     const label = this.miniFolded ? 'Show minimap' : 'Hide minimap';
-    setIcon(this.miniToggle, this.miniFolded ? 'map' : 'minimize-2'); this.miniToggle.setAttribute('aria-label', label); this.miniToggle.title = label;
-    this.miniToggle.setAttribute('aria-expanded', String(!this.miniFolded)); this.root.tabIndex = this.miniFolded ? -1 : 0;
-    this.root.className = 'graph-ng-minimap' + (this.miniFolded ? ' graph-ng-minimap-folded' : ''); this.miniCanvas.hidden = this.miniFolded;
+    this.miniToggle.textContent = ''; setIcon(this.miniToggle, this.miniFolded ? 'map' : 'minimize-2');
+    this.miniToggle.appendChild(Object.assign(document.createElement('span'), { className: 'graph-ng-corner-label', textContent: label }));
+    this.miniToggle.hidden = this.miniLast?.on === false;
+    this.miniToggle.setAttribute('aria-expanded', String(!this.folded)); this.root.tabIndex = this.folded ? -1 : 0;
+    this.root.className = 'graph-ng-minimap' + (this.folded ? ' graph-ng-minimap-folded' : ''); this.miniCanvas.hidden = this.folded;
   }
   private miniKey = (e: KeyboardEvent) => {
     const s = this.miniLast, d = ({ ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] } as Record<string, number[]>)[e.key];
-    if (this.miniFolded) return;
+    if (this.folded) return;
     if (e.key === 'Home') this.fitCamera();
     else if (d && s) this.panCamera(s.cx + d[0]! * s.worldW / 4 / this.miniFrame.width, s.cy + d[1]! * s.worldH / 4 / this.miniFrame.height);
     else return;
@@ -116,8 +120,9 @@ export class Minimap {
   /** Per frame: cheap key checks; the density image is rebuilt only after positions or the view settle,
    * and is only rescaled (one drawImage) when the drawn bounds follow the view. */
   update(s: MiniState) {
-    this.miniLast = s; this.root.hidden = !s.on; if (!s.on) return;
-    if (this.miniFolded) return;
+    const changed = this.miniLast?.on !== s.on; this.miniLast = s; this.root.hidden = false;
+    if (changed) this.paintToggle();
+    if (this.folded) return;
     const source = [s.positions, s.visible, s.ink];
     // First build is immediate; later changes wait for positions to stop moving (a pan alone does not restart the wait).
     if (!this.miniBuilt.length) this.rebuildDensity(source);

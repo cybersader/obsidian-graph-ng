@@ -375,7 +375,7 @@ test('live layout preview coalesces while opening, recycles superseded frames, a
   expect(disposed).toBe(1); expect(new Set(recycled).size).toBe(4); expect(recycled.length).toBe(4);
 });
 
-test('returning to Notes replaces a preview disposed by Group overview', async () => {
+test('returning to Notes replaces a preview disposed by Groups', async () => {
   const { LayoutPreview } = await import('../src/layout-preview');
   const recycled: Float32Array[] = []; let creates = 0;
   let renderer: any;
@@ -477,7 +477,7 @@ test('failed or timed-out Notes refresh paints available groups without changing
   }
 });
 
-test('choosing the displayed Group overview replaces fallback Notes intent', async () => {
+test('choosing the displayed Groups replaces fallback Notes intent', async () => {
   const { GraphView } = await import('../src/main');
   const view: any = Object.create(GraphView.prototype), root = new ControlElement(), render = ExplorePanel.prototype.render; let saves = 0;
   Object.assign(view, { contentEl: root, view: emptyView(), closed: false, presentation: 'nodes', detailFallback: 'Narrow filters to see notes',
@@ -486,7 +486,7 @@ test('choosing the displayed Group overview replaces fallback Notes intent', asy
     showGroups() { view.contentEl.dataset.mode = 'groups'; } });
   ExplorePanel.prototype.render = function () {};
   try { await view.onOpen(); } finally { ExplorePanel.prototype.render = render; }
-  view.contentEl.dataset.mode = 'groups'; control(root, 'Group overview').click();
+  view.contentEl.dataset.mode = 'groups'; control(root, 'Groups').click();
   expect(view.getState()).toEqual({ presentation: 'groups' }); expect(view.detailFallback).toBe(''); expect(saves).toBe(1);
   view.explorePanel.dispose();
 });

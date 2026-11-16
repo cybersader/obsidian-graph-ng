@@ -304,7 +304,7 @@ export function upgradeSettings(input: unknown, producer: string): Settings {
   if (disabled.length) explore.disabledDerived = [...(explore.disabledDerived ?? []), ...disabled].slice(-64);
   // Hover no longer moves the highlight (wave 5): the old hover delay has no meaning and is dropped.
   if (old.visuals && typeof old.visuals === 'object') delete (old.visuals as unknown as Record<string, unknown>).hoverDwellMs;
-  // Zooming out no longer switches to Group overview (wave 6): its threshold is dropped.
+  // Zooming out no longer switches to Groups (wave 6): its threshold is dropped.
   delete (old as Record<string, unknown>).lodZoomRatio;
   // Saved settings predating degree curves (with or without a visuals block) keep the earlier log-radius appearance until explicit adoption;
   // fresh installs never reach this migration and use defaults().

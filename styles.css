@@ -232,7 +232,8 @@ button.graph-ng-stat > .graph-ng-stat-label { text-align:start; }
 /* One desktop row; narrow panes keep a mode/search row and a stable icon row. */
 .graph-ng-toolbar { display:flex; align-items:center; gap:var(--gng-space-2, 8px); flex:none; min-width:0; }
 .graph-ng-representations, .graph-ng-tools { display:flex; align-items:center; gap:var(--gng-space-1, 4px); flex:none; }
-.graph-ng-representations { min-width:0; }
+.graph-ng-representations { display:grid; grid-template-columns:repeat(2, 80px); min-width:0; }
+.graph-ng-representations > :nth-child(3) { grid-column:1 / -1; }
 .graph-ng-tools { padding-left:var(--gng-space-2, 8px); border-left:1px solid var(--background-modifier-border); }
 .graph-ng-toolbar .graph-ng-tool { display:inline-flex; align-items:center; justify-content:center; gap:var(--gng-space-1, 4px); background:transparent; box-shadow:none; border:1px solid transparent; border-radius:var(--gng-chrome-radius); color:var(--text-muted); font-weight:var(--font-normal,400); min-height:var(--gng-row-h, 32px); padding:var(--gng-space-1, 4px) var(--gng-space-2, 8px); white-space:nowrap; }
 .graph-ng-toolbar .graph-ng-tool[hidden] { display:none; }
@@ -280,7 +281,6 @@ button.graph-ng-stat > .graph-ng-stat-label { text-align:start; }
   .graph-ng-toolbar { display:grid; grid-template-columns:auto minmax(0,1fr); gap:var(--gng-space-1, 4px) var(--gng-space-2, 8px); }
   .graph-ng-tools { grid-column:1 / -1; justify-content:flex-end; border-left:0; padding-left:0; }
   .graph-ng-toolbar > input { width:100%; min-width:0; }
-  .graph-ng-representations .graph-ng-tool:not([aria-pressed=true]) .graph-ng-tool-label { display:none; }
   .graph-ng-representations .graph-ng-tool { padding:var(--gng-space-1, 4px); }
 }
 @container (max-width: 360px) {
@@ -378,10 +378,10 @@ button.graph-ng-stat > .graph-ng-stat-label { text-align:start; }
 .graph-ng-find-status, .graph-ng-find-keys { font-size:var(--gng-text-xs); color:var(--gng-text-muted); padding:0 var(--gng-space-2); }
 .graph-ng-find-ring { position:absolute; left:0; top:0; z-index:2; width:32px; height:32px; border:3px solid var(--interactive-accent); border-radius:50%; pointer-events:none; }
 
-/* Orientation: visited-notes trail, minimap, zoom-out clamp and the way back from Group overview. */
+/* Orientation: visited-notes trail, minimap, zoom-out clamp and the way back from Groups. */
 .graph-ng-top { position:absolute; left:50%; top:8px; transform:translateX(-50%); display:flex; flex-direction:column; align-items:center; gap:var(--gng-space-2); max-width:calc(100% - 16px); pointer-events:none; }
 .graph-ng-top .graph-ng-isolation { position:static; transform:none; max-width:100%; }
-.graph-ng-crumbs[hidden], .graph-ng-crumbs-menu[hidden], .graph-ng-minimap[hidden], .graph-ng-minimap canvas[hidden], .graph-ng-zoom-chip[hidden] { display:none; }
+.graph-ng-crumbs[hidden], .graph-ng-minimap[hidden], .graph-ng-minimap canvas[hidden], .graph-ng-zoom-chip[hidden] { display:none; }
 .graph-ng-crumbs { order:-1; position:relative; display:flex; align-items:center; gap:var(--gng-space-1, 4px); max-width:100%; padding-left:var(--gng-space-2, 8px); box-sizing:border-box; pointer-events:auto; font-size:var(--gng-text-xs); background:var(--background-primary); border:1px solid var(--background-modifier-border); border-radius:var(--gng-chrome-radius); }
 .graph-ng-crumbs ol { display:flex; align-items:center; min-width:0; margin:0; padding:0; list-style:none; overflow:hidden; }
 .graph-ng-crumbs li { display:flex; align-items:center; min-width:0; }
@@ -390,18 +390,23 @@ button.graph-ng-stat > .graph-ng-stat-label { text-align:start; }
 .graph-ng-crumbs-icon { margin-right:var(--gng-space-1); color:var(--gng-text-muted); }
 .graph-ng-crumbs button { min-height:var(--gng-row-h); height:auto; padding:0 var(--gng-space-2); background:none; box-shadow:none; border:none; font-size:inherit; color:var(--gng-text-muted); cursor:pointer; }
 .graph-ng-crumbs button:hover { background:var(--background-modifier-hover); color:var(--text-normal); }
-.graph-ng-crumb { max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.graph-ng-crumb[aria-current] { color:var(--text-normal); font-weight:var(--font-semibold, 600); background:var(--background-modifier-hover); cursor:default; }
+.graph-ng-crumb { display:flex; max-width:152px; min-width:0; white-space:nowrap; }
+.graph-ng-crumb > :first-child { min-width:0; overflow:hidden; text-overflow:ellipsis; }
+.graph-ng-crumb > :last-child { flex:none; }
+.graph-ng-crumb[aria-current] { color:var(--text-normal); font-weight:var(--font-semibold, 600); background:var(--background-modifier-hover); }
 .graph-ng-crumbs button.graph-ng-crumbs-clear { flex:none; width:32px; padding:0; margin-left:2px; display:flex; align-items:center; justify-content:center; }
-.graph-ng-crumbs-menu { position:absolute; left:0; top:calc(100% + 4px); z-index:3; display:flex; flex-direction:column; min-width:160px; max-width:240px; max-height:240px; overflow-y:auto; padding:4px; background:var(--background-primary); border:1px solid var(--background-modifier-border); border-radius:var(--radius-s, 4px); box-shadow:var(--shadow-s); }
-.graph-ng-crumbs-menu button { justify-content:flex-start; min-height:32px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 /* Keep the collapse target beside the map, never on its viewport frame. */
-.graph-ng-minimap { position:absolute; right:var(--gng-space-2, 8px); bottom:var(--gng-space-2, 8px); width:200px; height:120px; pointer-events:none; }
-.graph-ng-minimap canvas { display:block; width:160px; height:120px; margin-left:40px; touch-action:none; pointer-events:auto; cursor:crosshair; background:var(--background-primary); box-sizing:border-box; border:1px solid var(--background-modifier-border); border-radius:var(--gng-chrome-radius); }
+.graph-ng-minimap { position:absolute; right:var(--gng-space-2, 8px); bottom:var(--gng-space-2, 8px); width:240px; height:120px; pointer-events:none; }
+.graph-ng-minimap canvas { display:block; width:160px; height:120px; margin-left:80px; touch-action:none; pointer-events:auto; cursor:crosshair; background:var(--background-primary); box-sizing:border-box; border:1px solid var(--background-modifier-border); border-radius:var(--gng-chrome-radius); }
 .graph-ng-minimap:focus-visible, .graph-ng-minimap :focus-visible, .graph-ng-crumbs :focus-visible, .graph-ng-tier-row:focus-visible { outline:2px solid var(--interactive-accent); outline-offset:2px; }
-.graph-ng-minimap button.graph-ng-minimap-toggle { position:absolute; bottom:0; left:0; width:32px; height:32px; min-height:32px; padding:0; display:flex; align-items:center; justify-content:center; pointer-events:auto; background:var(--background-primary); box-shadow:none; border:1px solid var(--background-modifier-border); border-radius:var(--gng-chrome-radius); color:var(--text-muted); cursor:pointer; }
-.graph-ng-minimap button.graph-ng-minimap-toggle:hover { color:var(--text-normal); background:var(--background-modifier-hover); }
-.graph-ng-minimap.graph-ng-minimap-folded { width:32px; height:32px; }
+.graph-ng-minimap button.graph-ng-corner { position:absolute; bottom:0; left:0; width:32px; height:32px; min-height:32px; padding:0; display:flex; align-items:center; justify-content:center; pointer-events:auto; background:var(--background-primary); box-shadow:none; border:1px solid var(--background-modifier-border); border-radius:var(--gng-chrome-radius); color:var(--text-muted); cursor:pointer; }
+.graph-ng-minimap button.graph-ng-corner:hover { color:var(--text-normal); background:var(--background-modifier-hover); }
+.graph-ng-minimap.graph-ng-minimap-folded { width:72px; height:32px; }
+.graph-ng-minimap button.graph-ng-minimap-toggle { left:40px; }
+.graph-ng-minimap button[hidden] { display:none; }
+.graph-ng-minimap:has(button[hidden]) { width:32px; }
+.graph-ng-corner-label { position:absolute; font-size:var(--gng-text-xs); right:0; bottom:calc(100% + 4px); padding:4px 8px; color:var(--text-normal); background:var(--background-primary); border:1px solid var(--background-modifier-border); border-radius:var(--gng-chrome-radius); white-space:nowrap; opacity:0; pointer-events:none; }
+.graph-ng-corner:hover .graph-ng-corner-label, .graph-ng-corner:focus-visible .graph-ng-corner-label { opacity:1; }
 .graph-ng-zoom-chip { position:absolute; left:50%; bottom:var(--gng-space-2); transform:translateX(-50%); display:flex; align-items:center; gap:var(--gng-space-2); pointer-events:auto; padding:var(--gng-space-1) var(--gng-space-1) var(--gng-space-1) var(--gng-space-3); font-size:var(--font-ui-small); background:var(--background-primary); border:1px solid var(--background-modifier-border); border-radius:var(--gng-chrome-radius); }
 .graph-ng-zoom-chip button, .graph-ng-back-chip { min-height:var(--gng-row-h); border-radius:var(--gng-chrome-radius); box-shadow:none; }
 .graph-ng-back-chip { position:absolute; left:8px; top:8px; }
@@ -499,7 +504,8 @@ button.graph-ng-help-trigger:hover { color:var(--text-accent); }
 
 /* Leave a gap beside the tools panel; on narrow views the panel owns the readout. */
 .graph-ng-summary button.graph-ng-summary-info { min-width:0; display:flex; flex-wrap:wrap; align-items:center; gap:var(--gng-space-1, 4px) var(--gng-space-3, 12px); max-width:100%; min-height:var(--gng-row-h, 32px); padding:var(--gng-space-1, 4px) var(--gng-space-2, 8px); white-space:normal; overflow-wrap:anywhere; font-size:var(--gng-text-xs); color:var(--text-muted); background:var(--background-primary); box-shadow:none; border:1px solid var(--background-modifier-border); border-radius:var(--gng-chrome-radius); }
-.graph-ng-body:has(.graph-ng-minimap:not([hidden])) > .graph-ng-summary { max-width:calc(100% - 224px); }
+.graph-ng-body:has(.graph-ng-minimap:not([hidden])) > .graph-ng-summary { max-width:calc(100% - 264px); }
+.graph-ng-body:has(.graph-ng-minimap-folded) > .graph-ng-summary { max-width:calc(100% - 96px); }
 .graph-ng-body:has(> .graph-ng-explore:not([hidden])) > .graph-ng-summary { max-width:calc(100% - 384px); }
 @container (max-width: 480px) { .graph-ng-body:has(> .graph-ng-explore:not([hidden])) > .graph-ng-summary { display:none; } }
 
@@ -507,7 +513,7 @@ button.graph-ng-help-trigger:hover { color:var(--text-accent); }
 @media (pointer: coarse) {
   .graph-ng-tools .graph-ng-tool, .graph-ng-representations .graph-ng-tool, .graph-ng-explore-close, .graph-ng-crumbs button, .graph-ng-tier-legend button.graph-ng-tier-row, .graph-ng-summary-info { min-width:44px; min-height:44px; }
   .graph-ng-toolbar > input { min-height:44px; }
-  .graph-ng-pip::before, .graph-ng-minimap-toggle::before { content:''; position:absolute; inset:-6px; }
+  .graph-ng-pip::before, .graph-ng-corner::before { content:''; position:absolute; inset:-6px; }
 }
 /* Filters keep one shared column grid; hidden counts sit below shown counts. */
 .graph-ng-group-legend { grid-template-columns:auto var(--gng-space-2) minmax(0,1fr) auto var(--gng-row-h); }

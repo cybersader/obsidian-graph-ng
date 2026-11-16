@@ -146,7 +146,7 @@ export class ExplorePanel {
     this.invalid = this.alert.createDiv(); this.feedback = this.alert.createDiv();
     this.body = this.root.createDiv({ cls: 'graph-ng-explore-body' });
     const representations = this.toolbar.createDiv({ cls: 'graph-ng-representations', attr: { role: 'group', 'aria-label': 'Graph representation and scope' } });
-    for (const [mode, label, icon] of [['nodes', 'Notes', 'file-text'], ['groups', 'Group overview', 'network']]) {
+    for (const [mode, label, icon] of [['nodes', 'Notes', 'file-text'], ['groups', 'Groups', 'network']]) {
       const button = toolButton(representations, label!, icon!); this.representations.set(mode!, button);
       button.onclick = () => this.host.presentation?.(mode!);
     }
