@@ -128,3 +128,23 @@ test('slider reset has an accessible name without a native tooltip', () => {
   for (const reset of resets) { expect(reset.getAttribute('aria-label')).toMatch(/^Reset /); expect(reset.getAttribute('title')).toBeNull(); }
   f.panel.dispose();
 });
+
+test('Saved views uses hidden shared help, including draft effects; information has no duplicate header counts', () => {
+  const f = fixture(); f.host.camera = () => null; f.panel.show('views');
+  expect(f.root.querySelectorAll('.graph-ng-help-trigger').map(e => e.textContent)).toContain('What a view saves');
+  for (const tip of f.root.querySelectorAll('.graph-ng-help-popover')) expect(tip.hidden).toBe(true);
+  const notes = f.root.querySelectorAll('.graph-ng-explore-note').map(e => e.textContent).join(' ');
+  expect(notes).not.toContain('Views save'); expect(notes).not.toContain('Explore one folder');
+  f.root.querySelectorAll('button').find(e => e.textContent === 'Prepare')!.click();
+  expect(f.root.querySelectorAll('.graph-ng-help-trigger').map(e => e.textContent)).toContain('What opening changes');
+  f.panel.show('information'); expect(f.panel.counts.hidden).toBe(true);
+  f.panel.show('views'); expect(f.panel.counts.hidden).toBe(false); f.panel.dispose();
+});
+
+test('saved view definitions stay collapsed by default and preserve expansion on updates', () => {
+  const f = fixture(); f.settings.explore.savedViews = [{ name: 'Synthetic view', view: emptyView(), camera: null }]; f.panel.show('views');
+  const details = () => f.root.querySelector('.graph-ng-saved-record')!.querySelector('details') as any;
+  expect(details().open).toBe(false); details().open = true; details().ontoggle();
+  f.panel.render(); expect(details().open).toBe(true);
+  expect(details().querySelector('summary').getAttribute('aria-label')).toBe('View definition: Synthetic view'); f.panel.dispose();
+});

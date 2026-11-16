@@ -63,7 +63,7 @@ test('UX named view opening is inert; only explicit Open restores existing recor
 });
 test('UX honest empty picker and explicit presentation choices preserve opening mode', () => {
   const f = fixture(); const text = f.panel.root.querySelectorAll('*').map((e: any) => e.textContent).join(' ');
-  expect(text).toContain('No saved views here yet'); expect(text).toContain('not view files'); expect(f.state.presentation).toBe('');
+  expect(text).toContain('No saved views yet'); expect(text).toContain('not files'); expect(f.state.presentation).toBe('');
   expect(f.panel.root.querySelectorAll('button').some((button: any) => ['Notes', 'Group overview'].includes(button.textContent))).toBe(false);
   control(f.toolbar, 'Notes').click(); expect(f.state.presentation).toBe('nodes'); control(f.toolbar, 'Group overview').click(); expect(f.state.presentation).toBe('groups'); f.panel.dispose();
 });
@@ -407,4 +407,12 @@ test('adaptive emphasis control switches live without moving the camera or rebui
   for (const mode of ['scale', 'adaptive'] as const) { field.value = mode; field.onchange(); expect(f.settings.visuals.emphasis).toBe(mode); }
   expect(f.state.visual).toBe(2); expect(f.state.fit + f.state.layout + f.state.viewCalls).toBe(0);
   expect(f.camera).toEqual({ x: .3, y: .4, ratio: .2 }); f.panel.dispose();
+});
+
+test('duplicate-ID inspection opens the existing quarantine destination and focuses its disclosure', () => {
+  const plugin: any = { settings: defaults('links') }, view: any = new GraphView(null as any, plugin), calls: string[] = [];
+  const panel = new ControlElement(), list: any = panel.createEl('details', { cls: 'graph-ng-quarantine' }), summary = list.createEl('summary');
+  list.scrollIntoView = () => calls.push('scroll'); view.panel = panel; view.toGroups = () => calls.push('groups'); view.explorePanel = { show: (tool: string) => calls.push(tool) };
+  view.informationActions.duplicates(); expect(calls).toEqual(['groups', 'members', 'scroll']);
+  expect(list.open).toBe(true); expect(ControlElement.active).toBe(summary);
 });

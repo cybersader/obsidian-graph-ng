@@ -2,6 +2,24 @@
 
 Results belong to an exact invocation, fixture, source revision and hardware class. They do not establish all-scale acceptance. Original slice-1 source is `041e1382` (2026-11-10); release-readiness baseline is `9b8cc07`. Historical tables below remain dated evidence. The slice-2 section records the new worker/browser/native invocations and unmet targets separately. Raw receipts remain ignored and local; publish only scrubbed summaries without hostnames, usernames, real-vault paths or private projections.
 
+## Answer-first Graph information — 2026-11-16
+
+Source: the commit carrying this section, based on `aa781eb`. Hardware class: Linux x86-64 desktop, 32 GB RAM. Graph information now leads with state and named counts, keeps reconciled note/edge accounting in disclosures, and separates navigation from explicit filter removal and relationship-display changes. Shared help replaces persistent Saved views explanations. Existing graph authorities and security boundaries are unchanged.
+
+Build and all six ordered gates pass; **619 tests pass, zero failures**, with 162,555 expectations across 36 files. Regressions cover active-predicate action names versus complementary hidden reasons, no reveal-count promises, truthful provisional/current-generation loading counts, existing quarantine navigation, disclosure/focus/help/scroll restoration, help/action ordering and collapsed Saved view definitions. Exact commands, run separately:
+
+- `flock -w 3000 -E 75 /tmp/openclast-bun.lock timeout --kill-after=5s 1800s ./scripts/run.sh build`
+- `flock -w 3000 -E 75 /tmp/openclast-bun.lock timeout --kill-after=5s 1800s ./scripts/run.sh test --timeout 10000`
+- `flock -w 3000 -E 75 /tmp/openclast-bun.lock timeout --kill-after=5s 1800s ./scripts/run.sh gates`
+
+Final bundle: **372,730 raw / 125,034 gzip bytes** (gzip level 9), versus **369,576 / 123,859** at baseline: **+3,154 raw / +1,175 gzip**. Unchanged owner-approved caps are **375,000 / 126,000**, leaving **2,270 / 966 bytes**. SHA-256: `4b86cd6b93333bef8b3b5ca783712af5d6a3f969657ac383402c41ff8843b6c4`. Ignored deterministic receipts: `.workspace/gi-tournament/{baseline-gates,final-build,final-tests,final-gates}.log` and `.workspace/evidence/bundle-size.json`.
+
+Actual-app command: `bash .workspace/visual-qa/run.sh gi-answer-final plugin-gi-answer-first vault-gi-answer-first steps-gi-answer-first.json 8`. The wrapper owns the harness lock; available memory was 10 GB at launch. The disposable synthetic vault contains 159 notes initially (120 ordinary, 36 relationship, 3 excluded), then 162 after duplicate-ID and missing-target fixtures are added. Ready shows 120 notes and 156 edges; the problem state shows 37 filtered relationship notes, 2 duplicate-ID notes and 1 missing target. Loading captures hold and release an actual worker result rather than fabricating counts.
+
+All **42 steps pass**, with no page/console errors or unhandled rejections, and teardown completes. The problem panel measures **320 × 480 px**, with exactly one scrolling surface; an explicit open-popover assertion verifies that help does not obscure the filter-removal action. All **28 captures** were visually inspected in both themes, including ready, accounting, relationship display, loading, problems and Saved views. Receipt: `.workspace/visual-qa/runs/gi-answer-final.json`. Selected images in that directory: `gi-answer-final.step-09-gi-ready.dark.png`, `gi-answer-final.step-26-gi-problem.dark.png`, `gi-answer-final.step-33-gi-problem-narrow-help.dark.png`, and `gi-answer-final.step-11-gi-ready-accounting.light.png`.
+
+Scope is synthetic browser-native Obsidian with Canvas fallback, not desktop Electron, hardware WebGL, mobile/touch or release acceptance. The harness verdict remains `unknown` (`harness-empty-list`); these are scoped interaction observations, not a trust verdict. Independent merged-wave review remains parent-owned.
+
 ## Merged wave 8 review fixes — 2026-11-16
 
 Source: the commit carrying this section, based on `99ec508`. Hardware class: Linux x86-64 desktop, 32 GB RAM. This is local deterministic evidence, not a release or native-rendering acceptance claim.

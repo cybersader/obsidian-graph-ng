@@ -187,7 +187,7 @@ test('production panel cancel, Escape, tool switch and ordinary rerender preserv
   const snapshot = [view.projection, view.detailRenderer, view.visible, view.view, view.detailScope, f.camera, view.stage];
   for (const cancel of ['Cancel', 'Escape', 'switch']) {
     panel.show('views'); prepare(panel); panel.render();
-    expect(panel.viewDraft.saved.name).toBe('Folder focus'); expect(panel.body.textContent).toContain('Matches are checked when opened');
+    expect(panel.viewDraft.saved.name).toBe('Folder focus'); expect(panel.body.textContent).toContain('matches are checked then');
     if (cancel === 'Cancel') control(panel.body, 'Cancel').click();
     else if (cancel === 'Escape') panel.root.onkeydown({ key: 'Escape', preventDefault() {}, stopPropagation() {} });
     else panel.show('filters');

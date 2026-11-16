@@ -55,16 +55,17 @@ test('coverage accounts for every markdown note once, every category non-zero, a
   expect(shrunk.parts.at(-1)).toEqual({ icon: 'refresh-cw', label: 'Removed since the last refresh', count: -2 }); expect(shrunk.parts.reduce((s, x) => s + x.count, 0)).toBe(total - 3);
 });
 
-test('a complete, unfiltered graph says all notes are accounted for; lines break down by rule', () => {
+test('complete accounting does not hide source issues; lines break down by rule', () => {
   const rows = vault().filter(x => !x.path.startsWith('Dup/')), p = buildProjection(rows, d), e = explore(p, d, emptyView(), new Uint32Array(p.paths.length), 0, { facetValues: 50 });
   const r: InformationReport = { nodes: p.paths.length, edges: p.source.length, listed: rows.length, linksPending: false, provisional: false, unresolved: p.unresolved, duplicates: 0,
     dropped: p.dropped, rows: rows.length, ruleNotes: p.ruleNotes, rules: d.edges.map(x => x.name), vault: rows.length, excluded: [] };
   const a = accounting(r, e);
   expect(a.complete).toBe(true); expect(a.parts.map(x => [x.label, x.count])).toEqual([['Shown as dots', 15], ['Drawn as crosswalk lines', 4]]);
   const host: any = new ControlElement(); renderInformation(host, '', 'ready', r, e);
-  expect(host.querySelector('.graph-ng-coverage-state').textContent).toBe('All notes accounted for');
+  expect(host.querySelector('.graph-ng-coverage-state').textContent).toBe('Source issues need attention');
   const stats = host.querySelectorAll('.graph-ng-stat').map((s: any) => [s.querySelector('svg')?.getAttribute('data-icon'), s.querySelector('.graph-ng-stat-label').textContent, s.querySelector('.graph-ng-count').textContent]);
-  expect(stats.slice(0, 3)).toEqual([['circle-dot', 'Shown as dots', '15'], ['spline', 'Drawn as crosswalk lines', '4'], ['files', 'Markdown notes in vault', '19']]);
+  expect(stats.slice(0, 2)).toEqual([['circle-dot', 'Notes shown', '15'], ['spline', 'Edges drawn', String(e.visibleEdges)]]);
+  for (const row of [['circle-dot', 'Shown as dots', '15'], ['spline', 'Drawn as crosswalk lines', '4'], ['files', 'Markdown notes in vault', '19']]) expect(stats).toContainEqual(row);
   expect(stats).toContainEqual(['spline', 'crosswalk edges', String(e.ruleVisible[0])]);
   expect(stats).toContainEqual(['spline', 'links edges', String(e.ruleVisible[1])]);
   expect(stats).toContainEqual(['unlink', 'Target note missing', '1']);
@@ -113,9 +114,9 @@ test('every edge found is drawn or not drawn for one named reason, every reason 
   // Rendered: drawn plus every reason row equals Edges found; each reason with a cause is a button to it.
   const calls: unknown[] = [], host: any = new ControlElement();
   renderInformation(host, '', 'ready', r, e, { relationships: () => calls.push(['relationships']), display: v => calls.push(['display', v]), filter: i => calls.push(['filter', i]) });
-  const kids = host.children, edgeRows = kids[kids.findIndex((h: any) => h.tagName === 'H4' && h.textContent === 'Edges') + 1];
+  const edgeRows = host.querySelectorAll('details').find((h: any) => h.dataset.info === 'edges');
   const value = (row: any) => Number(row.querySelector('.graph-ng-count').textContent.replace(/,/g, ''));
-  const rowsOf = edgeRows.querySelectorAll('.graph-ng-stat').filter((s: any) => !s.classes.has('graph-ng-stat-sub') && s.querySelector('.graph-ng-stat-label').textContent !== 'Layout');
+  const rowsOf = edgeRows.querySelectorAll('.graph-ng-stat').filter((s: any) => !s.classes.has('graph-ng-stat-sub') && s.querySelector('.graph-ng-stat-label').textContent !== 'Edge accounting');
   const found = rowsOf.find((s: any) => s.classes.has('graph-ng-stat-total'));
   expect(found.querySelector('.graph-ng-stat-label').textContent).toBe('Edges found');
   expect(rowsOf.filter((s: any) => s !== found).reduce((s: number, row: any) => s + value(row), 0)).toBe(value(found));
@@ -155,7 +156,7 @@ test('facet toggles own only negated value lists and presence tests on their key
   expect(toggledValues([{ kind: 'eq', key: 'kind', value: 'set' }], 'kind', present).owned).toEqual([]);
 });
 
-test('relationship notes drawn as lines offer "Show as nodes", and name the filter that would hide them, with its remove button', () => {
+test('relationship display has one explicit save/rebuild switch, separate from semantically named filter removal', () => {
   const rows = vault().filter(x => !x.path.startsWith('Dup/')), p = buildProjection(rows, d), room = { kind: 'expr' as const, expr: '!file.hasProperty("kind")' };
   const e = { ...explore(p, d, { ...emptyView(), filters: [room] }, new Uint32Array(p.paths.length), 0, { facetValues: 50 }) };
   // The worker counts filters on the relationship notes alone; the room filter hides all 4 of them.
@@ -165,20 +166,22 @@ test('relationship notes drawn as lines offer "Show as nodes", and name the filt
     rows: rows.length, ruleNotes: p.ruleNotes, rules: d.edges.map(x => x.name), vault: rows.length, excluded: [] };
   const calls: unknown[] = [], host: any = new ControlElement(), act = { display: (nodes: boolean) => calls.push(['display', nodes]), remove: (i: number) => calls.push(['remove', i]) };
   renderInformation(host, '', 'ready', r, e, act);
-  const show = host.querySelectorAll('button').find((b: any) => b.textContent === 'Save as dots and rebuild'); expect(show).toBeDefined();
-  // The action sits directly under the lines row.
-  const coverage = host.querySelector('.graph-ng-coverage').children, at = coverage.findIndex((c: any) => c.textContent.startsWith('Drawn as crosswalk lines'));
-  expect(coverage[at + 1].contains(show)).toBe(true);
+  const show = host.querySelectorAll('button').find((b: any) => b.textContent === 'Show relationships as notes (save and rebuild)'); expect(show).toBeDefined();
+  const display = host.querySelectorAll('details').find((c: any) => c.dataset.info === 'display');
+  expect(display.contains(show)).toBe(true);
   const warning = host.querySelector('.graph-ng-stat-warning');
-  expect(warning.textContent).toBe('As dots, 4 relationship notes would be hidden by filter: kind exists');
-  const remove = warning.querySelector('button'); expect(remove.getAttribute('aria-label')).toBe('Remove filter'); expect(remove.querySelector('svg').getAttribute('data-icon')).toBe('x');
+  expect(warning.textContent).toContain('Filtered relationship notes4');
+  expect(warning.textContent).toContain('Hidden where kind exists');
+  const remove = warning.querySelector('button'); expect(remove.textContent).toBe('Remove “kind is missing” filter');
+  expect(warning.children.indexOf(remove)).toBeLessThan(warning.children.findIndex((c: any) => c.querySelector('.graph-ng-help-trigger')));
+  expect(host.textContent).not.toMatch(/reveals|would be/);
   show.click(); remove.click(); expect(calls).toEqual([['display', true], ['remove', 0]]);
   // Drawn as notes: they are dots now, the switch offers lines back, and the warning says they are hidden.
   const nodesHost: any = new ControlElement(); renderInformation(nodesHost, '', 'ready', { ...r, relationshipNodes: true }, e, act);
   expect(nodesHost.textContent).not.toContain('Drawn as crosswalk lines');
-  nodesHost.querySelectorAll('button').find((b: any) => b.textContent === 'Save as lines and rebuild').click(); expect(calls.at(-1)).toEqual(['display', false]);
-  expect(nodesHost.querySelector('.graph-ng-stat-warning').textContent).toBe('4 relationship notes hidden by filter: kind exists');
-  expect(nodesHost.textContent).toContain('crosswalk notes, drawn as dots');
+  nodesHost.querySelectorAll('button').find((b: any) => b.textContent === 'Show relationships as lines (save and rebuild)').click(); expect(calls.at(-1)).toEqual(['display', false]);
+  expect(nodesHost.querySelector('.graph-ng-stat-warning').textContent).toContain('Filtered relationship notes4');
+  expect(nodesHost.textContent).toContain('crosswalk relationship notes');
   // No filter hides them: no warning.
   const clear: any = new ControlElement(); renderInformation(clear, '', 'ready', r, { ...e, carrierHidden: [0] }, act); expect(clear.querySelector('.graph-ng-stat-warning')).toBeUndefined();
 });
@@ -234,6 +237,75 @@ test('relationship warning offers filter review without changing mode or filters
   e.carrierHidden = carrierHiddenBy(relationshipNotes(rows, d)!, filters);
   const host: any = new ControlElement(), calls: unknown[] = [];
   renderInformation(host, '', 'ready', r, e, { filter: i => calls.push(['filter', i]), display: n => calls.push(['display', n]), remove: i => calls.push(['remove', i]) });
-  host.querySelector('.graph-ng-stat-warning').querySelectorAll('button').find((b: any) => b.textContent === 'Review filter').click();
+  host.querySelector('.graph-ng-stat-warning').querySelectorAll('button').find((b: any) => b.getAttribute('aria-label') === 'Edit “kind is missing” filter').click();
   expect(calls).toEqual([['filter', 0]]);
+});
+
+test('answer-first disclosures retain expansion, semantic focus and scroll as counts change', () => {
+  const host: any = new ControlElement();
+  host.ownerDocument = { get activeElement() { return ControlElement.active; }, defaultView: { innerWidth: 320, innerHeight: 480 } };
+  const report: InformationReport = { nodes: 2, edges: 1, listed: 2, rows: 2, vault: 2, linksPending: false, provisional: false, unresolved: 0, duplicates: 0 };
+  const section = (id: string) => host.querySelectorAll('details').find((d: any) => d.dataset.info === id);
+  renderInformation(host, '', 'ready', report);
+  section('notes').open = true; section('edges').open = true; section('notes').querySelector('summary').focus(); host.scrollTop = 87;
+  renderInformation(host, '', 'ready', { ...report, nodes: 3, vault: 3, listed: 3, rows: 3 });
+  expect(section('notes').open).toBe(true); expect(section('edges').open).toBe(true);
+  expect(ControlElement.active).toBe(section('notes').querySelector('summary')); expect(host.scrollTop).toBe(87);
+  section('edges').open = false;
+  renderInformation(host, 'Reading notes…', 'building');
+  expect(host.querySelector('.graph-ng-answer')).toBeUndefined(); expect(ControlElement.active).toBe(host);
+  renderInformation(host, '', 'ready', report);
+  expect(section('notes').open).toBe(true); expect(section('edges').open).toBe(false); ControlElement.active = undefined;
+});
+
+test('filter actions use predicates, not complementary hidden labels or affected-count promises', () => {
+  const rows = vault(), declared = { ...d, columns: [...d.columns!, 'rank'] }, p = buildProjection(rows, declared);
+  const filters = [{ kind: 'expr' as const, expr: '!file.hasProperty("kind")' }, { kind: 'exists' as const, key: 'rank' }, { kind: 'folder' as const, prefix: ['Synthetic'] }, { kind: 'expr' as const, expr: 'note.rank > 2' }];
+  const e = { ...explore(p, declared, { ...emptyView(), filters }, new Uint32Array(p.paths.length), 0, { facetValues: 50 }), carrierHidden: [4, 2, 1, 1] };
+  const report: InformationReport = { nodes: p.paths.length, edges: p.source.length, listed: rows.length, rows: rows.length, vault: rows.length, linksPending: false, provisional: false, unresolved: 0, duplicates: p.quarantined.length, ruleNotes: p.ruleNotes };
+  const host: any = new ControlElement(), calls: unknown[] = [];
+  renderInformation(host, '', 'ready', report, e, { remove: i => calls.push(['remove', i]), filter: i => calls.push(['filter', i]) });
+  const warnings = host.querySelectorAll('.graph-ng-stat-warning');
+  const names = ['kind is missing', 'rank exists', 'In folder Synthetic', 'note.rank > 2'];
+  warnings.forEach((w: any, i: number) => {
+    const row = w.querySelector('.graph-ng-stat'), action = w.querySelectorAll('button').find((b: any) => b.textContent === `Remove “${names[i]}” filter`);
+    expect(row.getAttribute('aria-label')).toBe(`Edit “${names[i]}” filter`); row.click();
+    expect(calls.at(-1)).toEqual(['filter', i]); action.click(); expect(calls.at(-1)).toEqual(['remove', i]);
+    expect(w.querySelector('.graph-ng-help-trigger').textContent).toBe(`Hidden ${hiddenClause(filters[i]!).text}`);
+    expect(w.querySelector('.graph-ng-help-popover').hidden).toBe(true);
+  });
+  expect(host.textContent).not.toMatch(/reveals|would be| · /);
+});
+
+test('information restores open help without replacing its primary action with explanation text', () => {
+  const rows = vault(), p = buildProjection(rows, d), filters = [{ kind: 'expr' as const, expr: '!file.hasProperty("kind")' }];
+  const e = { ...explore(p, d, { ...emptyView(), filters }, new Uint32Array(p.paths.length), 0, { facetValues: 50 }), carrierHidden: [4] };
+  const report: InformationReport = { nodes: p.paths.length, edges: p.source.length, listed: rows.length, linksPending: false, provisional: false, unresolved: 0, duplicates: 0, ruleNotes: p.ruleNotes };
+  const host: any = new ControlElement(); host.ownerDocument = { get activeElement() { return ControlElement.active; }, defaultView: { innerWidth: 320, innerHeight: 480 } };
+  const render = () => renderInformation(host, '', 'ready', report, e, { remove() {} }); render();
+  const warning = () => host.querySelector('.graph-ng-stat-warning'), help = () => warning().querySelector('.graph-ng-help-trigger'), tip = () => warning().querySelector('.graph-ng-help-popover');
+  help().focus(); help().onfocus(); expect(tip().hidden).toBe(false); render();
+  expect(tip().hidden).toBe(false); expect(ControlElement.active).toBe(help());
+  expect(warning().children[1].textContent).toBe('Remove “kind is missing” filter');
+  tip().ontoggle({ newState: 'closed' }); expect(tip().hidden).toBe(true);
+  ControlElement.active = undefined; render(); expect(tip().hidden).toBe(true);
+});
+
+test('only explicit current-generation read counters are shown during loading', () => {
+  const host: any = new ControlElement();
+  renderInformation(host, 'Reading notes 40%', 'building', undefined, undefined, {}, { indexed: 40, listed: 100 });
+  expect(host.textContent).toContain('Notes read40'); expect(host.textContent).toContain('Notes pending60');
+  expect(host.textContent).not.toContain('Edges drawn'); expect(host.textContent).toContain('Source checks pending');
+  renderInformation(host, 'Resolving relationships…', 'building');
+  expect(host.textContent).not.toContain('Notes read'); expect(host.textContent).not.toContain('%');
+});
+
+test('pending target diagnostics remain provisional and issues never claim no issues', () => {
+  const host: any = new ControlElement(), calls: string[] = [];
+  const report: InformationReport = { nodes: 2, edges: 1, listed: 4, rows: 4, linksPending: true, provisional: false, unresolved: 1, duplicates: 2, missed: [['links', 'Synthetic/A.md', 'Synthetic/Missing']], dropped: { links: { drawn: 1, missing: 1, excluded: 0, lines: 0 } } };
+  renderInformation(host, '', 'ready', report, undefined, { duplicates: () => calls.push('duplicates') });
+  expect(host.textContent).toContain('Target checks pending'); expect(host.textContent).not.toContain('Target note missing'); expect(host.textContent).not.toContain('No issues found');
+  host.querySelectorAll('button').find((b: any) => b.textContent === 'Inspect duplicate IDs2').click(); expect(calls).toEqual(['duplicates']);
+  host.querySelectorAll('button').find((b: any) => b.textContent === 'Inspect pending targets1').click();
+  for (const id of ['edges', 'missing']) expect(host.querySelectorAll('details').find((s: any) => s.dataset.info === id).open).toBe(true);
 });

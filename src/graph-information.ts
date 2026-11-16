@@ -27,7 +27,7 @@ type Explored = Pick<ExploreResult, 'visible' | 'matched' | 'nodes' | 'filters' 
 /** One breakdown row. `go` leads to its cause: filter `go`'s chip (past the last chip: the Filters panel), -1 the search box, -2 relationship display controls. */
 export interface Part { icon: string; label: string; count: number; lines?: boolean; go?: number }
 /** Breakdown actions: switch relationship notes between lines and notes, remove one filter, or open Filters at one (negative: search). */
-export interface InformationActions { relationships?(): void; display?(nodes: boolean): void; remove?(filter: number): void; filter?(at: number): void }
+export interface InformationActions { relationships?(): void; display?(nodes: boolean): void; remove?(filter: number): void; filter?(at: number): void; duplicates?(): void; exclusions?(): void }
 /** Every markdown note in the vault, in exactly one part; the parts sum to `total`. `hidden` are notes the view hides. */
 export interface Accounting { total: number; dots: number; lines: number; hidden: number; parts: Part[]; complete: boolean }
 /** Shared count text: locale digits, a counted noun, a total, and one tabular count element. */
@@ -71,73 +71,95 @@ export function edgeAccounting(r: InformationReport, view?: Explored) {
 }
 /** One icon, label and right-aligned tabular number; a button when it leads somewhere. */
 export function statRow(host: HTMLElement, icon: string, label: string, value: string, cls = '', click?: () => void) {
-  const row = host.createEl(click ? 'button' : 'div', { cls: `graph-ng-stat ${cls}` }); if (click) row.onclick = click;
+  const row = host.createEl(click ? 'button' : 'div', { cls: `graph-ng-stat ${click ? 'graph-ng-stat-nav' : ''} ${cls}` }); if (click) row.onclick = click;
   setIcon(row.createSpan({ cls: 'graph-ng-stat-icon' }), icon);
   row.createSpan({ cls: 'graph-ng-stat-label', text: label }); countSpan(row, value);
+  if (click) setIcon(row.createSpan({ cls: 'graph-ng-stat-icon' }), 'chevron-right');
   return row;
 }
 /** The always-visible canvas readout: notes shown, then the notes the view hides, else the edges drawn. */
 export function renderReadout(host: HTMLElement, a: Accounting) {
   for (const [icon, text] of [['circle-dot', plural(a.dots, 'note')], a.hidden ? ['eye-off', `${n(a.hidden)} hidden`] : ['spline', plural(a.lines, 'edge')]]) { const chip = host.createSpan({ cls: 'graph-ng-readout' }); setIcon(chip.createSpan({ cls: 'graph-ng-stat-icon' }), icon!); countSpan(chip, text!); }
 }
-/** Breakdown rows; each with a cause is a button to it, and missing targets open to the list of them. */
-function partRows(host: HTMLElement, parts: Part[], r: InformationReport, act: InformationActions, after?: (p: Part) => void) {
+/** All reason rows navigate; only explicitly named action buttons change settings. */
+function partRows(host: HTMLElement, parts: Part[], r: InformationReport, act: InformationActions) {
   for (const p of parts) {
     const go = p.go, list = p.icon === 'unlink' && r.missed?.length ? host.createEl('details', { cls: 'graph-ng-stat-list' }) : undefined;
-    statRow(list ? disclosure(list) : host, p.icon, p.label, (p.count < 0 ? '−' : '') + n(Math.abs(p.count)), '', go === undefined ? undefined : go < -1 ? act.relationships : act.filter && (() => act.filter!(go)));
+    if (list) list.dataset.info = 'missing';
+    const click = go === undefined ? p.lines ? act.relationships : p.icon === 'copy' ? act.duplicates : p.icon === 'folder-x' ? act.exclusions : undefined : go < -1 ? act.relationships : act.filter && (() => act.filter!(go));
+    statRow(list ? disclosure(list) : host, p.icon, p.icon === 'unlink' && r.linksPending ? 'Target checks pending' : p.label, (p.count < 0 ? '−' : '') + n(Math.abs(p.count)), '', click);
     for (const [rule, from, to] of list ? r.missed! : []) list!.createDiv({ cls: 'graph-ng-stat-sub', text: `${from} → ${to} (${rule})` });
     if (list && p.count > r.missed!.length) list.createDiv({ cls: 'graph-ng-stat-sub', text: `First ${r.missed!.length} listed` });
-    after?.(p);
   }
 }
-/** The Lines/Notes switch for relationship notes, then each filter that hides (or would hide) them, with its remove button. */
-function relationshipActions(host: HTMLElement, r: InformationReport, e: Explored | undefined, act: InformationActions) {
-  const nodes = !!r.relationshipNodes, row = host.createDiv({ cls: 'graph-ng-stat-sub graph-ng-stat-actions' });
-  if (act.display) row.createEl('button', { text: nodes ? 'Save as lines and rebuild' : 'Save as dots and rebuild' }).onclick = () => act.display!(!nodes);
-  e?.carrierHidden?.forEach((hidden, i) => {
-    if (!hidden) return;
-    const warn = host.createDiv({ cls: 'graph-ng-stat-sub graph-ng-stat-warning', attr: { role: 'note' } }), f = e.filters[i]!;
-    setIcon(warn.createSpan({ cls: 'graph-ng-stat-icon' }), 'alert-triangle');
-    warn.createSpan({ text: `${nodes ? '' : 'As dots, '}${plural(hidden, 'relationship note')} ${nodes ? '' : 'would be '}hidden ${by(f)}` });
-    if (act.filter) warn.createEl('button', { text: 'Review filter' }).onclick = () => act.filter!(i);
-    if (act.remove) { const x = warn.createEl('button', { cls: 'clickable-icon graph-ng-chip-action', attr: { 'aria-label': 'Remove filter', title: `Remove filter: ${filterSummary(f).text}` } }); setIcon(x, 'x'); x.onclick = () => act.remove!(i); }
-  });
+const informationState = new WeakMap<HTMLElement, Map<string, boolean>>();
+/** Preserve semantic disclosures, focus, open help and scroll through asynchronous updates. */
+export function renderInformation(host: HTMLElement, message: string, state: string | undefined, r?: InformationReport, view?: Explored, act: InformationActions = {}, loading?: { indexed?: number; listed?: number }) {
+  const opened = informationState.get(host) ?? new Map<string, boolean>(); informationState.set(host, opened);
+  const controls = () => Array.from(host.querySelectorAll<HTMLElement>('button, summary'));
+  const key = (el: HTMLElement) => (el.tagName === 'SUMMARY' ? el.parentElement?.dataset.info : undefined) ?? el.getAttribute('aria-label') ?? el.querySelector('.graph-ng-stat-label')?.textContent ?? el.textContent ?? '';
+  const active = host.ownerDocument?.activeElement as HTMLElement | null, focused = active && host.contains(active) ? key(active) : undefined, scroll = host.scrollTop;
+  const tips = controls().filter(el => el.getAttribute('aria-describedby') && !el.parentElement!.querySelector<HTMLElement>('.graph-ng-help-popover')!.hidden).map(key);
+  host.querySelectorAll<HTMLDetailsElement>('details').forEach(el => { if (el.dataset.info) opened.set(el.dataset.info, el.open); });
+  host.empty(); renderBody(host, message, state, r, view, act, loading);
+  host.querySelectorAll<HTMLDetailsElement>('details').forEach(el => { el.open = opened.get(el.dataset.info!) ?? false; });
+  const next = controls();
+  if (focused !== undefined) { const target = next.find(el => key(el) === focused) ?? host; target.tabIndex = target === host ? -1 : target.tabIndex; target.focus({ preventScroll: true }); }
+  for (const el of next) if (!host.hidden && tips.includes(key(el))) el.dispatchEvent(new Event('pointerenter'));
+  host.scrollTop = scroll;
 }
-export function renderInformation(host: HTMLElement, message: string, state: string | undefined, r?: InformationReport, view?: Explored, act: InformationActions = {}) {
-  host.empty();
-  if (message) host.createEl('p', { cls: state === 'error' ? 'graph-ng-status-message graph-ng-explore-error' : 'graph-ng-status-message', text: message });
-  if (!r) return;
-  if (state === 'building' || r.provisional) {
-    host.createDiv({ cls: 'graph-ng-coverage-state', attr: { role: 'status' }, text: r.provisional ? pendingText(r) : 'Counts available when the graph is ready' });
-    statRow(host, 'timer', 'Layout', r.layout ? layoutText(r.layout) : r.progress ? layoutProgress(r.progress) : 'Waiting for graph');
-    statRow(host, 'spline', 'Relationship notes', r.relationshipNodes ? 'Dots' : 'Lines');
+function renderBody(host: HTMLElement, message: string, state: string | undefined, r: InformationReport | undefined, view: Explored | undefined, act: InformationActions, loading?: { indexed?: number; listed?: number }) {
+  if (message) host.createDiv({ cls: state === 'error' ? 'graph-ng-status-message graph-ng-explore-error' : 'graph-ng-status-message', text: message });
+  if (state === 'building' || r?.provisional) {
+    host.createDiv({ cls: 'graph-ng-coverage-state', attr: { role: 'status' }, text: r?.provisional ? pendingText(r) : 'Counts available when the graph is ready' });
+    if (loading?.indexed !== undefined && loading.listed !== undefined) {
+      statRow(host, 'files', 'Notes read', n(loading.indexed)); statRow(host, 'loader', 'Notes pending', n(Math.max(0, loading.listed - loading.indexed)));
+    }
+    statRow(host, 'timer', 'Layout', r?.layout ? layoutText(r.layout) : r?.progress ? layoutProgress(r.progress) : 'Waiting for graph');
+    if (r) statRow(host, 'spline', 'Relationship notes', r.relationshipNodes ? 'Notes' : 'Lines');
+    panelHelp(host, 'Source checks pending', 'Checks are provisional until properties and links finish loading. Missing targets may still resolve.');
     return;
   }
-  const e = current(r, view), a = accounting(r, e), loading = a.parts.find(p => p.icon === 'loader');
-  host.createDiv({ cls: 'graph-ng-coverage-state', attr: { role: 'status' }, text: a.complete ? 'All notes accounted for' : loading ? `Still loading: ${plural(loading.count, 'note')} left to read` : r.provisional ? 'Still loading properties and links' : 'Vault changed since the last refresh' });
-  const notes = host.createDiv({ cls: 'graph-ng-stats graph-ng-coverage' });
-  let acted = false;
-  partRows(notes, a.parts, r, act, p => {
-    if (p.icon === 'copy') panelHelp(notes, 'Resolve duplicate IDs', 'These notes share an ID with another note. Give each note a unique ID to include it.');
-    if (p.lines && !acted) { acted = true; relationshipActions(notes, r, e, act); }
+  if (!r) return;
+  const e = current(r, view), a = accounting(r, e), edges = edgeAccounting(r, e), unread = a.parts.find(p => p.icon === 'loader');
+  host.createDiv({ cls: 'graph-ng-coverage-state', attr: { role: 'status' }, text: a.complete ? e?.carrierHidden?.some(Boolean) ? 'Relationship notes are filtered' : r.linksPending ? 'Source checks pending' : r.duplicates || r.unresolved ? 'Source issues need attention' : a.hidden || edges.total !== edges.drawn ? 'Ready with hidden items' : 'All notes accounted for' : unread ? `Still loading: ${plural(unread.count, 'note')} left to read` : 'Vault changed since the last refresh' });
+  const headline = host.createDiv({ cls: 'graph-ng-stats graph-ng-answer' });
+  statRow(headline, 'circle-dot', 'Notes shown', n(a.dots)); statRow(headline, 'spline', 'Edges drawn', n(edges.drawn));
+  const section = (id: string, icon: string, label: string, value: string, cls = '') => {
+    const details = host.createEl('details', { cls: `graph-ng-info-section ${cls}` }); details.dataset.info = id;
+    statRow(disclosure(details), icon, label, value); return details;
+  };
+  const reveal = (id: string) => {
+    const details = Array.from(host.querySelectorAll<HTMLDetailsElement>('details'));
+    for (const el of details) if (el.dataset.info === 'edges' || el.dataset.info === id) el.open = true;
+    const target = details.find(el => el.dataset.info === id) ?? details.find(el => el.dataset.info === 'edges');
+    target?.querySelector('summary')?.focus(); target?.scrollIntoView({ block: 'nearest' });
+  };
+  e?.carrierHidden?.forEach((hidden, i) => {
+    if (!hidden) return;
+    const f = e.filters[i]!, name = filterSummary(f).text, warn = host.createDiv({ cls: 'graph-ng-stat-warning' });
+    statRow(warn, 'filter', 'Filtered relationship notes', n(hidden), '', act.filter && (() => act.filter!(i))).setAttribute('aria-label', `Edit “${name}” filter`);
+    if (act.remove) warn.createEl('button', { text: `Remove “${name}” filter` }).onclick = () => act.remove!(i);
+    panelHelp(warn, `Hidden ${hiddenClause(f).text}`, 'These relationship notes do not pass the active filter, even when displayed as notes. Removing this filter leaves other filters and hidden groups unchanged.');
   });
-  statRow(notes, 'files', 'Markdown notes in vault', n(a.total), 'graph-ng-stat-total');
-  const carriers = Object.entries(r.ruleNotes ?? {});
-  if (r.relationshipNodes && carriers.length) {
-    host.createEl('h4', { text: 'Relationship notes' });
-    const list = host.createDiv({ cls: 'graph-ng-stats' });
-    for (const [rule, count] of carriers) statRow(list, 'circle-dot', `${rule} notes, drawn as dots`, n(count));
-    relationshipActions(list, r, e, act);
-  }
-  host.createEl('h4', { text: 'Edges' });
-  const lines = host.createDiv({ cls: 'graph-ng-stats' }), edges = edgeAccounting(r, e);
+  if (r.duplicates) statRow(host, 'copy', 'Inspect duplicate IDs', n(r.duplicates), '', act.duplicates);
+  if (r.unresolved) statRow(host, 'unlink', r.linksPending ? 'Inspect pending targets' : 'Inspect missing targets', n(r.unresolved), '', () => reveal('missing'));
+  if (r.linksPending) panelHelp(host, 'Source checks pending', 'Missing targets may still resolve while Obsidian links load. These checks are provisional.');
+  else if (!r.duplicates && !r.unresolved) statRow(host, 'check', 'Source checks', 'No issues found');
+  const notes = section('notes', 'files', 'Note accounting', n(a.total), 'graph-ng-coverage');
+  partRows(notes, a.parts, r, act); statRow(notes, 'files', 'Markdown notes in vault', n(a.total), 'graph-ng-stat-total');
+  const lines = section('edges', 'spline', 'Edge accounting', n(edges.total));
   statRow(lines, 'spline', 'Edges drawn', n(edges.drawn));
   (r.rules ?? []).forEach((rule, i) => { if (e?.ruleVisible[i]) statRow(lines, 'spline', `${rule} edges`, n(e.ruleVisible[i]!), 'graph-ng-stat-sub'); });
-  partRows(lines, edges.parts, r, act);
-  statRow(lines, 'sigma', 'Edges found', n(edges.total), 'graph-ng-stat-total');
-  statRow(lines, 'timer', 'Layout', r.layout ? layoutText(r.layout) : r.progress ? layoutProgress(r.progress) : 'Waiting for graph');
-  host.createEl('h4', { text: 'Issues' });
-  host.createDiv({ cls: 'graph-ng-explore-note', text: r.linksPending ? 'Links pending: link targets are still being resolved.' : 'No issues found.' });
+  partRows(lines, edges.parts, r, act); statRow(lines, 'sigma', 'Edges found', n(edges.total), 'graph-ng-stat-total');
+  if (Object.keys(r.ruleNotes ?? {}).length) {
+    const nodes = !!r.relationshipNodes, display = section('display', 'spline', 'Relationship display', nodes ? 'Notes' : 'Lines');
+    for (const [rule, count] of Object.entries(r.ruleNotes!)) statRow(display, nodes ? 'circle-dot' : 'spline', `${rule} relationship notes`, n(count));
+    if (act.display) display.createEl('button', { text: `Show relationships as ${nodes ? 'lines' : 'notes'} (save and rebuild)` }).onclick = () => act.display!(!nodes);
+    panelHelp(display, 'Lines / Notes', 'Lines connect the endpoints; Notes show relationship notes as dots. Changing display saves the setting and rebuilds the graph, without removing filters.');
+  }
+  const layout = section('layout', 'timer', 'Layout', r.layout?.cached || r.layout?.reused ? 'Reused' : r.layout ? 'Computed' : 'Pending');
+  layout.createDiv({ text: r.layout ? layoutText(r.layout) : r.progress ? layoutProgress(r.progress) : 'Waiting for graph' });
 }
 /** Whether the drawn positions came from the saved layout, and how long any computation took. */
 export function layoutText(l: NonNullable<InformationReport['layout']>) {

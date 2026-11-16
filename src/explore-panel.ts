@@ -19,7 +19,7 @@ import { recommendedPhysics, suggestionCopy, type Suggestion } from './recommend
 /** The view owns the worker, renderer and persistence; the panel only edits state. */
 export interface PanelHost {
   settings(): Settings;
-  loading?(): { stage: string } | undefined;
+  loading?(): { stage: string; indexed?: number; listed?: number } | undefined;
   information?: HTMLElement;
   members?: HTMLElement;
   scope?(): string;
@@ -91,6 +91,7 @@ const parseRaw = (raw: string): Scalar => { try { const v: unknown = JSON.parse(
 export class ExplorePanel {
   readonly root: HTMLElement;
   private expressionPanelId = ++expressionPanelId;
+  private viewDefinitions = new Set<string>();
   private viewDraft?: { saved: SavedView; folder?: string; configuration: string };
   private viewCollision?: SavedView;
   private viewSaved?: SavedView;
@@ -141,7 +142,7 @@ export class ExplorePanel {
     this.root = parent.createDiv({ cls: 'graph-ng-explore', attr: { role: 'region', 'aria-label': 'Graph tools', id: `graph-ng-controls-${this.expressionPanelId}` } });
     const head = this.root.createDiv({ cls: 'graph-ng-explore-head' });
     this.title = head.createEl('h3', { text: 'Views' });
-    this.closeButton = head.createEl('button', { cls: 'clickable-icon graph-ng-explore-close', attr: { 'aria-label': 'Close graph tools', title: 'Close graph tools' } });
+    this.closeButton = head.createEl('button', { cls: 'clickable-icon graph-ng-explore-close', attr: { 'aria-label': 'Close graph tools' } });
     setIcon(this.closeButton, 'x');
     this.closeButton.onclick = () => this.close();
     this.closeButton.onblur = () => { this.saveFocus = false; };
@@ -264,7 +265,7 @@ export class ExplorePanel {
   }
   /** Notes shown and edges drawn; what the view hides is one row leading to the breakdown. The scope is named only inside a selected group. */
   private summary(external: boolean, r?: ExploreResult) {
-    this.counts.empty();
+    this.counts.hidden = this.tool === 'information'; this.counts.empty();
     if (this.host.scoped?.()) this.counts.createDiv({ cls: 'graph-ng-scope-name', text: `In ${this.host.scope?.()}` });
     const loading = this.host.loading?.();
     if (external || !r) { this.note(this.counts, loading?.stage ?? (external ? 'External aggregate' : 'Waiting for projection…')); return; }
@@ -772,7 +773,7 @@ export class ExplorePanel {
       if (!this.disposed) {
         this.render();
         if (this.saveFocus && !this.root.hidden && this.tool === 'views' && document.activeElement === this.closeButton) {
-          [...this.body.querySelectorAll<HTMLButtonElement>('button')].find(button => !button.disabled)?.focus({ preventScroll: true });
+          [...this.body.querySelectorAll<HTMLButtonElement>('button')].find(button => !button.disabled && !button.getAttribute('aria-describedby'))?.focus({ preventScroll: true });
         }
       }
       this.saveFocus = false;
@@ -792,7 +793,7 @@ export class ExplorePanel {
   }
   private views(host: HTMLElement) {
     host.createDiv({ text: this.viewMessage, attr: { role: 'status', 'aria-live': 'polite' } });
-    this.note(host, 'Views live in plugin settings, not view files. Saves filters, grouping and camera. Appearance, layout, representation and selected-group scope are not included.');
+    panelHelp(host, 'What a view saves', 'Views save filters, grouping and camera in plugin settings, not files. Appearance, layout, relationship display and selected-group scope are not included.');
     const back = () => { this.viewDraft = undefined; this.viewCollision = undefined; this.viewSaved = undefined; this.viewMessage = ''; this.render(); this.body.querySelector<HTMLButtonElement>('button')?.focus(); };
     const draft = this.viewDraft;
     if (draft) {
@@ -811,7 +812,7 @@ export class ExplorePanel {
       this.note(host, 'Definition preview');
       try { this.viewDefinition(host, draft.folder === undefined ? draft.saved : folderView(draft.folder, draft.saved.name)); }
       catch (error) { this.note(host, String(error)); }
-      this.note(host, 'Uses current appearance, layout and relationship declarations. Replaces current search, filters and hidden-item choices when opened. Matches are checked when opened.');
+      panelHelp(host, 'What opening changes', 'Opening replaces search, filters and hidden-item choices; matches are checked then. Current appearance, layout and relationship declarations stay unchanged.');
       const save = host.createEl('button', { text: 'Save view', cls: 'mod-cta' }); save.disabled = this.viewBusy;
       save.onclick = () => {
         const target = this.settings.explore.savedViews.find(v => v.name === draft.saved.name.trim());
@@ -828,10 +829,13 @@ export class ExplorePanel {
     }
     if (this.viewSaved) { this.viewOpen(host, this.viewSaved); host.createEl('button', { text: 'Back to views' }).onclick = back; return; }
     const s = this.settings;
-    if (!s.explore.savedViews.length) this.note(host, 'No saved views here yet. Start below, or save the view you are exploring.');
+    if (!s.explore.savedViews.length) this.note(host, 'No saved views yet.');
     for (const saved of s.explore.savedViews) {
       const item = host.createDiv({ cls: 'graph-ng-saved-record' });
-      item.createEl('strong', { cls: 'graph-ng-saved-name', text: saved.name }); this.viewDefinition(item, saved);
+      item.createEl('strong', { cls: 'graph-ng-saved-name', text: saved.name });
+      const definition = item.createEl('details'); definition.open = this.viewDefinitions.has(saved.name);
+      definition.ontoggle = () => { if (definition.open) this.viewDefinitions.add(saved.name); else this.viewDefinitions.delete(saved.name); };
+      disclosure(definition, 'View definition', { 'aria-label': `View definition: ${saved.name}` }); this.viewDefinition(definition, saved);
       const actions = item.createDiv({ cls: 'graph-ng-row' });
       this.viewOpen(actions, saved);
       const remove = actions.createEl('button', { text: 'Delete', attr: { 'aria-label': `Delete view ${saved.name}` } }); remove.disabled = this.viewBusy;
@@ -849,7 +853,7 @@ export class ExplorePanel {
     };
     const current = host.createEl('button', { text: 'Save current view…' }); current.disabled = this.viewBusy; current.onclick = () => prepare();
     host.createEl('h4', { text: 'Starting points' });
-    this.note(host, 'Focus on a folder — explore one area using the current graph’s relationships.');
+    panelHelp(host, 'Focus on a folder', 'Explore one folder using the current graph’s relationships. Prepare a view without changing the graph.');
     const start = host.createEl('button', { text: 'Prepare', attr: { 'aria-label': 'Prepare Focus on a folder' } }); start.disabled = this.viewBusy; start.onclick = () => prepare('');
   }
 }

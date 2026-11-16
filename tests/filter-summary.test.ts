@@ -45,15 +45,15 @@ test('graph information renders icon stat rows, a plain-English issues list and 
   for (const cls of ['.graph-ng-stat-bar', '.graph-ng-stat-value', '.graph-ng-rules']) expect(host.querySelector(cls)).toBeUndefined();
   expect(host.querySelector('table')).toBeUndefined();
   renderInformation(host, '', 'ready', { ...report, provisional: false, linksPending: false, unresolved: 0, duplicates: 0, rows: 100, dropped: undefined, layout: { cached: false, ms: 412.4, totalMs: 900 } });
-  expect(host.textContent).toContain('No issues found.'); expect(host.querySelector('p')).toBeUndefined();
-  expect(host.querySelectorAll('.graph-ng-stat').at(-1).textContent).toBe('LayoutComputed layout in 0.4 s');
+  expect(host.textContent).toContain('No issues found'); expect(host.querySelector('p')).toBeUndefined();
+  expect(host.querySelectorAll('details').find((d: any) => d.dataset.info === 'layout').textContent).toBe('LayoutComputedComputed layout in 0.4 s');
   // The Layout row says whether positions came from the saved layout.
   for (const [layout, text] of [[{ cached: true, ms: 0 }, 'Reused saved layout'], [{ cached: false, reused: 'all', ms: 3 }, 'Reused saved layout'], [{ cached: false, reused: 'some', ms: 1840 }, 'Reused saved layout, adjusted in 1.8 s'], [{ cached: false, ms: 5800 }, 'Computed layout in 5.8 s']] as const) {
     renderInformation(host, '', 'ready', { ...report, provisional: false, linksPending: false, unresolved: 0, duplicates: 0, rows: 100, dropped: undefined, layout: { ...layout, totalMs: 900 } });
-    expect(host.querySelectorAll('.graph-ng-stat').at(-1).textContent).toBe(`Layout${text}`);
+    expect(host.querySelectorAll('details').find((d: any) => d.dataset.info === 'layout').textContent).toContain(text);
   }
   renderInformation(host, 'Projection refresh failed: synthetic', 'error');
-  expect(host.querySelector('p').classes.has('graph-ng-explore-error')).toBe(true); expect(host.querySelector('.graph-ng-stat')).toBeUndefined();
+  expect(host.querySelector('.graph-ng-status-message').classes.has('graph-ng-explore-error')).toBe(true); expect(host.querySelector('.graph-ng-stat')).toBeUndefined();
 });
 
 test('styles carry no stat bar, no stat card border and tabular counts', async () => {

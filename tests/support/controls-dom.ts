@@ -5,9 +5,14 @@ export class ControlElement {
   attributes: Record<string, string> = {};
   classes = new Set<string>();
   parent?: ControlElement;
+  get parentElement() { return this.parent; }
   private text = '';
   get textContent(): string { return this.text + this.children.map(child => child.textContent).join(''); }
   set textContent(value: string) { this.empty(); this.text = value; }
+  ownerDocument?: any;
+  getBoundingClientRect(): any { return { left: 0, bottom: 20 }; }
+  dispatchEvent(event: Event) { (this as any)[`on${event.type}`]?.(event); return true; }
+  scrollIntoView() {}
   hidden = false;
   scrollTop = 0;
   style: Record<string, string> = {};
@@ -27,7 +32,7 @@ export class ControlElement {
   constructor(readonly tagName = 'DIV') {}
   createEl(tag: string, options: any = {}) {
     const child = new ControlElement(tag.toUpperCase());
-    child.parent = this; child.textContent = options.text ?? ''; child.value = options.value ?? '';
+    child.parent = this; child.ownerDocument = this.ownerDocument; child.textContent = options.text ?? ''; child.value = options.value ?? '';
     for (const cls of (options.cls ?? '').split(' ').filter(Boolean)) child.classes.add(cls);
     for (const [key, value] of Object.entries(options.attr ?? {})) child.setAttribute(key, value as string);
     this.children.push(child); return child;
@@ -46,7 +51,7 @@ export class ControlElement {
   click() { if (!this.disabled) this.onclick?.(); }
   querySelectorAll(selector: string): ControlElement[] {
     const all = this.children.flatMap(child => [child, ...child.querySelectorAll('*')]);
-    return selector === '*' ? all : all.filter(child => selector.split(',').some(s => s.startsWith('.') ? child.classes.has(s.slice(1)) : child.tagName.toLowerCase() === s));
+    return selector === '*' ? all : all.filter(child => selector.split(',').map(s => s.trim()).some(s => s.startsWith('.') ? child.classes.has(s.slice(1)) : child.tagName.toLowerCase() === s));
   }
   querySelector(selector: string) { return this.querySelectorAll(selector)[0]; }
 }

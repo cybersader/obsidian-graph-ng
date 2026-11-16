@@ -9,6 +9,7 @@ export function panelHelp(host: HTMLElement, label: string, text?: string, cls =
   const trigger = wrap.createEl('button', { cls: 'graph-ng-help-trigger', text: label, attr: { type: 'button', 'aria-describedby': id } });
   const tip = wrap.createSpan({ cls: 'graph-ng-help-popover', text, attr: { id, popover: 'auto', role: 'tooltip' } });
   tip.hidden = true;
+  tip.ontoggle = e => { tip.hidden = (e as ToggleEvent).newState === 'closed'; };
   const close = () => { tip.hidePopover?.(); tip.hidden = true; };
   const open = () => {
     tip.hidden = false; tip.showPopover?.();

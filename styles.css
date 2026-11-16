@@ -1,7 +1,7 @@
 .graph-ng-view { display:flex; flex-direction:column; gap:8px; height:100%; overflow:hidden; container-type:inline-size; }
 .graph-ng-body { position:relative; flex:1 1 300px; min-height:0; display:flex; container-type:inline-size; }
 .graph-ng-stage { position:relative; flex:1 1 auto; min-width:0; min-height:0; background:var(--graph-ng-bg, var(--background-primary)); border:1px solid var(--background-modifier-border); border-radius:var(--radius-m, 8px); overflow:hidden; }
-.graph-ng-status summary { cursor:pointer; width:fit-content; }
+.graph-ng-status summary { cursor:pointer; width:100%; }
 .graph-ng-status details > div { padding:4px 0; }
 .graph-ng-group-controls { display:grid; gap:2px; padding:4px 0; }
 .graph-ng-edge,.graph-ng-member,.graph-ng-carrier { display:block; margin:4px 0; max-width:100%; white-space:normal; height:auto; text-align:left; }
@@ -39,8 +39,19 @@
 .graph-ng-stat-total { border-top:1px solid var(--background-modifier-border); padding-top:4px; font-weight:var(--font-semibold,600); }
 .graph-ng-stat-sub { color:var(--text-muted); font-size:var(--font-ui-smaller); padding-left:24px; }
 .graph-ng-coverage-state { font-weight:var(--font-semibold,600); }
-.graph-ng-stat-actions, .graph-ng-stat-warning { display:flex; align-items:center; gap:6px; }
-.graph-ng-stat-warning { color:var(--text-warning); }
+.graph-ng-stat-warning { display:grid; gap:8px; padding:8px; border:1px solid var(--background-modifier-border); border-left:3px solid var(--text-warning); border-radius:var(--radius-s,4px); }
+.graph-ng-stat-warning > .graph-ng-stat .graph-ng-stat-icon { color:var(--text-warning); }
+.graph-ng-answer { padding:4px 0 8px; }
+.graph-ng-answer .graph-ng-count { font-size:var(--font-ui-large); font-weight:var(--font-semibold,600); }
+.graph-ng-info-section { border-top:1px solid var(--background-modifier-border); padding:4px 0; }
+.graph-ng-info-section > summary > .graph-ng-stat { flex:1; }
+.graph-ng-stat-nav { grid-template-columns:16px minmax(0,1fr) auto 14px; }
+.graph-ng-status summary > .graph-ng-chevron { order:1; }
+.graph-ng-status .graph-ng-stat { min-height:32px; }
+.graph-ng-status .graph-ng-stat-label { white-space:normal; overflow:visible; }
+.graph-ng-status > * { flex-shrink:0; }
+.graph-ng-info-section > button { margin:8px 0; width:100%; }
+.graph-ng-explore-close { min-width:36px; min-height:36px!important; }
 /* A breakdown row that leads to its cause: a full-width button that still reads as a row. */
 button.graph-ng-stat { width:100%; height:auto; padding:0; text-align:start; font:inherit; color:inherit; background:none; box-shadow:none; border:0; border-radius:var(--radius-s,4px); cursor:pointer; }
 button.graph-ng-stat:hover { background:var(--background-modifier-hover); }

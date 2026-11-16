@@ -1,11 +1,11 @@
-import { panelHelp } from './panel-help';
+import { disclosure, panelHelp } from './panel-help';
 import { LayoutPreview } from './layout-preview';
 import type { CoordinateToken } from './webgl-renderer';
 import { legacySizing, sizingSettings, type NodeSizingValues } from './node-sizing';
 import { generationCurrent, physicsSettings, type PhysicsValues } from './physics-controls';
 import { expressionPrelude } from './core/expr/expression-prelude';
 import { folderPath, predicateColumn, groupColumn as sourceColumn } from './core/declaration';
-import { ItemView, Menu, Plugin, PluginSettingTab, Setting, Notice, TFile, apiVersion, type WorkspaceLeaf, type ViewStateResult } from 'obsidian';
+import { Modal, ItemView, Menu, Plugin, PluginSettingTab, Setting, Notice, TFile, apiVersion, type WorkspaceLeaf, type ViewStateResult } from 'obsidian';
 import { obsidianMenu } from './context-menu';
 import { LocalAdapter, type PropertySource } from './adapter/local';
 import { canonical, digest, layoutDeclaration, migrateDeclaration, validateDeclaration, type GraphDeclaration, type Predicate } from './core/declaration';
@@ -252,6 +252,8 @@ export class GraphView extends ItemView {
   /** Breakdown actions: the same Lines/Notes apply as Appearance, and removing one view filter. */
   private informationActions = {
     relationships: () => this.explorePanel?.show('appearance'),
+    exclusions: () => { const modal = new Modal(this.app), tab = new GraphSettings(this.plugin); modal.setTitle('Graph declaration'); tab.containerEl = modal.contentEl; tab.display(); modal.open(); },
+    duplicates: () => { this.toGroups(); this.explorePanel?.show('members'); const list = this.panel.querySelector<HTMLDetailsElement>('.graph-ng-quarantine'); if (list) { list.open = true; list.querySelector('summary')?.focus(); list.scrollIntoView({ block: 'nearest' }); } },
     display: (nodes: boolean) => { setRelationshipDisplay(this.plugin, nodes).catch(e => new Notice(String(e))); },
     remove: (i: number) => { if (i < this.view.filters.length) this.setView({ ...this.view, filters: this.view.filters.filter((_, j) => j !== i) }); },
     filter: (i: number) => this.explorePanel?.focusFilter(i),
@@ -260,7 +262,8 @@ export class GraphView extends ItemView {
     this.viewFeedbackText = message; this.explorePanel?.operation?.(message, retry);
     if (this.status && this.statusSummary) this.statusText = this.statusText;
   }
-  private loading() { return this.contentEl.dataset.state === 'building' ? { stage: this.statusMessage } : this.contentEl.dataset.state === 'ready' && this.provisional && !this.plugin.settings.projectionFile ? { stage: pendingText(this.report) } : undefined; }
+  private readProgress?: { indexed: number; listed: number };
+  private loading() { return this.contentEl.dataset.state === 'building' ? { stage: this.statusMessage, ...this.readProgress } : this.contentEl.dataset.state === 'ready' && this.provisional && !this.plugin.settings.projectionFile ? { stage: pendingText(this.report) } : undefined; }
   private progressAt = 0;
   private progressText(text: string) { const now = performance.now(); if (now - (this.progressAt ?? 0) >= 100) { this.progressAt = now; this.statusText = text; } }
   private get statusText() { return this.statusMessage; }
@@ -269,7 +272,7 @@ export class GraphView extends ItemView {
     this.statusMessage = text;
     (this.explorePanel as (ExplorePanel & { updateSummary?(): void }) | undefined)?.updateSummary?.();
     const state = this.contentEl.dataset.state;
-    renderInformation(this.status, [text, this.detailFallback].filter(Boolean).join(' '), state, this.report, this.explored, this.informationActions);
+    renderInformation(this.status, [text, this.detailFallback].filter(Boolean).join(' '), state, this.report, this.explored, this.informationActions, this.loading());
     const health = state === 'error' ? [text] : this.loading() ? [this.loading()!.stage]
       : this.plugin.settings.projectionFile ? ['External aggregate, not verified']
       : [];
@@ -434,7 +437,7 @@ export class GraphView extends ItemView {
     const settings = this.plugin.settings, start = performance.now();
     this.carrierLookup = undefined; this.renderRevision++; this.provisional = true; this.contentEl.dataset.verified = 'false';
     this.report = undefined; this.explored = undefined; this.positions = undefined;
-    this.contentEl.dataset.state = 'building'; this.statusText = 'Reading notes…';
+    this.readProgress = undefined; this.contentEl.dataset.state = 'building'; this.statusText = 'Reading notes…';
     if (this.presentation === 'nodes') { this.renderer?.dispose(); this.renderer = this.detailRenderer = undefined; this.stage.empty(); this.contentEl.dataset.mode = 'nodes-building'; }
     let preview: LayoutPreview | undefined;
     try {
@@ -475,7 +478,7 @@ export class GraphView extends ItemView {
       for await (const batch of this.plugin.adapter.columns(reset, settings.ingest)) {
         if (!current()) return;
         await this.plugin.pipeline.request(revision, { kind: 'rows', ...batch });
-        const c = this.plugin.adapter.coverage();
+        const c = this.plugin.adapter.coverage(); this.readProgress = { indexed: c.indexed, listed: c.listed };
         this.progressText(left(c));
       }
       this.plugin.ingestedHash = hashes.ingestHash;
@@ -589,7 +592,7 @@ export class GraphView extends ItemView {
     }, edges);
     if (this.projection?.quarantined.length) {
       const conflicts = this.section('quarantine', 'graph-ng-quarantine');
-      conflicts.createEl('summary', { text: `${this.projection.quarantined.length} notes share an ID (excluded)` });
+      disclosure(conflicts, `${this.projection.quarantined.length} notes share an ID (excluded)`);
       this.paginate(this.projection.quarantined, (note, host) => { host.createEl('button', { text: `${note.path} — ${note.id}` }).onclick = () => this.openPath(note.path); }, conflicts);
     }
     this.contentEl.dataset.mode = 'groups'; this.contentEl.dataset.groupFirstPageMs = String(performance.now() - start); this.explorePanel?.render();

@@ -127,7 +127,7 @@ test('graph information retains full diagnostics while healthy summary stays qui
   try { await view.onOpen(); } finally { ExplorePanel.prototype.render = render; }
   view.explorePanel.render = () => {}; view.contentEl.dataset.state = 'building';
   const text = 'Reading properties: 4 read, 6 left. Filters and member lists are provisional.';
-  view.statusText = text; expect(view.status.textContent).toBe(text); expect(view.statusSummary.hidden).toBe(false);
+  view.statusText = text; expect(view.status.querySelector('.graph-ng-status-message').textContent).toBe(text); expect(view.statusSummary.hidden).toBe(false);
   expect(view.statusSummary.title).toBe(''); expect(view.status.parent).toBe(view.explorePanel.root);
   expect(persistedPanelStates).toEqual([]);
   const info = control(view.statusSummary, 'Graph information'); info.click(); expect(view.status.hidden).toBe(false); const status = view.status; view.statusText = text; expect(control(view.statusSummary, 'Graph information')).toBe(info);
