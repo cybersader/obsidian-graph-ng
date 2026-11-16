@@ -593,7 +593,7 @@ export class GraphView extends ItemView {
     if (this.projection?.quarantined.length) {
       const conflicts = this.section('quarantine', 'graph-ng-quarantine');
       disclosure(conflicts, `${this.projection.quarantined.length} notes share an ID (excluded)`);
-      this.paginate(this.projection.quarantined, (note, host) => { host.createEl('button', { text: `${note.path} — ${note.id}` }).onclick = () => this.openPath(note.path); }, conflicts);
+      this.paginate(this.projection.quarantined, (note, host) => { host.createEl('button', { text: `${note.path} (${note.id})` }).onclick = () => this.openPath(note.path); }, conflicts);
     }
     this.contentEl.dataset.mode = 'groups'; this.contentEl.dataset.groupFirstPageMs = String(performance.now() - start); this.explorePanel?.render();
     if (this.contributionPage.selection) { this.renderContributionPanel(); this.contributionPage.update(this.contributionContext()); }

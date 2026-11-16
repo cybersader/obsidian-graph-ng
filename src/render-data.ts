@@ -123,7 +123,7 @@ export const pathStroke = (alpha: number, f: number) => [alpha + (1 - alpha) * f
 export const edgeBucket = (t: number) => t > 200 ? 255 : t ? 128 : 0;
 /** Graduated tier styling for Canvas; the shaders write the same expressions (tests compare both).
  * `g` is the node tier byte / 255 and `f` the eased focus level. Node: [alpha factor, radius
- * factor, ring coverage] — the focus grows 60% and gains a ring, direct notes grow 25% at full
+ * factor, ring coverage]: the focus grows 60% and gains a ring, direct notes grow 25% at full
  * alpha, 2-hop notes sit halfway to the dim opacity, context reaches it. */
 export const tierNode = (g: number, hot: boolean, isFocus: boolean, f: number, dim: number) => [hot ? 1 : 1 - (1 - dim) * f * (1 - g), 1 + f * (isFocus ? .6 : g > .9 ? .25 : 0), isFocus ? f : 0] as const;
 /** Edge: [alpha, width factor]. Focus-incident strokes triple (capped at 1) and widen 60%, 2-hop

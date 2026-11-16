@@ -152,9 +152,9 @@ test('close controls are X icons: no visible "Close" button text in src (owner r
   expect(visible.test(`createEl('button', { text: 'Close' })`)).toBe(true); expect(visible.test(`button('Close', 'Close', run)`)).toBe(true);
   expect(visible.test(`b.textContent = "Close card"`)).toBe(true); expect(visible.test(`button('×', 'Close', run)`)).toBe(false); expect(visible.test(`attr: { 'aria-label': 'Close graph tools' }`)).toBe(false);
 });
-test('UI strings never join fragments with a middle dot (owner rule)', () => {
+test('UI strings never use middle dots or em dashes (owner rule)', () => {
   const walk = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap(e => e.isDirectory() ? walk(path.join(dir, e.name)) : /\.ts$/.test(e.name) ? [path.join(dir, e.name)] : []);
-  const offenders = walk(path.join(import.meta.dir, '..', 'src')).filter(file => /·/.test(fs.readFileSync(file, 'utf8')));
+  const offenders = walk(path.join(import.meta.dir, '..', 'src')).filter(file => /[·—]/.test(fs.readFileSync(file, 'utf8')));
   expect(offenders).toEqual([]);
 });
 test('src stays domain-neutral: no use-case vocabulary in code or UI copy (owner rule)', () => {

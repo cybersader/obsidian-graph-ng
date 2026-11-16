@@ -411,7 +411,7 @@ export class ExplorePanel {
     const disabled = this.settings.explore.disabledDerived;
     if (disabled.length) {
       const note = host.createDiv({ cls: 'graph-ng-explore-note graph-ng-disabled-derive', attr: { role: 'status' } });
-      note.createSpan({ text: `Disabled: regex-derived groups are no longer supported. Recreate with segment or prefix — ${disabled.map(d => `${d.location}: ${d.key} /${d.pattern}/`).join('; ')}. ` });
+      note.createSpan({ text: `Disabled: regex-derived groups are no longer supported. Recreate with segment or prefix. ${disabled.map(d => `${d.location}: ${d.key} /${d.pattern}/`).join('; ')}. ` });
       note.createEl('button', { text: 'Dismiss' }).onclick = () => { this.settings.explore.disabledDerived = []; this.host.persist(); this.render(); };
     }
     const nodes = this.host.mode() === 'nodes', actions = host.createDiv({ cls: 'graph-ng-row' });
@@ -431,7 +431,7 @@ export class ExplorePanel {
       const storable = key.length <= VIEW_LIMITS.keyLength; eye.disabled = !storable && eye.checked;
       eye.onchange = () => this.update({ hiddenGroups: eye.checked ? this.view.hiddenGroups.filter(k => k !== key) : [...this.view.hiddenGroups, key] });
       item.createSpan({ cls: 'graph-ng-swatch' }).style.background = this.host.groupColor(i);
-      const name = item.createEl('button', { cls: 'graph-ng-legend-name', text: label, attr: { title: `${label} — ${nodes ? 'frame this group' : 'open members'}` } });
+      const name = item.createEl('button', { cls: 'graph-ng-legend-name', text: label, attr: { title: `${nodes ? 'Frame' : 'Open members of'} ${label}` } });
       name.onclick = () => this.host.focusGroup(i);
       countSpan(item, shownHidden(r.groupVisible[i]!, r.groupTotals[i]!));
       if (nodes) {
@@ -805,7 +805,7 @@ export class ExplorePanel {
       if (draft.folder !== undefined) {
         folder = form.createEl('input', { attr: { type: 'text', 'aria-label': 'Folder prefix', placeholder: 'Folder/Subfolder' } }); folder.value = draft.folder; folder.disabled = this.viewBusy;
         folder.oninput = () => {
-          if (!draft.saved.name || draft.saved.name === `${draft.folder} — focus`) draft.saved.name = `${folder!.value} — focus`;
+          if (!draft.saved.name || draft.saved.name === `${draft.folder} focus`) draft.saved.name = `${folder!.value} focus`;
           draft.folder = folder!.value; this.viewCollision = undefined; this.render();
         };
       }
