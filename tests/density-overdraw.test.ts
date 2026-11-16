@@ -96,7 +96,7 @@ test('density correction leaves node radius and edge geometry/direction/focus eq
     // Screen-space ink budget, long-line fade, "Focus only" and the dither seed change alpha and visibility only, never geometry.
     .replace(' || focusOnly > 0. && tier == 0u', '').replace(' seed = uint(gl_InstanceID);', '').replace('\nflat out uint seed;', '').replace('max(alpha, edgeAlpha)', 'alpha').replace(/\n.*\b(inkShare|fadeLength|focusOnly|quiet|lineRank)\b.*/g, '');
   expect(focusFree(shader('nodeVertex'))).toBe(focusFree(before.nodeVertex)); expect(shader('nodeVertex')).not.toBe(before.nodeVertex);
-  const geometry = (code: string) => focusFree(code.slice(0, code.lastIndexOf('tint = vec4(rgb * alpha,'))); expect(geometry(shader('edgeVertex'))).toBe(geometry(before.edge));
+  const geometry = (code: string) => focusFree(code.slice(0, code.lastIndexOf('tint = vec4(rgb * alpha,'))).replace(/vec4 sa = state\(s\), sb = state\(t\);/g, '').split('\n').map(s => s.trim()).filter(Boolean).join('\n'); expect(geometry(shader('edgeVertex'))).toBe(geometry(before.edge));
   const s = defaults('links'); s.nodeSizing = { policy: 'predictable', compensation: 1, floor: .3 };
   for (const zoom of [.02, 1, 8]) { const radius = baseRadius(s, 800, 600, 62230, zoom); expect(radius).toBeGreaterThanOrEqual(s.nodeSize * .3); expect(radius).toBeLessThanOrEqual(s.nodeSize); }
   expect(effectPolicy(s.visuals, 62230, 103058, 12, false, true).dark).toBe(true);

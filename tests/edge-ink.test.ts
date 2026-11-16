@@ -107,7 +107,7 @@ test('edge dither rounds premultiplied RGBA together: zero stays zero, no clampe
 });
 
 
-test('importance ranks conserve the exact share while favouring hub spokes, bridges and declared interest', () => {
+test('importance ranks bound the bridge allowance while favouring hub spokes and declared interest', () => {
   const m = 12000, source = Uint32Array.from({ length: m }, (_, e) => e * 2), target = source.map(n => n + 1);
   const offsets = Uint32Array.from({ length: 2 * m + 1 }, (_, n) => n);
   const groups = new Uint32Array(2 * m), interest = new Float32Array(2 * m);
@@ -116,7 +116,7 @@ test('importance ranks conserve the exact share while favouring hub spokes, brid
   for (let e = 3 * m / 4; e < m; e++) interest[source[e]!] = 1;
   const ranked = edgeRanks(source, target, offsets, groups, interest, () => true);
   expect(edgeRanks(source, target, offsets, groups, interest, () => true)).toEqual(ranked);
-  for (const share of [0, .01, .1, .5, 1]) expect([...ranked].filter(r => r < share * 16777216)).toHaveLength(m * share);
+  for (const share of [0, .01, .1, .5, 1]) { const count = [...ranked].filter(r => r < share * 16777216).length; expect(count).toBeGreaterThanOrEqual(m * share); expect(count).toBeLessThanOrEqual(Math.ceil(m * share / .9)); }
   const buckets = [0, 0, 0, 0]; ranked.forEach((r, e) => { if (r < .1 * 16777216) buckets[Math.floor(e / (m / 4))]!++; });
   expect(buckets[2]!).toBeGreaterThan(buckets[0]! * 1.5); expect(buckets[3]!).toBeGreaterThan(buckets[2]! * 1.5);
   // Hub degree alone biases selection, without dependence on displayed node-size settings.

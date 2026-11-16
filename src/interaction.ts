@@ -180,6 +180,7 @@ export class Interaction {
   /** Drop active pointers (context loss, dispose). */
   release() { this.pointers.clear(); this.gestures.cancel(); }
   /** Re-run hover at the last pointer position after coordinates change under it. */
+  clearHover() { this.lastPointer = undefined; this.host.setHover(-1, -1); }
   replayHover() { if (this.lastPointer) this.pointerMove({ ...this.lastPointer, pointerId: -1 } as PointerEvent); }
   pointerDown = (e: PointerEvent) => { const h = this.host; if (!h.live || e.button > 0) return; h.stopFlight(); this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY }); h.canvas.setPointerCapture(e.pointerId); this.downX = e.clientX; this.downY = e.clientY; this.moved = this.pointers.size > 1;
     // A still touch held for 500 ms opens the menu; a drag, a second finger or lifting cancels it.

@@ -163,7 +163,7 @@ test('effect policy, degree sizing, edge alpha, halos and label fade are bounded
   // Dark-theme artistic attenuation retains its historical per-edge ceiling.
   // Accumulated-light correctness is tested separately against actual shader equations.
   expect(edgeAlpha({ ...v, edgeOpacity: 1 }, 1, 1e-4, true)).toBeLessThanOrEqual(.5); expect(edgeAlpha(v, 100, 1, true)).toBeLessThan(edgeAlpha(v, 100, 1, false));
-  expect(labelFade(3, 6, 1, LABEL_RATIOS, true).alpha).toBe(0); expect(labelFade(3, 6, .1, LABEL_RATIOS, true).alpha).toBe(1);
+  expect(labelFade(3, 6, 1, LABEL_RATIOS, true).cut).toBe(.8); expect(labelFade(3, 6, .1, LABEL_RATIOS, true).alpha).toBe(1);
   expect(labelFade(3, 6, .1, LABEL_RATIOS, false)).toEqual({ alpha: 1, cut: 0 });
   const positions = Float32Array.from([0, 0, 2, 0, 10, 10, 10, 12, 50, 50]), halos = groupHalos(positions, Uint8Array.from([1, 1, 1, 1, 0]), Uint32Array.from([0, 0, 1, 1, 1]), 2, 8);
   expect(halos.map(h => [h.group, h.x, h.y, h.radius, h.count])).toEqual([[0, 1, 0, 1, 2], [1, 10, 11, 1, 2]]);

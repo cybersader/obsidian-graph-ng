@@ -3,7 +3,7 @@ import { legacySizing, sizingSettings, type NodeSizingValues } from './node-sizi
 import { generationCurrent, physicsSettings, type PhysicsValues } from './physics-controls';
 import { expressionPrelude } from './core/expr/expression-prelude';
 import { folderPath, predicateColumn, groupColumn as sourceColumn } from './core/declaration';
-import { ItemView, Menu, Plugin, PluginSettingTab, Setting, Notice, TFile, apiVersion, type WorkspaceLeaf } from 'obsidian';
+import { ItemView, Menu, Plugin, PluginSettingTab, Setting, Notice, TFile, apiVersion, type WorkspaceLeaf, type ViewStateResult } from 'obsidian';
 import { obsidianMenu } from './context-menu';
 import { LocalAdapter, type PropertySource } from './adapter/local';
 import { canonical, digest, layoutDeclaration, migrateDeclaration, validateDeclaration, type GraphDeclaration, type Predicate } from './core/declaration';
@@ -319,6 +319,14 @@ export class GraphView extends ItemView {
     this.view = structuredClone(plugin.settings.explore.view);
     this.contributionPage = new ContributionPage(plugin.settings.listPageSize, (revision, pair, offset, count, view) => plugin.pipeline.request(revision, { kind: 'contributions', pair, offset, count, view }), () => this.renderContributionPanel());
   }
+  private presentation: 'nodes' | 'groups' = 'groups';
+  getState() { return { presentation: this.presentation }; }
+  async setState(state: { presentation?: unknown }, result: ViewStateResult) {
+    this.presentation = state?.presentation === 'nodes' ? 'nodes' : 'groups';
+    if (this.positions && this.projection) { if (this.presentation === 'nodes') await this.showDetails(); else this.toGroups(); }
+    await super.setState(state, result);
+  }
+  private rememberPresentation(mode: 'nodes' | 'groups') { this.presentation = mode; this.app.workspace.requestSaveLayout(); }
   getViewType() { return VIEW; }
   getDisplayText() { return 'Graph NG'; }
   getIcon() { return 'git-fork'; }
@@ -489,6 +497,7 @@ export class GraphView extends ItemView {
       report.layout = { cached: layout.cached, reused: layout.reused, ms: layout.milliseconds, totalMs: performance.now() - start };
       this.contentEl.dataset.state = 'ready'; this.statusText = this.gpu.available || this.gpu.reason === 'Not probed' ? '' : 'GPU unavailable. Group overview and member lists remain available.';
       this.contentEl.dataset.layoutMs = String(layout.milliseconds); this.contentEl.dataset.cached = String(layout.cached);
+      if (this.presentation === 'nodes') await this.showDetails();
       if (settings.persistLayout && this.plugin.store.committed !== result.meta.key && complete && !this.provisional && (!settings.declaration.edges.some(e => e.kind === 'producer') || this.plugin.adapter.linksResolved)) {
         const generation = await this.plugin.pipeline.request<BinaryGeneration>(revision, { kind: 'encode' });
         if (!current()) return;
@@ -504,6 +513,7 @@ export class GraphView extends ItemView {
   }
   /** Group overview from Notes: remember the held focus so its group is ringed and a chip leads back. */
   private toGroups() {
+    this.rememberPresentation('groups');
     const back = this.contentEl.dataset.mode === 'nodes' ? this.detailRenderer?.returnPoint() : undefined;
     this.returnTo = back && { ...back, projection: this.projection }; this.showGroups();
   }
@@ -894,7 +904,7 @@ export class GraphView extends ItemView {
         this.gpu = { available: false, reason: 'WebGL context could not be restored' };
         this.showGroups(); void this.showDetails(bits, clearPanel);
       }, this.renderView());
-      this.renderer = this.detailRenderer; this.contentEl.dataset.mode = 'nodes';
+      this.renderer = this.detailRenderer; this.contentEl.dataset.mode = 'nodes'; this.rememberPresentation('nodes');
       const detailGeneration = this.detailGeneration;
       this.detailRenderer.describeEdges = edges => this.plugin.pipeline.request(detailGeneration, { kind: 'relationships', edges });
       this.detailRenderer.openPath = path => this.openPath(path);

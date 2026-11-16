@@ -75,3 +75,8 @@ export function radialLabels(items: readonly LabelItem[], budget: number, direct
   }
   return { slots, hidden, more };
 }
+
+/** Whole box plus its own height of breathing room on every side. */
+export const labelInView = (x: number, y: number, w: number, h: number, width: number, height: number) => x >= h && y >= h && x + w <= width - h && y + h <= height - h;
+/** Reposition a focus annotation inside that margin; a too-small viewport still fails labelInView. */
+export const insetLabel = (x: number, y: number, w: number, h: number, width: number, height: number) => [Math.max(h, Math.min(width - w - h, x)), Math.max(h, Math.min(height - 2 * h, y))];

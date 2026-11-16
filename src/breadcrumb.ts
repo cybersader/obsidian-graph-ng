@@ -30,8 +30,8 @@ export class Breadcrumb {
     this.root.setAttribute('aria-label', 'Recent notes'); this.root.hidden = true;
   }
   /** Per frame: re-renders only when the history moved. A single entry is not a trail and stays hidden. */
-  update(on: boolean, history: { items: readonly number[]; at: number }) {
-    const { items, at } = history, key = [on, items, items.length, at, items[0], items[at], items[items.length - 1]];
+  update(on: boolean, history: { items: readonly number[]; at: number }, selected = history.items[history.at]) {
+    const { items, at } = history, key = [on, selected, items, items.length, at, items[0], items[at], items[items.length - 1]];
     if (key.every((x, i) => x === this.crumbKey[i])) return;
     this.crumbKey = key;
     const { shown, older } = on ? trail(items, at) : { shown: [], older: [] };
@@ -53,7 +53,7 @@ export class Breadcrumb {
       const li = make('li', '', ol), label = this.crumbName(c.node);
       if (i || older.length) { const chevron = make('span', 'graph-ng-crumbs-sep', li); setIcon(chevron, 'chevron-right'); chevron.setAttribute('aria-hidden', 'true'); }
       const chip = make('button', 'graph-ng-crumb', li); chip.textContent = label; chip.title = label; chip.style.opacity = String(crumbFade(c.index - at));
-      if (c.current) chip.setAttribute('aria-current', 'location');
+      if (c.current && c.node === selected) chip.setAttribute('aria-current', 'location');
       else { chip.setAttribute('aria-label', (c.index < at ? 'Back to ' : 'Forward to ') + label); go(c, chip); }
     });
     const clear = make('button', 'clickable-icon graph-ng-crumbs-clear'); setIcon(clear, 'x'); clear.setAttribute('aria-label', 'Clear recent notes'); clear.title = 'Clear recent notes'; clear.onclick = () => this.clearCrumbs();

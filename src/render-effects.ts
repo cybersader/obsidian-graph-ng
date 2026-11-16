@@ -121,8 +121,8 @@ export const overdraw = (ink: EdgeInk, edges: number, width: number, scale: numb
 /** Share of context lines WebGL draws when `layers` lines overlap a core pixel: LINES / layers, 1 when off or
  * sparse. Lines too faint to resolve add up to a grey veil; the same budget as fewer whole lines reads as structure. */
 export const inkShare = (v: Pick<Visuals, 'zoomAdapt'>, layers: number) => v.zoomAdapt && layers > 0 ? Math.min(1, LINES / layers) : 1;
-/** Stable weighted sampling without replacement. A view's eligible edges get unique quantiles,
- * so importance redistributes (never enlarges) the line share. Hub spokes, declared interest and
+/** Stable weighted sampling without replacement. A view's eligible edges get quantile ranks,
+ * with a 10% admission discount for top-decile cross-group bridges. Hub spokes, declared interest and
  * cross-group edges compete with deterministic hash ties. Rebuilt on view changes, not camera frames. */
 export function edgeRanks(source: Uint32Array, target: Uint32Array, offsets: Uint32Array, groups: Uint32Array | undefined, interest: Float32Array | undefined, drawn: (e: number) => boolean): Uint32Array {
   const ranks = new Uint32Array(source.length), scores = new Float64Array(source.length), ids: number[] = [];
@@ -133,7 +133,7 @@ export function edgeRanks(source: Uint32Array, target: Uint32Array, offsets: Uin
     scores[e] = ((k ^ k >>> 13) >>> 8) / weight; ids.push(e);
   }
   ids.sort((a, b) => scores[a]! - scores[b]! || a - b);
-  ids.forEach((e, i) => ranks[e] = (i + .5) * 16777216 / ids.length); // Uint32 stores truncate
+  ids.forEach((e, i) => ranks[e] = (i + .5) * 16777216 / ids.length * (i < ids.length / 10 && groups && groups[source[e]!] !== groups[target[e]!] ? .9 : 1)); // Uint32 stores truncate
   return ranks;
 }
 /** Historical union-alpha reference for the earlier haze receipts, not used by either renderer. */
@@ -154,7 +154,8 @@ export function labelFade(nodeSize: number, threshold: number, ratio: number, ra
   const alpha = Math.min(1, Math.max(0, (visibleAt - .8) / .35));
   const i = level ?? ratios.findIndex(r => r >= ratio), hi = ratios[Math.max(0, i < 0 ? ratios.length - 1 : i)]!, lo = i > 0 ? ratios[i - 1]! : hi / 2;
   const progress = Math.min(1, Math.max(0, Math.log2(ratio / lo) / Math.log2(hi / lo || 2)));
-  return { alpha, cut: progress * .55 };
+  // Tiny marks reduce the ranked population, not the opacity of every hub name.
+  return { alpha: 1, cut: Math.max(progress * .55, (1 - alpha) * .8) };
 }
 export const easeInOut = (t: number) => t < .5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
 export interface Halo { group: number; x: number; y: number; radius: number; count: number }

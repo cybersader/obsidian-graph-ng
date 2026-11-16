@@ -79,3 +79,26 @@ test('label tier settings default, validate and reject out-of-range values', () 
   expect(() => validateVisuals({ ...v, labelTierScale: .9 })).toThrow('labelTierScale'); expect(() => validateVisuals({ ...v, labelTierScale: 1.7 })).toThrow('labelTierScale');
   expect(() => validateVisuals({ ...v, labelPlates: 'yes' })).toThrow('labelPlates');
 });
+
+test('small dots never suppress all ranked hub labels when zoom-adaptive labels are enabled', () => {
+  for (const nodeSize of [.1, .7, 3]) for (const ratio of [.12, .27, 1, 4]) {
+    const f = labelFade(nodeSize, 6, ratio, LABEL_RATIOS, true);
+    const alpha = (rank: number) => { const t = Math.max(0, Math.min(1, (rank - f.cut) / .15)); return f.alpha * t * t * (3 - 2 * t); };
+    expect(alpha(1)).toBe(1); expect(alpha(0)).toBe(0);
+  }
+  expect(labelFade(.7, 6, .27, LABEL_RATIOS, false)).toEqual({ alpha: 0, cut: 0 });
+});
+
+test('annotation boxes reserve their own height at every view edge', async () => {
+  const { labelInView, insetLabel } = await import('../src/label-layout');
+  for (const h of [16, 24, 32]) for (const [x, y] of [[-10, 100], [100, -10], [790, 100], [100, 590], [400, 300]]) {
+    const [a, b] = insetLabel(x!, y!, 80, h, 800, 600);
+    expect(labelInView(a!, b!, 80, h, 800, 600)).toBe(true);
+    expect(a).toBeGreaterThanOrEqual(h); expect(b).toBeGreaterThanOrEqual(h);
+    expect(a! + 80).toBeLessThanOrEqual(800 - h); expect(b! + h).toBeLessThanOrEqual(600 - h);
+  }
+  expect(labelInView(32, 31, 80, 32, 800, 600)).toBe(false);
+  expect(labelInView(32, 32, 80, 32, 800, 600)).toBe(true);
+  const [x, y] = insetLabel(0, 0, 800, 32, 800, 600);
+  expect(labelInView(x!, y!, 800, 32, 800, 600)).toBe(false);
+});

@@ -323,3 +323,29 @@ test('GPU resize fences poll without blocking, enforce deadline and always relea
     expect(deleted).toBe(scenario === 'no-fence' ? 0 : 1); expect(flushed).toBe(scenario === 'no-fence' ? 0 : 1);
   }
 });
+
+test('presentation state is per view, validates unknown values and restores only when detail is ready', async () => {
+  const { GraphView } = await import('../src/main');
+  const base = Object.getPrototypeOf(GraphView.prototype), old = base.setState;
+  let inherited = 0; base.setState = async () => { inherited++; };
+  const make = () => {
+    const plugin: any = { settings: { explore: { view: emptyView() }, listPageSize: 100 } };
+    const view: any = new GraphView(null as any, plugin), shown: string[] = [];
+    view.app = { workspace: { requestSaveLayout() { shown.push('saved'); } } };
+    view.showDetails = async () => { shown.push('nodes'); };
+    view.toGroups = () => { shown.push('groups'); };
+    return { view, shown };
+  };
+  try {
+    const a = make(), b = make(); expect(a.view.getState()).toEqual({ presentation: 'groups' });
+    await a.view.setState({ presentation: 'nodes' }, {}); expect(a.shown).toEqual([]);
+    expect(a.view.getState()).toEqual({ presentation: 'nodes' }); expect(b.view.getState()).toEqual({ presentation: 'groups' });
+    a.view.positions = new Float32Array(2); a.view.projection = {};
+    await a.view.setState(a.view.getState(), {}); expect(a.shown).toEqual(['nodes']);
+    await a.view.setState({ presentation: 'groups' }, {}); expect(a.shown).toEqual(['nodes', 'groups']);
+    for (const state of [null, {}, { presentation: '<untrusted>' }, { presentation: true }]) {
+      await a.view.setState(state, {}); expect(a.view.getState()).toEqual({ presentation: 'groups' });
+    }
+    expect(inherited).toBe(7);
+  } finally { if (old) base.setState = old; else delete base.setState; }
+});

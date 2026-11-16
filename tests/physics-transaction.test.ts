@@ -252,12 +252,12 @@ test('production sizing preview/cancel keeps renderer camera selection scope set
   // The selected note is the graduated focus: radius 14 grows by 60% at full focus and gains its ring stroke.
   const level = f.renderer[compiled('focusLevel')]; [14 * (1 + .6 * level), 14 * (1 + .6 * level) * 1.22].slice(0, level ? 2 : 1).forEach((v, i) => expect(radii[2 + i]!).toBeCloseTo(v, 9));
   await f.renderer[compiled('prepareLabels')](() => true);
-  expect(f.renderer.atlas.levels.every((level: Float32Array) => level.length % 11 === 0)).toBe(true);
+  expect(f.renderer.atlas.levels.every((level: Float32Array) => level.length % 13 === 0)).toBe(true);
   const populated = f.renderer.atlas.levels.find((level: Float32Array) => level.length > 0); expect(populated).toBeDefined(); expect(populated[10]).toBe(1);
   // Each label leads with one plate row (atlas v = 2) spanning every one of its padded glyph quads.
   for (const level of f.renderer.atlas.levels as Float32Array[]) for (let i = 0; i < level.length;) {
     expect(level[i + 6]).toBe(2); const node = level[i]!, left = level[i + 1]!, right = left + level[i + 3]!;
-    for (i += 11; i < level.length && level[i + 6] !== 2; i += 11) { expect(level[i]).toBe(node); expect(level[i + 1]).toBeGreaterThanOrEqual(left); expect(level[i + 1]! + level[i + 3]!).toBeLessThanOrEqual(right + 1e-4); }
+    for (i += 13; i < level.length && level[i + 6] !== 2; i += 13) { expect(level[i]).toBe(node); expect(level[i + 1]).toBeGreaterThanOrEqual(left); expect(level[i + 1]! + level[i + 3]!).toBeLessThanOrEqual(right + 1e-4); }
   }
   f.renderer[compiled('previewSizing')](null); expect(f.renderer.pick(point.x + original.nodeSize * (1 + original.visuals.degreeSizing) * (1 + .6 * level) + 5, point.y)).not.toBe(2); expect(f.plugin.settings).toEqual(original); expect(f.renderer.camera).toEqual(camera);
 });
@@ -1312,7 +1312,7 @@ test('a collapsed-group hub label never lands on the hover label', async () => {
   label.offsetWidth = 200; label.offsetHeight = 18;
   put(x + 10, y + 2); expect(hover.hidden).toBe(false); expect(label.style.visibility).toBe('hidden'); expect(label.hidden).toBeFalsy();
   r[k('placeOverlay')](); expect(label.style.visibility).toBe('hidden');
-  put(x + 10, y + 200); expect(label.style.visibility).toBe('');
+  put(r.width / 2, r.height - 50); expect(label.style.visibility).toBe('');
 });
 
 test('review: collapsing an inner path note clears its path, not just paths with hidden endpoints', async () => {
@@ -1567,4 +1567,79 @@ test('compiled overview admission is capped at eight shares and retained alpha h
     for (const zoom of [.05, .2, 1]) { r.camera.ratio = r[k('homeRatio')] * zoom; r[k('drawCanvas')](); }
     expect(alphas).toHaveLength(3); expect(alphas[0]).toBe(alphas[1]); expect(alphas[1]).toBe(alphas[2]);
   } finally { ctx.stroke = saved; }
+});
+
+test('Only connections draws the selected fan after opaque dots, without adding a Canvas edge pass', async () => {
+  const f = await graduated([[0, 1], [0, 2], [1, 3]], 4), { r, k } = f;
+  const old = { fill: ctx.fill, stroke: ctx.stroke, moveTo: ctx.moveTo, beginPath: ctx.beginPath };
+  let segments = 0; const order: string[] = [];
+  Object.assign(ctx, { beginPath: () => { segments = 0; }, moveTo: () => { segments++; }, fill: () => order.push('node'), stroke: () => { if (segments) order.push(`edge:${segments}`); } });
+  try {
+    f.tap(0); r[k('focusLevel')] = 1; r.atlas = undefined; r[k('edgeQuiet')] = () => [1, Infinity];
+    r[k('drawCanvas')](); const count = order.filter(x => x.startsWith('edge')).length;
+    expect(order.indexOf('edge:2')).toBeLessThan(order.indexOf('node'));
+    r.isolate(0, 2, false); order.length = 0; r[k('drawCanvas')]();
+    expect(order.filter(x => x.startsWith('edge'))).toHaveLength(count);
+    expect(order.indexOf('edge:2')).toBeGreaterThan(order.lastIndexOf('node'));
+    f.settings.visuals.edgeOpacity = 0; order.length = 0; r[k('drawCanvas')]();
+    expect(order.filter(x => x.startsWith('edge'))).toEqual([]);
+  } finally { Object.assign(ctx, old); }
+});
+
+test('Escape clears hovered animation and stale pointer replay, while history remains navigable without a current ring', async () => {
+  const f = await graduated([[0, 1], [1, 2]], 4), { r, k } = f;
+  f.tap(0); f.tap(1); r.isolate(1, 2, false); f.hover(2);
+  r[k('animate')](performance.now() + 500); r[k('placeOverlay')]();
+  expect(r[k('hoverFx')].n).toBe(2); const history = [...r.card.history.items];
+  r[k('keyDown')]({ key: 'Escape', target: r.canvas, preventDefault() {} });
+  r[k('placeOverlay')]();
+  expect(r.selected).toBe(-1); expect(r.hovered).toBe(-1); expect(r.hoveredEdge).toBe(-1);
+  expect(r[k('hoverFx')].n).toBe(-1); expect(r[k('focusNode')]).toBe(-1); expect(r[k('near')]).toEqual([]);
+  expect(r[k('hoverLabel')].textContent).toBe(''); expect(r[k('pathView')]).toBeUndefined();
+  expect(r.card.history.items).toEqual(history);
+  expect(r[k('crumbTrail')].root.querySelectorAll('[aria-current]')).toEqual([]);
+  // Coordinate changes cannot resurrect the old pointer location. A new pointer event still works.
+  r.input[k('replayHover')](); expect(r.hovered).toBe(-1);
+  f.hover(2); expect(r.hovered).toBe(2);
+});
+
+test('atlas glyphs carry shared whole-label bounds and pips retain a full-height viewport inset', async () => {
+  const f = await graduated([[0, 1], [1, 2]], 4), { r, k } = f;
+  await r[k('prepareLabels')](() => true);
+  for (const level of r.atlas.levels as Float32Array[]) for (let i = 0; i < level.length;) {
+    const left = level[i + 11]!, width = level[i + 12]!;
+    expect(level[i + 1]).toBe(left); expect(level[i + 3]).toBe(width);
+    for (i += 13; i < level.length && level[i + 6] !== 2; i += 13) {
+      expect(level[i + 11]).toBe(left); expect(level[i + 12]).toBe(width);
+    }
+  }
+  f.tap(0); r[k('focusLevel')] = 1;
+  r.setCamera(r.camera.x, r.camera.y, .02); r[k('placeHighlights')](1);
+  const pips = r[k('pipEls')].filter((el: any) => !el.hidden);
+  expect(pips.length).toBeGreaterThan(0);
+  for (const el of pips) {
+    const [x, y] = el.style.transform.match(/-?[\d.]+/g).map(Number);
+    expect(x).toBeGreaterThanOrEqual(32); expect(y).toBeGreaterThanOrEqual(32);
+    expect(x + 32).toBeLessThanOrEqual(r.width - 32); expect(y + 32).toBeLessThanOrEqual(r.height - 32);
+  }
+});
+
+test('WebGL frames reuse edge ranks without endpoint scans or another edge pass in Only connections', async () => {
+  const f = await graduated([[0, 1], [0, 2], [1, 3]], 4), { r, k } = f;
+  f.tap(0); r[k('focusLevel')] = 1; r[k('focusTarget')] = 1;
+  const d = driver(r), calls: number[] = []; let program = -1;
+  r[k('programs')] = [0, 1, 2, 3].map(handle => ({ handle, uniforms: {} }));
+  d.gl.useProgram = (handle: number) => { program = handle; };
+  d.gl.drawArraysInstanced = () => calls.push(program);
+  r[k('draw')](); const ranks = r.lineRanks, ink = r[k('ink')], columns = [r.projection.source, r.projection.target, r.projection.offsets];
+  const guard = (column: Uint32Array) => new Proxy(column, { get(target, key) { if (typeof key === 'string' && /^\d+$/.test(key)) throw new Error('per-frame edge/degree scan'); return Reflect.get(target, key, target); } });
+  [r.projection.source, r.projection.target, r.projection.offsets] = columns.map(guard);
+  try {
+    calls.length = 0; r[k('draw')](); const normal = [...calls];
+    r.isolation = { node: 0, hops: 2, expanded: new Set(), shown: [] };
+    calls.length = 0; r[k('draw')]();
+    expect(calls.filter(x => x === 0)).toHaveLength(1); expect(calls).toHaveLength(normal.length);
+    expect(normal.indexOf(0)).toBeLessThan(normal.indexOf(1)); expect(calls.indexOf(0)).toBeGreaterThan(calls.indexOf(1));
+    expect(r.lineRanks).toBe(ranks); expect(r[k('ink')]).toBe(ink);
+  } finally { [r.projection.source, r.projection.target, r.projection.offsets] = columns; }
 });

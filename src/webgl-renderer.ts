@@ -4,7 +4,7 @@ import { PickGrid, positionTexture, incidentEdges, focusTiers, tintedEdge, edgeB
 import { readTheme, type GraphTheme } from './render-theme';
 import { baseRadius, sizedRadius, sizingSettings, type NodeSizingValues } from './node-sizing';
 import { buildLabels, rankFocus, type LabelAtlas } from './render-labels';
-import { DIRECT_LABELS, LABEL_CHARS, middleTruncate, radialLabels, stickyLevel, tierFont, tierType, type LabelSlot } from './label-layout';
+import { DIRECT_LABELS, LABEL_CHARS, middleTruncate, radialLabels, stickyLevel, tierFont, tierType, type LabelSlot, labelInView, insetLabel } from './label-layout';
 import { carrierAlpha, carrierColors, carrierVisibility, categorical, degreeSizes, densityScale, edgeAlpha, edgeInk, overdraw, inkShare, edgeRanks, fadeLength, lengthFade, type EdgeInk, effectPolicy, prominenceKeep, zoomFade, neutralizeGroups, easeInOut, hoverPulse, groupHalos, isDark, labelFade, nodeColors, type EffectPolicy, type Halo, type RGB } from './render-effects';
 import { yieldTask } from './core/scheduler';
 import { generationCurrent } from './physics-controls';
@@ -25,7 +25,7 @@ const TOOLS_MIN_ROOM = 240;
 /** Hard DOM bound for graduated focus labels, under `labelsMaxPerViewport`. */
 const FOCUS_LABELS = 64;
 /** Selection ripple length (ms), and the inset of off-screen pips from the view border (CSS px). */
-const RIPPLE_MS = 250, PIP_INSET = 20;
+const RIPPLE_MS = 250, PIP_INSET = 56;
 export interface CoordinateToken { current(): boolean; commit(): void; rollback(): void; discard(): void }
 
 /** Identity tag; the production build strips GLSL whitespace/comments at load time. */
@@ -147,13 +147,21 @@ uniform float focusOnly;
 out vec4 tint;
 flat out uint seed;
 void main() {
- int s = int(source), t = int(target); vec4 sa = state(s), sb = state(t); seed = uint(gl_InstanceID);
+ int s = int(source), t = int(target); seed = uint(gl_InstanceID);
  uint tier = tierByte == 253u ? 255u : tierByte > 200u ? ((tierMask & 1) != 0 ? tierByte : 0u) : tierByte > 0u && (tierMask & 4) != 0 ? tierByte : 0u;
  tint = vec4(0.);
+ // The length fade can only reduce this upper bound. Skip texture fetches for most overview rows.
+ if (float(lineRank) >= inkShare * 16777216. && (tier == 0u || focus <= 0.) && gl_InstanceID != edgeHovered) { gl_Position = offscreen; return; }
+ vec4 sa = state(s), sb = state(t);
  if (edgeAlpha <= 0. || typeOn == 0u || sa.r < .5 || sb.r < .5 || focusOnly > 0. && tier == 0u) { gl_Position = offscreen; return; }
  int segment = gl_VertexID / 6; vec2 c = corners[gl_VertexID % 6];
  float u = (float(segment) + (c.x + 1.) * .5) / float(segments);
  vec2 a = point(s), b = point(t), delta = b - a; float len = length(delta);
+ // Ink budget: inkShare of the context lines, kept while their stable rank is under inkShare × the long-line fade
+ // (fadeLength, CSS px), draw whole; zooming in only adds lines. Dropped (quiet 0) lines are not rasterized.
+ float share = inkShare * min(1., fadeLength / max(len, 1.));
+ float quiet = share * 16777216. > float(lineRank) ? 1. : 0.;
+ if (quiet < .5 && (tier == 0u || focus <= 0.) && gl_InstanceID != edgeHovered) { gl_Position = offscreen; return; }
  vec2 normal = len > 0. ? vec2(-delta.y, delta.x) / len : vec2(0., 1.);
  vec2 q = (a + b) * .5 + normal * len * curvature;
  vec2 tangent = mix(q - a, b - q, u); float tl = length(tangent);
@@ -163,11 +171,6 @@ void main() {
  gl_Position = clip(mix(mix(a, q, u), mix(q, b, u), u) + side * c.y * wide);
  vec3 rgb = mix(color(1).rgb, mix(nodeColor(s).rgb, nodeColor(t).rgb, u), colorMix);
  float alpha = edgeAlpha * (direction > .5 ? mix(.12, 1., u) : 1.);
- // Ink budget: inkShare of the context lines, kept while their stable rank is under inkShare × the long-line fade
- // (fadeLength, CSS px), draw whole; zooming in only adds lines. Dropped (quiet 0) lines are not rasterized.
- float share = inkShare * min(1., fadeLength / max(len, 1.));
- float quiet = share * 16777216. > float(lineRank) ? 1. : 0.;
- if (quiet < .5 && (tier == 0u || focus <= 0.) && gl_InstanceID != edgeHovered) { gl_Position = offscreen; return; }
  alpha *= (tier > 0u ? mix(quiet, 1., focus) : quiet) * (focusOnly > 0. ? focus : 1.);
  if (focus > 0.) alpha = mix(alpha, tier > 200u ? min(1., alpha * 3.) : tier > 0u ? alpha : alpha * dim * .6, focus);
  // Strong focus edges (strongEdge): degree-scaled direct fan, the rest fades further.
@@ -189,6 +192,7 @@ const labelVertex = common + glsl`
 layout(location=0) in vec4 a;
 layout(location=1) in vec4 b;
 layout(location=2) in vec3 extra;
+layout(location=3) in vec2 bounds;
 uniform float labelAlpha;
 uniform float labelCut;
 out vec2 uv;
@@ -196,7 +200,9 @@ out vec4 tint;
 void main() { vec2 q = (corners[gl_VertexID] + 1.) * .5; int id = int(a.x); vec4 st = state(id);
  float alpha = labelAlpha * smoothstep(labelCut, labelCut + .15, extra.y);
  alpha = mix(alpha, st.g > .1 ? 0. : alpha * dim * .5, focus);
- gl_Position = st.r < .5 || st.b > .5 || alpha <= .004 ? offscreen : clip(point(id) + a.yz + vec2(extra.z * nodeSize, 0.) + q * vec2(a.w, b.x));
+ vec2 origin = point(id) + vec2(extra.z * nodeSize, 0.), box = origin + vec2(bounds.x, a.z) + viewport * .5;
+ bool inside = all(greaterThanEqual(box, vec2(b.x))) && all(lessThanEqual(box + vec2(bounds.y, b.x), viewport - b.x));
+ gl_Position = st.r < .5 || st.b > .5 || alpha <= .004 || !inside ? offscreen : clip(origin + a.yz + q * vec2(a.w, b.x));
  uv = b.yz + q * vec2(b.w, extra.x); tint = vec4(color(3).rgb, alpha);
 }`;
 const labelFragment = glsl`#version 300 es
@@ -704,7 +710,7 @@ export class DetailRenderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     for (let level = 0; level < this.atlas!.levels.length; level++) {
       const data = this.atlas!.levels[level]!, vao = this.labelVaos[level] ?? gl.createVertexArray()!, b = this.labelBuffers[level] ?? gl.createBuffer()!; this.labelVaos[level] = vao; this.labelBuffers[level] = b; gl.bindVertexArray(vao); gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
-      for (let i = 0; i < 3; i++) { gl.enableVertexAttribArray(i); gl.vertexAttribPointer(i, i === 2 ? 3 : 4, gl.FLOAT, false, 44, i * 16); gl.vertexAttribDivisor(i, 1); }
+      for (let i = 0; i < 4; i++) { gl.enableVertexAttribArray(i); gl.vertexAttribPointer(i, [4, 4, 3, 2][i]!, gl.FLOAT, false, 52, [0, 16, 32, 44][i]!); gl.vertexAttribDivisor(i, 1); }
     }
     gl.bindVertexArray(null); this.timings.labelUpload = performance.now() - started;
   }
@@ -1078,6 +1084,7 @@ export class DetailRenderer {
    * explicit Open button (or Enter on the canvas) opens the note. */
   private selectNote(node: number, card?: boolean, keepLens = false) {
     if (node < 0 && this.lensAnchor >= 0 && !keepLens) this.setLens(-1);
+    if (node < 0) { this.input?.clearHover(); this.hoverFx.n = -1; this.fx = [1, 0]; }
     this.selected = node; this.selectedEdges = []; this.pathView = undefined; this.edgeAnchor = -1; this.edgeToken++; this.cue = -1; if (card || node < 0) this.hovered = -1; this.emphasize(); this.startRipple(node); this.refresh();
     if (card && node >= 0) this.card.show(node); else this.card.hide();
   }
@@ -1239,6 +1246,7 @@ export class DetailRenderer {
       m.hidden = !k || i > k; if (m.hidden) return;
       const n = i < 2 ? notes[i ? k - 1 : 0]! : notes[i - 1]!, q = this.screenPoint(n), r = radius(n), d = i < 2 ? 0 : r * .75 + 6;
       if (i < 2) m.style.width = m.style.height = `${Math.round(2 * r + 12)}px`; else if (m.textContent !== String(i - 1)) m.textContent = String(i - 1);
+      if (i >= 2) m.hidden = !labelInView(q.x + d - 12, q.y - d - 12, 24, 24, this.width, this.height);
       m.style.opacity = String(focus); m.style.transform = `translate(${Math.round(q.x + d)}px, ${Math.round(q.y - d)}px) translate(-50%, -50%)`;
     });
   }
@@ -1316,10 +1324,12 @@ export class DetailRenderer {
     // Halos (under), edges, edge notes, other nodes, collapsed hubs, labels.
     const passes: [number, number, number, number?][] = [];
     if (policy.halos && haloAlpha > .002 && this.discData[0]!.length) passes.push([3, 2, 0]);
-    if (v.edgeOpacity > 0 && v.edgeMode !== 'off') passes.push([0, 0, 0]);
+    const edgesOnTop = !!this.isolation && focus > 0, edgePass = v.edgeOpacity > 0 && v.edgeMode !== 'off';
+    if (edgePass && !edgesOnTop) passes.push([0, 0, 0]);
     const [ink, reach] = this.edgeQuiet(2 * Math.max(.5, edgeWidth));
     if (this.visibleCarriers) passes.push([1, 1, 0, 0]);
     passes.push([1, 1, 0, 1]);
+    if (edgePass && edgesOnTop) passes.push([0, 0, 0]);
     if (this.discData[1]!.length) passes.push([3, 3, 1]);
     if (this.atlas && fade.alpha > .004) passes.push([2, -1, 0]);
     for (const [i, vaoIndex, hub, layer = 1] of passes) {
@@ -1334,7 +1344,7 @@ export class DetailRenderer {
       gl.bindVertexArray(vaoIndex < 0 ? this.labelVaos[lod]! : this.vaos[vaoIndex]!);
       if (i === 0) gl.drawArraysInstanced(gl.TRIANGLES, 0, 6 * policy.segments, this.projection.source.length);
       else if (i === 1) gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, this.visible.length);
-      else if (i === 2) gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, this.atlas!.levels[lod]!.length / 11);
+      else if (i === 2) gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, this.atlas!.levels[lod]!.length / 13);
       else gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, this.discData[hub]!.length / 8);
     }
     gl.bindVertexArray(null); this.placeOverlay(); this.timings.maxDraw = Math.max(this.timings.maxDraw || 0, performance.now() - drawStart);
@@ -1352,10 +1362,10 @@ export class DetailRenderer {
     // Overlay text never runs under the card or an overlay panel: each label's whole rectangle is
     // tested against their cached rects (the opaque stack and card also sit above as a backstop).
     const badgeBoxes: number[][] = [];
-    const under = (x: number, y: number, w = 1, h = 1) => badgeBoxes.some(r => overlapsBox(x, y, w, h, r)) || overlapsBox(x, y, w, h, this.cardRect) || this.panelRects.some(r => overlapsBox(x, y, w, h, r));
+    const under = (x: number, y: number, w = 1, h = 1) => !labelInView(x, y, w, h, this.width - this.toolsInset, this.height) || badgeBoxes.some(r => overlapsBox(x, y, w, h, r)) || overlapsBox(x, y, w, h, this.cardRect) || this.panelRects.some(r => overlapsBox(x, y, w, h, r));
     for (const { node: n, el: b, width } of this.frontierBadges) {
       const p = this.screenPoint(n), x = p.x + radius(n) + 2, y = p.y - 16;
-      b.hidden = !this.visible[n] || x < 0 || y < 0 || x + width > this.width - this.toolsInset || y + 32 > this.height || under(x, y, width, 32);
+      b.hidden = !this.visible[n] || under(x, y, width, 32);
       if (!b.hidden) { b.style.transform = `translate(${x}px, ${y}px)`; badgeBoxes.push([x, y, width, 32]); }
     }
     const lod = this.lodLevel(), s = this.settings, tier = v.labelTierScale, hover = this.hoverLabel;
@@ -1406,20 +1416,19 @@ export class DetailRenderer {
       // "+N more" counts the direct connections without a label actually shown this frame.
       const b = this.moreButton, rest = this.moreTotal - shown, text = `+${rest} more`;
       if (b.textContent !== text) { b.textContent = text; b.setAttribute('aria-label', `Show ${rest} more direct connections of ${ego >= 0 ? this.name(ego) : ''}`); }
-      const at = this.moreAt, p = ego >= 0 ? this.screenPoint(ego) : { x: 0, y: 0 }, [mw, mh] = this.moreSize, show = rest > 0 && !!at && ego >= 0 && focus > 0 && !under(p.x + at.dx, p.y + at.dy - mh! / 2, mw, mh); b.hidden = !show;
-      if (show) { taken.push([p.x + at.dx, p.y + at.dy - mh! / 2, mw!, mh!]); this.moreButton.style.opacity = String(focus); this.moreButton.style.transform = `translate(${Math.round(p.x + at.dx)}px, ${Math.round(p.y + at.dy)}px) translateY(-50%)`; }
+      const at = this.moreAt, p = ego >= 0 ? this.screenPoint(ego) : { x: 0, y: 0 }, [mw, mh] = this.moreSize, [mx, my] = insetLabel(p.x + (at?.dx ?? 0), p.y + (at?.dy ?? 0) - mh! / 2, mw!, mh!, this.width - this.toolsInset, this.height), show = rest > 0 && !!at && ego >= 0 && focus > 0 && !under(mx!, my!, mw, mh); b.hidden = !show;
+      if (show) { taken.push([mx!, my!, mw!, mh!]); b.style.opacity = String(focus); b.style.transform = `translate(${Math.round(mx!)}px, ${Math.round(my! + mh! / 2)}px) translateY(-50%)`; }
     }
     if (node >= 0) {
       // Right, left, above, then below the dot (centred, nudged into view). Never under the card or a
       // panel; prefer a spot inside the view and clear of the labels and "+N more" already placed.
-      const p = this.screenPoint(node), [, w, h] = this.hoverBox, gap = radius(node) + 6, mid = Math.max(0, Math.min(this.width - w, p.x - w / 2));
-      const spots = [[p.x + gap, p.y - 10], [p.x - gap - w, p.y - 10], [mid, p.y - gap - h], [mid, p.y + gap]].filter(([x, y]) => !under(x!, y!, w, h));
-      const inView = ([x, y]: number[]) => x! >= 0 && y! >= 0 && x! + w <= this.width && y! + h <= this.height, free = ([x, y]: number[]) => !taken.some(b => overlapsBox(x!, y!, w, h, b));
-      const at = spots.find(q => inView(q) && free(q)) ?? spots.find(free) ?? spots.find(inView) ?? spots[0];
+      const p = this.screenPoint(node), [, w, h] = this.hoverBox, gap = radius(node) + 6, mid = p.x - w / 2;
+      const spots = [[p.x + gap, p.y - 10], [p.x - gap - w, p.y - 10], [mid, p.y - gap - h], [mid, p.y + gap]].map(([x, y]) => insetLabel(x!, y!, w, h, this.width - this.toolsInset, this.height)).filter(([x, y]) => !under(x!, y!, w, h));
+      const at = spots.find(([x, y]) => !taken.some(b => overlapsBox(x!, y!, w, h, b))) ?? spots[0];
       hover.hidden = !at; if (at) taken.push([at[0]!, at[1]!, w, h]); if (at) hover.style.transform = `translate(${Math.round(at[0]!)}px, ${Math.round(at[1]!)}px)`;
     }
     this.placePath(radius, focus);
-    this.crumbTrail.update(v.breadcrumb, this.card.history);
+    this.crumbTrail.update(v.breadcrumb, this.card.history, this.selected);
     this.miniMap.update({ on: v.minimap && this.width >= MINIMAP_MIN_CANVAS, positions: this.display, visible: this.visible, cx: this.camera.x, cy: this.camera.y, worldW: this.width / this.scale, worldH: this.height / this.scale, focus: this.visible[this.focusNode] ? this.focusNode : -1, directs: this.directs, ink: this.theme.text, accent: this.theme.accent });
     // Greedy vertical nudge keeps coincident hub labels legible (hubs are bounded).
     const placed: [number, number, number][] = [];
@@ -1429,7 +1438,7 @@ export class DetailRenderer {
       for (let k = 0; k < placed.length; k++) { const [px, py, ph] = placed[k]!; if (Math.abs(px - x) < half + ph && Math.abs(py - y) < line) { y = py + line + 2; k = -1; } }
       // Placed labels, "+N more" and the hover label above keep their place: a hub label never lands on them.
       // Visibility, not `hidden`: a covered label keeps its measured size, so it cannot flicker.
-      el.style.visibility = taken.some(b => overlapsBox(x - half, y, 2 * half, line, b)) ? 'hidden' : ''; placed.push([x, y, half]); el.style.transform = `translate(-50%, 0) translate(${Math.round(x)}px, ${Math.round(y)}px)`;
+      el.style.visibility = under(x - half, y, 2 * half, line) || taken.some(b => overlapsBox(x - half, y, 2 * half, line, b)) ? 'hidden' : ''; placed.push([x, y, half]); el.style.transform = `translate(-50%, 0) translate(${Math.round(x)}px, ${Math.round(y)}px)`;
     });
   }
   /** Where Group overview leads back to: the selection (or lens), its group and the camera. */
@@ -1466,7 +1475,7 @@ export class DetailRenderer {
     for (let i = 0; i < ids.length; i++) { const p = this.screenPoint(ids[i]!); xy[i * 2] = p.x; xy[i * 2 + 1] = p.y; }
     const [right, bottom] = this.cardInset(), pips = ids.length ? offscreenPips(ids, this.pipXY, this.width - right, this.height - bottom, PIP_INSET) : [];
     this.pipEls.forEach((el, i) => {
-      const pip = pips[i]; el.hidden = !pip; if (!pip) return;
+      const pip = pips[i]; el.hidden = !pip || !labelInView(pip.x - 16, pip.y - 16, 32, 32, this.width - right, this.height - bottom); if (el.hidden || !pip) return;
       this.pipTargets[i] = pip.node; el.style.transform = `translate(${Math.round(pip.x - 16)}px, ${Math.round(pip.y - 16)}px)`; el.style.opacity = String(focus);
       const [arrow, count] = this.pipParts[i]!; arrow.style.transform = `rotate(${pip.sector * 45}deg)`;
       const text = pip.count > 999 ? '999+' : String(pip.count), label = `${pip.count.toLocaleString()} direct connection${pip.count === 1 ? '' : 's'} ${PIP_DIRECTIONS[pip.sector]}. Go to the nearest.`;
@@ -1511,7 +1520,7 @@ export class DetailRenderer {
     const zoom = this.camera.ratio / this.homeRatio, base = edgeAlpha(s.visuals, s.visuals.zoomAdapt ? 0 : this.visibleEdges, s.visuals.zoomAdapt ? 1 : zoom, this.policy.dark), width = 2 * Math.max(.5, s.edgeSize * zoomFade(s.visuals, this.visibleEdges, zoom, this.width, this.height));
     const mask = this.tierMask, strong = s.visuals.focusEdges ? focusAlpha(this.directs.length) : 0, mode = s.visuals.edgeMode, [ink, reach] = this.edgeQuiet(width);
     // The same quantile admission and long-line threshold as the shader; focus tiers are never sampled.
-    for (const tier of mode === 'off' ? [] : focus ? mode === 'focus' ? [128, 255] : [0, 128, 255] : mode === 'focus' ? [] : [-1]) {
+    const drawEdges = () => { for (const tier of mode === 'off' ? [] : focus ? mode === 'focus' ? [128, 255] : [0, 128, 255] : mode === 'focus' ? [] : [-1]) {
       let [alpha, wide] = tierEdge(tier, base * (mode === 'focus' ? focus : 1), tier < 0 ? 0 : focus, dim);
       if (strong && tier >= 0) { const [a2, w2] = strongEdge(tier, alpha, focus, strong); alpha = a2; wide *= w2; }
       ctx.lineWidth = width * wide; const lines: number[] = [], hue: number[] = [], line = (e: number) => { const a = this.projection.source[e]!, b = this.projection.target[e]!; ctx.moveTo(x(a), y(a)); ctx.lineTo(x(b), y(b)); };
@@ -1522,6 +1531,8 @@ export class DetailRenderer {
       // Path tier on top, as the shader's 253 branch: accent, pathStroke alpha and width.
       if (tier === 255 && this.pathView && s.visuals.edgeOpacity > 0) { const [pa, pw] = pathStroke(alpha, focus); ctx.strokeStyle = this.theme.accent; ctx.globalAlpha = pa; ctx.lineWidth = width * wide * pw; ctx.beginPath(); for (const e of this.pathView.edges) if (this.edgeTier[e] === PATH_EDGE) line(e); ctx.stroke(); ctx.strokeStyle = this.theme.edge; }
     }
+    };
+    const edgesOnTop = !!this.isolation && focus > 0; if (!edgesOnTop) drawEdges();
     const notes = this.projection.carrierNodes, level = this.carrierLevel();
     // Edge notes first (beneath), then the other nodes.
     for (const layer of [1, 0]) for (let n = 0; n < this.visible.length; n++) if (this.visible[n] && +!!notes[n] === layer) {
@@ -1538,6 +1549,7 @@ export class DetailRenderer {
       const band = !layer && s.visuals.tierRings && focus ? (ego ? 1.57 : shown > .9 && this.directs.length <= 50 ? 1.16 : 0) : 0;
       if (band) { ctx.globalAlpha = a * fade * focus; ctx.strokeStyle = this.theme.text; ctx.lineWidth = r * (ego ? .16 : .18); ctx.beginPath(); ctx.arc(x(n), y(n), r * band, 0, Math.PI * 2); ctx.stroke(); }
     }
+    if (edgesOnTop) drawEdges();
     ctx.globalAlpha = 1;
     for (const h of this.hubs) { ctx.fillStyle = this.groupColor(h.group); ctx.beginPath(); ctx.arc((h.x - this.centerX) * this.scale + this.width / 2, (h.y - this.centerY) * this.scale + this.height / 2, h.radius, 0, Math.PI * 2); ctx.fill(); }
     // The label shader's terms: zoom alpha, importance cut (degree rank), degree-weighted size, background outline.
@@ -1547,6 +1559,7 @@ export class DetailRenderer {
       const cut = Math.min(1, Math.max(0, (1 - i / nodes.length - fade.cut) / .15)); ctx.globalAlpha = tierLabel(g[n * 4 + 1]! / 255, fade.alpha * cut * cut * (3 - 2 * cut), focus, dim);
       if (ctx.globalAlpha <= .004) return; ctx.font = `${s.labelSize * scales[i]!}px ${this.theme.font}`;
       const name = this.name(n), lx = x(n) + this.nodeRadius(n, false, radius) + 4, ly = y(n) - s.labelSize * scales[i]! / 2;
+      if (!labelInView(lx - 2, ly - 2, this.atlas!.widths.get(n)! * scales[i]! + 4, s.labelSize * scales[i]! * 1.5 + 4, this.width, this.height)) return;
       if (s.visuals.labelPlates) { ctx.fillStyle = this.theme.background; ctx.fillRect(lx - 2, ly - 2, this.atlas!.widths.get(n)! * scales[i]! + 4, s.labelSize * scales[i]! * 1.5 + 4); }
       ctx.fillStyle = this.theme.text; ctx.fillText(name, lx, ly);
     });
