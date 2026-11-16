@@ -122,6 +122,9 @@ export interface ExploreResult {
   queryHidden: number;
   /** Per declared edge rule: visible lines. */
   ruleVisible: number[];
+  /** Edges not drawn, each counted once under its first reason: per filter (an endpoint hidden by it), then
+   * an endpoint hidden by search, an endpoint in a hidden group or color, a hidden relationship type, and inside a collapsed group. */
+  edgeHidden: number[];
   /** Per filter, the relationship notes it hides (or would hide, drawn as notes) that no earlier filter hides. */
   carrierHidden?: number[];
 }
@@ -173,8 +176,8 @@ export function* searchSteps(p: Projection, query: string, keep: Uint8Array, lim
 }
 /** Pure, worker-side compilation of a view to typed masks and bounded summaries.
  * Filters are ANDed columnar predicates; hidden groups/colors/types only hide. */
-/** AND one filter into `base`; returns how many notes it newly hid. */
-export function hide(base: Uint8Array, bits: Uint8Array) { let hidden = 0; for (let i = 0; i < base.length; i++) if (base[i] && !bits[i]) { base[i] = 0; hidden++; } return hidden; }
+/** AND one filter into `base`; returns how many notes it newly hid, marking them `code` in `why`. */
+export function hide(base: Uint8Array, bits: Uint8Array, why?: Uint8Array, code = 0) { let hidden = 0; for (let i = 0; i < base.length; i++) if (base[i] && !bits[i]) { base[i] = 0; hidden++; if (why) why[i] = code; } return hidden; }
 /** Per filter, in order, the notes it hides that no earlier filter hides. */
 export const hiddenBy = (p: Projection, filters: readonly Predicate[]) => { const base = new Uint8Array(p.paths.length).fill(1); return filters.map(f => hide(base, filterNodes(p, f))); };
 /** The relationship notes among `rows` as a projection of notes only (no edges), so filters can be counted on them.
@@ -187,8 +190,8 @@ export function relationshipNotes(rows: readonly FactRow[], d: GraphDeclaration)
 export function carrierHiddenBy(carriers: Projection | undefined, filters: readonly Predicate[]) {
   try { return carriers && hiddenBy(carriers, filters); } catch { return undefined; }
 }
-export function explore(p: Projection, d: GraphDeclaration, view: ExploreView, colors: Uint32Array, level: number, limits: ExploreLimits, prepared?: { base: Uint8Array; group: DictionaryColumn; hidden: number[] }): ExploreResult {
-  const n = p.paths.length, base = prepared?.base ?? new Uint8Array(n).fill(1), filterHidden = prepared?.hidden ?? view.filters.map(f => hide(base, filterNodes(p, f)));
+export function explore(p: Projection, d: GraphDeclaration, view: ExploreView, colors: Uint32Array, level: number, limits: ExploreLimits, prepared?: { base: Uint8Array; group: DictionaryColumn; hidden: number[]; why?: Uint8Array }): ExploreResult {
+  const n = p.paths.length, base = prepared?.base ?? new Uint8Array(n).fill(1), why = prepared?.why ?? new Uint8Array(n), filterHidden = prepared?.hidden ?? view.filters.map((f, i) => hide(base, filterNodes(p, f), why, i + 1));
   const query = view.query.trim().toLowerCase(); let queryHidden = 0;
   if (query) { const text = searchText(p); for (let i = 0; i < n; i++) if (base[i] && !text[i]!.includes(query)) { base[i] = 0; queryHidden++; } }
   const g = prepared?.group ?? groupColumn(p, d, view.group, level), hiddenGroup = new Uint8Array(g.values.length);
@@ -203,10 +206,14 @@ export function explore(p: Projection, d: GraphDeclaration, view: ExploreView, c
     if (!hiddenGroup[code] && !hiddenColor[color]) { visible[i] = 1; groupVisible[code]!++; }
   }
   const hiddenTypes = new Set(view.hiddenTypes), typeTotals = new Uint32Array(p.types.length), typeVisible = new Uint32Array(p.types.length);
-  let visibleEdges = 0; const ruleVisible = d.edges.map(() => 0);
+  let visibleEdges = 0; const ruleVisible = d.edges.map(() => 0), f = view.filters.length, edgeHidden = new Array<number>(f + 4).fill(0), folded = new Set(view.collapsedGroups);
+  const reason = (i: number) => visible[i] ? 1e9 : why[i] ? why[i]! - 1 : base[i] ? f + 1 : f;
   for (let e = 0; e < p.source.length; e++) {
-    const t = p.type[e]!; typeTotals[t]!++;
-    if (visible[p.source[e]!] && visible[p.target[e]!] && !hiddenTypes.has(p.types[t]!)) { typeVisible[t]!++; visibleEdges++; if (p.rule) ruleVisible[p.rule[e]!]!++; }
+    const t = p.type[e]!, a = p.source[e]!, b = p.target[e]!, k = Math.min(reason(a), reason(b)); typeTotals[t]!++;
+    if (k < 1e9) edgeHidden[k]!++;
+    else if (hiddenTypes.has(p.types[t]!)) edgeHidden[f + 2]!++;
+    else if (g.codes[a] === g.codes[b] && folded.has(g.values[g.codes[a]!]!)) edgeHidden[f + 3]!++;
+    else { typeVisible[t]!++; visibleEdges++; if (p.rule) ruleVisible[p.rule[e]!]!++; }
   }
   const facets: Facet[] = [];
   for (const key of Object.keys(p.columns).sort()) {
@@ -216,7 +223,7 @@ export function explore(p: Projection, d: GraphDeclaration, view: ExploreView, c
     facets.push({ key, distinct: c.values.length, values: order.map(i => ({ raw: c.values[i]!, label: valueLabel(c.values[i]!), count: total[i]!, visible: shown[i]! })) });
   }
   return { visible, groupCodes: g.codes, groupKeys: g.values, groupLabels: g.encoded ? g.values.map(valueLabel) : g.values, groupTotals, groupVisible,
-    types: p.types, typeTotals, typeVisible, colorCounts, matched, nodes: n, edges: p.source.length, visibleEdges, facets, filters: view.filters, filterHidden, queryHidden, ruleVisible };
+    types: p.types, typeTotals, typeVisible, colorCounts, matched, nodes: n, edges: p.source.length, visibleEdges, facets, filters: view.filters, filterHidden, queryHidden, ruleVisible, edgeHidden };
 }
 /** Projection view with hidden relation types removed, for group contraction. */
 export function withoutTypes<T extends Pick<Projection, 'source' | 'target' | 'type' | 'carrier' | 'types'>>(p: T, hiddenTypes: readonly string[]): T {

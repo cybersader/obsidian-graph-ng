@@ -5,7 +5,7 @@ import { physicsSettings, presetValues, PHYSICS_FIELDS, PHYSICS_PRESETS, type Ph
 import { editAsExpression, builderPredicate, checked } from './core/expr/engine';
 import { validate } from './core/expr/syntax';
 import { filterSummary, hiddenClause, setToggles, toggleable, toggledValues } from './filter-summary';
-import { countSpan, num, plural, statRow, sum } from './graph-information';
+import { countSpan, num, plural, shownHidden, statRow, sum } from './graph-information';
 import { suggestions } from './core/expr/autocomplete';
 import { declaredKeys } from './core/columns';
 import { describePredicate, groupLabel, NO_COLOR, VIEW_LIMITS, validateSaved, validateView, type ExploreResult, type ExploreView, type SavedView, type ViewCamera } from './core/explore';
@@ -247,14 +247,21 @@ export class ExplorePanel {
     this.body.scrollTop = scroll;
     if (focusName) { const replacement = [...this.body.querySelectorAll<HTMLElement>('button,input,select,summary')].find(e => !(e as HTMLButtonElement).disabled && (focusKey != null ? e.getAttribute('data-focus-key') === focusKey : name(e) === focusName)); replacement?.focus({ preventScroll: true }); if (replacement instanceof HTMLInputElement && selection && replacement.type === 'text') replacement.setSelectionRange(selection[0], selection[1]); }
   }
-  /** Shown-of-total rows for notes and lines; the scope is named only inside a selected group. */
+  /** Open Filters on filter `at`'s chip (no such chip: just the panel); a negative `at` focuses the search box. */
+  focusFilter(at: number) {
+    if (at < 0) return this.search.focus();
+    this.show('filters'); const chip = this.body.querySelectorAll<HTMLElement>('.graph-ng-chip')[at];
+    chip?.addClass('is-focused'); chip?.querySelector('button')?.focus();
+  }
+  /** Notes shown and edges drawn; what the view hides is one row leading to the breakdown. The scope is named only inside a selected group. */
   private summary(external: boolean, r?: ExploreResult) {
     this.counts.empty();
     if (this.host.scoped?.()) this.counts.createDiv({ cls: 'graph-ng-scope-name', text: `In ${this.host.scope?.()}` });
     if (external || !r) { this.note(this.counts, external ? 'External aggregate' : 'Waiting for projection…'); return; }
     const stats = this.counts.createDiv({ cls: 'graph-ng-stats' });
-    statRow(stats, 'circle-dot', 'Notes', `${num(sum(r.visible))} of ${num(r.nodes)}`);
-    statRow(stats, 'spline', 'Edges', `${num(r.visibleEdges)} of ${num(r.edges)}`);
+    const shown = sum(r.visible), notes = r.nodes - shown, edges = r.edges - r.visibleEdges;
+    statRow(stats, 'circle-dot', 'Notes shown', num(shown)); statRow(stats, 'spline', 'Edges drawn', num(r.visibleEdges));
+    if (notes || edges) statRow(stats, 'eye-off', 'Hidden, see why', `${plural(notes, 'note')}, ${plural(edges, 'edge')}`, '', () => this.show('information'));
   }
   private note(host: HTMLElement, text: string) { return host.createDiv({ cls: 'graph-ng-explore-note', text }); }
   /** One bounded text editor serves filters, colours and custom group values. */
@@ -276,7 +283,7 @@ export class ExplorePanel {
       const source = input.value, timer = setTimeout(() => {
         this.expressionTimers.delete(timer);
         void this.host.preview(source, context).then(count => {
-          if (input.isConnected && source === input.value) feedback.textContent = `${num(count.matched)} / ${num(count.total)} matched${count.groups === undefined ? '' : ` in ${num(count.groups)} groups`}`;
+          if (input.isConnected && source === input.value) feedback.textContent = `${plural(count.matched, 'matching note')}${count.groups === undefined ? '' : `, in ${plural(count.groups, 'group')}`}`;
         }).catch(e => { if (input.isConnected && source === input.value) feedback.textContent = String(e).includes('generation changed') ? 'Projection changed; edit to refresh count' : `Preview: ${String(e)}`; });
       }, 150); this.expressionTimers.add(timer);
     };
@@ -414,7 +421,7 @@ export class ExplorePanel {
       item.createSpan({ cls: 'graph-ng-swatch' }).style.background = this.host.groupColor(i);
       const name = item.createEl('button', { cls: 'graph-ng-legend-name', text: label, attr: { title: `${label} — ${nodes ? 'frame this group' : 'open members'}` } });
       name.onclick = () => this.host.focusGroup(i);
-      countSpan(item, r.groupVisible[i] === r.groupTotals[i] ? num(r.groupTotals[i]!) : `${num(r.groupVisible[i]!)}/${num(r.groupTotals[i]!)}`);
+      countSpan(item, shownHidden(r.groupVisible[i]!, r.groupTotals[i]!));
       if (nodes) {
         const fold = item.createEl('button', { cls: 'graph-ng-fold clickable-icon', text: collapsed.has(key) ? '⊕' : '⊖', attr: { 'data-focus-key': `group-fold:${key}`, 'aria-label': `${collapsed.has(key) ? 'Expand' : 'Collapse'} ${label}`, 'aria-pressed': String(collapsed.has(key)) } }); fold.disabled = !storable && !collapsed.has(key);
         fold.onclick = () => this.update({ collapsedGroups: collapsed.has(key) ? this.view.collapsedGroups.filter(k => k !== key) : [...this.view.collapsedGroups, key] }, collapsed.has(key) ? () => this.host.focusGroup(i) : undefined);
@@ -422,7 +429,7 @@ export class ExplorePanel {
     }
     const notes = nodes ? this.host.carriers() : 0, v = this.settings.visuals;
     if (notes) host.createDiv({ cls: 'graph-ng-explore-note graph-ng-carrier-note', text: `${notes.toLocaleString()} relationship notes draw small and beneath${v.carrierTint ? `, in their endpoints' color (bridges: ${v.carrierBridge === 'blend' ? 'blended' : 'source color'}${v.carrierBridgeAccent ? ', accented' : ''})` : ''}.${v.carrierLod ? ' Zoomed out, they fold into their edges.' : ''}` });
-    if (order.length > this.groupLimit) host.createEl('button', { text: `Show ${Math.min(this.settings.explore.legendPageSize, order.length - this.groupLimit)} more of ${(order.length - this.groupLimit).toLocaleString()}` }).onclick = () => { this.groupLimit += this.settings.explore.legendPageSize; this.render(); };
+    if (order.length > this.groupLimit) host.createEl('button', { text: `Show ${Math.min(this.settings.explore.legendPageSize, order.length - this.groupLimit)} more, ${num(order.length - this.groupLimit)} left` }).onclick = () => { this.groupLimit += this.settings.explore.legendPageSize; this.render(); };
   }
   /** Group by a bounded transform of an existing value; no note needs a new property. */
   private derivedForm(host: HTMLElement, r: ExploreResult) {
@@ -481,7 +488,7 @@ export class ExplorePanel {
       const item = list.createDiv({ cls: 'graph-ng-legend-row' }), eye = item.createEl('input', { attr: { type: 'checkbox', 'aria-label': `Show ${type} relationships` } });
       eye.checked = !hidden.has(type); eye.onchange = () => this.update({ hiddenTypes: eye.checked ? this.view.hiddenTypes.filter(t => t !== type) : [...this.view.hiddenTypes, type] });
       item.createSpan({ cls: 'graph-ng-legend-name', text: type });
-      countSpan(item, `${num(r.typeVisible[i]!)}/${num(r.typeTotals[i]!)}`);
+      countSpan(item, shownHidden(r.typeVisible[i]!, r.typeTotals[i]!));
     });
     if (!r.types.length) this.note(list, 'No relationships.');
     this.flag(host, 'edgeDirection', 'Show direction (fade from source to target)');

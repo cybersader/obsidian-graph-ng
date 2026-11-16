@@ -201,7 +201,7 @@ test('declared excluded folders never enter rows, coverage or identity, so archi
   } finally { adapter.index.dispose(); }
 });
 
-test('relationship accounting splits drawn, missing-endpoint, duplicate-endpoint and duplicate relationship-note drops per rule', () => {
+test('relationship accounting splits drawn, missing-endpoint and duplicate-ID drops (endpoint or relationship note) per rule', () => {
   const d = { ...defaultDeclaration('n@1'), identity: [{ key: 'curie' }], columns: ['curie'], edges: [{ name: 'crosswalk', kind: 'reified' as const, sourceProperty: 's', targetProperty: 'o' }] };
   const row = (path: string, properties: Record<string, unknown>) => ({ path, properties, links: {} });
   const p = buildProjection([
@@ -209,7 +209,7 @@ test('relationship accounting splits drawn, missing-endpoint, duplicate-endpoint
     row('m1.md', { curie: 'm:1', s: 'x:a', o: 'x:b' }), row('m2.md', { curie: 'm:2', s: 'x:a', o: 'x:zz' }), row('m3.md', { curie: 'm:3', s: 'x:a', o: 'x:d' }),
     row('m4.md', { curie: 'm:4', s: 'x:b', o: 'x:a' }), row('_old/m4.md', { curie: 'm:4', s: 'x:b', o: 'x:a' }),
   ], d);
-  expect(p.dropped!.crosswalk).toEqual({ drawn: 1, missing: 1, excluded: 1, carriers: 2 });
+  expect(p.dropped!.crosswalk).toEqual({ drawn: 1, missing: 1, excluded: 3, lines: 0 }); // each duplicate relationship note loses its one relationship
   expect(p.unresolved).toBe(2); expect(p.source.length).toBe(1);
 });
 
@@ -221,8 +221,8 @@ test('duplicate-ID sources count their lost inline and producer relationships as
   ], d as any);
   expect(p.quarantined.length).toBe(2); expect(p.source.length).toBe(0);
   // d1 and d2 each lose their links to c; d2's self/sibling references (destination also excluded) count once, not twice.
-  expect(p.dropped!.see).toEqual({ drawn: 0, missing: 0, excluded: 3, carriers: 0 });
-  expect(p.dropped!.links).toEqual({ drawn: 0, missing: 0, excluded: 3, carriers: 0 });
+  expect(p.dropped!.see).toEqual({ drawn: 0, missing: 0, excluded: 3, lines: 0 });
+  expect(p.dropped!.links).toEqual({ drawn: 0, missing: 0, excluded: 3, lines: 0 });
 });
 
 test('an excluded note resolving after the initial load never enters rows or coverage', async () => {

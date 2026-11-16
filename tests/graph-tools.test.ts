@@ -87,7 +87,7 @@ test('UX member navigator renders bounded name/path rows, searches existing memb
   const items = Array.from({ length: 16399 }, (_, i) => `Framework/Folder ${i % 3}/Note ${i}.md`); view.memberList(items, (s: string) => s);
   let rows = view.panel.querySelectorAll('.graph-ng-member'); expect(rows.length).toBe(7); expect(rows[0].querySelector('span').textContent).toBe('Note 0'); expect(rows[0].querySelector('small').textContent).toBe(items[0]);
   rows[0].focus(); view.panel.querySelector('.graph-ng-members').onkeydown({ key: 'ArrowDown', preventDefault() {} }); expect(ControlElement.active).toBe(rows[1]); rows[1].click(); expect(opened).toEqual([items[1]!]);
-  const search = input(view.panel, 'Search available group members'); search.value = 'Note 16398.md'; search.oninput(); rows = view.panel.querySelectorAll('.graph-ng-member'); expect(rows.length).toBe(1); expect(rows[0].getAttribute('aria-label')).toContain('16398'); expect(view.panel.querySelector('.graph-ng-explore-note').textContent).toBe('1 of 16,399 available members');
+  const search = input(view.panel, 'Search available group members'); search.value = 'Note 16398.md'; search.oninput(); rows = view.panel.querySelectorAll('.graph-ng-member'); expect(rows.length).toBe(1); expect(rows[0].getAttribute('aria-label')).toContain('16398'); expect(view.panel.querySelector('.graph-ng-explore-note').textContent).toBe('1 matching member');
 });
 test('UI batch group fold retains replacement focus across changing labels and subsequent render', () => {
   const f = fixture(), key = 'Odd["group]', p = buildProjection([{ path: `${key}/Note.md`, properties: {} }], f.settings.declaration);
@@ -213,7 +213,7 @@ test('UX graph status uses structured phase, coverage and failures rather than E
   view.statusText = 'partial, provisional, pending'; expect(view.statusSummary.textContent).toBe('Preparing graph…');
   view.contentEl.dataset.state = 'ready'; view.statusText = '0 unresolved'; expect(view.statusSummary.textContent).toBe('Still loading');
   view.provisional = false; view.statusText = 'error is a note name, not a health signal'; expect(view.statusSummary.hidden).toBe(true);
-  view.report = { nodes: 4, edges: 2, indexed: 4, listed: 4, linksPending: false, provisional: false, unresolved: 3, duplicates: 0 }; view.statusText = 'details'; expect(view.statusSummary.textContent).toBe('4 notes2 edgesof 4 in vault'); expect(view.statusSummary.hidden).toBe(false); view.report = undefined;
+  view.report = { nodes: 4, edges: 2, indexed: 4, listed: 4, linksPending: false, provisional: false, unresolved: 3, duplicates: 0 }; view.statusText = 'details'; expect(view.statusSummary.textContent).toBe('4 notes2 edges'); expect(view.statusSummary.hidden).toBe(false); view.report = undefined;
   view.contentEl.dataset.state = 'error'; view.statusText = 'Projection refresh failed: synthetic missing file'; expect(view.statusSummary.textContent).toContain('synthetic missing file'); expect(view.statusSummary.textContent).not.toContain('Retry');
   view.contentEl.dataset.state = 'ready'; view.plugin.settings.projectionFile = 'synthetic.json'; view.statusText = 'aggregate'; expect(view.statusSummary.textContent).toContain('not verified');
   view.plugin.settings.projectionFile = ''; view.gpu = { available: false, reason: 'Synthetic renderer unavailable' }; view.statusText = 'fallback'; expect(view.statusSummary.textContent).toContain('Synthetic renderer unavailable'); expect(view.statusSummary.textContent).toContain('Use group member lists');

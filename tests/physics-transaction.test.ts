@@ -1479,7 +1479,7 @@ test('navigator filters lazily fetched titles and declared groups without graph 
   // The find box is debounced (80 ms); `type` waits past it.
   const type = async (value: string) => { input.value = value; input.oninput(); await Bun.sleep(100); };
   await type('beacon RECOVERY'); expect(card.querySelector('input')).toBe(input);
-  expect(rows().length).toBe(37); expect(card.textContent).toContain('37 of 221 connections'); expect(card.querySelectorAll('b').length).toBe(0);
+  expect(rows().length).toBe(37); expect(card.textContent).toContain('37 matching connections'); expect(card.querySelectorAll('b').length).toBe(0);
   expect(rows().every((row: any) => row.textContent.includes('<b>Recovery check</b>'))).toBe(true);
   // Search fetches each connection's title once; a refined query reuses them.
   expect(titles - lookups).toBe(221); await type('beacon recovery check'); expect(titles - lookups).toBe(221); expect(r.camera).toEqual(camera); expect(r.positions).toBe(positions); expect(r.selected).toBe(0); expect(f.actual()).toEqual(tiers);

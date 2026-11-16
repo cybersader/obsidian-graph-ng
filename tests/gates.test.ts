@@ -175,3 +175,16 @@ test('UI copy keeps the README Terminology glossary: no retired synonyms in src 
   expect(literals(`note(host, 'Then 2-hop.')`).some(s => retired.test(s))).toBe(true); expect(literals(`text: 'Edge-note size'`).some(s => retired.test(s))).toBe(true);
   expect(literals(`// neighbors in a comment`)).toEqual([]); expect(literals(`const neighbours = edges.get(focus);`).some(s => retired.test(s))).toBe(false);
 });
+test('no count reads "x of y": user-visible strings and templates never put a number over an unnamed denominator (owner rule)', () => {
+  // Each count says what it counts ("1,200 notes shown"); each difference is its own named row. Path joins and "Part 1 of key" stay legal.
+  const walk = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap(e => e.isDirectory() ? walk(path.join(dir, e.name)) : /\.ts$/.test(e.name) ? [path.join(dir, e.name)] : []);
+  const count = String.raw`\$\{[^{}]*\b(?:num|n|plural|toLocaleString|length|count|total|indexed|listed|matched|rows|visible\w*)\b[^{}]*\}`;
+  // Templates: a counted expression next to "of" or "/" and another expression. Literal text: digits either side.
+  const template = new RegExp(`${count}\\s*(?:of|/)\\s*\\$\\{|(?:\\bof|/)\\s*${count}`), digits = /\d\s*(?:\bof|\/)\s*\d/;
+  const literals = (line: string) => [...line.matchAll(/(['"`])((?:\\.|(?!\1).)*?)\1/g)].map(m => m[2]!);
+  const bad = (line: string) => !/^\s*(?:\/\/|\*|\/\*)/.test(line) && (template.test(line) || literals(line).some(s => digits.test(s)));
+  const offenders = walk(path.join(import.meta.dir, '..', 'src')).flatMap(file => fs.readFileSync(file, 'utf8').split('\n').flatMap((line, i) => bad(line) ? [`${path.basename(file)}:${i + 1}`] : []));
+  expect(offenders).toEqual([]);
+  for (const line of ['text: `${num(shown)} of ${num(total)}`', 'text: `${a.visible} / ${a.total}`', 'text: `of ${n(a.total)} in vault`', "text: '1,200 of 1,500'", 'x = `${found.length.toLocaleString()} of ${total.toLocaleString()} connections`']) expect(bad(line)).toBe(true);
+  for (const line of ['p = `${directory}/${name}.bin`', 'l = `${part} of ${g.key}`', 't = `${plural(shown, "note")} shown`', 't = `${n(hidden)} hidden`', 'const y = 3 / 2;', "// '16 of 20' in a comment"]) expect(bad(line)).toBe(false);
+});

@@ -25,9 +25,9 @@ export type PipelineRequest =
   | { kind: 'relationships'; edges: number[] };
 /** Cancellable, latest-wins evaluations: a newer request of the same kind supersedes the older. */
 export const evaluation = (r: { kind: string }): r is Extract<PipelineRequest, { kind: 'expression-count' | 'explore' | 'search' }> => r.kind === 'expression-count' || r.kind === 'explore' || r.kind === 'search';
-export interface ProjectResult { invalidSaved?: GenerationMeta; meta: GenerationMeta; nodes: number; edges: number; unresolved: number; quarantined: { path: string; id: string }[]; dropped?: Record<string, EdgeRuleCounts>; rows?: number; ruleNotes?: Record<string, number> }
-/** Per edge rule: drawn relationships and those dropped (missing target, duplicate-ID endpoint, excluded relationship notes). */
-export interface EdgeRuleCounts { drawn: number; missing: number; excluded: number; carriers: number }
+export interface ProjectResult { invalidSaved?: GenerationMeta; meta: GenerationMeta; nodes: number; edges: number; unresolved: number; quarantined: { path: string; id: string }[]; dropped?: Record<string, EdgeRuleCounts>; missed?: string[][]; rows?: number; ruleNotes?: Record<string, number> }
+/** Per edge rule: drawn relationships and those dropped (missing target, duplicate ID, relationship note drawn as a line). */
+export interface EdgeRuleCounts { drawn: number; missing: number; excluded: number; lines: number }
 export interface DetailResult { projection: RenderProjection; visible: Uint8Array; colors: Uint32Array; explore: ExploreResult; view: number }
 export interface ViewResult { explore: ExploreResult; colors: Uint32Array; groups: GroupProjection; view: number }
 export interface LayoutResult { positions: Float32Array; milliseconds: number; cached: boolean; /** all: every position came from a saved layout; some: saved positions, then a short relax. */ reused?: 'all' | 'some'; stored?: string }

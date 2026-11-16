@@ -20,11 +20,13 @@ import { yieldTask, sliced } from './core/scheduler';
 import { WorkerPipeline, LAYOUT_PRODUCER, currentDetailGeneration, type ProjectResult, type DetailResult, type LayoutResult, type ViewResult } from './pipeline';
 import { groupPages, page } from './core/group-page';
 import { ContributionPage, type ContributionContext } from './contribution-page';
-import { accounting, num, renderInformation, renderReadout, sum, type InformationReport } from './graph-information';
+import { accounting, num, plural, renderInformation, renderReadout, sum, type InformationReport } from './graph-information';
 import { canonicalExplore, loadSettings, settingsForSave, validateSettings, type Settings } from './settings';
 import { searchable } from './search';
 import { DetailRenderer, GroupRenderer, gpuStatus, type Renderer, type RenderView } from './renderer';
 declare const __LAYOUT_WORKER_SOURCE__: string;
+/** Notes read and still to read, for a loading message. */
+const left = (c: { indexed: number; listed: number }) => `${num(c.indexed)} read, ${num(c.listed - c.indexed)} left`;
 /** One message/check serves each boundary without dropping phase information. */
 function requireLayout(current: () => boolean, phase = '') { if (!current()) throw new Error(`Layout generation changed${phase}`); }
 function cleanupFailure(error: unknown, phase: string, cleanup: unknown) { return new Error(`${error}; ${phase} failed: ${cleanup}. Saved-state recovery uncertain; retry saving before closing.`); }
@@ -247,6 +249,7 @@ export class GraphView extends ItemView {
   private informationActions = {
     display: (nodes: boolean) => { setRelationshipDisplay(this.plugin, nodes).catch(e => new Notice(String(e))); },
     remove: (i: number) => { if (i < this.view.filters.length) this.setView({ ...this.view, filters: this.view.filters.filter((_, j) => j !== i) }); },
+    filter: (i: number) => this.explorePanel?.focusFilter(i),
   };
   private viewFeedback(message = '', retry?: () => void) {
     this.viewFeedbackText = message; this.explorePanel?.operation?.(message, retry);
@@ -437,7 +440,7 @@ export class GraphView extends ItemView {
             const cache = await this.plugin.pipeline.request<{ groups?: GroupProjection } | undefined>(revision, { kind: 'load', generation: saved });
             if (cache?.groups && current() && !this.predicate && !(this.view && viewNarrows(this.view))) {
               this.projection = undefined; this.positions = undefined; this.groupGraph = cache.groups; this.groupGeneration = -revision; this.viewGeneration = -1; this.viewSource = this.sourceKey(null); this.members.clear(); this.contributions.clear(); this.showGroups(true);
-              this.statusText = `Showing cached groups while verifying ${this.plugin.adapter.coverage().indexed} of ${this.plugin.adapter.coverage().listed} notes. Filters and member lists are provisional.`;
+              this.statusText = `Showing cached groups while verifying notes: ${left(this.plugin.adapter.coverage())}. Filters and member lists are provisional.`;
               this.contentEl.dataset.cachedPaintMs = String(performance.now() - start); await yieldTask();
             }
           } catch { await this.plugin.store.quarantine(saved.meta); }
@@ -448,7 +451,7 @@ export class GraphView extends ItemView {
         if (!current()) return;
         await this.plugin.pipeline.request(revision, { kind: 'rows', ...batch });
         const c = this.plugin.adapter.coverage();
-        this.statusText = `${this.groupGraph ? 'Showing cached groups while verifying' : 'Reading properties:'} ${c.indexed} of ${c.listed} notes. Filters and member lists are provisional.`;
+        this.statusText = `${this.groupGraph ? 'Showing cached groups while verifying notes:' : 'Reading properties:'} ${left(c)}. Filters and member lists are provisional.`;
       }
       this.plugin.ingestedHash = hashes.ingestHash;
       this.plugin.pipeline.onGroups = event => {
@@ -467,7 +470,7 @@ export class GraphView extends ItemView {
       if (result.invalidSaved) await this.plugin.store.quarantine(result.invalidSaved);
       const coverage = this.plugin.adapter.coverage(); this.provisional = !this.plugin.adapter.factsComplete();
       this.contentEl.dataset.verified = String(!this.provisional);
-      const report: InformationReport = this.report = { nodes: result.nodes, edges: result.edges, listed: coverage.listed, linksPending: this.plugin.adapter.linksPending(), provisional: this.provisional, unresolved: result.unresolved, duplicates: result.quarantined.length, dropped: result.dropped, rows: result.rows, ruleNotes: result.ruleNotes, rules: settings.declaration.edges.map(e => e.name), relationshipNodes: settings.declaration.display.reifiedAsNodes, ...this.vaultCount(settings.declaration) };
+      const report: InformationReport = this.report = { nodes: result.nodes, edges: result.edges, listed: coverage.listed, linksPending: this.plugin.adapter.linksPending(), provisional: this.provisional, unresolved: result.unresolved, duplicates: result.quarantined.length, dropped: result.dropped, missed: result.missed, rows: result.rows, ruleNotes: result.ruleNotes, rules: settings.declaration.edges.map(e => e.name), relationshipNodes: settings.declaration.display.reifiedAsNodes, ...this.vaultCount(settings.declaration) };
       this.statusText = 'Building layout in worker…';
       this.contentEl.dataset.nodes = String(result.nodes); this.contentEl.dataset.edges = String(result.edges);
       await yieldTask();
@@ -524,7 +527,7 @@ export class GraphView extends ItemView {
       this.renderer = new GroupRenderer(this.stage, selected, settings, id => this.drill(id), edge => this.edgeList(edge, projection, generation, source), id => this.groupColor(Number(id)), ring);
       if (back) this.stage.createEl('button', { cls: 'graph-ng-back-chip', text: 'Back to ' + back.name }).onclick = () => { this.pendingCamera = back.camera; this.pendingFocus = back; void this.showDetails(); };
       previous.disabled = canvasPage === 0; next.disabled = (canvasPage + 1) * settings.groupCanvasPageSize >= projection.groups.length;
-      label.textContent = ` Canvas groups ${canvasPage * settings.groupCanvasPageSize + 1}–${Math.min((canvasPage + 1) * settings.groupCanvasPageSize, projection.groups.length)} / ${projection.groups.length} `;
+      label.textContent = ` Canvas groups ${canvasPage * settings.groupCanvasPageSize + 1}–${Math.min((canvasPage + 1) * settings.groupCanvasPageSize, projection.groups.length)}, ${projection.groups.length} total `;
       this.contentEl.dataset.canvasGroups = String(selected.groups.length);
     };
     previous.onclick = () => { canvasPage--; draw(); }; next.onclick = () => { canvasPage++; draw(); }; draw();
@@ -570,7 +573,7 @@ export class GraphView extends ItemView {
     const draw = () => {
       list.empty(); for (const item of page(items, index, size)) render(item, list);
       previous.disabled = index === 0; next.disabled = (index + 1) * size >= items.length;
-      label.textContent = ` ${items.length ? index * size + 1 : 0}–${Math.min((index + 1) * size, items.length)} / ${items.length} `;
+      label.textContent = ` ${items.length ? index * size + 1 : 0}–${Math.min((index + 1) * size, items.length)}, ${items.length} total `;
     };
     previous.onclick = () => { index--; draw(); }; next.onclick = () => { index++; draw(); }; draw();
   }
@@ -582,7 +585,7 @@ export class GraphView extends ItemView {
     const draw = () => {
       const query = search.value.trim().toLocaleLowerCase(); rows.empty();
       const filtered = query ? items.filter(item => path(item).toLocaleLowerCase().includes(query)) : items;
-      rows.createDiv({ text: `${num(filtered.length)} of ${num(items.length)} available members`, cls: 'graph-ng-explore-note' });
+      rows.createDiv({ text: plural(filtered.length, query ? 'matching member' : 'available member'), cls: 'graph-ng-explore-note' });
       this.paginate(filtered, (item, host) => {
         const full = path(item), button = host.createEl('button', { cls: 'graph-ng-member', attr: { title: full, 'aria-label': `Open ${full}` } });
         button.createSpan({ text: full.split('/').pop()!.replace(/\.md$/, '') });
@@ -686,7 +689,7 @@ export class GraphView extends ItemView {
     const previous = controls.createEl('button', { text: 'Previous page' }), next = controls.createEl('button', { text: 'Next page' });
     previous.disabled = pager.offset === 0; next.disabled = pager.offset + pager.size >= total;
     previous.onclick = () => pager.move(-1, this.contributionContext()); next.onclick = () => pager.move(1, this.contributionContext());
-    controls.createSpan({ text: ` ${total ? pager.offset + 1 : 0}–${Math.min(pager.offset + pager.size, total)} / ${total} ` });
+    controls.createSpan({ text: ` ${total ? pager.offset + 1 : 0}–${Math.min(pager.offset + pager.size, total)}, ${total} total ` });
     for (const r of items) { const item = root.createDiv({ cls: 'graph-ng-contribution' }); item.createSpan({ text: `${r.source} → ${r.target} [${r.type}] ` }); if (r.carrier) item.createEl('button', { text: r.carrier }).onclick = () => this.openPath(r.carrier!); }
   }
   /** Prepare CPU coordinates, persist, then commit on the existing renderer/context. */

@@ -41,6 +41,14 @@
 .graph-ng-coverage-state { font-weight:var(--font-semibold,600); }
 .graph-ng-stat-actions, .graph-ng-stat-warning { display:flex; align-items:center; gap:6px; }
 .graph-ng-stat-warning { color:var(--text-warning); }
+/* A breakdown row that leads to its cause: a full-width button that still reads as a row. */
+button.graph-ng-stat { width:100%; height:auto; padding:0; text-align:start; font:inherit; color:inherit; background:none; box-shadow:none; border:0; border-radius:var(--radius-s,4px); cursor:pointer; }
+button.graph-ng-stat:hover { background:var(--background-modifier-hover); }
+button.graph-ng-stat > .graph-ng-stat-label { text-decoration:underline dotted var(--text-faint); text-underline-offset:3px; }
+.graph-ng-stat-list > summary { list-style:none; cursor:pointer; }
+.graph-ng-stat-list > summary::-webkit-details-marker { display:none; }
+.graph-ng-stat-list > .graph-ng-stat-sub { overflow-wrap:anywhere; }
+.graph-ng-chip.is-focused { border-color:var(--interactive-accent); box-shadow:0 0 0 1px var(--interactive-accent); }
 .graph-ng-filter-sentence { font-size:var(--font-ui-small); font-weight:var(--font-semibold,600); }
 .graph-ng-filter-sentence code { font-weight:normal; }
 .graph-ng-chip > .graph-ng-count { padding:0 4px; }

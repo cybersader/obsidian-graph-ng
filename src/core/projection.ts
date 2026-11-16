@@ -27,8 +27,11 @@ export interface Projection {
   folders: Map<string, [number, number]>;
   unresolved: number;
   quarantined: { path: string; id: string }[];
-  /** Per edge rule: endpoints absent, endpoints excluded as duplicates, and relationship notes themselves excluded. */
-  dropped?: Record<string, { drawn: number; missing: number; excluded: number; carriers: number }>;
+  /** Per edge rule, relationships not drawn: target note missing, an endpoint (or the relationship note) has a duplicate ID,
+   * or an endpoint is a relationship note drawn as a line. */
+  dropped?: Record<string, { drawn: number; missing: number; excluded: number; lines: number }>;
+  /** The first 100 relationships with a missing target: rule, source path, target reference. */
+  missed?: string[][];
   /** Per reified rule: kept relationship notes, each counted once under the first rule it satisfies. */
   ruleNotes?: Record<string, number>;
   /** Declared hierarchy, when bound: per node, the resolved parents in CSR form (self and
@@ -68,15 +71,15 @@ export function buildProjection(input: readonly FactRow[], d: GraphDeclaration):
   const quarantined = sorted.flatMap((r, i) => excluded.has(i) ? [{ path: r.path, id: rowIds[i]! }] : []);
   const rows = sorted.filter((_, i) => !excluded.has(i));
   const gone = new Set(quarantined.flatMap(q => [q.id, q.path])), dropped: NonNullable<Projection['dropped']> = Object.create(null);
-  const tally = (rule: string) => dropped[rule] ??= { drawn: 0, missing: 0, excluded: 0, carriers: 0 };
-  const miss = (rule: string, ...refs: string[]) => { const t = tally(rule); if (refs.some(r => gone.has(r))) t.excluded++; else t.missing++; };
-  // A quarantined source loses its inline/producer relationships too; each counts once, whatever its destination.
-  const carries = (r: FactRow) => !!relationshipRule(r, d);
-  sorted.forEach((r, i) => { if (excluded.has(i)) for (const e of d.edges) if (e.kind === 'reified' && has(r, e.sourceProperty) && has(r, e.targetProperty)) tally(e.name).carriers++;
-    else if (d.display.reifiedAsNodes || !carries(r)) tally(e.name).excluded += e.kind === 'inline' ? values(r.properties[e.key]).length : e.kind === 'producer' ? [...(r.links?.[e.producer] ?? [])].length : 0; });
+  const tally = (rule: string) => dropped[rule] ??= { drawn: 0, missing: 0, excluded: 0, lines: 0 }, missed: string[][] = [];
+  const miss = (rule: string, from: string, ...refs: string[]) => { const t = tally(rule); if (refs.some(r => gone.has(r))) t.excluded++; else if (refs.some(r => carriers.has(r))) t.lines++; else { t.missing++; if (missed.length < 100) missed.push([rule, from, refs.join(', ')]); } };
+  const own = (r: FactRow, e: GraphDeclaration['edges'][number]) => e.kind === 'inline' ? values(r.properties[e.key]).length : e.kind === 'producer' ? r.links?.[e.producer]?.length ?? 0 : values(r.properties[e.sourceProperty]).length * values(r.properties[e.targetProperty]).length;
+  // A quarantined source loses its relationships too; each counts once, whatever its destination.
+  sorted.forEach((r, i) => { if (excluded.has(i)) for (const e of d.edges) if (e.kind !== 'reified' || has(r, e.sourceProperty) && has(r, e.targetProperty)) tally(e.name).excluded += own(r, e); });
   const rowIndex = new Map(rows.map((row, i) => [row.path, i]));
+  // Relationship notes by path, and in Lines also by ID: a reference to one is not a missing note.
   const carriers = new Set<string>(), ruleNotes: Record<string, number> = Object.create(null);
-  for (const r of rows) { const e = relationshipRule(r, d); if (e) { carriers.add(r.path); ruleNotes[e.name] = (ruleNotes[e.name] ?? 0) + 1; } }
+  for (const r of rows) { const e = relationshipRule(r, d); if (e) { carriers.add(r.path); if (!d.display.reifiedAsNodes) carriers.add(rowIds[allPaths.get(r.path)!]!); ruleNotes[e.name] = (ruleNotes[e.name] ?? 0) + 1; } }
   const nodes = rows.filter(r => d.display.reifiedAsNodes || !carriers.has(r.path));
   const paths = nodes.map(r => r.path), nodeIndex = new Map(paths.map((x, i) => [x, i]));
   const references = new Map<string, number>(), identities: string[] = [];
@@ -102,16 +105,17 @@ export function buildProjection(input: readonly FactRow[], d: GraphDeclaration):
       const t = types[0] ?? e.type ?? e.name;
       for (const a of values(r.properties[e.sourceProperty])) for (const b of values(r.properties[e.targetProperty])) {
         const s = references.get(a), tnode = references.get(b);
-        if (s === undefined || tnode === undefined) { unresolved++; miss(e.name, ...(s === undefined ? [a] : []), ...(tnode === undefined ? [b] : [])); continue; }
+        if (s === undefined || tnode === undefined) { unresolved++; miss(e.name, r.path, ...(s === undefined ? [a] : []), ...(tnode === undefined ? [b] : [])); continue; }
         tally(e.name).drawn++;
         const h = +!!e.highlight;
         if (d.display.reifiedAsNodes) { edge(s, nodeIndex.get(r.path), t, rowIndex.get(r.path)!, h); edge(nodeIndex.get(r.path), tnode, t, rowIndex.get(r.path)!, h); }
         else edge(s, tnode, t, rowIndex.get(r.path)!, h);
       }
-    } else if (e.kind === 'inline' && nodeIndex.has(r.path)) {
-      for (const ref of values(r.properties[e.key])) { const t = references.get(ref); if (t === undefined) miss(e.name, ref); else tally(e.name).drawn++; edge(nodeIndex.get(r.path), t, e.type, NONE); }
-    } else if (e.kind === 'producer' && nodeIndex.has(r.path)) {
-      for (const ref of [...(r.links?.[e.producer] ?? [])].sort(compare)) { const t = nodeIndex.get(ref); if (t === undefined) miss(e.name, ref); else tally(e.name).drawn++; edge(nodeIndex.get(r.path), t, e.type, NONE); }
+    } else if (e.kind !== 'reified' && !nodeIndex.has(r.path)) { if (own(r, e)) tally(e.name).lines += own(r, e); }
+    else if (e.kind === 'inline') {
+      for (const ref of values(r.properties[e.key])) { const t = references.get(ref); if (t === undefined) miss(e.name, r.path, ref); else tally(e.name).drawn++; edge(nodeIndex.get(r.path), t, e.type, NONE); }
+    } else if (e.kind === 'producer') {
+      for (const ref of [...(r.links?.[e.producer] ?? [])].sort(compare)) { const t = nodeIndex.get(ref); if (t === undefined) miss(e.name, r.path, ref); else tally(e.name).drawn++; edge(nodeIndex.get(r.path), t, e.type, NONE); }
     }
   }
   const offsets = new Uint32Array(nodes.length + 1);
@@ -147,7 +151,7 @@ export function buildProjection(input: readonly FactRow[], d: GraphDeclaration):
   const ik = d.interest?.property;
   return { up, interest: ik === undefined ? undefined : interestColumn(nodes.map(r => r.properties[ik])), tint: tint.some(Boolean) ? Uint8Array.from(tint) : undefined, paths, identities, carrierPaths: rows.map(r => r.path), offsets, targets,
     source: Uint32Array.from(src), target: Uint32Array.from(dst), type: tc.codes, carrier: Uint32Array.from(carrier), rule: Uint32Array.from(rule), carrierNodes: Uint32Array.from(nodes, r => carriers.has(r.path) ? rowIndex.get(r.path)! + 1 : 0), types: tc.values,
-    columns, groups, folders, unresolved, quarantined, dropped, ruleNotes };
+    columns, groups, folders, unresolved, quarantined, dropped, missed, ruleNotes };
 }
 /** Rank-normalise finite numbers to [0, 1] (scale-free, outlier-proof); anything else is NaN. */
 export function interestColumn(values: readonly unknown[]): Float32Array {

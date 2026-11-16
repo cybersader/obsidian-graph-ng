@@ -4,7 +4,7 @@ import { ControlElement } from './support/controls-dom';
 import { buildProjection, type FactRow } from '../src/core/projection';
 import { carrierHiddenBy, emptyView, explore, hiddenBy, relationshipNotes } from '../src/core/explore';
 import type { GraphDeclaration } from '../src/core/declaration';
-import { accounting, renderInformation, renderReadout, type InformationReport } from '../src/graph-information';
+import { accounting, edgeAccounting, renderInformation, renderReadout, type InformationReport } from '../src/graph-information';
 import { hiddenClause, setToggles, toggleable, toggledValues } from '../src/filter-summary';
 
 const d: GraphDeclaration = {
@@ -38,8 +38,8 @@ test('coverage accounts for every markdown note once, every category non-zero, a
   expect(a.parts.map(x => [x.icon, x.label, x.count])).toEqual([
     ['circle-dot', 'Shown as dots', 3], // n0, n6, n9
     ['spline', 'Drawn as crosswalk lines', 4],
-    ['filter', 'Hidden where kind exists', 3],
-    ['filter', 'Hidden where team is “B”', 4], // n1, n4, n7, n10; s2 already hidden
+    ['filter', 'Hidden by filter: kind exists', 3],
+    ['filter', 'Hidden by filter: team is “B”', 4], // n1, n4, n7, n10; s2 already hidden
     ['search', 'Hidden by search', 1], // other3
     ['eye-off', 'In hidden groups or colors', 4], // n2, n5, n8, n11
     ['folder-x', 'In excluded folder _archive', 3], ['folder-x', 'In excluded folder Templates', 1],
@@ -48,7 +48,7 @@ test('coverage accounts for every markdown note once, every category non-zero, a
   expect(a.parts.reduce((s, x) => s + x.count, 0)).toBe(total); expect(total).toBe(28);
   expect(a.complete).toBe(false); expect(a.dots).toBe(e.visible.reduce((s, v) => s + v, 0)); expect(a.lines).toBe(e.visibleEdges);
   const host: any = new ControlElement(); renderInformation(host, '', 'ready', r, e);
-  expect(host.querySelector('.graph-ng-coverage-state').textContent).toBe('Still loading: 21 of 23 notes read');
+  expect(host.querySelector('.graph-ng-coverage-state').textContent).toBe('Still loading: 2 notes left to read');
   expect(host.querySelector('.graph-ng-stat-total').textContent).toBe('Markdown notes in vault28');
   // Removed notes are a signed part so the sum still matches.
   const shrunk = accounting({ ...r, vault: total - 3 }, e);
@@ -67,13 +67,67 @@ test('a complete, unfiltered graph says all notes are accounted for; lines break
   expect(stats.slice(0, 3)).toEqual([['circle-dot', 'Shown as dots', '15'], ['spline', 'Drawn as crosswalk lines', '4'], ['files', 'Markdown notes in vault', '19']]);
   expect(stats).toContainEqual(['spline', 'crosswalk edges', String(e.ruleVisible[0])]);
   expect(stats).toContainEqual(['spline', 'links edges', String(e.ruleVisible[1])]);
-  expect(stats).toContainEqual(['unlink', 'links: target note missing', '1']);
+  expect(stats).toContainEqual(['unlink', 'Target note missing', '1']);
   expect(e.ruleVisible[0]! + e.ruleVisible[1]!).toBe(e.visibleEdges);
-  // The canvas readout: dots, lines and the vault total, no middle dots.
+  // The canvas readout: notes and edges, no vault total and no middle dots.
   const readout: any = new ControlElement(); renderReadout(readout, a);
-  expect(readout.querySelectorAll('.graph-ng-readout').map((x: any) => x.textContent)).toEqual(['15 notes', `${e.visibleEdges} edges`, 'of 19 in vault']);
+  expect(readout.querySelectorAll('.graph-ng-readout').map((x: any) => x.textContent)).toEqual(['15 notes', `${e.visibleEdges} edges`]);
   expect(readout.querySelectorAll('svg').map((x: any) => x.getAttribute('data-icon'))).toEqual(['circle-dot', 'spline']);
-  expect(readout.textContent).not.toContain('·');
+  expect(readout.textContent).not.toContain('·'); expect(readout.textContent).not.toContain(' of ');
+  // Something hidden: the readout names how many notes the view hides instead of the edges.
+  const filtered = explore(p, d, { ...emptyView(), filters: [{ kind: 'expr', expr: '!file.hasProperty("kind")' }] }, new Uint32Array(p.paths.length), 0, { facetValues: 50 }), shown: any = new ControlElement();
+  renderReadout(shown, accounting(r, filtered));
+  expect(shown.querySelectorAll('.graph-ng-readout').map((x: any) => x.textContent)).toEqual(['12 notes', '3 hidden']);
+  expect(shown.querySelectorAll('svg').map((x: any) => x.getAttribute('data-icon'))).toEqual(['circle-dot', 'eye-off']);
+});
+
+test('every edge found is drawn or not drawn for one named reason, every reason is non-zero, and the rows sum exactly', () => {
+  // Lines display. Teams group the notes; C is hidden, B collapsed, crosswalk lines hidden, a filter hides the kind note and a search for "n" hides "other".
+  const note = (name: string, team: string, refs: string[] = [], more: Record<string, unknown> = {}) => ({ path: `N/${name}.md`, properties: { id: name === 'other' ? 'o:1' : `n:${name}`, team, refs, ...more } });
+  const rows: FactRow[] = [
+    note('a0', 'A', ['n:k0', 'e:0']), // endpoint hidden by the filter; a relationship note drawn as a line
+    note('a1', 'A', ['o:1']), // endpoint hidden by search
+    note('a2', 'A', ['n:c0']), // endpoint in hidden group C
+    note('a3', 'A', ['n:a4']), // drawn
+    note('a4', 'A'), note('a5', 'A', ['n:missing']), // target note missing
+    note('b0', 'B', ['n:b1']), note('b1', 'B'), // inside collapsed group B
+    note('c0', 'C'), note('other', 'A'),
+    note('k0', 'A', ['n:c0'], { kind: 'set' }), // both endpoints hidden: the filter, the first reason, wins
+    { path: 'E/e0.md', properties: { id: 'e:0', from: 'n:a4', to: 'n:a5', refs: ['n:a1'] } }, // crosswalk (hidden type); its own link starts at a line
+    { path: 'Dup/d1.md', properties: { id: 'dup', refs: ['n:a0'] } }, { path: 'Dup/d2.md', properties: { id: 'dup', refs: ['n:a0'] } }, // duplicate-ID sources
+  ];
+  const p = buildProjection(rows, d), filters = [{ kind: 'expr' as const, expr: '!file.hasProperty("kind")' }];
+  const e = explore(p, d, { ...emptyView(), filters, query: 'n', hiddenGroups: ['"C"'], hiddenTypes: ['crosswalk'], collapsedGroups: ['"B"'] }, new Uint32Array(p.paths.length), 0, { facetValues: 50 });
+  expect(e.edgeHidden).toEqual([2, 1, 1, 1, 1]); expect(e.visibleEdges).toBe(1); expect(p.source.length).toBe(7);
+  expect(p.dropped).toEqual({ links: { drawn: 6, missing: 1, excluded: 2, lines: 2 }, crosswalk: { drawn: 1, missing: 0, excluded: 0, lines: 0 } });
+  expect(p.missed).toEqual([['links', 'N/a5.md', 'n:missing']]);
+  const r: InformationReport = { nodes: p.paths.length, edges: p.source.length, listed: rows.length, linksPending: false, provisional: false, unresolved: p.unresolved, duplicates: p.quarantined.length,
+    dropped: p.dropped, missed: p.missed, rows: rows.length, ruleNotes: p.ruleNotes, rules: d.edges.map(x => x.name), vault: rows.length, excluded: [] };
+  const x = edgeAccounting(r, e);
+  expect(x.parts.map(q => [q.label, q.count])).toEqual([
+    ['Endpoint hidden by filter: kind exists', 2], ['Endpoint hidden by search', 1], ['Endpoint in a hidden group or color', 1], ['Relationship type hidden', 1],
+    ['Inside a collapsed group', 1], ['Target note missing', 1], ['Endpoint has a duplicate ID', 2], ['Endpoint is a relationship note drawn as a line', 2],
+  ]);
+  expect(x.parts.every(q => q.count > 0)).toBe(true); expect(x.drawn).toBe(1);
+  expect(x.drawn + x.parts.reduce((s, q) => s + q.count, 0)).toBe(x.total); expect(x.total).toBe(p.source.length + 1 + 2 + 2);
+  // Rendered: drawn plus every reason row equals Edges found; each reason with a cause is a button to it.
+  const calls: unknown[] = [], host: any = new ControlElement();
+  renderInformation(host, '', 'ready', r, e, { display: v => calls.push(['display', v]), filter: i => calls.push(['filter', i]) });
+  const kids = host.children, edgeRows = kids[kids.findIndex((h: any) => h.tagName === 'H4' && h.textContent === 'Edges') + 1];
+  const value = (row: any) => Number(row.querySelector('.graph-ng-count').textContent.replace(/,/g, ''));
+  const rowsOf = edgeRows.querySelectorAll('.graph-ng-stat').filter((s: any) => !s.classes.has('graph-ng-stat-sub') && s.querySelector('.graph-ng-stat-label').textContent !== 'Layout');
+  const found = rowsOf.find((s: any) => s.classes.has('graph-ng-stat-total'));
+  expect(found.querySelector('.graph-ng-stat-label').textContent).toBe('Edges found');
+  expect(rowsOf.filter((s: any) => s !== found).reduce((s: number, row: any) => s + value(row), 0)).toBe(value(found));
+  const button = (label: string) => rowsOf.find((s: any) => s.querySelector('.graph-ng-stat-label').textContent === label);
+  button('Endpoint hidden by filter: kind exists').click(); button('Endpoint hidden by search').click(); button('Inside a collapsed group').click(); button('Endpoint is a relationship note drawn as a line').click();
+  expect(calls).toEqual([['filter', 0], ['filter', -1], ['filter', 1], ['display', true]]);
+  for (const label of ['Endpoint hidden by filter: kind exists', 'Relationship type hidden']) expect(button(label).tagName).toBe('BUTTON');
+  // The missing-target row opens to the relationships it counts.
+  const missing = host.querySelector('.graph-ng-stat-list'); expect(missing.tagName).toBe('DETAILS');
+  expect(missing.querySelector('summary').textContent).toBe('Target note missing1'); expect(host.textContent).not.toMatch(/\d\s*(?:of|\/)\s*\d/); expect(missing.textContent).toContain('N/a5.md → n:missing (links)');
+  // The notes breakdown's filter row leads to its chip too.
+  host.querySelector('.graph-ng-coverage').querySelectorAll('.graph-ng-stat').find((s: any) => s.textContent.startsWith('Hidden by filter')).click(); expect(calls.at(-1)).toEqual(['filter', 0]);
 });
 
 test('hidden clauses read after "Hiding N notes"', () => {

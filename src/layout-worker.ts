@@ -25,7 +25,7 @@ let complete = true, projectionRevision = -1, colors: Uint32Array = new Uint32Ar
 /** Every applied view (project, regroup, filter, derived source) gets its own generation;
  * member/contribution reads must name it, so no lookup can cross groupings. */
 let viewGeneration = 0;
-function applyView(view: ExploreView, prepared?: { base: Uint8Array; group: DictionaryColumn; hidden: number[] }) {
+function applyView(view: ExploreView, prepared?: { base: Uint8Array; group: DictionaryColumn; hidden: number[]; why: Uint8Array }) {
   viewGeneration++;
   const filters = config.predicate ? [...view.filters, config.predicate] : view.filters;
   explored = explore(projection, config.declaration, { ...view, filters }, colors, config.groupLevel, { facetValues: config.facetValues ?? 50 }, prepared);
@@ -41,9 +41,9 @@ function applyView(view: ExploreView, prepared?: { base: Uint8Array; group: Dict
 }
 let carrierCache: [Projection, Projection | undefined] | undefined;
 /** Prepare expression work cooperatively; only commit config/view state on success. */
-function* viewSteps(view: ExploreView, rules: PipelineConfig['declaration']['colors'] | undefined): Generator<void, { base: Uint8Array; group: DictionaryColumn; colors: Uint32Array; hidden: number[] }> {
-  const base = new Uint8Array(projection.paths.length).fill(1), hidden: number[] = [];
-  for (const predicate of [...view.filters, ...(config.predicate ? [config.predicate] : [])]) { hidden.push(hide(base, yield* filterSteps(projection, lowerPredicate(predicate)))); yield; }
+function* viewSteps(view: ExploreView, rules: PipelineConfig['declaration']['colors'] | undefined): Generator<void, { base: Uint8Array; group: DictionaryColumn; colors: Uint32Array; hidden: number[]; why: Uint8Array }> {
+  const base = new Uint8Array(projection.paths.length).fill(1), why = new Uint8Array(base.length), hidden: number[] = [];
+  for (const predicate of [...view.filters, ...(config.predicate ? [config.predicate] : [])]) { hidden.push(hide(base, yield* filterSteps(projection, lowerPredicate(predicate)), why, hidden.length + 1)); yield; }
   let nextColors = colors;
   if (rules) {
     nextColors = new Uint32Array(base.length).fill(rules.length);
@@ -54,7 +54,7 @@ function* viewSteps(view: ExploreView, rules: PipelineConfig['declaration']['col
   }
   const g = view.group;
   const group = g && (g.from === 'expr' || g.from === 'derived') ? yield* groupSteps(projection, lowerGroup(g)) : groupColumn(projection, config.declaration, g, config.groupLevel);
-  return { base, group, colors: nextColors, hidden };
+  return { base, group, colors: nextColors, hidden, why };
 }
 let declarationHash = '', layoutHash = '', hashes: Uint32Array = new Uint32Array();
 /** Same source, producer and layout parameters: positions are valid warm-start hints even when only
@@ -122,7 +122,7 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       hashes = edgeHashes(projection);
       let invalidSaved;
       if (saved && complete) { const current = new Set(projection.identities); if (saved.identities.some(id => !current.has(id))) { if (matches(saved.meta)) invalidSaved = saved.meta; saved = undefined; } }
-      return { invalidSaved, meta, nodes: projection.paths.length, edges: projection.source.length, unresolved: projection.unresolved, quarantined: projection.quarantined, dropped: projection.dropped, rows: projection.carrierPaths.length + projection.quarantined.length, ruleNotes: projection.ruleNotes };
+      return { invalidSaved, meta, nodes: projection.paths.length, edges: projection.source.length, unresolved: projection.unresolved, quarantined: projection.quarantined, dropped: projection.dropped, missed: projection.missed, rows: projection.carrierPaths.length + projection.quarantined.length, ruleNotes: projection.ruleNotes };
     }
     case 'detail': {
       // Copies are made in the worker only: the renderer borrows transferred buffers;

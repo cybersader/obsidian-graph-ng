@@ -170,10 +170,10 @@ test('find box debounces typing: one repaint per pause, not per keystroke', () =
   expect(timers.map(t => t.ms)).toEqual([NAV_DEBOUNCE_MS]); expect(NAV_DEBOUNCE_MS).toBe(80);
   expect(r.status()).toBe('120 direct connections in 3 groups'); expect(r.rows()).toHaveLength(0);
   r.flush();
-  expect(r.status()).toBe('32 of 120 connections'); expect(r.rows()).toHaveLength(32);
+  expect(r.status()).toBe('32 matching connections'); expect(r.rows()).toHaveLength(32);
   // A redraw while typing is pending keeps the typed text instead of dropping it.
   r.type('id-12'); r.card.render(); expect(timers).toHaveLength(0);
-  expect(r.root.tag('input')[0]!.value).toBe('id-12'); expect(r.status()).toBe('2 of 120 connections');
+  expect(r.root.tag('input')[0]!.value).toBe('id-12'); expect(r.status()).toBe('2 matching connections');
 });
 
 test('matches are one flat list of 50 rows with their group, paged by "Show 50 more"; clearing restores the sections', () => {

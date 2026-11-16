@@ -294,7 +294,7 @@ export class ConnectionCard {
     list.textContent = ''; list.scrollTop = 0; this.rows = []; this.size = undefined;
     if (searching) {
       const found = filterConnections(sections, this.navQuery, this.title), shown = this.navShown;
-      this.navStatus!.textContent = `${found.length.toLocaleString()} of ${total.toLocaleString()} connections`;
+      this.navStatus!.textContent = `${found.length.toLocaleString()} matching connection${found.length === 1 ? '' : 's'}`;
       if (!found.length) list.append(el('div', 'No matching connections. Try another name, ID or group.', 'graph-ng-explore-note'));
       for (const entry of found.slice(0, shown)) list.append(this.row(entry, true));
       if (found.length > shown) list.append(button(`Show ${Math.min(ROWS, found.length - shown)} more`, 'Show more matching connections', () => {

@@ -32,15 +32,14 @@ test('graph information renders icon stat rows, a plain-English issues list and 
   const { ControlElement } = await import('./support/controls-dom');
   const { renderInformation } = await import('../src/graph-information');
   const host: any = new ControlElement();
-  const report: any = { nodes: 16121, edges: 49534, indexed: 90, listed: 100, linksPending: true, provisional: true, unresolved: 1, duplicates: 2, rows: 100, rules: ['crosswalk'], dropped: { crosswalk: { drawn: 10, missing: 2, excluded: 1, carriers: 3 } } };
+  const report: any = { nodes: 16121, edges: 49534, indexed: 90, listed: 100, linksPending: true, provisional: true, unresolved: 1, duplicates: 2, rows: 100, rules: ['crosswalk'], dropped: { crosswalk: { drawn: 10, missing: 2, excluded: 1, lines: 0 } } };
   renderInformation(host, 'Building layout in worker…', 'ready', report);
   const rows = host.querySelectorAll('.graph-ng-stat').map((t: any) => [t.children[0].children[0].getAttribute('data-icon'), t.children[1].textContent, t.children[2].textContent]);
   expect(rows).toEqual([['circle-dot', 'Shown as dots', '16,121'], ['copy', 'Duplicate IDs, left out', '2'], ['files', 'Markdown notes in vault', '16,123'], ['spline', 'Edges drawn', '49,534'],
-    ['unlink', 'crosswalk: target note missing', '2'], ['copy', 'crosswalk: endpoint has a duplicate ID', '1'], ['timer', 'Layout', 'Building…']]);
+    ['unlink', 'Target note missing', '2'], ['copy', 'Endpoint has a duplicate ID', '1'], ['sigma', 'Edges found', '49,537'], ['timer', 'Layout', 'Building…']]);
   expect(host.querySelectorAll('.graph-ng-count').length).toBe(rows.length);
-  const issues = host.querySelectorAll('li').map((li: any) => li.children[0].textContent);
-  // Issues list only what the breakdown does not: loading is the coverage line, duplicate IDs a breakdown row with its fix.
-  expect(issues).toEqual(['Links pending', '1 unresolved link']);
+  // Issues list only what the breakdown does not: loading is the coverage line, duplicate IDs and missing targets are breakdown rows.
+  expect(host.querySelector('.graph-ng-explore-note').textContent).toBe('Links pending: link targets are still being resolved.');
   expect(host.querySelector('.graph-ng-coverage-state').textContent).toBe('Still loading properties and links');
   expect(host.querySelectorAll('.graph-ng-stat-sub').map((x: any) => x.textContent)).toContain('These notes share an ID with another note. Give each note a unique ID to include it.');
   expect(host.textContent).not.toContain('Properties loaded'); expect(host.textContent).not.toContain('Partial graph');
