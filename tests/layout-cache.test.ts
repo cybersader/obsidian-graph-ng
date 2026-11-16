@@ -225,3 +225,24 @@ test('known miss: deleting or renaming a note recomputes from scratch (ADR-0004 
     expect(deleted.text).toMatch(/^Computed layout in/);
   } finally { app.dispose(); }
 });
+
+test('browser runtime without Node Buffer: the cache writes, and a reload is an exact hit; the plugin never touches Buffer', async () => {
+  // Browser-native Obsidian has no Node Buffer. Any access from the store, layout or view code throws.
+  const own = Object.getOwnPropertyDescriptor(globalThis, 'Buffer');
+  Object.defineProperty(globalThis, 'Buffer', { configurable: true, get() { throw new ReferenceError('Buffer is not defined'); } });
+  /** A disk that, like a browser adapter, accepts only a plain ArrayBuffer and returns one. */
+  class BrowserDisk extends MemoryAdapter {
+    override async writeBinary(p: string, b: ArrayBuffer) { expect(Object.getPrototypeOf(b)).toBe(ArrayBuffer.prototype); return super.writeBinary(p, b); }
+  }
+  try {
+    const disk = new BrowserDisk(), links = graph(); let cold: Float32Array;
+    const first = await boot(disk, links);
+    try { const r = await first.open(); expect(r.cacheError).toBe(''); expect(r.layout.cached).toBe(false); cold = r.positions; } finally { first.dispose(); }
+    expect(manifests(disk)).toHaveLength(1);
+    const reload = await boot(disk, links);
+    try {
+      const r = await reload.open();
+      expect(r.text).toBe('Reused saved layout'); expect(r.layout.cached).toBe(true); expect(r.streamed).toBe(0); expect(r.binReads).toBeGreaterThan(0); expect(r.positions).toEqual(cold);
+    } finally { reload.dispose(); }
+  } finally { if (own) Object.defineProperty(globalThis, 'Buffer', own); else delete (globalThis as any).Buffer; }
+});
