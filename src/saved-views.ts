@@ -1,5 +1,10 @@
 import { validatePredicate, type Predicate } from './core/declaration';
-import { emptyView, type SavedView } from './core/explore';
+import { emptyView, type ExploreView, type SavedView } from './core/explore';
+
+/** A transient starting point, not an entry in the user's saved views. */
+export function everythingView(view: ExploreView): SavedView {
+  return { name: 'Everything', view: { ...emptyView(), group: structuredClone(view.group) }, camera: null };
+}
 
 /** Shared with the existing folder filter builder; no source enumeration or new schema. */
 export function folderPredicate(text: string): Extract<Predicate, { kind: 'folder' }> {

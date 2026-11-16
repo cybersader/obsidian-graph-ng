@@ -39,6 +39,30 @@ function prepare(panel: any, folder = 'Notes', name = 'Folder focus') {
   control(panel.body, 'Set up folder view…').click(); input(panel, 'Folder prefix', folder); input(panel, 'Saved view name', name);
 }
 
+test('Show everything clears every restriction, keeps grouping/camera and never saves a built-in', async () => {
+  const f = await fixture(), saved = folderView('Notes', 'Everything');
+  f.plugin.settings.explore.savedViews = [saved];
+  const requested = { ...folderView('Notes', 'Focus').view, query: 'a', hiddenGroups: ['Sub'], collapsedGroups: ['Notes'], hiddenColors: ['red'], hiddenTypes: ['link'] };
+  f.view.view = requested; f.panel.setState(requested);
+  const camera = { ...f.camera }, before = structuredClone(f.plugin.settings.explore.savedViews);
+  await (control(f.panel.body, 'Show everything') as any).onclick();
+  expect(f.view.view).toEqual({ ...emptyView(), group: requested.group });
+  expect(f.view.view.group).not.toBe(requested.group);
+  expect(f.camera).toEqual(camera); expect(f.plugin.settings.explore.savedViews).toEqual(before);
+  expect(f.calls.filter(c => c === 'write')).toEqual([]);
+  expect(f.panel.body.querySelectorAll('button').filter((b: any) => b.textContent === 'Show everything')).toHaveLength(1);
+  expect(f.panel.body.querySelectorAll('button').filter((b: any) => b.textContent === 'Delete')).toHaveLength(1);
+  expect(f.panel.body.textContent).not.toContain('Default view'); f.panel.dispose();
+});
+test('Show everything respects loading and selected-group scope', async () => {
+  const f = await fixture();
+  f.view.detailScope = new Uint8Array([1, 0, 0, 0]); f.panel.render();
+  expect(control(f.panel.body, 'Show everything').disabled).toBe(true);
+  expect(f.panel.body.textContent).toContain('Workspace scope');
+  f.view.detailScope = undefined; f.view.detailGeneration = 0; f.panel.render();
+  expect(control(f.panel.body, 'Show everything').disabled).toBe(true); f.panel.dispose();
+});
+
 test('scout W1 opened saved folder grouping remains selected without another graph request', async () => {
   const f = await fixture(), saved = folderView('Notes', 'Folder focus');
   await f.plugin.commitSavedView(saved, null); await f.view.openSavedView(f.plugin.settings.explore.savedViews[0]);

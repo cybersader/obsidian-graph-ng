@@ -24,7 +24,7 @@ export interface InformationReport {
   /** Declared edge rule names, in declaration order. */
   rules?: string[];
 }
-type Explored = Pick<ExploreResult, 'visible' | 'matched' | 'nodes' | 'filters' | 'filterHidden' | 'queryHidden' | 'visibleEdges' | 'ruleVisible' | 'carrierHidden' | 'edgeHidden'>;
+type Explored = Pick<ExploreResult, 'visible' | 'matched' | 'nodes' | 'filters' | 'filterHidden' | 'queryHidden' | 'visibleEdges' | 'ruleVisible' | 'carrierHidden' | 'edgeHidden'> & Partial<Pick<ExploreResult, 'types' | 'typeTotals' | 'typeVisible'>>;
 /** One breakdown row. `go` leads to its cause: filter `go`'s chip (past the last chip: the Filters panel), -1 the search box, -2 relationship display controls. */
 export interface Part { icon: string; label: string; count: number; lines?: boolean; go?: number }
 /** Breakdown actions: switch relationship notes between lines and notes, remove one filter, or open Filters at one (negative: search). */
@@ -78,6 +78,8 @@ export function statRow(host: HTMLElement, icon: string, label: string, value: s
 }
 /** The always-visible canvas readout: notes shown, then the notes the view hides, else the edges drawn. */
 export function renderReadout(host: HTMLElement, a: Accounting) {
+  const open = host.onclick;
+  host.onclick = event => { open?.call(host, event); revealInformation(host.closest('.graph-ng-view') ?? host, 'edges'); };
   for (const [icon, text] of [['circle-dot', plural(a.dots, 'note')], a.hidden ? ['eye-off', `${num(a.hidden)} hidden`] : ['spline', plural(a.lines, 'edge')]]) { const chip = host.createSpan({ cls: 'graph-ng-readout' }); setIcon(chip.createSpan({ cls: 'graph-ng-stat-icon' }), icon!); countSpan(chip, text!); }
 }
 /** All reason rows navigate; only explicitly named action buttons change settings. */
@@ -90,6 +92,12 @@ function partRows(host: HTMLElement, parts: Part[], r: InformationReport, act: I
     for (const [rule, from, to] of list ? r.missed! : []) list!.createDiv({ cls: 'graph-ng-stat-sub', text: `${from} → ${to} (${rule})` });
     if (list && p.count > r.missed!.length) list.createDiv({ cls: 'graph-ng-stat-sub', text: `First ${r.missed!.length} listed` });
   }
+}
+function revealInformation(host: HTMLElement, id: string) {
+  const details = Array.from(host.querySelectorAll<HTMLDetailsElement>('details'));
+  for (const el of details) if (el.dataset.info === 'edges' || el.dataset.info === id) el.open = true;
+  const target = details.find(el => el.dataset.info === id) ?? details.find(el => el.dataset.info === 'edges');
+  target?.querySelector('summary')?.focus(); target?.scrollIntoView({ block: 'nearest' });
 }
 const informationState = new WeakMap<HTMLElement, Map<string, boolean>>();
 const pendingHelp = (host: HTMLElement) => panelHelp(host, 'Source checks pending', 'Provisional: targets may resolve as properties and Obsidian links load.');
@@ -124,16 +132,10 @@ function renderBody(host: HTMLElement, message: string, state: string | undefine
   const e = current(r, view), a = accounting(r, e), edges = edgeAccounting(r, e), unread = a.parts.find(p => p.icon === 'loader');
   host.createDiv({ cls: 'graph-ng-coverage-state', attr: { role: 'status' }, text: a.complete ? e?.carrierHidden?.some(Boolean) ? 'Relationship notes are filtered' : r.linksPending ? 'Source checks pending' : r.duplicates || r.unresolved ? 'Source issues need attention' : a.hidden || edges.total !== edges.drawn ? 'Ready with hidden items' : 'All notes accounted for' : unread ? `Still loading: ${plural(unread.count, 'note')} left to read` : 'Vault changed since the last refresh' });
   const headline = host.createDiv({ cls: 'graph-ng-stats graph-ng-answer' });
-  statRow(headline, 'circle-dot', 'Notes shown', num(a.dots)); statRow(headline, 'spline', 'Edges drawn', num(edges.drawn));
+  statRow(headline, 'circle-dot', 'Notes shown', num(a.dots)); statRow(headline, 'spline', 'Edges drawn', num(edges.drawn), '', () => revealInformation(host, 'edges'));
   const section = (id: string, icon: string, label: string, value: string, cls = '') => {
     const details = host.createEl('details', { cls: `graph-ng-info-section ${cls}` }); details.dataset.info = id;
     statRow(disclosure(details), icon, label, value); return details;
-  };
-  const reveal = (id: string) => {
-    const details = Array.from(host.querySelectorAll<HTMLDetailsElement>('details'));
-    for (const el of details) if (el.dataset.info === 'edges' || el.dataset.info === id) el.open = true;
-    const target = details.find(el => el.dataset.info === id) ?? details.find(el => el.dataset.info === 'edges');
-    target?.querySelector('summary')?.focus(); target?.scrollIntoView({ block: 'nearest' });
   };
   e?.carrierHidden?.forEach((hidden, i) => {
     if (!hidden) return;
@@ -145,14 +147,18 @@ function renderBody(host: HTMLElement, message: string, state: string | undefine
     if (act.remove) { const remove = iconButton(row, `Remove ${name}`, 'x', 'clickable-icon graph-ng-stat-remove'); remove.onclick = () => act.remove!(i); }
   });
   if (r.duplicates) statRow(host, 'copy', 'Inspect duplicate IDs', num(r.duplicates), '', act.duplicates);
-  if (r.unresolved) statRow(host, 'unlink', r.linksPending ? 'Inspect pending targets' : 'Inspect missing targets', num(r.unresolved), '', () => reveal('missing'));
+  if (r.unresolved) statRow(host, 'unlink', r.linksPending ? 'Inspect pending targets' : 'Inspect missing targets', num(r.unresolved), '', () => revealInformation(host, 'missing'));
   if (r.linksPending) pendingHelp(host);
   else if (!r.duplicates && !r.unresolved) statRow(host, 'check', 'Source checks', 'No issues found');
   const notes = section('notes', 'files', 'Note accounting', num(a.total), 'graph-ng-coverage');
   partRows(notes, a.parts, r, act); statRow(notes, 'files', 'Markdown notes in vault', num(a.total), 'graph-ng-stat-total');
   const lines = section('edges', 'spline', 'Edge accounting', num(edges.total));
   statRow(lines, 'spline', 'Edges drawn', num(edges.drawn));
-  (r.rules ?? []).forEach((rule, i) => { if (e?.ruleVisible[i]) statRow(lines, 'spline', `${rule} edges`, num(e.ruleVisible[i]!), 'graph-ng-stat-sub'); });
+  e?.types?.forEach((type, i) => {
+    const drawn = e.typeVisible![i]!, hidden = e.typeTotals![i]! - drawn;
+    statRow(lines, 'spline', `${type} edges drawn`, num(drawn), 'graph-ng-stat-sub');
+    if (hidden) statRow(lines, 'eye-off', `${type}: hidden by view`, num(hidden), 'graph-ng-stat-sub', act.filter && (() => act.filter!(e.filters.length)));
+  });
   partRows(lines, edges.parts, r, act); statRow(lines, 'sigma', 'Edges found', num(edges.total), 'graph-ng-stat-total');
   if (Object.keys(r.ruleNotes ?? {}).length) {
     const nodes = !!r.relationshipNodes, display = section('display', 'spline', 'Relationship display', nodes ? 'Notes' : 'Lines');

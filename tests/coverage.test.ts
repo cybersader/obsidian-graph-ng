@@ -56,7 +56,31 @@ test('coverage accounts for every markdown note once, every category non-zero, a
   expect(shrunk.parts.at(-1)).toEqual({ icon: 'refresh-cw', label: 'Removed since the last refresh', count: -2 }); expect(shrunk.parts.reduce((s, x) => s + x.count, 0)).toBe(total - 3);
 });
 
-test('complete accounting does not hide source issues; lines break down by rule', () => {
+test('edge breakdown includes zero-drawn types, exact view-hidden counts and navigable reasons', () => {
+  const rows = vault(), p = buildProjection(rows, d);
+  const e = explore(p, d, { ...emptyView(), hiddenTypes: ['crosswalk'] }, new Uint32Array(p.paths.length), 0, { facetValues: 50 });
+  const r: InformationReport = { nodes: p.paths.length, edges: p.source.length, listed: rows.length, rows: rows.length, linksPending: false, provisional: false, unresolved: p.unresolved, duplicates: p.quarantined.length, dropped: p.dropped, rules: d.edges.map(x => x.name) };
+  const host: any = new ControlElement(), calls: number[] = [];
+  renderInformation(host, '', 'ready', r, e, { filter: i => calls.push(i) });
+  const lines = () => host.querySelectorAll('details').find((x: any) => x.dataset.info === 'edges');
+  const row = (name: string) => host.querySelectorAll('.graph-ng-stat').find((x: any) => x.querySelector('.graph-ng-stat-label')?.textContent === name);
+  expect(lines().open).toBe(false); row('Edges drawn').click(); expect(lines().open).toBe(true);
+  expect(row('crosswalk edges drawn').querySelector('.graph-ng-count').textContent).toBe('0');
+  expect(row('link edges drawn').querySelector('.graph-ng-count').textContent).toBe('12');
+  expect(row('crosswalk: hidden by view').querySelector('.graph-ng-count').textContent).toBe('4');
+  row('crosswalk: hidden by view').click(); expect(calls).toEqual([0]);
+  expect(row('Relationship type hidden').querySelector('.graph-ng-count').textContent).toBe('4');
+  renderInformation(host, '', 'ready', r, e); expect(lines().open).toBe(true);
+  const chip: any = new ControlElement('BUTTON'); let opens = 0;
+  chip.closest = () => host; chip.onclick = () => { opens++; }; renderReadout(chip, accounting(r, e));
+  lines().open = false; chip.click(); expect(opens).toBe(1); expect(lines().open).toBe(true);
+  expect(ControlElement.active).toBe(lines().querySelector('summary'));
+  expect(chip.querySelectorAll('button')).toHaveLength(0); ControlElement.active = undefined;
+  renderInformation(host, '', 'ready', { ...r, nodes: r.nodes + 1 }, e);
+  expect(host.textContent).not.toContain('crosswalk edges drawn');
+});
+
+test('complete accounting does not hide source issues; lines break down by type', () => {
   const rows = vault().filter(x => !x.path.startsWith('Dup/')), p = buildProjection(rows, d), e = explore(p, d, emptyView(), new Uint32Array(p.paths.length), 0, { facetValues: 50 });
   const r: InformationReport = { nodes: p.paths.length, edges: p.source.length, listed: rows.length, linksPending: false, provisional: false, unresolved: p.unresolved, duplicates: 0,
     dropped: p.dropped, rows: rows.length, ruleNotes: p.ruleNotes, rules: d.edges.map(x => x.name), vault: rows.length, excluded: [] };
@@ -67,8 +91,8 @@ test('complete accounting does not hide source issues; lines break down by rule'
   const stats = host.querySelectorAll('.graph-ng-stat').map((s: any) => [s.querySelector('svg')?.getAttribute('data-icon'), s.querySelector('.graph-ng-stat-label').textContent, s.querySelector('.graph-ng-count').textContent]);
   expect(stats.slice(0, 2)).toEqual([['circle-dot', 'Notes shown', '15'], ['spline', 'Edges drawn', String(e.visibleEdges)]]);
   for (const row of [['circle-dot', 'Shown as dots', '15'], ['spline', 'Drawn as crosswalk lines', '4'], ['files', 'Markdown notes in vault', '19']]) expect(stats).toContainEqual(row);
-  expect(stats).toContainEqual(['spline', 'crosswalk edges', String(e.ruleVisible[0])]);
-  expect(stats).toContainEqual(['spline', 'links edges', String(e.ruleVisible[1])]);
+  expect(stats).toContainEqual(['spline', 'crosswalk edges drawn', String(e.ruleVisible[0])]);
+  expect(stats).toContainEqual(['spline', 'link edges drawn', String(e.ruleVisible[1])]);
   expect(stats).toContainEqual(['unlink', 'Target note missing', '1']);
   expect(e.ruleVisible[0]! + e.ruleVisible[1]!).toBe(e.visibleEdges);
   // The canvas readout: notes and edges, no vault total and no middle dots.

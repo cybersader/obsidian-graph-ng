@@ -1,4 +1,4 @@
-import { disclosure, panelHelp } from './panel-help';
+import { disclosure, panelHelp, iconButton } from './panel-help';
 import { workingText } from './working';
 import { LayoutPreview } from './layout-preview';
 import type { CoordinateToken } from './webgl-renderer';
@@ -368,6 +368,7 @@ export class GraphView extends ItemView {
     this.panel = this.body.createDiv({ cls: 'graph-ng-panel' });
     this.explorePanel = new ExplorePanel(this.body, {
       information: this.status, members: this.panel,
+      memberGroups: () => this.groupGraph?.groups, openGroup: id => { void this.drill(id, true); },
       scope: () => this.detailScope ? this.scopeName : 'Workspace', scoped: () => Boolean(this.detailScope),
       presentation: mode => {
         if (mode === 'workspace') {
@@ -642,8 +643,8 @@ export class GraphView extends ItemView {
     previous.onclick = () => { index--; draw(); }; next.onclick = () => { index++; draw(); }; draw();
   }
   /** Search the fetched group dictionary; render only the configured page, never a full tree. */
-  private memberList<T>(items: readonly T[], path: (item: T) => string) {
-    this.panel.createEl('button', { text: 'Back to groups' }).onclick = () => this.showGroups();
+  private memberList<T>(items: readonly T[], path: (item: T) => string, browse = false) {
+    if (!browse) this.panel.createEl('button', { text: 'Back to groups' }).onclick = () => this.showGroups();
     const search = this.panel.createEl('input', { attr: { type: 'search', placeholder: 'Search name or folder…', 'aria-label': 'Search available group members' } });
     const rows = this.panel.createDiv({ cls: 'graph-ng-members' });
     const draw = () => {
@@ -665,19 +666,21 @@ export class GraphView extends ItemView {
     };
     draw();
   }
-  private async drill(id: string) {
+  private async drill(id: string, browse = false) {
     this.contributionPage.clear();
     const group = this.groupGraph?.groups.find(g => g.id === id); if (!group) return;
-    this.scopeName = group.label; this.explorePanel?.show('members');
+    if (!browse) this.scopeName = group.label;
+    this.explorePanel?.show('members');
     this.panel.empty();
-    const heading = this.panel.createDiv({ cls: 'graph-ng-member-heading' });
-    heading.createEl('strong', { text: group.label });
+    const heading = this.panel.createDiv({ cls: 'graph-ng-member-heading' }), title = browse ? heading.createDiv({ cls: 'graph-ng-row' }) : heading;
+    if (browse) iconButton(title, 'Back to groups', 'arrow-left').onclick = () => this.explorePanel?.browseGroups(id);
+    title.createEl('strong', { text: group.label });
     heading.createSpan({ text: `${plural(group.count, 'note')} in group${this.provisional ? ' (provisional)' : ''}` });
-    const revision = this.activeRevision, projection = this.projection, renderRevision = ++this.renderRevision, view = this.viewGeneration;
+    const revision = this.activeRevision, projection = this.projection, renderRevision = browse ? this.renderRevision : ++this.renderRevision, view = this.viewGeneration;
     if (projection && !currentDetailGeneration(revision, this.activeRevision, this.detailGeneration)) { new Notice('Member dictionary is updating; try this group again when verification finishes.'); return; }
     const status = this.panel.createDiv({ text: 'Loading members…', attr: { role: 'status', 'aria-live': 'polite' } });
     const current = () => revision === this.activeRevision && view === this.viewGeneration && (!projection || currentDetailGeneration(revision, this.activeRevision, this.detailGeneration)) && renderRevision === this.renderRevision && !this.closed && this.panel.contains(status);
-    const back = () => { this.panel.createEl('button', { text: 'Back to groups' }).onclick = () => this.showGroups(); };
+    const back = () => { if (!browse) this.panel.createEl('button', { text: 'Back to groups' }).onclick = () => this.showGroups(); };
     // An obsolete answer never fills the panel, but a status it still owns must not stay "Loading".
     const stale = () => { if (!this.closed && this.panel.contains(status)) { status.textContent = 'Members out of date. Select the group again.'; back(); } };
     let members: Uint32Array | undefined;
@@ -691,11 +694,12 @@ export class GraphView extends ItemView {
     if (!members || !projection) {
       if (group.openPath) this.panel.createEl('button', { text: 'Open group note' }).onclick = () => this.openPath(group.openPath!);
       const local = group.identityPrefix ? this.plugin.adapter.snapshot().filter(r => this.plugin.settings.declaration.identity.some(k => typeof r.properties[k.key] === 'string' && (r.properties[k.key] as string).startsWith(group.identityPrefix!))) : [];
-      if (local.length) this.memberList(local, row => row.path);
+      if (local.length) this.memberList(local, row => row.path, browse);
       else this.panel.createDiv({ text: 'Producer aggregate: member bodies are not included. No local members matched its declared identity prefix.' });
       return;
     }
     const p = projection;
+    if (browse) { this.memberList(Array.from(members), i => renderPath(p, i), true); return; }
     try { if (this.gpu.reason === 'Not probed') this.gpu = await this.plugin.pipeline.request<typeof this.gpu | undefined>(revision, { kind: 'gpu' }) ?? gpuStatus(); }
     catch (error) { new Notice(`GPU probe failed: ${String(error)}. Use group member lists.`); }
     if (revision !== this.activeRevision || renderRevision !== this.renderRevision || this.closed) return;

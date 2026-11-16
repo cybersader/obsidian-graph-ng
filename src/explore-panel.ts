@@ -1,6 +1,6 @@
 import { workingText } from './working';
 import { panelHelp, disclosure, settingRow, settingSelect, panelButton, iconButton } from './panel-help';
-import { folderPredicate, folderView } from './saved-views';
+import { everythingView, folderPredicate, folderView } from './saved-views';
 import { sizingValues, sizingSettings, MAX_NODE_RADIUS, type NodeSizingValues } from './node-sizing';
 import { physicsSettings, presetValues, PHYSICS_FIELDS, PHYSICS_PRESETS, type PhysicsKey, type PhysicsValues } from './physics-controls';
 import { editAsExpression, builderPredicate, checked } from './core/expr/engine';
@@ -22,6 +22,8 @@ export interface PanelHost {
   loading?(): { stage: string; indexed?: number; listed?: number } | undefined;
   information?: HTMLElement;
   members?: HTMLElement;
+  memberGroups?(): readonly { id: string; label: string; count: number }[] | undefined;
+  openGroup?(id: string): void;
   scope?(): string;
   scoped?(): boolean;
   presentation?(mode: string): void;
@@ -201,13 +203,41 @@ export class ExplorePanel {
     if (this.host.information) this.host.information.hidden = this.root.hidden || this.tool !== 'information';
     if (this.host.members) {
       this.host.members.hidden = this.root.hidden || this.tool !== 'members';
-      if (this.tool === 'members' && !this.host.members.children.length) {
-        this.note(this.host.members, 'Select a group to browse its available members.');
-        panelButton(this.host.members, 'Group overview', () => this.host.presentation?.('groups'));
-      }
+      if (this.tool === 'members' && !this.host.members.children.length) this.browseGroups();
     }
     this.body.hidden = this.root.hidden || this.tool === 'information' || this.tool === 'members'; this.render();
     this.host.toolsChanged?.();
+  }
+  private memberQuery = '';
+  private memberRoot?: HTMLElement;
+  private memberGroups?: ReturnType<NonNullable<PanelHost['memberGroups']>>;
+  /** Browse the existing group dictionary without changing the graph or its scope. */
+  browseGroups(focus?: string) {
+    const panel = this.host.members; if (!panel) return;
+    const searching = panel.contains(document.activeElement) && document.activeElement?.getAttribute('aria-label') === 'Find a group';
+    panel.empty(); const host = this.memberRoot = panel.createDiv();
+    const groups = this.memberGroups = this.host.memberGroups?.();
+    if (!groups?.length) { this.note(host, groups ? 'No groups in this view.' : 'Groups are loading…'); return; }
+    const search = groups.length > this.settings.listPageSize || this.memberQuery ? host.createEl('input', { attr: { type: 'search', placeholder: 'Find a group…', 'aria-label': 'Find a group' } }) : undefined;
+    if (search) { search.value = this.memberQuery; if (searching) search.focus(); }
+    const list = host.createDiv({ cls: 'graph-ng-legend graph-ng-group-legend' });
+    const more = panelButton(host, 'Show more groups', () => { limit += this.settings.listPageSize; draw(); });
+    let limit = this.settings.listPageSize;
+    const draw = () => {
+      list.empty(); const query = this.memberQuery.trim().toLocaleLowerCase(), matches = groups.filter(g => g.label.toLocaleLowerCase().includes(query));
+      if (focus) limit = Math.max(limit, matches.findIndex(g => g.id === focus) + 1);
+      for (const group of matches.slice(0, limit)) {
+        const row = list.createDiv({ cls: 'graph-ng-legend-row' });
+        const swatch = row.createSpan({ cls: 'graph-ng-swatch' }); swatch.style.background = this.host.groupColor(Number(group.id)); swatch.style.gridColumn = '2';
+        const button = panelButton(row, group.label, () => this.host.openGroup?.(group.id), false, 'graph-ng-legend-name', { 'aria-label': `Open members of ${group.label}` });
+        countSpan(row, plural(group.count, 'note'));
+        if (group.id === focus) button.focus();
+      }
+      if (!matches.length) this.note(list, 'No matching groups.');
+      more.hidden = matches.length <= limit; focus = undefined;
+    };
+    if (search) search.oninput = () => { this.memberQuery = search.value; limit = this.settings.listPageSize; draw(); };
+    draw();
   }
   /** Progress-only update: no control rebuild, focus changes or draft work. */
   updateSummary(): void {
@@ -228,6 +258,7 @@ export class ExplorePanel {
     for (const [mode, button] of this.representations) button.setAttribute('aria-pressed', String(this.host.mode() === mode));
     this.workspaceButton.hidden = this.workspaceButton.disabled = !this.host.scoped?.();
     if (this.workspaceButton.hidden && document.activeElement === this.workspaceButton) this.representations.get('nodes')!.focus();
+    if (this.tool === 'members' && this.host.members && (!this.host.members.children.length || this.memberRoot && this.host.members.contains(this.memberRoot) && this.memberGroups !== this.host.memberGroups?.())) this.browseGroups();
     if (this.body.hidden) return;
     // Re-render rebuilds controls; changing labels use a stable action identity.
     const active = document.activeElement instanceof HTMLElement && this.body.contains(document.activeElement) ? document.activeElement : null;
@@ -772,10 +803,10 @@ export class ExplorePanel {
       this.saveFocus = false;
     }
   }
-  private viewOpen(host: HTMLElement, saved: SavedView) {
+  private viewOpen(host: HTMLElement, saved: SavedView, label = 'Open') {
     const issue = this.host.savedViewIssue?.(saved) ?? '';
     if (issue) this.note(host, issue);
-    panelButton(host, 'Open', async () => {
+    panelButton(host, label, async () => {
       const request = ++this.openRequest;
       this.viewMessage = `Opening ‘${saved.name}’… Requested view; displayed graph may still show the previous result.`; this.render();
       try { await this.host.openSavedView!(saved); if (request === this.openRequest) this.viewMessage = `Opened ‘${saved.name}’.${saved.camera && this.host.mode() !== 'nodes' ? ' Saved camera applies in Notes.' : ''}`; }
@@ -820,6 +851,9 @@ export class ExplorePanel {
     }
     if (this.viewSaved) { this.viewOpen(host, this.viewSaved); panelButton(host, 'Back to views', back); return; }
     const s = this.settings;
+    const start = host.createDiv({ cls: 'graph-ng-row' });
+    this.viewOpen(start, everythingView(this.view), 'Show everything');
+    panelHelp(start, 'What changes', 'Clears search, filters, hidden items and collapsed groups. Keeps grouping and camera. Declared exclusions and relationship display still apply.');
     if (!s.explore.savedViews.length) this.note(host, 'No saved views yet.');
     for (const saved of s.explore.savedViews) {
       const item = host.createDiv({ cls: 'graph-ng-saved-record' });

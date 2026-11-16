@@ -117,6 +117,43 @@ function memberRequestFixture() {
     showGroups() { backs++; panel.empty(); }, openPath() {} });
   return { view, panel, pending, backs: () => backs, status: () => panel.querySelectorAll('div').find(e => e.getAttribute('role') === 'status' && e.getAttribute('aria-live') === 'polite') };
 }
+test('group browser pages and searches the existing dictionary without changing graph state', () => {
+  const f = fixture(), opened: string[] = [];
+  f.settings.listPageSize = 3;
+  let groups = Array.from({ length: 9 }, (_, i) => ({ id: String(i), label: `Group ${i}`, count: i + 1 }));
+  f.host.memberGroups = () => groups; f.host.groupColor = () => '#808080'; f.host.openGroup = (id: string) => opened.push(id);
+  f.panel.show('members'); const host = f.host.members;
+  expect(host.querySelectorAll('.graph-ng-legend-row')).toHaveLength(3);
+  expect(host.querySelectorAll('.graph-ng-swatch')).toHaveLength(3);
+  expect(host.textContent).toContain('1 note'); expect(host.textContent).toContain('2 notes');
+  control(host, 'Show more groups').click(); expect(host.querySelectorAll('.graph-ng-legend-row')).toHaveLength(6);
+  f.panel.browseGroups('5'); expect(ControlElement.active).toBe(control(host, 'Open members of Group 5'));
+  let search = input(host, 'Find a group'); search.focus(); groups = [...groups]; f.panel.render();
+  search = input(host, 'Find a group'); expect(ControlElement.active).toBe(search);
+  search.value = 'Group 8'; search.oninput();
+  expect(host.querySelectorAll('.graph-ng-legend-row')).toHaveLength(1);
+  control(host, 'Open members of Group 8').click(); expect(opened).toEqual(['8']);
+  f.panel.browseGroups('8'); expect(ControlElement.active).toBe(control(host, 'Open members of Group 8'));
+  const next = input(host, 'Find a group'); next.value = 'no match'; next.oninput();
+  expect(host.textContent).toContain('No matching groups.');
+  groups = []; f.panel.render(); expect(host.textContent).toContain('No groups in this view.');
+  expect(f.state.viewCalls + f.state.fit + f.state.layout).toBe(0); expect(f.state.presentation).toBe(''); f.panel.dispose();
+});
+for (const finish of ['resolve', 'reject', 'back'] as const) test(`panel-only group drill ${finish} preserves camera, scope and renderer`, async () => {
+  const f = memberRequestFixture(), scope = new Uint8Array([1]), camera = { x: .4, y: .2, ratio: .7 }, renderer = { camera };
+  Object.assign(f.view, { detailScope: scope, scopeName: 'Original', detailRenderer: renderer, gpu: { reason: 'Not probed' } });
+  let back = ''; f.view.explorePanel.browseGroups = (id: string) => { back = id; f.panel.empty(); };
+  const done = f.view.drill('first', true), button = control(f.panel, 'Back to groups');
+  expect(button.textContent).toBe(''); expect(button.querySelector('svg')?.getAttribute('data-icon')).toBe('arrow-left');
+  if (finish === 'back') button.click();
+  if (finish === 'reject') f.pending[0]!.reject(Error('Synthetic failure')); else f.pending[0]!.resolve(new Uint32Array([0]));
+  await done;
+  expect(f.view.detailScope).toBe(scope); expect(f.view.scopeName).toBe('Original'); expect(f.view.detailRenderer).toBe(renderer); expect(f.view.renderRevision).toBe(0);
+  expect(f.pending).toHaveLength(1); expect(f.backs()).toBe(0);
+  if (finish === 'back') { expect(back).toBe('first'); expect(f.panel.children).toHaveLength(0); }
+  else { expect(f.panel.querySelectorAll('.graph-ng-member')).toHaveLength(finish === 'resolve' ? 1 : 0); control(f.panel, 'Back to groups').click(); expect(back).toBe('first'); }
+});
+
 test('UI batch member failure has pending status and explicit recovery without retries or focus movement', async () => {
   const f = memberRequestFixture(), focus = new ControlElement('BUTTON'); focus.focus();
   const done = f.view.drill('first'); expect(f.status()?.textContent).toBe('Loading members…'); expect(f.status()?.getAttribute('aria-live')).toBe('polite');
