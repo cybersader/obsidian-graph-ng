@@ -254,6 +254,11 @@ test('production sizing preview/cancel keeps renderer camera selection scope set
   await f.renderer[compiled('prepareLabels')](() => true);
   expect(f.renderer.atlas.levels.every((level: Float32Array) => level.length % 11 === 0)).toBe(true);
   const populated = f.renderer.atlas.levels.find((level: Float32Array) => level.length > 0); expect(populated).toBeDefined(); expect(populated[10]).toBe(1);
+  // Each label leads with one plate row (atlas v = 2) spanning every one of its padded glyph quads.
+  for (const level of f.renderer.atlas.levels as Float32Array[]) for (let i = 0; i < level.length;) {
+    expect(level[i + 6]).toBe(2); const node = level[i]!, left = level[i + 1]!, right = left + level[i + 3]!;
+    for (i += 11; i < level.length && level[i + 6] !== 2; i += 11) { expect(level[i]).toBe(node); expect(level[i + 1]).toBeGreaterThanOrEqual(left); expect(level[i + 1]! + level[i + 3]!).toBeLessThanOrEqual(right + 1e-4); }
+  }
   f.renderer[compiled('previewSizing')](null); expect(f.renderer.pick(point.x + original.nodeSize * (1 + original.visuals.degreeSizing) * (1 + .6 * level) + 5, point.y)).not.toBe(2); expect(f.plugin.settings).toEqual(original); expect(f.renderer.camera).toEqual(camera);
 });
 

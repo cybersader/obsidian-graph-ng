@@ -203,8 +203,8 @@ const labelFragment = glsl`#version 300 es
 precision highp float; uniform sampler2D atlas; uniform vec3 outline; uniform float plates;
 in vec2 uv; in vec4 tint; out vec4 outputColor;
 void main() {
- float a = texture(atlas, uv).a;
- float alpha = max(a, plates) * tint.a;
+ // Plates come only from each label's own plate quad (uv (0, 2) clamps to a padding texel); glyph quads draw ink alone.
+ float a = texture(atlas, uv).a, alpha = (uv.y > 1.5 ? plates : a) * tint.a;
  outputColor = vec4(mix(outline, tint.rgb, a) * alpha, alpha);
 }`;
 const discVertex = common + glsl`
@@ -1508,19 +1508,19 @@ export class DetailRenderer {
     ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0); ctx.fillStyle = this.theme.background; ctx.fillRect(0, 0, this.width, this.height); ctx.strokeStyle = this.theme.edge; ctx.lineWidth = s.edgeSize;
     // The edge shader's tier weights: rest, neighbours of neighbours, then direct strokes on top.
-    const zoom = this.camera.ratio / this.homeRatio, base = edgeAlpha(s.visuals, s.visuals.zoomAdapt ? 0 : this.visibleEdges, s.visuals.zoomAdapt ? 1 : zoom, this.policy.dark), width = s.edgeSize * zoomFade(s.visuals, this.visibleEdges, zoom, this.width, this.height);
-    const mask = this.tierMask, strong = s.visuals.focusEdges ? focusAlpha(this.directs.length) : 0, mode = s.visuals.edgeMode, [ink, reach] = this.edgeQuiet(2 * Math.max(.5, width));
+    const zoom = this.camera.ratio / this.homeRatio, base = edgeAlpha(s.visuals, s.visuals.zoomAdapt ? 0 : this.visibleEdges, s.visuals.zoomAdapt ? 1 : zoom, this.policy.dark), width = 2 * Math.max(.5, s.edgeSize * zoomFade(s.visuals, this.visibleEdges, zoom, this.width, this.height));
+    const mask = this.tierMask, strong = s.visuals.focusEdges ? focusAlpha(this.directs.length) : 0, mode = s.visuals.edgeMode, [ink, reach] = this.edgeQuiet(width);
     // The same quantile admission and long-line threshold as the shader; focus tiers are never sampled.
     for (const tier of mode === 'off' ? [] : focus ? mode === 'focus' ? [128, 255] : [0, 128, 255] : mode === 'focus' ? [] : [-1]) {
       let [alpha, wide] = tierEdge(tier, base * (mode === 'focus' ? focus : 1), tier < 0 ? 0 : focus, dim);
       if (strong && tier >= 0) { const [a2, w2] = strongEdge(tier, alpha, focus, strong); alpha = a2; wide *= w2; }
-      ctx.lineWidth = 2 * Math.max(.5, width) * wide; const lines: number[] = [], hue: number[] = [], line = (e: number) => { const a = this.projection.source[e]!, b = this.projection.target[e]!; ctx.moveTo(x(a), y(a)); ctx.lineTo(x(b), y(b)); };
-      for (const e of this.canvasEdges) { const a = this.projection.source[e]!, b = this.projection.target[e]!, t = shownEdgeTier(this.edgeTier[e]!, mask); if (!this.edgeOn[e] || !this.filterVisible[a] || !this.filterVisible[b] || tier >= 0 && edgeBucket(t) !== tier) continue; if (!(t && focus) && e !== this.hoveredEdge && this.lineRanks[e]! >= ink * lengthFade(Math.hypot(x(b) - x(a), y(b) - y(a)), reach) * 16777216) continue; if (tier >= 0 && tintedEdge(t)) hue.push(e); lines.push(e); }
+      ctx.lineWidth = width * wide; const lines: number[] = [], hue: number[] = [], line = (e: number) => { const a = this.projection.source[e]!, b = this.projection.target[e]!; ctx.moveTo(x(a), y(a)); ctx.lineTo(x(b), y(b)); };
+      for (const e of this.canvasEdges) { const a = this.projection.source[e]!, b = this.projection.target[e]!, t = shownEdgeTier(this.edgeTier[e]!, mask); if (!this.edgeDrawn(e) || tier >= 0 && edgeBucket(t) !== tier) continue; if (!(t && focus) && e !== this.hoveredEdge && this.lineRanks[e]! >= ink * lengthFade(Math.hypot(x(b) - x(a), y(b) - y(a)), reach) * 16777216) continue; if (tier >= 0 && tintedEdge(t)) hue.push(e); lines.push(e); }
       ctx.globalAlpha = alpha; if (s.visuals.edgeOpacity > 0 && lines.length) { ctx.beginPath(); lines.forEach(line); ctx.stroke(); }
       // Tinted relationship layer: the shader mixes the accent by focus / 2 at the same weight.
       if (s.visuals.edgeOpacity > 0 && hue.length) { ctx.strokeStyle = this.theme.accent; ctx.globalAlpha = alpha * focus * .5; ctx.beginPath(); hue.forEach(line); ctx.stroke(); ctx.strokeStyle = this.theme.edge; }
       // Path tier on top, as the shader's 253 branch: accent, pathStroke alpha and width.
-      if (tier === 255 && this.pathView && s.visuals.edgeOpacity > 0) { const [pa, pw] = pathStroke(alpha, focus); ctx.strokeStyle = this.theme.accent; ctx.globalAlpha = pa; ctx.lineWidth = 2 * Math.max(.5, width) * wide * pw; ctx.beginPath(); for (const e of this.pathView.edges) if (this.edgeTier[e] === PATH_EDGE) line(e); ctx.stroke(); ctx.strokeStyle = this.theme.edge; }
+      if (tier === 255 && this.pathView && s.visuals.edgeOpacity > 0) { const [pa, pw] = pathStroke(alpha, focus); ctx.strokeStyle = this.theme.accent; ctx.globalAlpha = pa; ctx.lineWidth = width * wide * pw; ctx.beginPath(); for (const e of this.pathView.edges) if (this.edgeTier[e] === PATH_EDGE) line(e); ctx.stroke(); ctx.strokeStyle = this.theme.edge; }
     }
     const notes = this.projection.carrierNodes, level = this.carrierLevel();
     // Edge notes first (beneath), then the other nodes.

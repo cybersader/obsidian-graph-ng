@@ -72,6 +72,8 @@ export async function buildLabels(p: RenderProjection, grid: Pick<PickGrid, 'pos
     // Importance is degree rank among placed labels; the shader fades the least important first.
     placed.forEach((box, rank) => {
       const z = grow.get(box.node)!, k = scale * z; let offset = (predictable ? 0 : s.nodeSize) + 2; const importance = 1 - rank / Math.max(1, placed.length);
+      // One plate per label (atlas v = 2, the shader's plate flag) under its glyphs: overlapping padded glyph quads never cover a neighbour or double its alpha.
+      data.push(box.node, offset, (-s.labelSize / 2 - 2) * z, widths.get(box.node)! * z + 5 * k, line * k, 0, 2, 0, 0, importance, multiplier(box.node));
       for (const c of strings.get(box.node)!) { const g = glyph(c); data.push(box.node, offset, (-s.labelSize / 2 - 2) * z, g.w * k, line * k, g.x / 2048, g.y / 2048, g.w / 2048, line / 2048, importance, multiplier(box.node)); offset += g.advance * k; }
     });
     levels.push(new Float32Array(data)); nodes.push(Uint32Array.from(placed, b => b.node)); scales.push(Float32Array.from(placed, b => grow.get(b.node)!));

@@ -129,11 +129,11 @@ export function edgeRanks(source: Uint32Array, target: Uint32Array, offsets: Uin
   for (let e = 0; e < source.length; e++) if (drawn(e)) {
     const a = source[e]!, b = target[e]!;
     let k = Math.imul(e, 2654435769); k ^= k >>> 15; k = Math.imul(k, 2246822519);
-    const weight = 1 + Math.sqrt(Math.max(offsets[a + 1]! - offsets[a]!, offsets[b + 1]! - offsets[b]!)) + (groups && groups[a] !== groups[b] ? 2 : 0) + 4 * Math.max(interest?.[a] ?? 0, interest?.[b] ?? 0);
+    const weight = 1 + Math.sqrt(Math.max(offsets[a + 1]! - offsets[a]!, offsets[b + 1]! - offsets[b]!)) + (groups && groups[a] !== groups[b] ? 2 : 0) + 4 * Math.max(interest?.[a] || 0, interest?.[b] || 0);
     scores[e] = ((k ^ k >>> 13) >>> 8) / weight; ids.push(e);
   }
   ids.sort((a, b) => scores[a]! - scores[b]! || a - b);
-  ids.forEach((e, i) => ranks[e] = Math.floor((i + .5) * 16777216 / ids.length));
+  ids.forEach((e, i) => ranks[e] = (i + .5) * 16777216 / ids.length); // Uint32 stores truncate
   return ranks;
 }
 /** Historical union-alpha reference for the earlier haze receipts, not used by either renderer. */

@@ -137,5 +137,30 @@ test('both renderers and picking consume the same importance column and context 
   expect(source).not.toContain('unionAlpha');
   expect(source).toContain('edgeAlpha(v, v.zoomAdapt ? 0 : this.visibleEdges');
   expect(source).toContain('edgeAlpha(s.visuals, s.visuals.zoomAdapt ? 0 : this.visibleEdges');
-  expect(source).toContain('ctx.lineWidth = 2 * Math.max(.5, width) * wide');
+  expect(source).toContain('width = 2 * Math.max(.5, s.edgeSize * zoomFade('); expect(source).toContain('ctx.lineWidth = width * wide;');
+});
+
+test('label plates are one quad per label: overlapping glyph padding neither hides a neighbour nor doubles plate alpha', () => {
+  const fragment = source.match(/const labelFragment = glsl`([\s\S]*?)`;/)![1]!, line = fragment.match(/float a = (.*);/)![1]!;
+  const shade = new Function('s', `with (s) { a = ${line.replace(/\b(\d+)\.(?!\d)/g, '$1.0')}; return [alpha, a]; }`) as (s: any) => number[];
+  // One row: glyph A's ink reaches its last padded texel, which glyph B's padded quad overlaps.
+  const ink = (q: number, x: number) => q === 0 && x === 3 ? 1 : 0;
+  for (const t of [1, .5]) {
+    const dst = new Array(6).fill(0);
+    const draw = (from: number, to: number, glyph: number) => { for (let x = from; x < to; x++) {
+      const env: any = { a: 0, alpha: 0, step: (e: number, v: number) => v >= e ? 1 : 0, max: Math.max, plates: .92, tint: { a: t }, atlas: 0, uv: { y: glyph < 0 ? 2 : .5 }, texture: () => ({ a: glyph < 0 ? 0 : ink(glyph, x) }) };
+      const [alpha] = shade(env); dst[x] = alpha! + dst[x]! * (1 - alpha!);
+    } };
+    draw(0, 6, -1); draw(0, 4, 0); draw(2, 6, 1);
+    expect(dst[3]).toBeCloseTo(t + .92 * t * (1 - t), 12); // A's ink stays on top; B's quad adds nothing over it
+    expect(dst[2]).toBeCloseTo(.92 * t, 12); expect(dst[5]).toBeCloseTo(.92 * t, 12); // no seam where quads overlap
+  }
+});
+
+test('missing declared interest (NaN) ranks like zero interest instead of poisoning the order', () => {
+  const m = 64, source = Uint32Array.from({ length: m }, (_, e) => e * 2), target = source.map(n => n + 1), offsets = Uint32Array.from({ length: 2 * m + 1 }, (_, n) => n);
+  const missing = new Float32Array(2 * m).fill(NaN), zero = new Float32Array(2 * m);
+  expect(edgeRanks(source, target, offsets, undefined, missing, () => true)).toEqual(edgeRanks(source, target, offsets, undefined, zero, () => true));
+  missing[0] = zero[0] = 1;
+  expect(edgeRanks(source, target, offsets, undefined, missing, () => true)).toEqual(edgeRanks(source, target, offsets, undefined, zero, () => true));
 });
