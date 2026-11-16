@@ -38,7 +38,7 @@ test('filter text is non-destructive, removal is distinct and focused, expressio
   expect(f.panel.view.filters).toEqual(filters);
   // Pill actions are labelled icon buttons; find them by accessible name.
   const labelled = (prefix: string) => { const found = f.panel.body.querySelectorAll('button').find((b: ControlElement) => b.getAttribute('aria-label')?.startsWith(prefix)); expect(found).toBeDefined(); return found!; };
-  const remove = labelled('Remove filter'); expect(remove.getAttribute('aria-label')).toBe('Remove filter'); expect(remove.title).toBe('Remove filter: category is “<synthetic>”'); expect(remove.textContent).toBe('');
+  const remove = labelled('Remove filter'); expect(remove.getAttribute('aria-label')).toBe('Remove filter: category is “<synthetic>”'); expect(remove.getAttribute('title')).toBeNull(); expect(remove.textContent).toBe('');
   remove.focus(); remove.click(); expect(f.view().filters).toEqual([filters[1]]);
   expect(ControlElement.active).toBe(labelled('Remove filter'));
   labelled('Remove filter').click(); expect(f.view().filters).toEqual([]); expect(ControlElement.active).toBe(f.panel.search);
@@ -51,7 +51,7 @@ test('filter text is non-destructive, removal is distinct and focused, expressio
   f.panel.dispose();
 });
 
-test('filters inspector: inline stat rows, one plain sentence, removable chips with counts, facet toggles and an add control', () => {
+test('filters inspector: inline stat rows, readable chips with named counts, facet toggles and an add control', () => {
   const f = controlsFixture(), result: any = { visible: [3, 4], nodes: 10, visibleEdges: 5, edges: 20, facets: [] };
   f.panel.host.scope = () => 'Workspace'; f.panel.host.scoped = () => false;
   f.panel.summary(false, result);
@@ -63,7 +63,7 @@ test('filters inspector: inline stat rows, one plain sentence, removable chips w
   f.panel.host.scoped = () => true; f.panel.host.scope = () => 'Group A'; f.panel.summary(false, result); expect(counts.querySelector('.graph-ng-scope-name').textContent).toBe('In Group A');
   f.panel.summary(true, undefined); expect(counts.textContent).toContain('External aggregate'); expect(counts.querySelector('.graph-ng-stat')).toBeUndefined();
   f.panel.view = { ...emptyView(), filters: [] }; f.panel.body.empty(); f.panel.filters(f.panel.body, result);
-  expect(f.panel.body.querySelector('.graph-ng-filter-sentence').textContent).toBe('No filters. Every note is shown.');
+  expect(f.panel.body.querySelector('.graph-ng-chip')).toBeUndefined(); expect(f.panel.body.textContent).not.toContain('Every note is shown');
   const adder = f.panel.body.querySelector('.graph-ng-add-filter'); expect(adder.tagName).toBe('DETAILS'); expect(adder.querySelector('summary').textContent).toBe('Add filter');
   const add = f.panel.body.querySelector('.graph-ng-builder');
   expect(add.getAttribute('role')).toBe('group'); expect(add.getAttribute('aria-label')).toBe('Add filter');
@@ -72,24 +72,23 @@ test('filters inspector: inline stat rows, one plain sentence, removable chips w
   f.panel.view = { ...emptyView(), filters };
   const counted = { ...result, filters, filterHidden: [191, 12, 0] };
   f.panel.body.empty(); f.panel.filters(f.panel.body, counted);
-  expect(f.panel.body.querySelector('.graph-ng-filter-sentence').textContent).toBe('Hiding 203 notes with 3 filters');
   const list = f.panel.body.querySelector('.graph-ng-chips'); expect(list.getAttribute('role')).toBe('list'); expect(list.getAttribute('aria-label')).toBe('Active filters');
   const chips = f.panel.body.querySelectorAll('.graph-ng-chip'); expect(chips.map((c: ControlElement) => c.getAttribute('role'))).toEqual(['listitem', 'listitem', 'listitem']);
   const text = chips.map((c: ControlElement) => c.querySelector('.graph-ng-chip-text'));
-  expect(text.map((t: ControlElement) => t.textContent)).toEqual(['kind is missing', 'note.rank > 2 || note.rank < 0', 'rank exists']);
+  expect(text.map((t: ControlElement) => t.querySelector('.graph-ng-help-trigger')?.textContent)).toEqual(['kind is missing', 'note.rank > 2 || note.rank < 0', 'rank exists']);
   expect(text.map((t: ControlElement) => t.classes.has('graph-ng-chip-code'))).toEqual([false, true, false]);
-  expect(text[0]!.getAttribute('title')).toBe('!file.hasProperty("kind")');
-  expect(chips.map((c: any) => c.querySelector('.graph-ng-count').textContent)).toEqual(['191', '12', '0']);
-  const actions = chips.map((c: ControlElement) => c.querySelectorAll('button').map(b => [b.getAttribute('aria-label'), b.textContent, b.querySelector('svg')?.getAttribute('data-icon')]));
-  expect(actions[0]).toEqual([['Edit filter 1 as expression', '', 'pencil'], ['Remove filter', '', 'x']]);
+  expect(text[0]!.querySelector('.graph-ng-help-popover')?.textContent).toBe('!file.hasProperty("kind")'); expect(text[0]!.getAttribute('title')).toBeNull();
+  expect(chips.map((c: any) => c.querySelector('.graph-ng-count').textContent)).toEqual(['191 notes hidden', '12 notes hidden', '0 notes hidden']);
+  const actions = chips.map((c: ControlElement) => c.querySelectorAll('button').filter(b => !b.classes.has('graph-ng-help-trigger')).map(b => [b.getAttribute('aria-label'), b.textContent, b.querySelector('svg')?.getAttribute('data-icon')]));
+  expect(actions[0]).toEqual([['Edit filter 1 as expression', '', 'pencil'], ['Remove filter: kind is missing', '', 'x']]);
   // Builder filters keep the JSON editor as a compact labelled disclosure inside the pill.
   const json = chips[2]!.querySelector('details'); expect(json.querySelector('summary').getAttribute('aria-label')).toBe('Edit builder filter 3 as JSON');
-  expect(actions[2]!.map((a: any) => a[0])).toEqual(['Edit filter 3 as expression', null, 'Remove filter']);
-  // One filter reads as one sentence; counts from another filter list are not shown.
+  expect(actions[2]!.map((a: any) => a[0])).toEqual(['Edit filter 3 as expression', null, 'Remove filter: rank exists']);
+  // Counts remain specific to the exact filter list; obsolete counts are not shown.
   f.panel.view = { ...emptyView(), filters: [filters[0]] }; f.panel.body.empty(); f.panel.filters(f.panel.body, { ...counted, filters: [filters[0]], filterHidden: [191] });
-  expect(f.panel.body.querySelector('.graph-ng-filter-sentence').textContent).toBe('Hiding 191 notes where kind exists');
+  expect(f.panel.body.querySelector('.graph-ng-chip').querySelector('.graph-ng-count').textContent).toBe('191 notes hidden');
   f.panel.body.empty(); f.panel.filters(f.panel.body, { ...counted, filters: [filters[1]] });
-  expect(f.panel.body.querySelector('.graph-ng-filter-sentence').textContent).toBe('Hiding notes where kind exists'); expect(f.panel.body.querySelector('.graph-ng-chip').querySelector('.graph-ng-count')).toBeUndefined();
+  expect(f.panel.body.querySelector('.graph-ng-chip').querySelector('.graph-ng-count')).toBeUndefined();
   // Removing a chip removes exactly that filter.
   f.panel.view = { ...emptyView(), filters }; f.panel.body.empty(); f.panel.filters(f.panel.body, counted);
   f.panel.body.querySelectorAll('.graph-ng-remove')[1].click(); expect(f.view().filters).toEqual([filters[0], filters[2]]);

@@ -103,11 +103,11 @@ test('toggle names retain native labels and help names activate their checkbox',
   f.panel.dispose();
 });
 
-test('builder JSON disclosure has a code icon and an accessible name', () => {
+test('builder JSON disclosure has the shared chevron and an accessible name', () => {
   const f = fixture(); f.panel.view = { ...emptyView(), filters: [{ kind: 'exists', key: 'rank' }] }; f.panel.body.empty(); f.panel.filters(f.panel.body, f.host.result());
   const summary = f.root.querySelector('.graph-ng-chip-json')!.querySelector('summary')!;
   expect(summary.getAttribute('aria-label')).toBe('Edit builder filter 1 as JSON');
-  expect(summary.querySelectorAll('svg').some(e => e.getAttribute('data-icon') === 'braces')).toBe(true); f.panel.dispose();
+  expect(summary.querySelectorAll('svg').some(e => e.getAttribute('data-icon') === 'chevron-right')).toBe(true); f.panel.dispose();
 });
 
 test('panel and canvas help ID namespaces cannot collide', () => {

@@ -5,7 +5,7 @@ import { sizingValues, sizingSettings, MAX_NODE_RADIUS, type NodeSizingValues } 
 import { physicsSettings, presetValues, PHYSICS_FIELDS, PHYSICS_PRESETS, type PhysicsKey, type PhysicsValues } from './physics-controls';
 import { editAsExpression, builderPredicate, checked } from './core/expr/engine';
 import { validate } from './core/expr/syntax';
-import { filterSummary, hiddenClause, setToggles, toggleable, toggledValues } from './filter-summary';
+import { filterSummary, setToggles, toggleable, toggledValues } from './filter-summary';
 import { countSpan, num, plural, shownHidden, statRow, sum } from './graph-information';
 import { suggestions } from './core/expr/autocomplete';
 import { declaredKeys } from './core/columns';
@@ -300,37 +300,31 @@ export class ExplorePanel {
     let pending: ReturnType<typeof setTimeout> | undefined;
     input.oninput = () => { if (pending) { clearTimeout(pending); this.expressionTimers.delete(pending); } const before = new Set(this.expressionTimers); sync(); pending = [...this.expressionTimers].find(t => !before.has(t)); };
     apply.onclick = () => { try { const ast = checked(input.value, context); const source = editAsExpression(context === 'filter' ? { kind: 'expr', expr: input.value } : { from: 'expr', expr: input.value }); if (!source.text) throw new Error(source.reason); submit(source.text); } catch (e) { feedback.textContent = String(e); } };
+    details.ontoggle = () => { if (details.open && context === 'group' && !input.value && this.view.group) { input.value = editAsExpression(this.view.group).text ?? ''; if (input.value) sync(); } };
     if (input.value) sync(); else apply.disabled = true;
   }
   private filters(host: HTMLElement, r: ExploreResult) {
-    const filters = this.view.filters, count = filters.length;
+    const filters = this.view.filters;
     // Per-filter counts only when the result is for exactly these filters.
-    const hidden = r.filters && canonical(r.filters.slice(0, count)) === canonical(filters) ? r.filterHidden : undefined, total = hidden && sum(hidden.slice(0, count));
-    const sentence = host.createDiv({ cls: 'graph-ng-filter-sentence', attr: { role: 'status' } });
-    if (!count) sentence.textContent = 'No filters. Every note is shown.';
-    else {
-      const clause = hiddenClause(filters[0]!);
-      sentence.createSpan({ text: `Hiding ${total === undefined ? 'notes' : plural(total, 'note')} ${count > 1 ? `with ${count} filters` : clause.code ? 'not matching ' : clause.text}` });
-      if (count === 1 && clause.code) sentence.createEl('code', { text: clause.text });
-    }
-    // Pills: readable summary, then small labelled icon actions. Text is never a click target.
+    const hidden = r.filters && canonical(r.filters.slice(0, filters.length)) === canonical(filters) ? r.filterHidden : undefined;
+    // Chips: summary opens help, never edits the filter; actions stay separate.
     const chips = host.createDiv({ cls: 'graph-ng-chips', attr: { role: 'list', 'aria-label': 'Active filters' } });
-    const icon = (parent: HTMLElement, label: string, name: string, cls = '') => { const b = parent.createEl('button', { cls: `clickable-icon graph-ng-chip-action ${cls}`, attr: { 'aria-label': label, title: label } }); setIcon(b, name); return b; };
+    const icon = (parent: HTMLElement, label: string, name: string, cls = '') => { const b = parent.createEl('button', { cls: `clickable-icon graph-ng-chip-action ${cls}`, attr: { 'aria-label': label } }); setIcon(b, name); return b; };
     this.view.filters.forEach((f, i) => {
-      const chip = chips.createDiv({ cls: 'graph-ng-chip', attr: { role: 'listitem' } }), summary = filterSummary(f), description = describePredicate(f);
-      chip.createSpan({ cls: summary.code ? 'graph-ng-chip-text graph-ng-chip-code' : 'graph-ng-chip-text', text: summary.text, attr: { title: description } });
-      if (hidden) countSpan(chip, hidden[i]!, 'Notes this filter hides that no earlier filter hides');
+      const chip = chips.createDiv({ cls: 'graph-ng-chip', attr: { role: 'listitem' } }), summary = filterSummary(f);
+      panelHelp(chip, summary.text, describePredicate(f), summary.code ? 'graph-ng-chip-text graph-ng-chip-code' : 'graph-ng-chip-text');
+      if (hidden) countSpan(chip, `${plural(hidden[i]!, 'note')} hidden`);
       const converted = editAsExpression(f), edit = icon(chip, `Edit filter ${i + 1} as expression`, 'pencil');
-      edit.disabled = !converted.text; if (converted.reason) edit.title = converted.reason;
+      edit.disabled = !converted.text;
       edit.onclick = () => { this.drafts.set(`Edit filter ${i + 1}`, converted.text!); this.render(); };
       if (f.kind !== 'expr') {
         const builder = chip.createEl('details', { cls: 'graph-ng-chip-json' });
-        setIcon(builder.createEl('summary', { attr: { 'aria-label': `Edit builder filter ${i + 1} as JSON` } }), 'braces');
+        disclosure(builder, 'JSON', { 'aria-label': `Edit builder filter ${i + 1} as JSON` });
         const input = builder.createEl('textarea', { attr: { 'aria-label': `Builder filter ${i + 1}` } }); input.value = JSON.stringify(f, null, 2);
         const error = builder.createDiv({ cls: 'graph-ng-explore-error', attr: { role: 'alert' } });
         builder.createEl('button', { text: 'Save builder entry' }).onclick = () => { try { const value: unknown = JSON.parse(input.value); validatePredicate(value); this.update({ filters: this.view.filters.map((p, j) => j === i ? value : p) }); } catch (e) { error.textContent = String(e); } };
       }
-      const remove = icon(chip, 'Remove filter', 'x', 'graph-ng-remove'); remove.title = `Remove filter: ${summary.text}`;
+      const remove = icon(chip, `Remove filter: ${summary.text}`, 'x', 'graph-ng-remove');
       remove.onclick = () => { this.update({ filters: this.view.filters.filter((_, j) => j !== i) }); (this.body.querySelectorAll<HTMLButtonElement>('.graph-ng-remove')[i] ?? this.search).focus(); };
       if (this.drafts.has(`Edit filter ${i + 1}`)) this.expressionField(chip, r, `Edit filter ${i + 1}`, 'filter', expr => { this.drafts.delete(`Edit filter ${i + 1}`); this.update({ filters: this.view.filters.map((p, j) => j === i ? { kind: 'expr', expr } : p) }); });
     });
@@ -395,7 +389,7 @@ export class ExplorePanel {
     this.expressionField(host, r, action === 'Add filter' ? 'Filter expression' : 'Rule expression', 'filter', expr => submit({ kind: 'expr', expr }));
   }
   private groups(host: HTMLElement, r: ExploreResult) {
-    const d = this.settings.declaration, row = host.createDiv({ cls: 'graph-ng-row' });
+    const d = this.settings.declaration, row = settingRow(host, 'Group by', 'graph-ng-select');
     const select = row.createEl('select', { attr: { 'aria-label': 'Group by' } });
     const options: [string, GroupSource | null][] = [['Declared default', null], ...d.groups.map(g => [groupLabel(g), g] as [string, GroupSource])];
     for (const f of r.facets) if (!d.groups.some(g => g.from === 'key' && g.key === f.key)) options.push([`Property: ${f.key}`, { from: 'key', key: f.key }]);
@@ -403,25 +397,27 @@ export class ExplorePanel {
     options.forEach(([label, g], i) => { const o = select.createEl('option', { value: String(i), text: label }); o.selected = canonical(g) === canonical(this.view.group); });
     if (this.view.group && !options.some(([, g]) => canonical(g) === canonical(this.view.group))) { options.push([groupLabel(this.view.group), this.view.group]); select.createEl('option', { value: String(options.length - 1), text: options.at(-1)![0] }).selected = true; }
     select.onchange = () => this.update({ group: options[Number(select.value)]![1], hiddenGroups: [], collapsedGroups: [] });
-    this.derivedForm(host, r);
-    this.expressionField(host, r, 'Group expression', 'group', expr => this.update({ group: { from: 'expr', expr }, hiddenGroups: [], collapsedGroups: [] }));
-    if (this.view.group && this.view.group.from !== 'expr') { const converted = editAsExpression(this.view.group), edit = host.createEl('button', { text: 'Edit group as expression' }); edit.disabled = !converted.text; edit.title = converted.reason ?? ''; edit.onclick = () => { this.drafts.set('Group expression', converted.text!); this.render(); }; }
+    const advanced = host.createEl('details', { cls: 'graph-ng-group-advanced' });
+    advanced.open = this.drafts.has('Group expression');
+    disclosure(advanced, 'Advanced grouping');
+    this.derivedForm(advanced, r);
+    this.expressionField(advanced, r, 'Group expression', 'group', expr => this.update({ group: { from: 'expr', expr }, hiddenGroups: [], collapsedGroups: [] }));
     const disabled = this.settings.explore.disabledDerived;
     if (disabled.length) {
       const note = host.createDiv({ cls: 'graph-ng-explore-note graph-ng-disabled-derive', attr: { role: 'status' } });
       note.createSpan({ text: `Disabled: regex-derived groups are no longer supported. Recreate with segment or prefix. ${disabled.map(d => `${d.location}: ${d.key} /${d.pattern}/`).join('; ')}. ` });
       note.createEl('button', { text: 'Dismiss' }).onclick = () => { this.settings.explore.disabledDerived = []; this.host.persist(); this.render(); };
     }
-    const nodes = this.host.mode() === 'nodes', actions = host.createDiv({ cls: 'graph-ng-row' });
+    const nodes = this.host.mode() === 'nodes', actions = host.createDiv({ cls: 'graph-ng-row graph-ng-group-actions' });
     const order = Array.from(r.groupKeys.keys()).filter(i => r.groupTotals[i]).sort((a, b) => r.groupTotals[b]! - r.groupTotals[a]! || a - b);
     if (nodes) {
       const all = order.map(i => r.groupKeys[i]!).filter(k => k.length <= VIEW_LIMITS.keyLength), collapse = actions.createEl('button', { text: 'Collapse all' });
-      collapse.disabled = all.length > VIEW_LIMITS.keys; if (collapse.disabled) collapse.title = `More than ${VIEW_LIMITS.keys.toLocaleString()} groups; collapse individually`;
+      collapse.disabled = all.length > VIEW_LIMITS.keys; if (collapse.disabled) panelHelp(actions, 'Group limit', `Collapse up to ${num(VIEW_LIMITS.keys)} groups at once.`);
       collapse.onclick = () => this.update({ collapsedGroups: all });
       actions.createEl('button', { text: 'Expand all' }).onclick = () => this.update({ collapsedGroups: [] });
     }
     if (this.view.hiddenGroups.length) actions.createEl('button', { text: 'Show all' }).onclick = () => this.update({ hiddenGroups: [] });
-    const list = host.createDiv({ cls: 'graph-ng-legend', attr: { role: 'list' } }), hidden = new Set(this.view.hiddenGroups), collapsed = new Set(this.view.collapsedGroups);
+    const list = host.createDiv({ cls: 'graph-ng-legend graph-ng-group-legend', attr: { role: 'list', 'aria-label': 'Groups and notes shown' } }), hidden = new Set(this.view.hiddenGroups), collapsed = new Set(this.view.collapsedGroups);
     for (const i of order.slice(0, this.groupLimit)) {
       const key = r.groupKeys[i]!, label = r.groupLabels[i]!, item = list.createDiv({ cls: 'graph-ng-legend-row', attr: { role: 'listitem' } });
       const eye = item.createEl('input', { attr: { type: 'checkbox', 'aria-label': `Show ${label}` } }); eye.checked = !hidden.has(key);
@@ -429,11 +425,11 @@ export class ExplorePanel {
       const storable = key.length <= VIEW_LIMITS.keyLength; eye.disabled = !storable && eye.checked;
       eye.onchange = () => this.update({ hiddenGroups: eye.checked ? this.view.hiddenGroups.filter(k => k !== key) : [...this.view.hiddenGroups, key] });
       item.createSpan({ cls: 'graph-ng-swatch' }).style.background = this.host.groupColor(i);
-      const name = item.createEl('button', { cls: 'graph-ng-legend-name', text: label, attr: { title: `${nodes ? 'Frame' : 'Open members of'} ${label}` } });
+      const name = item.createEl('button', { cls: 'graph-ng-legend-name', text: label, attr: { 'aria-label': `${nodes ? 'Frame' : 'Open members of'} ${label}` } });
       name.onclick = () => this.host.focusGroup(i);
-      countSpan(item, shownHidden(r.groupVisible[i]!, r.groupTotals[i]!));
+      this.legendCount(item, r.groupVisible[i]!, r.groupTotals[i]!, 'note');
       if (nodes) {
-        const fold = item.createEl('button', { cls: 'graph-ng-fold clickable-icon', text: collapsed.has(key) ? '⊕' : '⊖', attr: { 'data-focus-key': `group-fold:${key}`, 'aria-label': `${collapsed.has(key) ? 'Expand' : 'Collapse'} ${label}`, 'aria-pressed': String(collapsed.has(key)) } }); fold.disabled = !storable && !collapsed.has(key);
+        const fold = item.createEl('button', { cls: 'graph-ng-fold clickable-icon', attr: { 'data-focus-key': `group-fold:${key}`, 'aria-label': `${collapsed.has(key) ? 'Expand' : 'Collapse'} ${label}`, 'aria-pressed': String(collapsed.has(key)) } }); setIcon(fold, collapsed.has(key) ? 'plus' : 'minus'); fold.disabled = !storable && !collapsed.has(key);
         fold.onclick = () => this.update({ collapsedGroups: collapsed.has(key) ? this.view.collapsedGroups.filter(k => k !== key) : [...this.view.collapsedGroups, key] }, collapsed.has(key) ? () => this.host.focusGroup(i) : undefined);
       }
     }
@@ -492,13 +488,17 @@ export class ExplorePanel {
       color = form.createEl('input', { cls: 'graph-ng-color', attr: { type: 'color', 'aria-label': 'Rule color' } }); color.value = '#e6a23c';
     });
   }
+  private legendCount(host: HTMLElement, visible: number, total: number, noun: string) {
+    const count = countSpan(host, plural(visible, noun));
+    if (visible < total) count.createEl('small', { text: plural(total - visible, `hidden ${noun}`) });
+  }
   private edges(host: HTMLElement, r: ExploreResult) {
-    const hidden = new Set(this.view.hiddenTypes), list = host.createDiv({ cls: 'graph-ng-legend' });
+    const hidden = new Set(this.view.hiddenTypes), list = host.createDiv({ cls: 'graph-ng-legend graph-ng-type-legend', attr: { role: 'list', 'aria-label': 'Relationship types and edges shown' } });
     r.types.forEach((type, i) => {
-      const item = list.createDiv({ cls: 'graph-ng-legend-row' }), eye = item.createEl('input', { attr: { type: 'checkbox', 'aria-label': `Show ${type} relationships` } });
+      const item = list.createDiv({ cls: 'graph-ng-legend-row', attr: { role: 'listitem' } }), eye = item.createEl('input', { attr: { type: 'checkbox', 'aria-label': `Show ${type} relationships` } });
       eye.checked = !hidden.has(type); eye.onchange = () => this.update({ hiddenTypes: eye.checked ? this.view.hiddenTypes.filter(t => t !== type) : [...this.view.hiddenTypes, type] });
       item.createSpan({ cls: 'graph-ng-legend-name', text: type });
-      countSpan(item, shownHidden(r.typeVisible[i]!, r.typeTotals[i]!));
+      this.legendCount(item, r.typeVisible[i]!, r.typeTotals[i]!, 'edge');
     });
     if (!r.types.length) this.note(list, 'No relationships.');
     this.flag(host, 'edgeDirection', 'Show direction (fade from source to target)');

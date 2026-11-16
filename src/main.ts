@@ -585,10 +585,10 @@ export class GraphView extends ItemView {
       this.contentEl.dataset.canvasGroups = String(selected.groups.length);
     };
     previous.onclick = () => { canvasPage--; draw(); }; next.onclick = () => { canvasPage++; draw(); }; draw();
-    this.paginate(projection.groups, (g, host) => { const b = host.createEl('button', { cls: 'graph-ng-count-row', attr: { 'data-group': g.id, title: g.label } }); b.createSpan({ text: g.label }); b.createSpan({ cls: 'graph-ng-count', text: num(g.count) }); b.onclick = () => this.drill(g.id); }, this.panel, 'graph-ng-group-controls');
-    const edges = this.section('relationships'); edges.createEl('summary', { text: `Relationships (${projection.groupEdges.length} group pairs)` });
+    this.paginate(projection.groups, (g, host) => { const b = host.createEl('button', { cls: 'graph-ng-count-row', attr: { 'data-group': g.id } }); b.createSpan({ text: g.label }); b.createSpan({ cls: 'graph-ng-count', text: plural(g.count, 'note') }); b.onclick = () => this.drill(g.id); }, this.panel, 'graph-ng-group-controls', 'Groups');
+    const edges = this.section('relationships'); disclosure(edges, `Relationships (${plural(projection.groupEdges.length, 'group pair')})`);
     this.paginate(projection.groupEdges, (edge, host) => {
-      host.createEl('button', { text: `${pages.labels.get(edge.a)} ↔ ${pages.labels.get(edge.b)} (${edge.total})`, cls: 'graph-ng-edge' }).onclick = () => this.edgeList(edge, projection, generation, source);
+      host.createEl('button', { text: `${pages.labels.get(edge.a)} ↔ ${pages.labels.get(edge.b)} (${plural(edge.total, 'edge')})`, cls: 'graph-ng-edge' }).onclick = () => this.edgeList(edge, projection, generation, source);
     }, edges);
     if (this.projection?.quarantined.length) {
       const conflicts = this.section('quarantine', 'graph-ng-quarantine');
@@ -619,7 +619,7 @@ export class GraphView extends ItemView {
     const link = `[[${file instanceof TFile ? this.app.metadataCache.fileToLinktext(file, '', true) : path.replace(/\.md$/, '')}]]`;
     void navigator.clipboard.writeText(link).then(() => new Notice('Link copied'), () => new Notice('Could not copy the link'));
   }
-  private paginate<T>(items: readonly T[], render: (item: T, host: HTMLElement) => void, host = this.panel, listClass = 'graph-ng-list') {
+  private paginate<T>(items: readonly T[], render: (item: T, host: HTMLElement) => void, host = this.panel, listClass = 'graph-ng-list', noun = 'Items') {
     let index = 0; const size = this.plugin.settings.listPageSize, root = host.createDiv({ cls: 'graph-ng-pagination' });
     const controls = root.createDiv({ cls: 'graph-ng-page-controls' }), previous = controls.createEl('button', { text: 'Previous page' });
     const label = controls.createSpan(), next = controls.createEl('button', { text: 'Next page' }), list = root.createDiv({ cls: listClass });
@@ -627,7 +627,7 @@ export class GraphView extends ItemView {
     const draw = () => {
       list.empty(); for (const item of page(items, index, size)) render(item, list);
       previous.disabled = index === 0; next.disabled = (index + 1) * size >= items.length;
-      label.textContent = ` ${items.length ? index * size + 1 : 0}–${Math.min((index + 1) * size, items.length)}, ${items.length} total `;
+      label.textContent = `${noun} ${num(items.length ? index * size + 1 : 0)}–${num(Math.min((index + 1) * size, items.length))}, ${num(items.length)} total`;
     };
     previous.onclick = () => { index--; draw(); }; next.onclick = () => { index++; draw(); }; draw();
   }
@@ -639,12 +639,13 @@ export class GraphView extends ItemView {
     const draw = () => {
       const query = search.value.trim().toLocaleLowerCase(); rows.empty();
       const filtered = query ? items.filter(item => path(item).toLocaleLowerCase().includes(query)) : items;
-      rows.createDiv({ text: plural(filtered.length, query ? 'matching member' : 'available member'), cls: 'graph-ng-explore-note' });
+      rows.createDiv({ text: plural(filtered.length, query ? 'matching note' : 'available note'), cls: 'graph-ng-explore-note', attr: { role: 'status' } });
       this.paginate(filtered, (item, host) => {
-        const full = path(item), button = host.createEl('button', { cls: 'graph-ng-member', attr: { title: full, 'aria-label': `Open ${full}` } });
-        button.createSpan({ text: full.split('/').pop()!.replace(/\.md$/, '') });
-        button.createEl('small', { text: full }); button.onclick = () => this.openPath(full);
-      }, rows);
+        const full = path(item), parts = full.split('/'), name = parts.pop()!.replace(/\.md$/, ''), button = host.createEl('button', { cls: 'graph-ng-member', attr: { 'aria-label': `Open ${full}` } });
+        button.createSpan({ text: name });
+        if (parts.length) button.createEl('small', { text: parts.join('/') });
+        button.onclick = () => this.openPath(full);
+      }, rows, 'graph-ng-list', 'Notes');
     };
     search.oninput = draw;
     rows.onkeydown = e => {
@@ -658,7 +659,10 @@ export class GraphView extends ItemView {
     this.contributionPage.clear();
     const group = this.groupGraph?.groups.find(g => g.id === id); if (!group) return;
     this.scopeName = group.label; this.explorePanel?.show('members');
-    this.panel.empty(); this.panel.createEl('strong', { text: `${group.label}: ${num(group.count)} members${this.provisional ? ' (provisional)' : ''}` });
+    this.panel.empty();
+    const heading = this.panel.createDiv({ cls: 'graph-ng-member-heading' });
+    heading.createEl('strong', { text: group.label });
+    heading.createSpan({ text: `${plural(group.count, 'note')} in group${this.provisional ? ' (provisional)' : ''}` });
     const revision = this.activeRevision, projection = this.projection, renderRevision = ++this.renderRevision, view = this.viewGeneration;
     if (projection && !currentDetailGeneration(revision, this.activeRevision, this.detailGeneration)) { new Notice('Member dictionary is updating; try this group again when verification finishes.'); return; }
     const status = this.panel.createDiv({ text: 'Loading members…', attr: { role: 'status', 'aria-live': 'polite' } });

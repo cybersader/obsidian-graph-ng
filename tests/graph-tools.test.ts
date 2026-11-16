@@ -85,9 +85,9 @@ test('UX member navigator renders bounded name/path rows, searches existing memb
   const view: any = Object.create(GraphView.prototype), opened: string[] = [];
   Object.assign(view, { panel: new ControlElement(), plugin: { settings: { listPageSize: 7 } }, openPath: (path: string) => opened.push(path), showGroups() {} });
   const items = Array.from({ length: 16399 }, (_, i) => `Framework/Folder ${i % 3}/Note ${i}.md`); view.memberList(items, (s: string) => s);
-  let rows = view.panel.querySelectorAll('.graph-ng-member'); expect(rows.length).toBe(7); expect(rows[0].querySelector('span').textContent).toBe('Note 0'); expect(rows[0].querySelector('small').textContent).toBe(items[0]);
+  let rows = view.panel.querySelectorAll('.graph-ng-member'); expect(rows.length).toBe(7); expect(rows[0].querySelector('span').textContent).toBe('Note 0'); expect(rows[0].querySelector('small').textContent).toBe('Framework/Folder 0');
   rows[0].focus(); view.panel.querySelector('.graph-ng-members').onkeydown({ key: 'ArrowDown', preventDefault() {} }); expect(ControlElement.active).toBe(rows[1]); rows[1].click(); expect(opened).toEqual([items[1]!]);
-  const search = input(view.panel, 'Search available group members'); search.value = 'Note 16398.md'; search.oninput(); rows = view.panel.querySelectorAll('.graph-ng-member'); expect(rows.length).toBe(1); expect(rows[0].getAttribute('aria-label')).toContain('16398'); expect(view.panel.querySelector('.graph-ng-explore-note').textContent).toBe('1 matching member');
+  const search = input(view.panel, 'Search available group members'); search.value = 'Note 16398.md'; search.oninput(); rows = view.panel.querySelectorAll('.graph-ng-member'); expect(rows.length).toBe(1); expect(rows[0].getAttribute('aria-label')).toContain('16398'); expect(view.panel.querySelector('.graph-ng-explore-note').textContent).toBe('1 matching note');
 });
 test('UI batch group fold retains replacement focus across changing labels and subsequent render', () => {
   const f = fixture(), key = 'Odd["group]', p = buildProjection([{ path: `${key}/Note.md`, properties: {} }], f.settings.declaration);
@@ -115,7 +115,7 @@ function memberRequestFixture() {
     contributionPage: { clear() {} }, explorePanel: { show() {} }, gpu: { available: false, reason: 'Synthetic no-GPU path' },
     plugin: { settings, pipeline: { request(_revision: number, request: any) { expect(request.kind).toBe('members'); return new Promise<Uint32Array>((resolve, reject) => pending.push({ resolve, reject })); } } },
     showGroups() { backs++; panel.empty(); }, openPath() {} });
-  return { view, panel, pending, backs: () => backs, status: () => panel.querySelectorAll('div').find(e => e.getAttribute('role') === 'status') };
+  return { view, panel, pending, backs: () => backs, status: () => panel.querySelectorAll('div').find(e => e.getAttribute('role') === 'status' && e.getAttribute('aria-live') === 'polite') };
 }
 test('UI batch member failure has pending status and explicit recovery without retries or focus movement', async () => {
   const f = memberRequestFixture(), focus = new ControlElement('BUTTON'); focus.focus();
@@ -131,7 +131,7 @@ test('UI batch member success removes pending status and keeps normal bounded ro
   const f = memberRequestFixture(), done = f.view.drill('first'); expect(f.status()?.textContent).toBe('Loading members…');
   f.pending[0]!.resolve(new Uint32Array([0])); await done;
   expect(f.status()).toBeUndefined(); expect(f.panel.querySelectorAll('.graph-ng-member').length).toBe(1);
-  expect(f.panel.textContent).toContain('Synthetic/Note.md'); expect(f.pending.length).toBe(1);
+  expect(f.panel.querySelector('.graph-ng-member')?.getAttribute('aria-label')).toBe('Open Synthetic/Note.md'); expect(f.pending.length).toBe(1);
 });
 for (const settle of ['reject', 'resolve'] as const) for (const supersession of ['selection', 'closed', 'revision', 'view', 'contents'] as const) test(`UI batch stale member ${settle} after ${supersession} never leaves Loading members`, async () => {
   const f = memberRequestFixture(), done = f.view.drill('first'); let newer: Promise<void> | undefined;
@@ -416,7 +416,7 @@ test('count lists: group legend rows keep the name and the count in separate ele
   f.panel.show('filters');
   const rows = f.panel.body.querySelectorAll('.graph-ng-legend-row').filter((r: ControlElement) => r.querySelector('.graph-ng-legend-name'));
   const cells = rows.map((r: ControlElement) => [r.querySelector('.graph-ng-legend-name')!.textContent, r.children.find(c => c.classes.has('graph-ng-count'))?.textContent]);
-  expect(cells).toContainEqual([long, (1200).toLocaleString()]); expect(cells).toContainEqual(['Short', '1']);
+  expect(cells).toContainEqual([long, '1,200 notes']); expect(cells).toContainEqual(['Short', '1 note']);
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8'), rule = css.match(/^\.graph-ng-count \{([^}]*)\}/m)?.[1] ?? '';
   expect(rule).toContain('font-variant-numeric:tabular-nums'); expect(rule).toContain('text-align:right'); expect(rule).toContain('white-space:nowrap');
   expect(css).toMatch(/\.graph-ng-count-row \{[^}]*grid-template-columns:minmax\(0,1fr\) auto/);
@@ -460,6 +460,87 @@ test('UI foundation keeps aligned settings, wrapping labels and inline help exce
   // UI spacing changes must not enlarge their DOM box past the collision footprint.
   expect(rule('.graph-ng-anchor-text')).toContain('padding:2px 6px');
   expect(rule('.graph-ng-more')).toContain('min-height:32px');
+});
+test('Filters exposes one advanced grouping entry and seeds the current expression on demand', () => {
+  const f = fixture(); f.settings.declaration.columns = ['category'];
+  const p = buildProjection([{ path: 'Folder/Note.md', properties: { category: 'Sample' } }], f.settings.declaration);
+  f.state.view.group = { from: 'key', key: 'category' };
+  f.host.result = () => explore(p, f.settings.declaration, f.state.view, colorGroups(p, f.settings.declaration), 0, { facetValues: 10 });
+  f.host.groupColor = () => '#808080'; f.host.focusGroup = () => {};
+  f.panel.show('filters');
+  const group = f.panel.body.querySelector('.graph-ng-explore-groups'), content = group.querySelector('div');
+  const details = content.children.filter((e: ControlElement) => e.tagName === 'DETAILS');
+  expect(details.length).toBe(1); expect(details[0].querySelector('summary').textContent).toBe('Advanced grouping');
+  expect(details[0].open).toBe(false); expect(details[0].querySelector('.graph-ng-derived')).toBeDefined();
+  const expression = details[0].querySelector('.graph-ng-expression');
+  expect(input(expression, 'Group expression').value).toBe('');
+  expression.open = true; expression.ontoggle();
+  expect(input(expression, 'Group expression').value).toBe('note.category');
+  expect(f.state.viewCalls).toBe(0);
+  f.panel.render(); expect(f.panel.body.querySelector('.graph-ng-group-advanced').open).toBe(true);
+  expect(f.panel.body.querySelector('.graph-ng-group-advanced').querySelector('.graph-ng-expression').open).toBe(true);
+  f.panel.drafts.delete('Group expression'); f.state.view.group = { from: 'folder', depth: 1 }; f.panel.render();
+  const blank = f.panel.body.querySelector('.graph-ng-group-advanced').querySelector('.graph-ng-expression');
+  blank.open = true; blank.ontoggle();
+  expect(input(blank, 'Group expression').value).toBe('');
+  expect(blank.querySelector('.graph-ng-expression-status').textContent).toBe('');
+  expect(control(blank, 'Group by expression').disabled).toBe(true); f.panel.dispose();
+});
+test('Filter chips name hidden notes and remove their filter without duplicate explanatory prose', () => {
+  const f = fixture(), p = buildProjection([{ path: 'A/Note.md', properties: {} }, { path: 'B/Note.md', properties: {} }], f.settings.declaration);
+  f.state.view.filters = [{ kind: 'folder', prefix: ['A'] }];
+  f.host.result = () => explore(p, f.settings.declaration, f.state.view, colorGroups(p, f.settings.declaration), 0, { facetValues: 10 });
+  f.host.groupColor = () => '#808080'; f.host.focusGroup = () => {};
+  f.panel.show('filters');
+  const chip = f.panel.body.querySelector('.graph-ng-chip');
+  expect(chip.querySelector('.graph-ng-count').textContent).toBe('1 note hidden');
+  expect(chip.querySelector('.graph-ng-help-trigger').textContent).toBe('In folder A');
+  expect(chip.querySelector('.graph-ng-chip-text').getAttribute('title')).toBeNull();
+  expect(chip.querySelector('.graph-ng-chip-json').querySelector('.graph-ng-chevron')).toBeDefined();
+  control(chip, 'Remove filter: In folder A').click();
+  expect(f.state.view.filters).toEqual([]); expect(f.panel.body.querySelector('.graph-ng-chip')).toBeUndefined();
+  expect(f.panel.body.textContent).not.toContain('Every note is shown'); f.panel.dispose();
+});
+test('Legend separates shown and hidden counts and retains one-note underscore folders', () => {
+  const f = fixture(), p = buildProjection([{ path: '_local/Note.md', properties: {} }], f.settings.declaration);
+  f.state.view.group = { from: 'folder', depth: 1 };
+  f.host.result = () => ({ ...explore(p, f.settings.declaration, f.state.view, colorGroups(p, f.settings.declaration), 0, { facetValues: 10 }), types: ['link'], typeVisible: [12345], typeTotals: [12347] });
+  f.host.groupColor = () => '#808080'; f.host.focusGroup = () => {};
+  f.panel.show('filters');
+  const groups = f.panel.body.querySelector('.graph-ng-group-legend');
+  expect(groups.querySelectorAll('.graph-ng-legend-row').length).toBe(1);
+  expect(groups.querySelector('.graph-ng-legend-name').textContent).toBe('_local');
+  expect(groups.querySelector('.graph-ng-count').textContent).toBe('1 note');
+  const fold = control(groups, 'Collapse _local'); expect(fold.children[0]!.getAttribute('data-icon')).toBe('minus');
+  const types = f.panel.body.querySelector('.graph-ng-type-legend');
+  expect(types.querySelector('.graph-ng-count').textContent).toBe('12,345 edges2 hidden edges');
+  expect(types.querySelector('small').textContent).toBe('2 hidden edges');
+  const show = input(types, 'Show link relationships'); show.checked = false; show.onchange();
+  expect(f.state.view.hiddenTypes).toEqual(['link']);
+  const direction = input(f.panel.body, 'Show direction'); direction.checked = true; direction.onchange();
+  expect(f.settings.visuals.edgeDirection).toBe(true); f.panel.dispose();
+});
+test('Members keeps root notes clean, names page counts and exposes full paths accessibly', () => {
+  const view: any = Object.create(GraphView.prototype), opened: string[] = [];
+  Object.assign(view, { panel: new ControlElement(), plugin: { settings: { listPageSize: 2 } }, openPath: (path: string) => opened.push(path), showGroups() {} });
+  const items = ['Root.md', 'Long folder/Note.md', 'Elsewhere/Note.md']; view.memberList(items, (s: string) => s);
+  const rows = view.panel.querySelectorAll('.graph-ng-member');
+  expect(rows[0].querySelector('small')).toBeUndefined();
+  expect(rows[1].querySelector('small').textContent).toBe('Long folder');
+  expect(rows[1].getAttribute('aria-label')).toBe('Open Long folder/Note.md');
+  expect(view.panel.querySelector('.graph-ng-page-controls').textContent).toContain('Notes 1–2, 3 total');
+  rows[1].click(); expect(opened).toEqual(['Long folder/Note.md']);
+  const search = input(view.panel, 'Search available group members'); search.value = 'missing'; search.oninput();
+  expect(view.panel.querySelector('.graph-ng-explore-note').textContent).toBe('0 matching notes');
+  expect(view.panel.querySelector('.graph-ng-explore-note').getAttribute('role')).toBe('status');
+});
+test('Filter rows use shared columns, keyboard-visible actions and only one scroll owner', () => {
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+  expect(css).toContain('.graph-ng-group-legend { grid-template-columns:auto');
+  expect(css).toContain('.graph-ng-type-legend { grid-template-columns:auto minmax(0,1fr) auto; }');
+  expect(css).toContain('.graph-ng-legend-row:focus-within .graph-ng-fold { opacity:1; }');
+  expect(css).toContain('@media (hover:hover) and (pointer:fine)');
+  expect(css).toContain('scrollbar-gutter:stable;'); expect(css).toContain('max-height:none; overflow:visible;');
 });
 
 test('adaptive emphasis control switches live without moving the camera or rebuilding the view', () => {
