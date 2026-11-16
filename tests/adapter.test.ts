@@ -239,3 +239,23 @@ test('an excluded note resolving after the initial load never enters rows or cov
     expect((await rows(false)).map(r => r.path)).toEqual([]); expect(adapter.coverage()).toEqual({ indexed: 1, listed: 1 });
   } finally { adapter.index.dispose(); }
 });
+
+
+test('review: acknowledged input stamps stay compact and distinguish equal-length declared edits', async () => {
+  let value = 'a'.repeat(20000);
+  const f = await propertyFixture({ get: p => fact(p, { verified: true, frontmatter: { id: p, category: value } }) });
+  try {
+    await f.rows();
+    const stamps = (f.adapter as any).sent as Map<string, string>;
+    const first = stamps.get('a.md')!;
+    expect(first.length).toBeLessThan(40); expect(first).not.toContain(value);
+    f.events.get('resolve')!(f.files[0]); f.adapter.index.flush(); expect(await f.rows(false)).toEqual([]);
+    value = 'b' + value.slice(1);
+    f.events.get('resolve')!(f.files[0]); f.adapter.index.flush();
+    expect((await f.rows(false))[0]!.properties.category).toBe(value); expect(stamps.get('a.md')).not.toBe(first);
+    const changed = stamps.get('a.md')!; value += 'x';
+    f.events.get('resolve')!(f.files[0]); f.adapter.index.flush();
+    expect((await f.rows(false))[0]!.properties.category).toBe(value); expect(stamps.get('a.md')).not.toBe(changed);
+    f.adapter.invalidate(); expect(stamps.size).toBe(0);
+  } finally { f.adapter.index.dispose(); }
+});

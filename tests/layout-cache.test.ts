@@ -40,7 +40,7 @@ async function boot(disk: MemoryAdapter, resolved: Record<string, Record<string,
     await view.refreshOnce();
     expect(view.contentEl.dataset.state).toBe('ready');
     const layout = view.report.layout;
-    return { layout, text: layoutText(layout), streamed, positions: view.positions as Float32Array, verified: view.contentEl.dataset.verified === 'true', cacheError: view.contentEl.dataset.cacheError, binReads: disk.reads.filter(p => p.endsWith('.bin')).length };
+    return { layout, text: layoutText(layout), streamed, positions: view.positions as Float32Array, verified: view.contentEl.dataset.verified === 'true', cacheError: view.contentEl.dataset.cacheError, trace: view.cacheTrace.at(-1), binReads: disk.reads.filter(p => p.endsWith('.bin')).length };
   }
   /** Settings adoption as GraphPlugin.apply does it, minus the data.json save. */
   const apply = (next: any) => { plugin.settings = next; plugin.adapter.configure(next.declaration); };
@@ -52,7 +52,7 @@ test('successive provisional layouts reuse live coordinates without persisting a
   const disk = new MemoryAdapter(), app = await boot(disk, {});
   try {
     const first = await app.open(); expect(first.verified).toBe(false); expect(first.streamed).toBeGreaterThan(0);
-    const next = await app.open(); expect(next.verified).toBe(false); expect(next.layout.reused).toBe('all');
+    const next = await app.open(); expect(next.verified).toBe(false); expect(next.layout.reused).toBe('interim');
     expect(next.positions).toEqual(first.positions); expect(next.streamed).toBe(0); expect(disk.files.size).toBe(0);
   } finally { app.dispose(); }
 });
@@ -254,4 +254,53 @@ test('browser runtime without Node Buffer: the cache writes, and a reload is an 
       expect(r.text).toBe('Reused saved layout'); expect(r.layout.cached).toBe(true); expect(r.streamed).toBe(0); expect(r.binReads).toBeGreaterThan(0); expect(r.positions).toEqual(cold);
     } finally { reload.dispose(); }
   } finally { if (own) Object.defineProperty(globalThis, 'Buffer', own); else delete (globalThis as any).Buffer; }
+});
+
+
+test('review: changed vault restart measures verified churn against saved edges, not incomplete interim edges', async () => {
+  const disk = new MemoryAdapter(), links = graph(), original = await boot(disk, links);
+  try { await original.open(); } finally { original.dispose(); }
+  links[name(10)]![name(30)] = 1;
+  const directDisk = new MemoryAdapter();
+  for (const [path, bytes] of disk.files) directDisk.files.set(path, bytes.slice());
+  const direct = await boot(directDisk, links);
+  let expected: Float32Array;
+  try { const warm = await direct.open(); expected = warm.positions; expect(warm.layout.reused).toBe('some'); }
+  finally { direct.dispose(); }
+  const resolving = Object.fromEntries(Object.entries(links).slice(0, 1)), reload = await boot(disk, resolving);
+  try {
+    const partial = await reload.open(); expect(partial.verified).toBe(false);
+    Object.assign(resolving, links); reload.plugin.adapter.invalidate();
+    const verified = await reload.open();
+    expect(verified.layout.reused).toBe('some'); expect(verified.streamed).toBeLessThanOrEqual(12);
+    expect(verified.positions).toEqual(expected!);
+    const persisted = await boot(disk, links);
+    try { const next = await persisted.open(); expect(next.layout.cached).toBe(true); expect(next.positions).toEqual(expected!); }
+    finally { persisted.dispose(); }
+  } finally { reload.dispose(); }
+});
+
+test('review: exact interim reuse never reports a saved cache hit or stored key', async () => {
+  const disk = new MemoryAdapter(), links: Record<string, Record<string, number>> = {}, app = await boot(disk, links);
+  try {
+    const partial = await app.open(); expect(disk.files.size).toBe(0);
+    for (let i = 0; i < N; i++) links[name(i)] = {};
+    app.plugin.adapter.invalidate();
+    const verified = await app.open();
+    expect(verified.verified).toBe(true); expect(verified.positions).toEqual(partial.positions); expect(verified.streamed).toBe(0);
+    expect(verified.layout.cached).toBe(false); expect(verified.layout.reused).toBe('interim');
+    expect(verified.trace.valid).toBe(false); expect(verified.trace.stored).toBeUndefined();
+    expect(verified.text).toBe('Reused provisional layout');
+  } finally { app.dispose(); }
+});
+
+test('review: a full-budget restart from interim positions reports computation, not a short adjustment', async () => {
+  const disk = new MemoryAdapter(), links: Record<string, Record<string, number>> = {}, app = await boot(disk, links);
+  try {
+    await app.open(); Object.assign(links, graph()); app.plugin.adapter.invalidate();
+    const verified = await app.open();
+    expect(verified.verified).toBe(true); expect(verified.streamed).toBe(59);
+    expect(verified.layout.cached).toBe(false); expect(verified.layout.reused).toBeUndefined();
+    expect(verified.trace.stored).toBeUndefined(); expect(verified.text).toMatch(/^Computed layout in /);
+  } finally { app.dispose(); }
 });

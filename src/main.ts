@@ -308,7 +308,7 @@ export class GraphView extends ItemView {
   private viewSource = '';
   private contributionScope = '';
   private contributionPage: ContributionPage;
-  private queued = false;
+  private queuedRefresh?: Promise<void>;
   /** Disclosure sections the user opened; a re-render restores them instead of collapsing. */
   private openSections = new Set<string>();
   private refreshing = false;
@@ -427,12 +427,15 @@ export class GraphView extends ItemView {
   async onClose() { this.explorePanel?.dispose(); this.contributionPage.clear(); this.closed = true; this.renderRevision++; this.revision++; this.renderer?.dispose(); this.unsubscribe?.(); }
   refresh(): Promise<void> {
     if (this.closed) return Promise.resolve();
-    if (this.refreshing) { this.queued = true; return this.refreshWork!; }
+    if (this.refreshing) {
+      // Coalesce callers onto the next pass, not an indefinitely growing hydration drain.
+      const next = () => { this.queuedRefresh = undefined; return this.refresh(); };
+      return this.queuedRefresh ??= this.refreshWork!.then(next, next);
+    }
     this.refreshing = true;
-    return this.refreshWork = (async () => {
-      try { do { this.queued = false; await this.plugin.serialize(() => this.refreshOnce()); } while (this.queued && !this.closed); }
-      finally { this.refreshing = false; if (!this.closed) this.explorePanel?.render(); }
-    })();
+    return this.refreshWork = this.plugin.serialize(() => this.refreshOnce()).finally(() => {
+      this.refreshing = false; if (!this.closed) this.explorePanel?.render();
+    });
   }
   private async refreshOnce() {
     const scope = JSON.stringify([this.plugin.sourceIdentity, this.plugin.settings.projectionFile, this.plugin.settings.groupLevel, this.plugin.settings.declaration.groups, this.view?.group ?? null]);

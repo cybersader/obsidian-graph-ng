@@ -588,3 +588,34 @@ test('relationship display rebuild settles despite unchanged metadata bursts; re
     expect(projects).toBe(5); expect(cacheAttempts).toBe(1);
   } finally { plugin.adapter.index.dispose(); await view.onClose(); }
 });
+
+
+test('review: save completes after its rebuild while later hydration rebuilds continue', async () => {
+  const { default: GraphPlugin, GraphView } = await import('../src/main');
+  const { defaults } = await import('../src/settings');
+  const plugin: any = new GraphPlugin({} as any, {} as any);
+  plugin.settings = defaults('p@1'); plugin.adapter = { configure() {} }; plugin.resetStore = () => {}; plugin.saveData = async () => {};
+  const view: any = Object.create(GraphView.prototype);
+  const started: (() => void)[] = [], releases: (() => void)[] = [];
+  const begins = Array.from({ length: 3 }, () => new Promise<void>(r => started.push(r)));
+  let passes = 0, saved = false;
+  Object.assign(view, { plugin, closed: false, refreshing: false, async refreshOnce() {
+    const pass = passes++; started[pass]!(); await new Promise<void>(r => { releases[pass] = r; });
+  } });
+  plugin.subscribe(() => view.refresh());
+  const apply = plugin.apply(plugin.settings).then(() => { saved = true; });
+  let later: Promise<unknown> | undefined, final: Promise<unknown> | undefined;
+  try {
+    await begins[0]; expect(saved).toBe(false);
+    later = plugin.notify(); // arrives during the save's rebuild
+    releases[0]!(); await begins[1];
+    final = plugin.notify(); // another hydration pass remains outstanding
+    // Flush only microtasks, never wait for the later rebuilds or a wall-clock timeout.
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    expect(saved).toBe(true); expect(passes).toBe(2);
+  } finally {
+    releases[0]?.(); releases[1]?.();
+    if (final) { await begins[2]; releases[2]!(); }
+    await Promise.all([apply, later, final]);
+  }
+});

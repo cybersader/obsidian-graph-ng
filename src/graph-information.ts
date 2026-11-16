@@ -1,7 +1,7 @@
 import { workingText } from './working';
 import { setIcon } from 'obsidian';
 import { disclosure, panelHelp, iconButton } from './panel-help';
-import type { EdgeRuleCounts } from './pipeline';
+import type { EdgeRuleCounts, LayoutResult } from './pipeline';
 import type { ExploreResult } from './core/explore';
 import { filterSummary, hiddenClause } from './filter-summary';
 import type { Predicate } from './core/declaration';
@@ -9,7 +9,7 @@ import type { Predicate } from './core/declaration';
 export interface InformationReport {
   nodes: number; edges: number; listed: number;
   linksPending: boolean; provisional: boolean; unresolved: number; duplicates: number;
-  layout?: { cached: boolean; reused?: 'all' | 'some'; ms: number; totalMs: number };
+  layout?: { cached: boolean; reused?: LayoutResult['reused']; ms: number; totalMs: number };
   progress?: { iteration: number; total: number };
   pendingProperties?: number;
   dropped?: Record<string, EdgeRuleCounts>;
@@ -169,7 +169,8 @@ function renderBody(host: HTMLElement, message: string, state: string | undefine
 /** Whether the drawn positions came from the saved layout, and how long any computation took. */
 export function layoutText(l: NonNullable<InformationReport['layout']>) {
   const s = `${(Math.max(l.ms, 50) / 1000).toFixed(1)} s`;
-  return l.cached || l.reused === 'all' ? 'Reused saved layout' : l.reused ? `Reused saved layout, adjusted in ${s}` : `Computed layout in ${s}`;
+  const source = l.reused?.startsWith('interim') ? 'Reused provisional layout' : 'Reused saved layout';
+  return l.cached || l.reused === 'all' || l.reused === 'interim' ? source : l.reused ? `${source}, adjusted in ${s}` : `Computed layout in ${s}`;
 }
 
 /** Stage-local progress only: no elapsed-time estimate and no invented resolver percentage. */

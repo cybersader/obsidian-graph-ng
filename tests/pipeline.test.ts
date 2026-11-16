@@ -401,7 +401,7 @@ test('real edits queued during provisional layout warm-start by identity without
     const first = await p.request<LayoutResult>(1, { kind: 'layout' });
     expect(follow).toBeDefined(); await follow;
     const next = await p.request<LayoutResult>(2, { kind: 'layout' });
-    expect(next.cached).toBe(false); expect(next.reused).toBe('some');
+    expect(next.cached).toBe(false); expect(next.reused).toBe('interim-some');
     expect(streams.filter(e => e.revision === 2).map(e => e.iteration)).toEqual([1, 2, 3, 4, 5]);
     expect(next.positions.slice(6)).toEqual(first.positions.slice(6));
     await p.request(3, { kind: 'configure', config: { ...c, source: 'different-view' } });

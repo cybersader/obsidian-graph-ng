@@ -141,9 +141,10 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
     }
     case 'layout': {
       const start = performance.now(), seed = Number.parseInt(meta.key.slice(0, 8), 16);
-      const prior = complete && saved && matches(saved.meta) && saved.meta.key === meta.key ? saved : interim ?? saved, stored = prior?.meta.key;
-      const exact = complete && prior && matches(prior.meta) && stored === meta.key && prior.identities.length === projection.identities.length && prior.identities.every((id, i) => id === projection.identities[i]);
-      let reused: LayoutResult['reused'] = exact ? 'all' : undefined;
+      // Verified builds compare churn with the complete generation, not an incomplete resolver graph.
+      const prior = complete ? saved ?? interim : interim ?? saved, fromSaved = !!prior && prior === saved, stored = fromSaved ? prior.meta.key : undefined;
+      const exact = complete && prior && matches(prior.meta) && prior.meta.key === meta.key && prior.identities.length === projection.identities.length && prior.identities.every((id, i) => id === projection.identities[i]);
+      let reused: LayoutResult['reused'] = exact ? fromSaved ? 'all' : 'interim' : undefined;
       if (exact) positions = prior!.positions;
       else {
         let input: LayoutInput | undefined;
@@ -165,14 +166,14 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
           }
         }
         if (!input) input = { count: projection.paths.length, source: projection.source, target: projection.target, offsets: projection.offsets, targets: projection.targets, seed };
-        if (input.movable && !input.movable.some(Boolean)) { positions = input.initial!; reused = 'all'; }
-        else { if (input.initial) reused = 'some'; positions = await runLayoutStream(input, config.layout, config.streamEveryIterations, (p, iteration, total) => self.postMessage({ kind: 'positions', revision, positions: p, iteration, total }, { transfer: [p.buffer] }), yieldTask, takeBuffer); }
+        if (input.movable && !input.movable.some(Boolean)) { positions = input.initial!; reused = fromSaved ? 'all' : 'interim'; }
+        else { if (input.movable && input.initial) reused = fromSaved ? 'some' : 'interim-some'; positions = await runLayoutStream(input, config.layout, config.streamEveryIterations, (p, iteration, total) => self.postMessage({ kind: 'positions', revision, positions: p, iteration, total }, { transfer: [p.buffer] }), yieldTask, takeBuffer); }
       }
       const milliseconds = performance.now() - start;
       // An exact hit already holds this generation; skip re-contracting its group summary.
       if (complete && (!exact || prior === interim)) saved = { meta, identities: projection.identities, positions, edgeKeys: hashes, groups: cacheSummary() };
       interim = complete ? undefined : { meta, identities: projection.identities, positions, edgeKeys: hashes };
-      return { positions: positions.slice(), milliseconds, cached: Boolean(exact), reused, stored };
+      return { positions: positions.slice(), milliseconds, cached: Boolean(exact && fromSaved), reused, stored };
     }
     case 'encode':
       if (!positions) throw new Error('No completed layout');

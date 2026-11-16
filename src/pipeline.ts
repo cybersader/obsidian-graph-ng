@@ -30,7 +30,7 @@ export interface ProjectResult { invalidSaved?: GenerationMeta; meta: Generation
 export interface EdgeRuleCounts { drawn: number; missing: number; excluded: number; lines: number }
 export interface DetailResult { projection: RenderProjection; visible: Uint8Array; colors: Uint32Array; explore: ExploreResult; view: number }
 export interface ViewResult { explore: ExploreResult; colors: Uint32Array; groups: GroupProjection; view: number }
-export interface LayoutResult { positions: Float32Array; milliseconds: number; cached: boolean; /** all: every position came from a saved layout; some: saved positions, then a short relax. */ reused?: 'all' | 'some'; stored?: string }
+export interface LayoutResult { positions: Float32Array; milliseconds: number; cached: boolean; /** all/some: saved positions, unchanged/short relax; interim variants: memory-only hints. Full runs omit reuse. */ reused?: 'all' | 'some' | 'interim' | 'interim-some'; stored?: string }
 export interface GroupEvent { kind: 'groups'; revision: number; view: number; projection: GroupProjection }
 export interface Transport { postMessage(message: unknown, transfer: Transferable[]): void; terminate(): void; onmessage: ((event: MessageEvent) => void) | null; onerror: ((event: ErrorEvent) => void) | null }
 interface Pending { id: number; revision: number; request: PipelineRequest; resolve(v: any): void; reject(e: Error): void; timer?: ReturnType<typeof setTimeout> }

@@ -1,6 +1,7 @@
 import { TFile, type TAbstractFile, type TFolder, type App, type Plugin } from 'obsidian';
 import type { FactRow } from '../core/projection';
 import { IncrementalIndex } from './index';
+import { hashEdge } from '../core/edge-hash';
 import { folderPath, type GraphDeclaration } from '../core/declaration';
 import { declaredKeys, packRows, type RowColumns } from '../core/columns';
 import { yieldTask, type IngestOptions } from '../core/scheduler';
@@ -28,11 +29,17 @@ export class LocalAdapter {
   private dirty = new Map<string, number>();
   private changeVersion = 0;
   private reloadRequired = true;
-  /** Exact, ephemeral input stamps, never a source of rows. Adopt only after worker acknowledgement. */
+  /** Ephemeral 64-bit input digests plus length, never rows. Adopt only after worker acknowledgement. */
   private sent = new Map<string, string>();
   private sentComplete = false;
   private ingesting = false;
-  private stamp(row: FactRow | undefined) { return row && JSON.stringify([row, this.indexed.has(row.path), this.propertyVerified.has(row.path)]); }
+  private stamp(row: FactRow | undefined) {
+    if (!row) return;
+    const text = JSON.stringify([row, this.indexed.has(row.path), this.propertyVerified.has(row.path)]);
+    // Two hash lanes plus length make accidental equality unlikely without retaining JSON rows.
+    // Not an authenticity check: collisions can delay a notification, never change source facts.
+    return `${text.length}:${hashEdge(text).join(':')}`;
+  }
   invalidate() { this.epoch++; this.reloadRequired = true; this.seedComplete = false; this.indexed.clear(); this.propertyVerified.clear(); this.sent.clear(); this.sentComplete = false; this.linksResolved = false; }
   setPropertySource(source?: PropertySource) { this.propertySource = source; this.invalidate(); }
   private declaration?: GraphDeclaration;
