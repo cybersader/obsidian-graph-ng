@@ -8,7 +8,7 @@ import { buildProjection, type FactRow } from '../src/core/projection';
 import { sliced } from '../src/core/scheduler';
 import { CACHE_FORMAT, BinaryLayoutStore, encodeLayout, decodeLayout, type BinaryAdapter, type BinaryGeneration, type GenerationMeta } from '../src/core/binary-layout';
 const declaration = defaultDeclaration('fixture@1');
-const layout = { ...DEFAULT_LAYOUT, iterations: 2, relaxIterations: 2 };
+const layout = { ...DEFAULT_LAYOUT, iterations: 2, relaxIterations: 2, convergenceThreshold: 1e20, convergenceIterations: 2 };
 const config = { declaration, layout, source: 'obsidian-links@1/local', groupLevel: 0, streamEveryIterations: 1 };
 function pipeline() { return new WorkerPipeline(new Worker(new URL('../src/layout-worker.ts', import.meta.url).href) as unknown as Transport, () => 10000); }
 class MemoryAdapter implements BinaryAdapter {
@@ -122,15 +122,13 @@ test('worker protocol ignores mismatched revision responses and disposes all pen
   transport.onmessage!({ data: { id: 1, revision: 11, result: 11 } } as MessageEvent); expect(await promise).toBe(11);
   const pending = p.request(12, { kind: 'project' }); p.dispose(); await expect(pending).rejects.toThrow('closed');
 });
-test('legacy slice-1 positions migrate as hints and are reverified, never exact old-format hits', async () => {
+test('legacy slice-1 positions are refused after the quality producer migration', async () => {
   const p = pipeline();
   try {
     const hashes = await p.request<{ declarationHash: string }>(1, { kind: 'configure', config });
     const old = { key: '1'.repeat(64), identities: ['0.md'], positions: [3, 4], producer: 'graphology-fa2@0.10.1', layoutHash: await digest(layoutIdentity(layout)), edgeKeys: [] };
     const binary = await p.request<BinaryGeneration>(1, { kind: 'migrate', declarationHash: hashes.declarationHash, generation: old });
-    expect(binary.meta.format).toBe(CACHE_FORMAT); expect(decodeLayout(binary).positions).toEqual(new Float32Array([3, 4]));
-    await p.request(1, { kind: 'load', generation: binary }); await p.request(1, { kind: 'rows', reset: true, columns: packRows([{ path: '0.md', properties: {} }], declaration) }); await p.request(1, { kind: 'project' });
-    const restored = await p.request<LayoutResult>(1, { kind: 'layout' }); expect(restored.cached).toBe(false); expect(restored.positions).toEqual(new Float32Array([3, 4]));
+    expect(binary).toBeUndefined(); // pre-quality producers are never restamped as settled
   } finally { p.dispose(); }
 });
 test('foreign-view manifest refuses before any binary chunk is read', async () => {
@@ -367,22 +365,22 @@ test('worker position events carry actual cold and warm solver iteration limits'
   const p = pipeline(), events: [number, number][] = [];
   p.onPositions = event => { events.push([event.iteration, event.total]); p.recycle(event.positions.buffer as ArrayBuffer); };
   try {
-    await p.request(1, { kind: 'configure', config: { ...config, layout: { ...layout, iterations: 7, relaxIterations: 3 }, streamEveryIterations: 2 } });
+    await p.request(1, { kind: 'configure', config: { ...config, layout: { ...layout, iterations: 7, relaxIterations: 3, convergenceThreshold: 0 }, streamEveryIterations: 2 } });
     await p.request(1, { kind: 'rows', columns: packRows([{ path: 'a.md', properties: {} }, { path: 'b.md', properties: {} }], declaration), reset: true });
     await p.request(1, { kind: 'project', complete: true }); await p.request(1, { kind: 'layout' });
     expect(events).toEqual([[2, 7], [4, 7], [6, 7]]);
     events.length = 0;
-    await p.request(2, { kind: 'configure', config: { ...config, layout: { ...layout, iterations: 7, relaxIterations: 3 }, streamEveryIterations: 2 } });
+    await p.request(2, { kind: 'configure', config: { ...config, layout: { ...layout, iterations: 7, relaxIterations: 3, convergenceThreshold: 0 }, streamEveryIterations: 2 } });
     await p.request(2, { kind: 'rows', columns: packRows([{ path: 'c.md', properties: {} }], declaration) });
     await p.request(2, { kind: 'project', complete: true }); await p.request(2, { kind: 'layout' });
-    expect(events).toEqual([[2, 3]]); // warm continuation never repaints the zero-step seed
+    expect(events).toEqual([[2, 7], [4, 7], [6, 7]]); // unsettled continuation gets a full budget
   } finally { p.dispose(); }
 });
 
 test('real edits queued during provisional layout warm-start by identity without a zero-step reset', async () => {
   const p = pipeline(), streams: { revision: number; iteration: number }[] = [];
   const d = { ...declaration, identity: [{ key: 'id' }], edges: [{ name: 'edge', kind: 'inline' as const, key: 'to', type: 'edge' }] };
-  const c = { ...config, declaration: d, layout: { ...layout, iterations: 20, relaxIterations: 6 }, streamEveryIterations: 1 };
+  const c = { ...config, declaration: d, layout: { ...layout, iterations: 20, relaxIterations: 6, convergenceThreshold: 0 }, streamEveryIterations: 1 };
   const facts = Array.from({ length: 20 }, (_, i) => ({ path: `${String(i).padStart(2, '0')}.md`, properties: { id: String(i), ...(i === 0 ? { to: '1' } : {}) } }));
   let follow: Promise<unknown> | undefined;
   p.onPositions = e => {
@@ -402,12 +400,47 @@ test('real edits queued during provisional layout warm-start by identity without
     const first = await p.request<LayoutResult>(1, { kind: 'layout' });
     expect(follow).toBeDefined(); await follow;
     const next = await p.request<LayoutResult>(2, { kind: 'layout' });
-    expect(next.cached).toBe(false); expect(next.reused).toBe('interim-some');
-    expect(streams.filter(e => e.revision === 2).map(e => e.iteration)).toEqual([1, 2, 3, 4, 5]);
-    expect(next.positions.slice(6)).toEqual(first.positions.slice(6));
+    expect(next.cached).toBe(false); expect(next.reused).toBeUndefined();
+    expect(streams.filter(e => e.revision === 2).map(e => e.iteration)).toEqual(Array.from({ length: 19 }, (_, i) => i + 1));
+    expect(next.positions.every(Number.isFinite)).toBe(true);
     await p.request(3, { kind: 'configure', config: { ...c, source: 'different-view' } });
     await p.request(3, { kind: 'project', complete: false });
     const isolated = await p.request<LayoutResult>(3, { kind: 'layout' });
     expect(isolated.reused).toBeUndefined(); expect(streams.some(e => e.revision === 3 && e.iteration === 0)).toBe(false);
+  } finally { p.dispose(); }
+});
+
+test('review: committed refinement becomes the settled generation for encode and reopen', async () => {
+  const p = pipeline(), rows: FactRow[] = [{ path: 'a.md', properties: {}, links: { 'fixture@1': ['b.md'] } }, { path: 'b.md', properties: {}, links: {} }];
+  try {
+    await p.request(1, { kind: 'configure', config }); await p.request(1, { kind: 'rows', columns: packRows(rows, declaration), reset: true }); await p.request(1, { kind: 'project' });
+    const first = await p.request<LayoutResult>(1, { kind: 'layout' });
+    const options = { ...layout, force: { ...layout.force, scalingRatio: 12 } };
+    const refined = await p.request<LayoutResult>(1, { kind: 'recompute', options, initial: first.positions });
+    expect(refined.settled).toBe(true);
+    await p.request(1, { kind: 'adoptLayout' } as any);
+    const encoded = await p.request<BinaryGeneration>(1, { kind: 'encode' });
+    expect(decodeLayout(encoded).positions).toEqual(refined.positions); expect(encoded.meta.layout).toEqual(options);
+    await p.request(2, { kind: 'configure', config: { ...config, layout: options } }); await p.request(2, { kind: 'project' });
+    const restored = await p.request<LayoutResult>(2, { kind: 'layout' }); expect(restored.cached).toBe(true); expect(restored.positions).toEqual(refined.positions);
+  } finally { p.dispose(); }
+});
+
+test('unsettled generations never encode; hydration continues from prior coordinates instead of pinning them', async () => {
+  const p = pipeline(), c = { ...config, layout: { ...layout, iterations: 1, convergenceThreshold: 0 }, streamEveryIterations: 1 };
+  const rows = [{ path: 'a.md', properties: {}, links: { 'fixture@1': ['b.md'] } }, { path: 'b.md', properties: {} }, { path: 'c.md', properties: {} }];
+  try {
+    await p.request(1, { kind: 'configure', config: c }); await p.request(1, { kind: 'rows', reset: true, columns: packRows(rows, declaration) });
+    await p.request(1, { kind: 'project', complete: false }); const first = await p.request<LayoutResult>(1, { kind: 'layout' });
+    expect(first.settled).toBe(false); expect(await p.request(1, { kind: 'encode' }).catch(String)).toContain('not settled');
+    const continued = await p.request<LayoutResult>(1, { kind: 'recompute', options: c.layout, initial: first.positions.slice() });
+    await p.request(2, { kind: 'project', complete: true }); const verified = await p.request<LayoutResult>(2, { kind: 'layout' });
+    expect(verified.positions).toEqual(continued.positions); expect(verified.positions).not.toEqual(first.positions); expect(verified.cached).toBe(false);
+    const twice = await p.request<LayoutResult>(2, { kind: 'recompute', options: c.layout, initial: verified.positions.slice() });
+    expect(twice.positions).not.toEqual(verified.positions);
+    const detail = await p.request<DetailResult>(2, { kind: 'detail' });
+    await p.request(2, { kind: 'explore', view: { ...(await import('../src/core/explore')).emptyView(), query: 'b' }, facetValues: 10 });
+    expect((await p.request<DetailResult>(2, { kind: 'detail' })).projection.source).toEqual(detail.projection.source);
+    expect((await p.request<LayoutResult>(2, { kind: 'recompute', options: c.layout, initial: verified.positions.slice() })).positions).toEqual(twice.positions);
   } finally { p.dispose(); }
 });

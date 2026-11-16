@@ -1,7 +1,7 @@
 import { layoutIdentity, validateLayout } from './core/layout-options';
 import { probeGpu } from './gpu-probe';
 import { renderProjection } from './render-projection';
-import { runLayout, runLayoutStream, type LayoutInput } from './core/layout';
+import { runLayout, runLayoutStream, isolateRing, type LayoutInput } from './core/layout';
 import { yieldTask } from './core/scheduler';
 import { checked, cooperative, filterSteps, groupSteps, lowerPredicate, lowerGroup, type EvaluationControl } from './core/expr/engine';
 import { identityDeclaration, digest, canonical, layoutDeclaration } from './core/declaration';
@@ -20,6 +20,8 @@ let config: PipelineConfig, meta: GenerationMeta, projection: Projection, visibl
 let contracted: ReturnType<typeof contractGroups>, positions: Float32Array | undefined, saved: BinaryLayout | undefined;
 /** Unverified coordinates are same-declaration, in-memory hints only, never a disk generation. */
 let interim: BinaryLayout | undefined;
+let settled = false;
+let preparedLayout: { positions: Float32Array; settled: boolean; options: PipelineConfig['layout']; revision: number } | undefined;
 const recycled: ArrayBuffer[] = [];
 const takeBuffer = (length: number) => { const i = recycled.findIndex(b => b.byteLength === length * 4); return i < 0 ? new Float32Array(length) : new Float32Array(recycled.splice(i, 1)[0]!); };
 let complete = true, projectionRevision = -1, colors: Uint32Array = new Uint32Array(), explored: ExploreResult | undefined;
@@ -72,6 +74,15 @@ function groupSummary(p: GroupProjection): GroupProjection {
   // Carrier/contribution objects remain worker-owned and are read a page at a time.
   return { ...p, groupEdges: p.groupEdges.map(e => ({ ...e, carriers: { kind: e.carriers.kind, ids: [] } })) };
 }
+async function solve(input: LayoutInput, options: PipelineConfig['layout'], revision: number) {
+  let settled = false;
+  const arrange = isolateRing(input);
+  const positions = await runLayoutStream(input, options, config.streamEveryIterations, (p, iteration, total) => {
+    arrange(p); self.postMessage({ kind: 'positions', revision, positions: p, iteration, total }, { transfer: [p.buffer] });
+  }, yieldTask, takeBuffer, value => { settled = value; });
+  arrange(positions);
+  return { positions, settled };
+}
 async function handle(r: PipelineRequest, revision: number, control: EvaluationControl): Promise<unknown> {
   switch (r.kind) {
     case 'gpu': return typeof OffscreenCanvas === 'undefined' ? undefined : probeGpu(new OffscreenCanvas(1, 1));
@@ -80,6 +91,7 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       const value: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(r.bytes)); validateGroupProjection(value, r.limits); return value;
     }
     case 'configure': {
+      preparedLayout = undefined;
       // Equal ID strings from different declared properties need not identify the same notes.
       if (saved && canonical(config.declaration.identity) !== canonical(r.config.declaration.identity)) saved = undefined;
       config = r.config;
@@ -105,13 +117,14 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       const old = r.generation;
       if (!config.source.endsWith('/local')) return undefined;
       // Old keys omit source/format; local-only hints can never be stamped for a new view.
-      if (!['graphology-fa2@0.10.1', LAYOUT_PRODUCER].includes(old.producer) || !validSavedLayout(old) || old.layoutHash !== await digest(layoutIdentity(config.layout)) || r.declarationHash !== declarationHash) return undefined;
+      if (old.producer !== LAYOUT_PRODUCER || !validSavedLayout(old) || old.layoutHash !== await digest(layoutIdentity(config.layout)) || r.declarationHash !== declarationHash) return undefined;
       const keys = new Uint32Array((old.edgeKeys?.length ?? 0) * 2);
       old.edgeKeys?.forEach((key, i) => keys.set(hashEdge(key), i * 2));
       const m = { format: CACHE_FORMAT, declarationHash, layoutHash, layout: config.layout, key: old.key, producer: LAYOUT_PRODUCER, source: config.source, groupLevel: config.groupLevel, streamEveryIterations: config.streamEveryIterations };
       return encodeLayout({ meta: m, identities: old.identities, positions: Float32Array.from(old.positions), edgeKeys: keys });
     }
     case 'project': {
+      preparedLayout = undefined;
       projectionRevision = revision;
       complete = r.complete !== false;
       positions = undefined;
@@ -136,15 +149,32 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       if (revision !== projectionRevision || !positions) throw new Error('Projection generation changed');
       validateLayout(r.options);
       const start = performance.now();
-      const next = await runLayoutStream({ count: projection.paths.length, source: projection.source, target: projection.target, offsets: projection.offsets, targets: projection.targets, up: projection.up, seed: Number.parseInt(meta.key.slice(0, 8), 16), initial: positions.slice() }, r.options, config.streamEveryIterations, (p, iteration, total) => self.postMessage({ kind: 'positions', revision, positions: p, iteration, total }, { transfer: [p.buffer] }), yieldTask, takeBuffer);
-      return { positions: next, milliseconds: performance.now() - start, cached: false };
+      const next = await solve({ count: projection.paths.length, source: projection.source, target: projection.target, offsets: projection.offsets, targets: projection.targets, up: projection.up, seed: Number.parseInt(meta.key.slice(0, 8), 16), initial: r.initial ?? positions.slice() }, r.options, revision);
+      preparedLayout = { ...next, options: r.options, revision };
+      return { ...next, positions: next.positions.slice(), milliseconds: performance.now() - start, cached: false };
+    }
+    case 'adoptLayout': {
+      const pending = preparedLayout;
+      if (!pending || pending.revision !== revision || revision !== projectionRevision) throw new Error('Layout generation changed');
+      const options = pending.options;
+      const nextDeclarationHash = await digest(identityDeclaration(layoutDeclaration(config.declaration, options.force.familyPull > 0)));
+      const nextLayoutHash = await digest({ layout: layoutIdentity(options), streamEveryIterations: config.streamEveryIterations });
+      const key = await generationKey([...rows.values()], config.declaration, options, `${LAYOUT_PRODUCER}/stream${config.streamEveryIterations}/group${config.groupLevel}/${config.source}/format${CACHE_FORMAT}`);
+      config = { ...config, layout: options }; declarationHash = nextDeclarationHash; layoutHash = nextLayoutHash;
+      meta = { ...meta, key, declarationHash, layoutHash, layout: options };
+      positions = pending.positions; settled = pending.settled; preparedLayout = undefined;
+      const generation = { meta, identities: projection.identities, positions, edgeKeys: hashes };
+      if (complete && settled) { saved = { ...generation, groups: cacheSummary() }; interim = undefined; }
+      else { saved = undefined; interim = generation; }
+      return meta;
     }
     case 'layout': {
       const start = performance.now(), seed = Number.parseInt(meta.key.slice(0, 8), 16);
-      // Verified builds compare churn with the complete generation, not an incomplete resolver graph.
-      const prior = complete ? saved ?? interim : interim ?? saved, fromSaved = !!prior && prior === saved, stored = fromSaved ? prior.meta.key : undefined;
-      const exact = complete && prior && matches(prior.meta) && prior.meta.key === meta.key && prior.identities.length === projection.identities.length && prior.identities.every((id, i) => id === projection.identities[i]);
+      // Continue the latest live computation; unchanged saved borrowing creates no interim.
+      const prior = interim ?? saved, fromSaved = !!prior && prior === saved, stored = fromSaved ? prior.meta.key : undefined;
+      const exact = complete && fromSaved && prior && matches(prior.meta) && prior.meta.key === meta.key && prior.identities.length === projection.identities.length && prior.identities.every((id, i) => id === projection.identities[i]);
       let reused: LayoutResult['reused'] = exact ? fromSaved ? 'all' : 'interim' : undefined;
+      settled = !!exact;
       if (exact) positions = prior!.positions;
       else {
         let input: LayoutInput | undefined;
@@ -168,18 +198,18 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
         if (!input) input = { count: projection.paths.length, source: projection.source, target: projection.target, offsets: projection.offsets, targets: projection.targets, up: projection.up, seed };
         // A parent-only edit changes no link endpoint. On active-family key misses relax
         // every note, rather than incorrectly treating all existing notes as pinned.
-        if (config.layout.force.familyPull && projection.up) input.movable = undefined;
-        if (input.movable && !input.movable.some(Boolean)) { positions = input.initial!; reused = fromSaved ? 'all' : 'interim'; }
-        else { if (input.movable && input.initial) reused = fromSaved ? 'some' : 'interim-some'; positions = await runLayoutStream(input, config.layout, config.streamEveryIterations, (p, iteration, total) => self.postMessage({ kind: 'positions', revision, positions: p, iteration, total }, { transfer: [p.buffer] }), yieldTask, takeBuffer); }
+        if (prior === interim || config.layout.force.familyPull && projection.up) input.movable = undefined;
+        if (input.movable && !input.movable.some(Boolean)) { positions = input.initial!; settled = fromSaved; reused = fromSaved ? 'all' : 'interim'; }
+        else { if (input.movable && input.initial) reused = fromSaved ? 'some' : 'interim-some'; const result = await solve(input, config.layout, revision); positions = result.positions; settled = result.settled; }
       }
       const milliseconds = performance.now() - start;
       // An exact hit already holds this generation; skip re-contracting its group summary.
-      if (complete && (!exact || prior === interim)) saved = { meta, identities: projection.identities, positions, edgeKeys: hashes, groups: cacheSummary() };
-      interim = complete ? undefined : { meta, identities: projection.identities, positions, edgeKeys: hashes };
-      return { positions: positions.slice(), milliseconds, cached: Boolean(exact && fromSaved), reused, stored };
+      if (complete && settled && (!exact || prior === interim)) saved = { meta, identities: projection.identities, positions, edgeKeys: hashes, groups: cacheSummary() };
+      interim = complete && settled || fromSaved && reused === 'all' ? undefined : { meta, identities: projection.identities, positions, edgeKeys: hashes };
+      return { positions: positions.slice(), milliseconds, cached: Boolean(exact && fromSaved), reused, stored, settled };
     }
     case 'encode':
-      if (!positions) throw new Error('No completed layout');
+      if (!positions || !settled) throw new Error('Layout not settled');
       return encodeLayout({ meta, identities: projection.identities, positions, edgeKeys: hashes, groups: saved?.meta.key === meta.key && saved.groups ? saved.groups : cacheSummary() });
     case 'explore': {
       if (revision !== projectionRevision) throw new Error('Projection generation changed');

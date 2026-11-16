@@ -15,7 +15,7 @@ const graph = () => { const links: Record<string, Record<string, number>> = {}; 
 const declaration = defaultDeclaration('p@1');
 function settings(change: (s: any) => void = () => {}) {
   const s: any = { ...defaults('p@1'), declaration: structuredClone(declaration), persistLayout: true, streamEveryIterations: 1 };
-  s.layout = { ...s.layout, iterations: 60, relaxIterations: 12 }; change(s); return s;
+  s.layout = { ...s.layout, iterations: 60, relaxIterations: 12, convergenceThreshold: 1e20, convergenceIterations: 12 }; change(s); return s;
 }
 async function boot(disk: MemoryAdapter, resolved: Record<string, Record<string, number>>, initial = settings()) {
   const { default: GraphPlugin } = await import('../src/main');
@@ -52,8 +52,8 @@ test('successive provisional layouts reuse live coordinates without persisting a
   const disk = new MemoryAdapter(), app = await boot(disk, {});
   try {
     const first = await app.open(); expect(first.verified).toBe(false); expect(first.streamed).toBeGreaterThan(0);
-    const next = await app.open(); expect(next.verified).toBe(false); expect(next.layout.reused).toBe('interim');
-    expect(next.positions).toEqual(first.positions); expect(next.streamed).toBe(0); expect(disk.files.size).toBe(0);
+    const next = await app.open(); expect(next.verified).toBe(false); expect(next.layout.reused).toBeUndefined();
+    expect(next.positions.every(Number.isFinite)).toBe(true); expect(next.streamed).toBe(11); expect(disk.files.size).toBe(0);
   } finally { app.dispose(); }
 });
 
@@ -61,7 +61,7 @@ test('(a) a second open of an unchanged graph is an exact hit: no layout iterati
   const disk = new MemoryAdapter(), app = await boot(disk, graph());
   try {
     const cold = await app.open();
-    expect(cold.layout.cached).toBe(false); expect(cold.layout.reused).toBeUndefined(); expect(cold.streamed).toBe(59);
+    expect(cold.layout.cached).toBe(false); expect(cold.layout.reused).toBeUndefined(); expect(cold.streamed).toBe(11);
     expect(cold.text).toMatch(/^Computed layout in \d+\.\d s$/); expect(manifests(disk)).toHaveLength(1);
     const again = await app.open();
     expect(again.layout.cached).toBe(true); expect(again.streamed).toBe(0); expect(again.text).toBe('Reused saved layout');
@@ -145,14 +145,14 @@ test('(e) layout physics and topology changes invalidate: full computation, neve
     const cold = await app.open();
     app.apply(settings(s => { s.layout = { ...s.layout, force: { ...s.layout.force, gravity: 2 } }; }));
     const physics = await app.open();
-    expect(physics.layout.cached).toBe(false); expect(physics.layout.reused).toBeUndefined(); expect(physics.streamed).toBe(59);
+    expect(physics.layout.cached).toBe(false); expect(physics.layout.reused).toBeUndefined(); expect(physics.streamed).toBe(11);
     expect(physics.text).toMatch(/^Computed layout in/); expect(physics.positions).not.toEqual(cold.positions);
     // A settings change is not damage: no quarantined copy is left in the (possibly synced) plugin folder.
     expect([...disk.files.keys()].some(p => p.includes('.corrupt-'))).toBe(false); expect(manifests(disk)).toHaveLength(1);
     // Same physics, different edges: the producer is a different source of edges.
     app.apply(settings(s => { s.layout = { ...s.layout, force: { ...s.layout.force, gravity: 2 } }; s.declaration.edges = [{ name: 'parents', kind: 'inline', key: 'parent', type: 'parent' }]; }));
     const topology = await app.open();
-    expect(topology.layout.cached).toBe(false); expect(topology.layout.reused).toBeUndefined(); expect(topology.streamed).toBe(59);
+    expect(topology.layout.cached).toBe(false); expect(topology.layout.reused).toBeUndefined(); expect(topology.streamed).toBe(11);
   } finally { app.dispose(); }
 });
 
@@ -169,8 +169,8 @@ test('changing identity rules cannot move saved positions to other notes that re
     const changed = await app.open();
     // Every old string is present and there are no changed edges: neither the membership check
     // nor the >50% heuristic can detect this identity-namespace change.
-    expect(changed.layout.reused).toBeUndefined(); expect(changed.streamed).toBe(59);
-    expect(changed.positions).not.toEqual(cold.positions);
+    expect(changed.layout.reused).toBeUndefined(); expect(changed.streamed).toBe(11);
+    expect(changed.trace.expected).not.toBe(cold.trace.expected); // isolated-ring geometry is deliberately seed-independent
     expect([...disk.files.keys()].some(p => p.includes('.corrupt-'))).toBe(false);
   } finally { app.dispose(); }
 });
@@ -211,7 +211,7 @@ test('a loaded generation rejected by the worker is quarantined and the same key
   const app = await boot(disk, links);
   try {
     const rebuilt = await app.open();
-    expect(rebuilt.layout.cached).toBe(false); expect(rebuilt.streamed).toBe(59);
+    expect(rebuilt.layout.cached).toBe(false); expect(rebuilt.streamed).toBe(11);
     expect([...disk.files.keys()].some(p => p.includes('.corrupt-'))).toBe(true);
     expect(disk.files.has(`plugin/cache/local/${declarationHash!}/${key!}/manifest.json`)).toBe(true);
     expect(JSON.parse(await disk.read('plugin/cache/local/index.json'))).toEqual([{ declarationHash: declarationHash!, key: key! }]);
@@ -230,7 +230,7 @@ test('known miss: deleting or renaming a note recomputes from scratch (ADR-0004 
     const files = app.plugin.adapter.app.vault.getMarkdownFiles(); files.splice(5, 1); delete links[name(5)];
     app.plugin.adapter.invalidate();
     const deleted = await app.open();
-    expect(deleted.layout.cached).toBe(false); expect(deleted.layout.reused).toBeUndefined(); expect(deleted.streamed).toBe(59);
+    expect(deleted.layout.cached).toBe(false); expect(deleted.layout.reused).toBeUndefined(); expect(deleted.streamed).toBe(11);
     expect(deleted.text).toMatch(/^Computed layout in/);
   } finally { app.dispose(); }
 });
@@ -287,10 +287,10 @@ test('review: exact interim reuse never reports a saved cache hit or stored key'
     for (let i = 0; i < N; i++) links[name(i)] = {};
     app.plugin.adapter.invalidate();
     const verified = await app.open();
-    expect(verified.verified).toBe(true); expect(verified.positions).toEqual(partial.positions); expect(verified.streamed).toBe(0);
-    expect(verified.layout.cached).toBe(false); expect(verified.layout.reused).toBe('interim');
+    expect(verified.verified).toBe(true); expect(verified.positions.every(Number.isFinite)).toBe(true); expect(verified.streamed).toBe(11);
+    expect(verified.layout.cached).toBe(false); expect(verified.layout.reused).toBeUndefined();
     expect(verified.trace.valid).toBe(false); expect(verified.trace.stored).toBeUndefined();
-    expect(verified.text).toBe('Reused provisional layout');
+    expect(verified.text).toMatch(/^Computed layout/);
   } finally { app.dispose(); }
 });
 
@@ -299,7 +299,7 @@ test('review: a full-budget restart from interim positions reports computation, 
   try {
     await app.open(); Object.assign(links, graph()); app.plugin.adapter.invalidate();
     const verified = await app.open();
-    expect(verified.verified).toBe(true); expect(verified.streamed).toBe(59);
+    expect(verified.verified).toBe(true); expect(verified.streamed).toBe(11);
     expect(verified.layout.cached).toBe(false); expect(verified.layout.reused).toBeUndefined();
     expect(verified.trace.stored).toBeUndefined(); expect(verified.text).toMatch(/^Computed layout in /);
   } finally { app.dispose(); }

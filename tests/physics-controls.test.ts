@@ -58,7 +58,7 @@ test('every control has a plain label and an effect hint; advanced controls sit 
     expect(hint.length).toBeGreaterThan(30); expect(f.panel.body.textContent).toContain(hint);
     expect(details.contains(byLabel(f, label))).toBe(advanced);
   }
-  expect(PHYSICS_FIELDS.filter(([, , , advanced]) => !advanced).map(([key]) => key)).toEqual(['scalingRatio', 'gravity', 'familyPull']);
+  expect(PHYSICS_FIELDS.filter(([, , , advanced]) => !advanced).map(([key]) => key)).toEqual(['scalingRatio', 'gravity', 'familyPull', 'hubGravity']);
   f.panel.dispose();
 });
 test('presets and checkboxes only fill drafts; one explicit apply sends every exposed value', async () => {
@@ -129,7 +129,7 @@ test('host rejects invalid stale disposed and worker-failed apply with prior gra
 test('real worker recompute is finite, layout-only and streams progressed frames; stale/invalid requests preserve prior generation', async () => {
   const { WorkerPipeline } = await import('../src/pipeline');
   const { packRows } = await import('../src/core/columns');
-  const s = defaults('links'), options = { ...s.layout, iterations: 2, relaxIterations: 2 };
+  const s = defaults('links'), options = { ...s.layout, iterations: 2, relaxIterations: 2, convergenceThreshold: 1e20, convergenceIterations: 2 };
   const p = new WorkerPipeline(new Worker(new URL('../src/layout-worker.ts', import.meta.url).href) as any, () => 10000);
   try {
     await p.request(1, { kind: 'configure', config: { declaration: s.declaration, layout: options, source: 'fixture/local', groupLevel: 0, streamEveryIterations: 1 } });
@@ -192,10 +192,10 @@ test('preset transforms are relative to the base, bounded, and never compound', 
 });
 test('recommended values scale with graph size and stay valid', () => {
   const sizes = [[50, 60], [500, 1500], [2000, 6000], [16000, 50000], [200000, 900000]].map(([n, e]) => recommendedPhysics(n!, e!));
-  for (let i = 1; i < sizes.length; i++) { expect(sizes[i]!.gravity).toBeLessThanOrEqual(sizes[i - 1]!.gravity); expect(sizes[i]!.iterations).toBeLessThanOrEqual(sizes[i - 1]!.iterations); }
-  expect(sizes[0]!.gravity).toBeGreaterThan(sizes[3]!.gravity); expect(sizes[0]!.iterations).toBeGreaterThan(sizes[3]!.iterations);
+  for (let i = 1; i < sizes.length; i++) { expect(sizes[i]!.gravity).toBeLessThanOrEqual(sizes[i - 1]!.gravity); expect(sizes[i]!.iterations).toBeGreaterThanOrEqual(sizes[i - 1]!.iterations); }
+  expect(sizes[0]!.gravity).toBeGreaterThan(sizes[3]!.gravity); expect(sizes[0]!.iterations).toBeLessThan(sizes[3]!.iterations);
   for (const v of sizes) { expect(v.strongGravityMode).toBe(true); expect(v.gravity).toBeGreaterThanOrEqual(.1); expect(v.gravity).toBeLessThanOrEqual(.25); expect(() => physicsSettings(defaults('links'), v)).not.toThrow(); }
-  expect(recommendedPhysics(16000, 50000)).toMatchObject({ scalingRatio: 10, gravity: .125, slowDown: 1, iterations: 150, barnesHutTheta: 1.2 });
+  expect(recommendedPhysics(16000, 50000)).toMatchObject({ scalingRatio: 10, gravity: .125, slowDown: 1, iterations: 310, barnesHutTheta: 1.2 });
   expect(recommendedPhysics(0, 0).iterations).toBe(300);
 });
 test('undo restores the tuned values before a preset, and re-applies them in one click once the preset was applied', async () => {

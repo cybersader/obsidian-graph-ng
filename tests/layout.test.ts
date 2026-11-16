@@ -8,7 +8,7 @@ import { oracleLayout, layoutQuality, qualityDifference } from './support/layout
 import { defaults, upgradeSettings } from '../src/settings';
 const projection = buildProjection(fixture(400, 1000), exampleDeclaration);
 const input = { count: projection.paths.length, source: projection.source, target: projection.target, offsets: projection.offsets, targets: projection.targets, seed: 17 };
-const options = { ...DEFAULT_LAYOUT, iterations: 50 };
+const options = { ...DEFAULT_LAYOUT, iterations: 50, force: { ...DEFAULT_LAYOUT.force, hubGravity: 0 } };
 const hash = (p: Float32Array) => createHash('sha256').update(new Uint8Array(p.buffer)).digest('hex');
 test('CSR solver is deterministic; stream cadence and task budget preserve integrator history', async () => {
   const first = runLayout(input, options), second = runLayout(input, options);
@@ -109,8 +109,9 @@ test('centering: normal gravity rings disconnected parts far out, strong gravity
   for (let i = 1; i < 500; i++) { src.push(i); dst.push(Math.floor(rng() * i)); }
   for (let k = 0; k < 300; k++) { const a = Math.floor(rng() * 500), b = Math.floor(rng() * 500); if (a !== b) { src.push(a); dst.push(b); } }
   for (let i = 500; i < 750; i += 2) { src.push(i); dst.push(i + 1); }
-  const g = { count: n, source: Uint32Array.from(src), target: Uint32Array.from(dst), seed: 7 };
-  const room = (strongGravityMode: boolean, gravity: number) => ({ ...DEFAULT_LAYOUT, force: { ...DEFAULT_LAYOUT.force, scalingRatio: 23.64, gravity, strongGravityMode, slowDown: 3.607, barnesHutTheta: .369 } });
+  const seed = random(7 ^ DEFAULT_LAYOUT.seed);
+  const g = { count: n, source: Uint32Array.from(src), target: Uint32Array.from(dst), seed: 7, initial: Float32Array.from({ length: n * 2 }, () => (seed() - .5) * 100) };
+  const room = (strongGravityMode: boolean, gravity: number) => ({ ...DEFAULT_LAYOUT, force: { ...DEFAULT_LAYOUT.force, hubGravity: 0, scalingRatio: 23.64, gravity, strongGravityMode, slowDown: 3.607, barnesHutTheta: .369 } });
   const median = (a: number[]) => a.sort((x, y) => x - y)[a.length >> 1]!;
   const ring = (p: Float32Array) => {
     let cx = 0, cy = 0; for (let i = 0; i < n; i++) { cx += p[2 * i]! / n; cy += p[2 * i + 1]! / n; }
@@ -124,4 +125,53 @@ test('centering: normal gravity rings disconnected parts far out, strong gravity
   // The far ring is the reference ForceAtlas2 behaviour, not a solver error.
   for (const [mine, strongMode, gravity] of [[weak, false, .5], [strong, true, .15]] as const)
     expect(Math.abs(ring(oracleLayout(g, room(strongMode, gravity))).ratio / mine.ratio - 1)).toBeLessThan(.1);
+});
+
+test('cold seeds are deterministic discs whose radius grows with square root of note count', () => {
+  const small = initialPositions(100, 7, 10), large = initialPositions(400, 7, 10);
+  expect(small).toEqual(initialPositions(100, 7, 10));
+  for (let i = 0; i < 100; i++) {
+    expect(Math.hypot(small[i * 2]!, small[i * 2 + 1]!)).toBeLessThanOrEqual(100.001);
+    expect(large[i * 2]).toBeCloseTo(small[i * 2]! * 2, 4);
+  }
+});
+test('budget exhaustion is not settlement; explicit quiet runs report settlement', async () => {
+  let settled = true;
+  await runLayoutStream(input, { ...options, iterations: 1 }, 1, () => {}, async () => {}, undefined, value => { settled = value; });
+  expect(settled).toBe(false);
+  const quiet = new LayoutSolver(input, { ...options, convergenceThreshold: 1e20 });
+  while (!quiet.done) quiet.step(); expect(quiet.settled).toBe(true);
+});
+test('isolates use ordered outer rings without moving connected or pinned notes', async () => {
+  const { isolateRing } = await import('../src/core/layout');
+  const p = Float32Array.of(-10, 0, 10, 0, 400, 400, -300, -300);
+  const arrange = isolateRing({ count: 4, source: Uint32Array.of(0), target: Uint32Array.of(1), seed: 1 });
+  arrange(p); expect(p.slice(0, 4)).toEqual(Float32Array.of(-10, 0, 10, 0));
+  expect(Math.hypot(p[4]!, p[5]!)).toBeCloseTo(10.8, 4); expect(p[4]).toBeCloseTo(-p[6]!, 4);
+  const pinned = p.slice(); isolateRing({ count: 4, source: Uint32Array.of(0), target: Uint32Array.of(1), seed: 1, movable: Uint8Array.of(1, 1, 0, 0) })(p); expect(p).toEqual(pinned);
+});
+test('mass hub pull is default-on, finite, deterministic and inert when no larger neighbours exist', async () => {
+  const { layoutIdentity, validateLayout } = await import('../src/core/layout-options');
+  expect(DEFAULT_LAYOUT.force.hubGravity).toBe(2);
+  const off = { ...options, force: { ...options.force, hubGravity: 0 } }, on = { ...off, force: { ...off.force, hubGravity: 2 } };
+  expect(layoutIdentity(off).force).not.toHaveProperty('hubGravity'); expect(layoutIdentity(on).force).toHaveProperty('hubGravity', 2);
+  for (const hubGravity of [-1, 10.01, NaN, Infinity]) expect(() => validateLayout({ ...off, force: { ...off.force, hubGravity } })).toThrow();
+  const count = 60, ring = { count, source: Uint32Array.from({ length: count }, (_, i) => i), target: Uint32Array.from({ length: count }, (_, i) => (i + 1) % count), seed: 1 };
+  expect(runLayout(ring, on)).toEqual(runLayout(ring, off));
+  const star = { ...ring, source: new Uint32Array(count - 1), target: Uint32Array.from({ length: count - 1 }, (_, i) => i + 1) };
+  const radius = (p: Float32Array) => Array.from({ length: count - 1 }, (_, i) => Math.hypot(p[(i + 1) * 2]! - p[0]!, p[(i + 1) * 2 + 1]! - p[1]!)).reduce((a, b) => a + b, 0);
+  const base = runLayout(star, off), pulled = runLayout(star, on);
+  expect(pulled.every(Number.isFinite)).toBe(true); expect(pulled).toEqual(runLayout(star, on)); expect(radius(pulled)).toBeLessThan(radius(base));
+});
+test('review: stationary layouts can settle with a one-step budget', () => {
+  const solver = new LayoutSolver({ count: 1, source: new Uint32Array(), target: new Uint32Array(), seed: 1, initial: Float32Array.of(0, 0) }, { ...options, iterations: 1, convergenceIterations: 3 });
+  solver.step(); expect(solver.settled).toBe(true);
+});
+test('review: new isolate never occupies a pinned isolate slot', async () => {
+  const { isolateRing } = await import('../src/core/layout');
+  const source = Uint32Array.of(0), target = Uint32Array.of(1), p = Float32Array.of(-10, 0, 10, 0, 0, 0, 0, 0);
+  isolateRing({ count: 3, source, target, seed: 1 })(p);
+  const pinned = p.slice(4, 6);
+  isolateRing({ count: 4, source, target, seed: 1, movable: Uint8Array.of(0, 0, 0, 1) })(p);
+  expect(p.slice(4, 6)).toEqual(pinned); expect(Math.hypot(p[6]! - p[4]!, p[7]! - p[5]!)).toBeGreaterThan(.1);
 });

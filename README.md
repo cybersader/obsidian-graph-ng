@@ -284,7 +284,8 @@ The generated [`examples/default-settings.json`](examples/default-settings.json)
 | Layout seed / initial radius | 1 / 100; host derives effective seed from generation hash |
 | Barnes–Hut / theta / maximum tree depth | true / 1.2 / 32 |
 | Layout worker-task iteration budget / stream cadence | 5 / 5 iterations |
-| Convergence RMS threshold / consecutive quiet iterations | 0 (disabled) / 3 |
+| Convergence RMS threshold / consecutive quiet iterations | 0 (early exit disabled; relative settlement still checked) / 3, capped at the step budget |
+| Hub gravity / Family pull | 2 / 0 |
 | Layout node radius / size-adjusted force limit | 1 / 10 |
 | Scaling ratio / gravity / slowDown | 2 / 1 / 1 |
 | Edge-weight influence | 1 |
@@ -423,7 +424,7 @@ Groups streams before detail/layout. Declared columns and producer-link CSR are 
 
 `data.json` contains settings only. Default derived storage is `cache/local/` under the plugin folder; `cache.directory`, `cache.chunkBytes` (at most 1 MiB), `cache.maxGenerationBytes` and `cachedDeclarations` control it. Position Float32, identity dictionaries/offsets, hash-pair topology and group summaries are checksummed/chunked; manifests commit completed generations, matching chunks can resume, bad data quarantines automatically, and the LRU records kept/removed actions. Plain Obsidian uses source identity `local`; a future host can supply an opaque member/view identity through `setSourceIdentity()`. Changing it clears the old display and discards the old namespace. No remote adapter or grant enforcement is claimed.
 
-A compatible cached group summary paints first with **cached · verifying N of M**. Filters/member lists remain provisional until every Markdown note has a non-null public `metadataCache` entry, then the worker confirms or rebuilds the generation. Partial indexing cannot overwrite a complete saved generation. Old v1 positions migrate once as hints, never as verified input. No frontmatter scanner, private host cache access or plugin-owned property database is added.
+A compatible cached group summary paints first with **cached · verifying N of M**. Filters/member lists remain provisional until every Markdown note has a non-null public `metadataCache` entry, then the worker confirms or rebuilds the generation. Partial indexing cannot overwrite a complete saved generation. Old solver generations are refused, including legacy graphology positions. Producer `graph-ng-fa2@2` deliberately rebuilds them without changing binary format 3. No frontmatter scanner, private host cache access or plugin-owned property database is added.
 
 Finite defaults are 64 MiB external aggregate JSON, 20,000 groups, 200,000 pairs and 1,000,000 carrier references. Explicit count zero still opts into unlimited counts; byte budgets remain finite. External files always say **unverified external aggregate** and never merge with live rows. In-app export is not implemented. Headless projection output is labelled **your view**, accepts only a caller-scoped fact export and requires an explicit destination.
 
@@ -633,3 +634,11 @@ Both toggles are under Appearance → Finding connections. Evidence: `tests/orie
 ### Resolution-change candidate (unverified)
 
 The next detail paint reconciles a changed device-pixel ratio even when the CSS box did not resize. This preserves CSS geometry, semantic colors and layout; it does not establish the cause of scale-dependent color shifts or guarantee all-scale crispness. The optional `probe:zoom` local synthetic harness compares fixed coordinates at far/small-step/mid/near zoom on actual WebGL and bounded Canvas with DPR 1→2, records backend/backing resolution and screenshots, and requires separate runtime authorization. Source authoring is not execution or native/live-tab evidence.
+
+### Large layouts and explicit refinement (wave 12)
+
+Cold positions use a seeded disc with radius proportional to the square root of the note count. Unlinked notes occupy deliberate outer rings; connected fragments remain in the force solver. Recommended uses linear attraction, strong gravity and Hub gravity 2, with 300 to 1,000 iterations based on graph size. Hub gravity is a bounded 0 to 10 attraction along existing links from smaller-degree notes toward larger-degree neighbours; 0 disables it. Family pull stays off. View filters mask the full layout rather than remove its hubs or change force topology.
+
+A run that exhausts its budget without sufficiently quiet movement says **Layout not settled** and offers **Keep refining**. Its coordinates remain usable in memory, but do not become a saved completed generation. Refinement starts from the committed displayed positions; after a successful settings/coordinate transaction the worker adopts them, and settled verified results may persist. Hydration continues the latest live coordinates without pinning unfinished notes. Settlement is a movement criterion, not proof of meaningful clusters.
+
+During Apply, the camera gently follows an expanding layout until a pan or zoom; an untouched camera fits at completion. Motion Reduced/Off and the system reduced-motion preference remain respected. Layout presets use a full-width selector and a separate action at narrow widths. Switching relationship representation from Filters, Appearance or Graph information first shows an inline confirmation; Cancel performs no rebuild.

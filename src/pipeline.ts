@@ -6,7 +6,7 @@ import type { BinaryGeneration, GenerationMeta } from './core/binary-layout';
 import type { RenderProjection } from './render-projection';
 import type { GroupProjection } from './core/group-projection';
 import type { ExploreResult, ExploreView } from './core/explore';
-export const LAYOUT_PRODUCER = 'graph-ng-fa2@1';
+export const LAYOUT_PRODUCER = 'graph-ng-fa2@2';
 export interface PipelineConfig { declaration: GraphDeclaration; layout: LayoutOptions; source: string; groupLevel: number; predicate?: Predicate; view?: ExploreView; facetValues?: number; streamEveryIterations: number }
 export type PipelineRequest =
   | { kind: 'external'; bytes: Uint8Array; maxBytes: number; limits: { groups: number; pairs: number; carriers: number } }
@@ -15,7 +15,8 @@ export type PipelineRequest =
   | { kind: 'load'; generation: BinaryGeneration }
   | { kind: 'migrate'; generation: { key: string; identities: string[]; positions: number[]; producer: string; layoutHash?: string; edgeKeys?: string[] }; declarationHash: string }
   | { kind: 'project'; complete?: boolean } | { kind: 'detail' } | { kind: 'layout' } | { kind: 'encode' }
-  | { kind: 'recompute'; options: LayoutOptions }
+  | { kind: 'adoptLayout' }
+  | { kind: 'recompute'; options: LayoutOptions; initial?: Float32Array }
   | { kind: 'gpu' }
   | { kind: 'members'; group: string; view: number }
   | { kind: 'expression-count'; expr: string; context: 'filter' | 'group'; budgetMs?: number }
@@ -30,7 +31,7 @@ export interface ProjectResult { invalidSaved?: GenerationMeta; meta: Generation
 export interface EdgeRuleCounts { drawn: number; missing: number; excluded: number; lines: number }
 export interface DetailResult { projection: RenderProjection; visible: Uint8Array; colors: Uint32Array; explore: ExploreResult; view: number }
 export interface ViewResult { explore: ExploreResult; colors: Uint32Array; groups: GroupProjection; view: number }
-export interface LayoutResult { positions: Float32Array; milliseconds: number; cached: boolean; /** all/some: saved positions, unchanged/short relax; interim variants: memory-only hints. Full runs omit reuse. */ reused?: 'all' | 'some' | 'interim' | 'interim-some'; stored?: string }
+export interface LayoutResult { positions: Float32Array; milliseconds: number; cached: boolean; settled?: boolean; /** all/some: saved positions, unchanged/short relax; interim variants: memory-only hints. Full runs omit reuse. */ reused?: 'all' | 'some' | 'interim' | 'interim-some'; stored?: string }
 export interface GroupEvent { kind: 'groups'; revision: number; view: number; projection: GroupProjection }
 export interface Transport { postMessage(message: unknown, transfer: Transferable[]): void; terminate(): void; onmessage: ((event: MessageEvent) => void) | null; onerror: ((event: ErrorEvent) => void) | null }
 interface Pending { id: number; revision: number; request: PipelineRequest; resolve(v: any): void; reject(e: Error): void; timer?: ReturnType<typeof setTimeout> }

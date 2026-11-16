@@ -7,7 +7,7 @@ import { digest, layoutDeclaration, identityDeclaration } from '../src/core/decl
 import { WorkerPipeline, type Transport, type LayoutResult } from '../src/pipeline';
 import type { BinaryGeneration } from '../src/core/binary-layout';
 import { packRows } from '../src/core/columns';
-const options = { ...DEFAULT_LAYOUT, iterations: 50 };
+const options = { ...DEFAULT_LAYOUT, iterations: 50, force: { ...DEFAULT_LAYOUT.force, hubGravity: 0 } };
 
 test('family pull is off by default; resolved parent attraction works independently of links', async () => {
   const { rows, declaration } = familyFixture(200), p = buildProjection(rows, declaration);
@@ -36,7 +36,7 @@ test('family pull accepts cycles and multiple parents, rejects malformed CSR and
 });
 test('family off keeps historical bytes and saved positions; active family invalidates parent-only changes', async () => {
   const fixture = familyFixture(100), d = fixture.declaration, rows = fixture.rows;
-  const legacy: any = structuredClone(options); delete legacy.force.familyPull;
+  const legacy: any = structuredClone(options); delete legacy.force.familyPull; delete legacy.force.hubGravity;
   const legacyDeclaration = layoutDeclaration(d);
   const historical = await digest({ declaration: identityDeclaration(legacyDeclaration), layout: legacy, producer: 'fixture', rows: declaredFacts(rows, legacyDeclaration) });
   expect(await generationKey(rows, d, options, 'fixture')).toBe(historical);
@@ -46,7 +46,7 @@ test('family off keeps historical bytes and saved positions; active family inval
   expect(await generationKey(changed, d, active, 'fixture')).not.toBe(await generationKey(rows, d, active, 'fixture'));
   const pipeline = () => new WorkerPipeline(new Worker(new URL('../src/layout-worker.ts', import.meta.url).href) as unknown as Transport, () => 10000);
   for (const familyPull of [0, 2]) {
-    let p = pipeline(); const c = { declaration: d, source: 'synthetic@1/local', groupLevel: 0, streamEveryIterations: 1, layout: { ...active, force: { ...active.force, familyPull } } };
+    let p = pipeline(); const c = { declaration: d, source: 'synthetic@1/local', groupLevel: 0, streamEveryIterations: 1, layout: { ...active, convergenceThreshold: 1e20, convergenceIterations: 3, force: { ...active.force, familyPull } } };
     try {
       await p.request(1, { kind: 'configure', config: c });
       await p.request(1, { kind: 'rows', reset: true, columns: packRows(rows, d) });
@@ -69,7 +69,7 @@ test('family off keeps historical bytes and saved positions; active family inval
       else { expect(after.reused).toBe('all'); expect(after.positions).toEqual(before.positions); }
       const preview = await p.request<LayoutResult>(3, { kind: 'recompute', options: { ...active, force: { ...active.force, familyPull: 5 } } });
       expect(preview.positions).not.toEqual(after.positions);
-      const reset = await p.request<any>(4, { kind: 'configure', config: { ...c, layout: { ...active, force: { ...active.force, familyPull: 5 } } } });
+      const reset = await p.request<any>(4, { kind: 'configure', config: { ...c, layout: { ...active, convergenceThreshold: 1e20, convergenceIterations: 3, force: { ...active.force, familyPull: 5 } } } });
       expect(reset.held).toBe(false);
     } finally { p.dispose(); }
   }

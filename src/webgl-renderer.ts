@@ -498,7 +498,7 @@ export class DetailRenderer {
     const div = (className: string) => this.overlay.appendChild(el('div', '', className));
     this.cueLine = div('graph-ng-cue-line'); this.cueRing = div('graph-ng-cue'); this.cueLine.hidden = this.cueRing.hidden = true;
     this.isolationBar = el('div', '', 'graph-ng-isolation');
-    this.miniMap = new Minimap(this.overlay, this.cameraFrame, (x, y) => this.setCamera(x, y, this.camera.ratio), () => this.fitAll(), () => this.refresh()); this.limitChip = zoomChip(this.overlay, () => this.onZoomOut());
+    this.miniMap = new Minimap(this.overlay, this.cameraFrame, (x, y) => { this.followLayout = false; this.setCamera(x, y, this.camera.ratio); }, () => this.fitAll(), () => this.refresh()); this.limitChip = zoomChip(this.overlay, () => this.onZoomOut());
     this.noteCard = div('graph-ng-card'); this.card = new ConnectionCard(this.noteCard, this.cardHost());
     const input = this.input = new Interaction(this.controls());
     ({ pointerDown: this.pointerDown, pointerMove: this.pointerMove, pointerUp: this.pointerUp, pointerLeave: this.pointerLeave, keyDown: this.keyDown } = input);
@@ -601,13 +601,14 @@ export class DetailRenderer {
 
   }
   private layoutActive = false;
+  private followLayout = true;
   private labelsPending = false;
   /** Keep pan/zoom and the last layout, suppress stale labels and picking until adoption.
    * Failed/superseded applies restore CPU geometry without rolling back the user's camera. */
   beginLayout() {
     const { positions, display, grid, picker, visible, hubs, halos, discData } = this;
     const previous = { positions, display, grid, picker, visible, hubs, halos, discData }, view = this.view, filter = this.filterVisible;
-    this.layoutActive = true; this.labelsRevision++; this.overlay.hidden = true; this.refresh();
+    this.followLayout = true; this.layoutActive = true; this.labelsRevision++; this.overlay.hidden = true; this.refresh();
     return (committed: boolean) => {
       this.layoutActive = false;
       if (this.disposed) return;
@@ -619,7 +620,7 @@ export class DetailRenderer {
         }
       } catch (e) { throw new Error(`Last-good CPU coordinates retained; GPU recovery uncertain: ${e}`); }
       finally {
-        if (committed) this.labelsPending = false;
+        if (committed) { this.labelsPending = false; if (this.followLayout) this.fitAll(); }
         else if (this.labelsPending) void this.prepareLabels(() => !this.disposed).catch(() => {});
         this.anchorKey = []; this.rankedKey = []; this.overlay.hidden = !!this.view.loading; this.refresh();
       }
@@ -633,7 +634,14 @@ export class DetailRenderer {
     this.positions = next;
     Object.assign(this, geometry); this.discData = this.discs(geometry.halos, geometry.hubs);
     if (this.gl) this.uploadCoordinates();
-    this.refresh(); return previous;
+    this.followExtent(); this.refresh(); return previous;
+  }
+  /** Only zoom outward while streaming; a gesture permanently releases this run. */
+  private followExtent() {
+    if (!this.followLayout) return;
+    const g = this.grid, ratio = Math.max(Math.abs(g.minX - this.centerX), Math.abs(g.minX + g.width - this.centerX)) * 2.2 * this.fit / this.width;
+    const needed = Math.max(ratio, Math.max(Math.abs(g.minY - this.centerY), Math.abs(g.minY + g.height - this.centerY)) * 2.2 * this.fit / this.height);
+    if (needed > (this.flight?.to.ratio ?? this.camera.ratio) * 1.02) this.flyTo(this.camera.x, this.camera.y, needed);
   }
   async preparePositions(next: Float32Array, current: () => boolean): Promise<CoordinateToken> {
     const revision = ++this.coordinateRevision; ++this.labelsRevision;
@@ -947,7 +955,7 @@ export class DetailRenderer {
     if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(ratio)) throw new Error('CAMERA_NONFINITE');
     this.flight = undefined; this.camera.x = x; this.camera.y = y; this.camera.ratio = this.clampRatio(ratio); this.refresh();
   }
-  private panBy(dx: number, dy: number) { this.setCamera(this.camera.x - dx / this.scale / this.cameraFrame.width, this.camera.y - dy / this.scale / this.cameraFrame.height, this.camera.ratio); }
+  private panBy(dx: number, dy: number) { this.followLayout = false; this.setCamera(this.camera.x - dx / this.scale / this.cameraFrame.width, this.camera.y - dy / this.scale / this.cameraFrame.height, this.camera.ratio); }
   /** Eased camera transition; honors reduced motion and the configured duration. */
   flyTo(x: number, y: number, ratio: number, ms = this.settings.visuals.cameraAnimationMs) {
     if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(ratio)) throw new Error('CAMERA_NONFINITE');
@@ -1843,13 +1851,13 @@ export class DetailRenderer {
       openable: n => !this.layoutActive && !!this.filterVisible[n],
       open: n => { if (!this.layoutActive) this.onNode(n); },
       openHub: g => { if (!this.layoutActive) this.onHub?.(g); },
-      stopFlight: () => { this.flight = undefined; },
-      setCamera: (x, y, ratio) => this.setCamera(x, y, ratio),
+      stopFlight: () => { this.followLayout = false; this.flight = undefined; },
+      setCamera: (x, y, ratio) => { this.followLayout = false; this.setCamera(x, y, ratio); },
       flyTo: (x, y, ratio, ms) => this.flyTo(x, y, ratio, ms),
       panBy: (dx, dy) => this.panBy(dx, dy),
       zoomAt: (factor, x, y) => {
         // Zooming out clamps a little past the whole graph (and Fit all); it never switches views.
-        this.flight = undefined; const before = this.scale, step = zoomStep(this.camera.ratio, factor, this.settings.cameraMinRatio, this.clampRatio(Math.max(this.homeRatio, this.layoutRatio()) * ZOOM_OUT_LIMIT));
+        this.followLayout = false; this.flight = undefined; const before = this.scale, step = zoomStep(this.camera.ratio, factor, this.settings.cameraMinRatio, this.clampRatio(Math.max(this.homeRatio, this.layoutRatio()) * ZOOM_OUT_LIMIT));
         this.camera.ratio = step.ratio; if (step.clamped) this.limitChip.hit(performance.now());
         this.camera.x += (x / before - x / this.scale) / this.cameraFrame.width; this.camera.y += (y / before - y / this.scale) / this.cameraFrame.height; this.refresh();
       },

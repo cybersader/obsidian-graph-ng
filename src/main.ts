@@ -253,7 +253,7 @@ export class GraphView extends ItemView {
     relationships: () => this.explorePanel?.show('appearance'),
     exclusions: () => { const modal = new Modal(this.app), tab = new GraphSettings(this.plugin); modal.setTitle('Graph declaration'); tab.containerEl = modal.contentEl; tab.display(); modal.open(); },
     duplicates: () => { this.toGroups(); this.explorePanel?.show('members'); const list = this.panel.querySelector<HTMLDetailsElement>('.graph-ng-quarantine'); if (list) { list.open = true; list.querySelector('summary')?.focus(); list.scrollIntoView({ block: 'nearest' }); } },
-    display: (nodes: boolean) => setRelationshipDisplay(this.plugin, nodes).catch(e => { new Notice(String(e)); }),
+    display: (nodes: boolean) => this.explorePanel?.confirmRelationshipDisplay(nodes),
     remove: (i: number) => { if (i < this.view.filters.length) this.setView({ ...this.view, filters: this.view.filters.filter((_, j) => j !== i) }); },
     filter: (i: number) => this.explorePanel?.focusFilter(i),
   };
@@ -401,7 +401,7 @@ export class GraphView extends ItemView {
       commitSavedView: (saved, expected) => this.plugin.commitSavedView(saved, expected),
       viewCurrent: () => !!this.explored && canonical(this.appliedView) === canonical(this.view),
       savedViewIssue: saved => this.savedViewIssue(saved), openSavedView: saved => this.openSavedView(saved),
-      applyLayout: values => this.applyLayout(values), settings: () => this.plugin.settings, result: () => this.explored, loading: () => this.loading(), mode: () => this.contentEl.dataset.mode ?? 'groups',
+      layoutSettled: () => this.layoutSettled, applyLayout: values => this.applyLayout(values), settings: () => this.plugin.settings, result: () => this.explored, loading: () => this.loading(), mode: () => this.contentEl.dataset.mode ?? 'groups',
       policy: () => this.detailRenderer?.policy.reasons ?? [], carriers: () => this.detailRenderer?.carrierCount ?? 0, relationshipNotes: () => this.relationshipNotes(), setRelationshipDisplay: nodes => setRelationshipDisplay(this.plugin, nodes), setView: (view, after) => this.setView(view, after), setColors: colors => this.setColors(colors), preview: (expr, context) => this.previewExpression(expr, context),
       lens: () => { const r = this.contentEl.dataset.mode === 'nodes' ? this.detailRenderer : undefined; return { active: !!r && r.lensNode >= 0, available: !!r && (r.lensNode >= 0 || r.selected >= 0 || r.hovered >= 0) }; },
       toggleLens: () => this.detailRenderer?.toggleLens(), toolsChanged: () => this.renderer?.syncTools?.(),
@@ -551,13 +551,13 @@ export class GraphView extends ItemView {
       await preview.finish(true);
       if (!current()) return;
       this.statusText = this.buildProgress.text(3);
-      this.positions = layout.positions;
+      this.positions = layout.positions; this.layoutSettled = layout.settled !== false; this.explorePanel?.render();
       this.cacheTrace.push({ expected: result.meta.key, stored: layout.stored, nodes: result.nodes, ...coverage, valid: layout.cached }); if (this.cacheTrace.length > 16) this.cacheTrace.shift();
       report.layout = { cached: layout.cached, reused: layout.reused, ms: layout.milliseconds, totalMs: performance.now() - start };
-      this.buildProgress.text(4); this.contentEl.dataset.state = 'ready'; this.statusText = this.provisional ? pendingText(report) : '';
+      this.buildProgress.text(4); this.contentEl.dataset.state = 'ready'; this.statusText = this.provisional ? pendingText(report) : this.layoutSettled ? '' : 'Layout not settled';
       this.contentEl.dataset.layoutMs = String(layout.milliseconds); this.contentEl.dataset.cached = String(layout.cached);
       if (this.presentation === 'nodes') await this.showDetails();
-      if (settings.persistLayout && this.plugin.store.committed !== result.meta.key && complete && !this.provisional && (!settings.declaration.edges.some(e => e.kind === 'producer') || this.plugin.adapter.linksResolved)) {
+      if (layout.settled !== false && settings.persistLayout && this.plugin.store.committed !== result.meta.key && complete && !this.provisional && (!settings.declaration.edges.some(e => e.kind === 'producer') || this.plugin.adapter.linksResolved)) {
         const generation = await this.plugin.pipeline.request<BinaryGeneration>(revision, { kind: 'encode' });
         if (!current()) return;
         // A failed cache write costs the next open a recompute; it must not fail the drawn graph.
@@ -775,6 +775,7 @@ export class GraphView extends ItemView {
     for (const r of items) { const item = root.createDiv({ cls: 'graph-ng-contribution' }); item.createSpan({ text: `${r.source} → ${r.target} [${r.type}] ` }); if (r.carrier) item.createEl('button', { text: r.carrier }).onclick = () => this.openPath(r.carrier!); }
   }
   /** Prepare CPU coordinates, persist, then commit on the existing renderer/context. */
+  private layoutSettled = true;
   private async applyLayout(values: PhysicsValues) {
     const revision = this.activeRevision, projection = this.projection, old = this.detailRenderer;
     const current = generationCurrent(() => [this.closed, this.activeRevision, this.projection, this.positions, this.plugin.settings.layout, canonical(this.plugin.settings.layout), this.renderRevision, this.detailRenderer, this.detailScope, this.visible, this.explored]);
@@ -793,20 +794,29 @@ export class GraphView extends ItemView {
           if (event.iteration > 0 && finish) { try { old!.streamPositions(event.positions); } catch (e) { streamError = e; } }
           else this.plugin.pipeline.recycle(event.positions.buffer as ArrayBuffer);
         };
-        const result = await this.plugin.pipeline.request<LayoutResult>(revision, { kind: 'recompute', options: next.layout });
+        const result = await this.plugin.pipeline.request<LayoutResult>(revision, { kind: 'recompute', options: next.layout, initial: this.positions!.slice() });
         this.plugin.pipeline.onPositions = previousStream;
         requireLayout(current); if (streamError) throw streamError;
         this.statusText = this.buildProgress.text(3);
         if (old && this.contentEl.dataset.mode === 'nodes') token = await old.preparePositions(result.positions, current);
         await this.plugin.commitLayout(values, ready, () => {
           token?.commit();
-          this.positions = result.positions;
+          this.positions = result.positions; this.layoutSettled = result.settled !== false;
           committed = true;
         });
+        // The worker adopts only after settings and visible coordinates commit. A failed
+        // derived-cache write must not roll back the already committed renderer.
+        if (result.settled !== undefined) {
+          await this.plugin.pipeline.request(revision, { kind: 'adoptLayout' });
+          if (result.settled && this.plugin.settings.persistLayout && !this.provisional && (!this.plugin.settings.declaration.edges.some(e => e.kind === 'producer') || this.plugin.adapter.linksResolved)) {
+            const generation = await this.plugin.pipeline.request<BinaryGeneration>(revision, { kind: 'encode' });
+            this.contentEl.dataset.cacheError = await this.plugin.cache(generation, () => !this.closed && this.activeRevision === revision && this.positions === result.positions).then(() => '', String);
+          }
+        }
       } finally {
         this.plugin.pipeline.onPositions = previousStream; token?.discard();
         try { finish?.(committed); }
-        finally { if (working) { this.layoutWorking = false; this.statusText = this.provisional ? pendingText(this.report) : ''; } }
+        finally { if (working) { this.layoutWorking = false; this.statusText = this.provisional ? pendingText(this.report) : this.layoutSettled ? '' : 'Layout not settled'; } }
       }
     });
   }

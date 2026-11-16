@@ -15,7 +15,7 @@ import { canonical, validateDerivedGroup, validatePredicate, type GraphDeclarati
 import { defaults, defaultVisuals, type EdgeMode, type Settings, type Visuals } from './settings';
 import { progressiveSlider, type Curve, type SliderOptions } from './progressive-slider';
 /** Slider travel per numeric layout control; typed values outside the span stay unclamped. */
-const PHYSICS_CURVES: Partial<Record<PhysicsKey, Curve>> = { familyPull: { min: 0, max: 10 }, scalingRatio: { min: .1, max: 100, log: true }, gravity: { min: 0, max: 20, k: 3 }, slowDown: { min: .1, max: 100, log: true }, iterations: { min: 1, max: 1000, log: true, int: true }, barnesHutTheta: { min: .1, max: 3, k: 2 } };
+const PHYSICS_CURVES: Partial<Record<PhysicsKey, Curve>> = { hubGravity: { min: 0, max: 10 }, familyPull: { min: 0, max: 10 }, scalingRatio: { min: .1, max: 100, log: true }, gravity: { min: 0, max: 20, k: 3 }, slowDown: { min: .1, max: 100, log: true }, iterations: { min: 1, max: 1000, log: true, int: true }, barnesHutTheta: { min: .1, max: 3, k: 2 } };
 import { recommendedPhysics, suggestionCopy, type Suggestion } from './recommend';
 /** The view owns the worker, renderer and persistence; the panel only edits state. */
 export interface PanelHost {
@@ -56,6 +56,7 @@ export interface PanelHost {
   restoreCamera(camera: ViewCamera): void;
   persist(): void;
   applyLayout(values: PhysicsValues): Promise<void>;
+  layoutSettled?(): boolean;
   previewSizing?(values: NodeSizingValues | null): void;
   applySizing?(values: NodeSizingValues): Promise<void>;
   sizingReadout?(): string;
@@ -558,17 +559,20 @@ export class ExplorePanel {
     const draft = this.physicsDraft ??= applied();
     const fill = (values: Required<PhysicsValues>, name: string) => { this.physicsUndo = { values: { ...draft }, name, applied: false }; for (const [key] of PHYSICS_FIELDS) { const v = values[key]; draft[key] = typeof v === 'boolean' ? v : String(v); } this.physicsError = ''; this.render(); };
     const size = this.host.result(), recommended = recommendedPhysics(size?.nodes ?? 1000, size?.edges ?? 3000);
-    panelHelp(host, 'How changes apply', 'Apply layout saves these changes and recomputes note positions. Fit graph is separate.');
+    panelHelp(host, 'How changes apply', 'Apply layout saves these changes and recomputes note positions. The graph stays framed until you pan or zoom.');
     const presets = settingRow(host, 'Presets', 'graph-ng-presets', 'Groups apart loosens the layout; Fill the screen tightens it. Faster uses fewer steps; presets stay drafts until Apply.').createDiv({ cls: 'graph-ng-setting-line', attr: { role: 'group', 'aria-label': 'Layout presets' } });
-    const names = ['Recommended', ...PHYSICS_PRESETS.map(([name]) => name)], select = presets.createEl('select', { attr: { 'aria-label': 'Layout preset' } });
+    const label = presets.createEl('label', { cls: 'graph-ng-preset-choice' });
+    label.createSpan({ cls: 'graph-ng-sr-only', text: 'Layout preset' });
+    const names = ['Recommended', ...PHYSICS_PRESETS.map(([name]) => name)], select = label.createEl('select');
     for (const name of names) select.createEl('option', { text: name, value: name });
     select.value = names.includes(this.physicsUndo?.name ?? '') ? this.physicsUndo!.name : 'Recommended'; select.disabled = this.physicsBusy;
     panelButton(presets, 'Use preset', () => fill(select.value === 'Recommended' ? recommended : presetValues(select.value, recommended), select.value), this.physicsBusy);
     const advice = this.host.layoutAdvice?.();
     if (advice) {
       // Keeps every other draft value; only turns Strong gravity on with a measured pull.
-      panelButton(presets, PULL_IN, () => fill({ ...draft, strongGravityMode: true, gravity: advice.gravity } as unknown as Required<PhysicsValues>, PULL_IN), this.physicsBusy);
-      panelHelp(host, 'Why pull them in?', advice.reason);
+      const suggestion = host.createDiv({ cls: 'graph-ng-setting-line' });
+      panelButton(suggestion, PULL_IN, () => fill({ ...draft, strongGravityMode: true, gravity: advice.gravity } as unknown as Required<PhysicsValues>, PULL_IN), this.physicsBusy);
+      panelHelp(suggestion, 'Why pull them in?', advice.reason);
     }
     const undo = this.physicsUndo;
     if (undo) {
@@ -591,11 +595,13 @@ export class ExplorePanel {
       if (typeof value === 'boolean') {
         const row = settingRow(parent, title, 'graph-ng-toggle graph-ng-physics-field', help), input = row.querySelector('input')!;
         input.disabled = this.physicsBusy; input.checked = value; input.onchange = () => { draft[key] = input.checked; summarize(); };
-      } else progressiveSlider(parent, { label: title, desc: help, curve: PHYSICS_CURVES[key]!, value, def: def as number, disabled: this.physicsBusy, cls: 'graph-ng-physics-field', attr: { step: key === 'iterations' ? '1' : 'any', ...(key === 'familyPull' ? { min: '0', max: '10' } : key === 'gravity' ? { min: '0' } : key === 'iterations' ? { min: '1' } : {}) }, changed: v => { draft[key] = v; summarize(); } });
+      } else progressiveSlider(parent, { label: title, desc: help, curve: PHYSICS_CURVES[key]!, value, def: def as number, disabled: this.physicsBusy, cls: 'graph-ng-physics-field', attr: { step: key === 'iterations' ? '1' : 'any', ...((key === 'familyPull' || key === 'hubGravity') ? { min: '0', max: '10' } : key === 'gravity' ? { min: '0' } : key === 'iterations' ? { min: '1' } : {}) }, changed: v => { draft[key] = v; summarize(); } });
     }
     host.createDiv({ cls: 'graph-ng-explore-error', text: this.physicsError, attr: { role: 'alert' } });
+    const unsettled = this.host.layoutSettled?.() === false;
+    if (unsettled) this.note(host, 'Layout not settled');
     const actions = host.createDiv({ cls: 'graph-ng-layout-actions' });
-    const apply = actions.createEl('button', { cls: 'mod-cta' }); workingText(apply, this.physicsBusy ? 'Recomputing…' : 'Apply layout', this.physicsBusy);
+    const apply = actions.createEl('button', { cls: 'mod-cta' }); workingText(apply, this.physicsBusy ? 'Recomputing…' : unsettled ? 'Keep refining' : 'Apply layout', this.physicsBusy);
     const changes = actions.createDiv({ cls: 'graph-ng-layout-changes', attr: { 'aria-live': 'polite' } }); summarize();
     apply.disabled = this.physicsBusy;
     apply.onclick = () => run();
@@ -761,23 +767,30 @@ export class ExplorePanel {
       return button;
     });
   }
+  confirmRelationshipDisplay(nodes: boolean) { this.relationPending = nodes; this.show('appearance'); this.body.querySelector('.graph-ng-relation-confirm')?.scrollIntoView({ block: 'nearest' }); }
   private relationBusy = false;
   private relationMessage = '';
+  private relationPending?: boolean;
   private relationshipDisplay(host: HTMLElement) {
     const nodes = this.settings.declaration.display.reifiedAsNodes, count = this.host.relationshipNotes?.() ?? 0;
-    this.note(host, 'Relationship notes');
     const row = host.createDiv({ cls: 'graph-ng-row graph-ng-segmented', attr: { role: 'group', 'aria-label': 'Relationship notes' } });
     panelHelp(row, 'Relationship notes', `Lines join the endpoints; Notes makes each relationship a clickable dot${count ? ` (${plural(count, 'added dot')})` : ''}. Switching saves globally and rebuilds the layout.`);
     for (const [value, text] of [[false, 'Lines'], [true, 'Notes']] as const) {
       const button = row.createEl('button', { text, attr: { 'aria-pressed': String(nodes === value) } }); button.disabled = this.relationBusy || nodes === value;
-      button.onclick = async () => {
-        this.relationBusy = true; this.relationMessage = 'Rebuilding graph…'; this.render();
+      button.onclick = () => { this.relationPending = value; this.render(); };
+    }
+    if (this.relationPending !== undefined && this.relationPending !== nodes) {
+      const value = this.relationPending, confirm = host.createDiv({ cls: 'graph-ng-relation-confirm' });
+      const total = Math.max(0, (this.host.result()?.nodes ?? 0) + (value ? count : -count));
+      this.note(confirm, `Switch to ${value ? 'Notes' : 'Lines'}? Rebuilds the layout${total ? ` for up to ${num(total)} notes` : ''}.`);
+      panelButton(confirm, 'Cancel', () => { this.relationPending = undefined; this.render(); });
+      panelButton(confirm, 'Switch', async () => {
+        this.relationPending = undefined; this.relationBusy = true; this.relationMessage = 'Rebuilding graph…'; this.render();
         try { await this.host.setRelationshipDisplay!(value); this.relationMessage = ''; }
         catch (e) { this.relationMessage = `Not switched: ${String(e)}. The displayed graph is unchanged.`; }
         finally { this.relationBusy = false; if (!this.disposed) this.render(); }
-      };
+      }, this.relationBusy);
     }
-    this.note(host, 'Saves globally and rebuilds the graph.');
     if (this.relationMessage) workingText(host.createDiv({ cls: 'graph-ng-explore-note', attr: { role: 'status' } }), this.relationMessage, this.relationBusy);
   }
   private viewDefinition(host: HTMLElement, saved: SavedView) {

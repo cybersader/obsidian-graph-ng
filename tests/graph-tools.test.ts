@@ -448,9 +448,13 @@ test('UX relationship notes Lines | Nodes: shown only with reified rules; one ap
   f.settings.declaration.edges.push({ kind: 'reified', name: 'crosswalk', sourceProperty: 'from', targetProperty: 'to' }); f.panel.render();
   const [lines, nodes] = buttons() as any[]; expect(lines.getAttribute('aria-pressed')).toBe('true'); expect(lines.disabled).toBe(true); expect(nodes.disabled).toBe(false);
   const note = f.panel.root.querySelectorAll('.graph-ng-help-popover').find((e: any) => e.textContent.startsWith('Lines join'))!; expect(note.textContent).toContain('44,123 added dots'); expect(note.hidden).toBe(true); expect(note.textContent).not.toContain(' · ');
-  fail = true; await nodes.onclick(); expect(applies).toBe(1); expect(f.panel.root.textContent).toContain('Not switched: Error: synthetic save failure');
+  fail = true; await nodes.onclick(); expect(applies).toBe(0);
+  await (f.panel.root.querySelectorAll('button').find((e: any) => e.textContent === 'Switch') as any).onclick(); expect(applies).toBe(1); expect(f.panel.root.textContent).toContain('Not switched: Error: synthetic save failure');
   expect(plugin.settings.declaration.display.reifiedAsNodes).toBe(false);
-  fail = false; await (buttons()[1] as any).onclick(); expect(applies).toBe(2);
+  fail = false; await (buttons()[1] as any).onclick(); expect(applies).toBe(1);
+  await (f.panel.root.querySelectorAll('button').find((e: any) => e.textContent === 'Cancel') as any).onclick(); expect(applies).toBe(1);
+  await (buttons()[1] as any).onclick();
+  await (f.panel.root.querySelectorAll('button').find((e: any) => e.textContent === 'Switch') as any).onclick(); expect(applies).toBe(2);
   expect(plugin.settings.declaration.display.reifiedAsNodes).toBe(true); expect(plugin.settings.explore.view.query).toBe('kept');
   expect(f.settings.declaration.display.reifiedAsNodes).toBe(false); // the previous settings object is not mutated
   await setRelationshipDisplay(plugin, true); expect(applies).toBe(2); // no-op when already in that display
@@ -473,7 +477,7 @@ test('settings rows: Edges and layout Presets use the name, description and cont
   expect(headings().filter(t => t === 'Layout')).toHaveLength(1);
   const presets = row('Presets'); expect(presets.tagName).toBe('DIV'); expect(parts(presets)).toEqual(['graph-ng-setting-name', 'graph-ng-setting-line']);
   const buttons = presets.children[1]; expect(buttons.getAttribute('aria-label')).toBe('Layout presets');
-  expect(buttons.children.map((b: any) => b.tagName)).toEqual(['SELECT', 'BUTTON']);
+  expect(buttons.children.map((b: any) => b.tagName)).toEqual(['LABEL', 'BUTTON']);
   expect(buttons.querySelector('select').children.map((o: any) => o.textContent)).toEqual(['Recommended', 'Groups apart', 'Fill the screen', 'Faster']);
   expect(buttons.querySelector('select').value).toBe('Recommended');
   expect(buttons.querySelector('button').textContent).toBe('Use preset');
@@ -628,6 +632,14 @@ test('adaptive emphasis control switches live without moving the camera or rebui
   for (const mode of ['scale', 'adaptive'] as const) { field.value = mode; field.onchange(); expect(f.settings.visuals.emphasis).toBe(mode); }
   expect(f.state.visual).toBe(2); expect(f.state.fit + f.state.layout + f.state.viewCalls).toBe(0);
   expect(f.camera).toEqual({ x: .3, y: .4, ratio: .2 }); f.panel.dispose();
+});
+
+test('review: information relationship switch opens confirmation without applying', () => {
+  const f = fixture(), view: any = new GraphView(null as any, { settings: f.settings } as any);
+  f.settings.declaration.edges.push({ name: 'relationships', kind: 'reified', sourceProperty: 'source', targetProperty: 'target', typeProperty: 'type' });
+  let applied = 0; f.host.setRelationshipDisplay = async () => { applied++; };
+  view.explorePanel = f.panel; view.informationActions.display(!f.settings.declaration.display.reifiedAsNodes);
+  expect(applied).toBe(0); expect(f.panel.body.querySelector('.graph-ng-relation-confirm')).toBeTruthy(); f.panel.dispose();
 });
 
 test('duplicate-ID inspection opens the existing quarantine destination and focuses its disclosure', () => {

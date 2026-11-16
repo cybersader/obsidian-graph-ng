@@ -1125,3 +1125,39 @@ Native visual check: `bash .workspace/visual-qa/run.sh wave11-d-readable plugin-
 Ignored preferred receipts are `.workspace/visual-qa/runs/wave11-d-readable.json` and the paired `step-09-pull-0-graph.{light,dark}.png` / `step-18-pull-5-graph.{light,dark}.png` files under that run prefix. Panel afters are `step-15-pull-5-panel.{light,dark}.png`; draft/Undo captures are steps 13 and 21. The supplied original panel baseline `wave10-p2-final.step-13-layout.{light,dark}.png` was also inspected: the old equal-button grid, disabled Undo and loose empty-status sentence are replaced by a compact select/action, conditional Undo and an attached changes disclosure. This panel baseline has 120 synthetic notes, not the 5k force fixture.
 
 Ordered final `gates:fast`, `build`, `test --timeout 10000`, and `gates` all passed through the brief's lock/timeout wrapper. Bundle: **370,078 raw / 125,552 gzip / 108,341 Brotli bytes**, a **+1,413 raw / +548 gzip** delta from the same-toolchain `8a624f4` build. No cap was changed in this track. SHA-256: `c39c56f71c355118db443518d6f000c7ba94621896aabeadffc6698c5fac17d8`. Private receipts are `.workspace/evidence/final-{preflight,build,tests,gates}.log`. The coordinator independently read the cache diff before local commit; the dedicated merged-wave senior review still gates shipping. No remote action or real-vault read occurred.
+
+
+## Large relationship-note layouts (wave 12, 2026-11-16)
+
+Synthetic-only CPU measurements on a Linux x86-64 workstation class with 32 GiB RAM. The deterministic fixture in `scripts/large-layout-benchmark.ts` has 26.2% endpoint notes, 73.8% two-legged relationship notes, sixteen planted groups, about three edges per note, local hubs, 1% cross-group relationships and 5% disconnected endpoint notes. No private vault was read. The seed and topology are fixed; groups score the output but never drive the solver.
+
+The archived baseline is commit `2bfcf8e`, with 100 iterations, LinLog on, spread 26.23, normal gravity 0.1, slowdown 1, theta 1.2 and no optional family/hub force. Measuring displacement disproves the hypothesis that seeds barely move: repulsion expands this graph dramatically while groups remain mixed. This does not establish why every note in an owner's screenshot lies outside its dense area.
+
+| Notes | Edges | Baseline RMS displacement | Baseline RMS radius | Last step / radius | Group separation |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 16,000 | 47,419 | 27,569.53 | 27,605.95 | 0.00767 | 0.0366 |
+| 32,000 | 94,936 | 37,666.16 | 37,702.94 | 0.00779 | 0.0251 |
+| 61,000 | 181,067 | 50,114.46 | 50,151.43 | 0.00784 | 0.0214 |
+
+Group separation is RMS group-centroid radius divided by within-group RMS radius, weighted by membership. Larger means better separation of these planted groups, not inferred semantic correctness. Hub radius is RMS distance to the highest-degree adjacent note. Solver metrics exclude the presentation-only disconnected-note ring.
+
+| Notes | Recommended steps | Hub gravity | Group separation | Hub radius | Last step / radius | Settled | CPU seconds |
+| ---: | ---: | ---: | ---: | ---: | ---: | :---: | ---: |
+| 16,000 | 300 | 0 | 3.7026 | 237.89 | 0.00275 | no | 4.26 |
+| 16,000 | 300 | 2 | 3.9812 | 203.84 | 0.00313 | no | 5.20 |
+| 16,000 | 300 | 5 | 4.2161 | 187.74 | 0.00702 | no | 4.74 |
+| 32,000 | 430 | 0 | 3.8285 | 346.37 | 0.00103 | yes | 14.35 |
+| 32,000 | 430 | 2 | 4.1303 | 296.85 | 0.00204 | no | 15.04 |
+| 61,000 | 590 | 0 | 3.8756 | 496.88 | 0.00110 | yes | 40.15 |
+| 61,000 | 590 | 2 | 4.0969 | 429.62 | 0.00164 | yes | 47.41 |
+| 61,000 | 590 | 5 | 4.2274 | 392.53 | 0.00336 | no | 46.93 |
+
+Recommended changes attraction/gravity and iteration budget as well as initialization: this is not a seed-only A/B claim. Strength 2 balances stronger separation with lower residual movement than 5. The experimental strongest-neighbour-only model at 61k/590 yielded separation 3.9038 / 3.9306 and hub radius 439.87 / 386.59 at strengths 2 / 5. Both settled, but the mass-weighted model separated groups better. Only the mass model ships. Timing is a single-run CPU observation, not a latency SLA or renderer FPS measurement.
+
+Reproduce the current implementation with `flock -w 3000 -E 75 /tmp/openclast-bun.lock timeout --kill-after=5s 1800s ./scripts/run.sh scripts/large-layout-benchmark.ts 61000 recommended 2`; substitute 16000/32000 and strengths 0/5 for the other cases. Original measured runners were locally bundled Node executables: `node .workspace/track-l/reified-before.cjs 61000 owner 0`, `node .workspace/track-l/reified-after.cjs 61000 rec 0`, and `node .workspace/track-l/mass.cjs 61000 rec 2`. Raw receipts are `.workspace/track-l/reified-before.jsonl`, `reified-after.jsonl` and `mass.jsonl`. The first runner freezes the archived baseline; the second freezes the intermediate strongest-neighbour experiment, not the shipped model.
+
+Native paired runs use a separate synthetic 32,000-note / 93,466-edge vault with eight groups, software rendering and explicit 60,000-note / 300,000-edge admission limits. `wave12-l-before-2` uses the archived baseline and the stated LinLog settings. `wave12-l-after` adds the new default hub force and then explicitly applies Recommended. Initial, in-progress and final screenshots in both themes show mixed expanding baseline rings versus eight separated groups after Recommended; the final frame is retained. Both runs returned native harness exit 0 with no reported console/page errors. The post-Recommended native result honestly remains Layout not settled. These captures do not establish hardware-WebGL, mobile, private-vault or screen-reader acceptance. Narrow Layout presets and confirmation in both Filters and Appearance have separate captures. Raw native evidence remains ignored under `.workspace/track-l/native/`.
+
+Final local verification used `flock -w 3000 -E 75 /tmp/openclast-bun.lock timeout --kill-after=5s 1800s ./scripts/run.sh build`, then the same wrapper with `test --timeout 10000` and `gates`. Build passed; 727 tests passed, one optional browser test skipped. Four independent-review regressions were recorded failing before correction: refined-generation adoption, short-budget settlement, pinned-isolate collision and Graph information confirmation. Additional transaction tests cover persistence after commit and non-adoption after failed settings save. The final 61k command reproduced separation 4.09695 and settlement true in 48.42 seconds. Bundle is 387,362 raw / 130,936 gzip (level 9), exceeding unchanged 385,000 / 130,000 ceilings by 2,362 / 936 bytes. Safety, frozen-lock/install-policy and runtime-license lanes pass; full gates remain red solely on bundle size, left for integration rather than changing caps here.
+
+The repeated native run `wave12-l-after-2` exposes and visually verifies both inline confirmations at 340px; all scripted steps completed without console/page errors. The harness global verdict remains `unknown` (`harness-empty-list`), so the claimed evidence is these exact scripted observations, not an overall native acceptance verdict. Initial/mid/final captures and the narrow preset row were inspected in both themes. Native captures precede the final Graph information auto-scroll-only adjustment; deterministic tests cover that confirmation route. Hardware-WebGL and private-vault acceptance remain unproven.

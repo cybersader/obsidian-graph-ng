@@ -314,8 +314,10 @@ button.graph-ng-stat > .graph-ng-stat-label { text-align:start; }
 .graph-ng-suggestion { min-width:0; line-height:var(--gng-leading); }
 .graph-ng-suggestion-row { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:var(--gng-space-3); padding:var(--gng-space-3) 0; border-bottom:1px solid var(--background-modifier-border); }
 .graph-ng-actions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:var(--gng-space-2); padding-top:var(--gng-space-3); }
-.graph-ng-presets .graph-ng-setting-line { display:flex; align-items:center; }
-.graph-ng-presets select { flex:1; min-width:0; }
+.graph-ng-presets .graph-ng-setting-line { display:flex; flex-wrap:wrap; align-items:center; }
+.graph-ng-preset-choice { flex-basis:100%; min-width:0; }
+.graph-ng-presets select { width:100%; }
+.graph-ng-sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
 .graph-ng-layout-actions { display:flex; align-items:baseline; gap:var(--gng-space-3); }
 .graph-ng-layout-changes { color:var(--gng-text-muted); font-size:var(--gng-text-sm); }
 .graph-ng-explore-note:empty { display:none; }

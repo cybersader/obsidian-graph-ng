@@ -24,7 +24,7 @@ export function graphStats(offsets: ArrayLike<number>, edges: number, carriers =
 export function layoutAdvice(t: GraphStats, s: Settings): { gravity: number; reason: string } | undefined {
   const out = t.outside ?? 0, f = s.layout.force;
   if (f.strongGravityMode || !f.gravity || out < Math.max(20, t.nodes * .02)) return;
-  return { gravity: recommendedPhysics(t.nodes, t.edges).gravity, reason: `${out.toLocaleString()} notes sit in disconnected parts. Normal gravity leaves them in a far ring that more steps widen; Strong gravity pulls them in.` };
+  return { gravity: recommendedPhysics(t.nodes, t.edges).gravity, reason: `${out.toLocaleString()} notes sit in disconnected parts. Normal gravity can leave connected fragments far away; Strong gravity pulls them in. Notes without edges use outer rings.` };
 }
 /** Presentation keys the renderer reads live (labels shown in the card). Layout keys need a
  * recompute and stay manual. */
@@ -77,21 +77,17 @@ export function recommend(t: GraphStats, s: Settings): Suggestion[] {
   if (t.carriers && t.carriers >= n / 2) add('carrierOpacity', .45, 'many relationship notes');
   return out;
 }
-/** Layout values that read well for a graph of this size; the base every preset scales.
- * Measured on synthetic clustered graphs (500 to 16k notes, about 3 links per note, 5% orphans):
- * - Display fits the graph to the view, so Spread is only a zoom; it stays at 10.
- * - Normal gravity lets unlinked notes fly out in rings and squeezes the real graph into the
- *   middle. Strong gravity grows with distance and keeps them close; 0.12 to 0.22 balanced
- *   group separation against filling the view, a little less pull suiting bigger graphs.
- * - Step slowdown above 1 leaves a fresh layout unsettled in the step budget, so it stays 1.
- * - Steps follow a cost budget of about 10M node-or-link steps: 300 for small graphs, 150 at 16k
- *   notes and 50k links; more steps did not change the measured picture. */
+/** Deterministic, opt-in presets measured on synthetic graphs through 61k notes, including
+ * two-legged relationship notes. Linear attraction, strong gravity and hub pull 2 improve
+ * planted-group separation; they do not infer private-vault meaning. The 300..1000 step budget
+ * grows with sqrt(notes + edges), under the existing terminable-worker deadline. Exhaustion
+ * is not settlement: callers expose Keep refining rather than silently persisting it. */
 export function recommendedPhysics(nodes: number, edges: number): Required<PhysicsValues> {
   const n = Math.max(1, nodes), size = n + Math.max(0, edges);
   return {
-    familyPull: 0, scalingRatio: 10, slowDown: 1, strongGravityMode: true, linLogMode: false, outboundAttractionDistribution: false, adjustSizes: false,
+    familyPull: 0, hubGravity: 2, scalingRatio: 10, slowDown: 1, strongGravityMode: true, linLogMode: false, outboundAttractionDistribution: false, adjustSizes: false,
     gravity: +Math.min(.25, Math.max(.1, .2 * (1000 / n) ** .17)).toFixed(3),
-    iterations: Math.min(300, Math.max(100, Math.round(1e7 / size / 10) * 10)),
+    iterations: Math.min(1000, Math.max(300, Math.round(Math.sqrt(size) * 1.2 / 10) * 10)),
     barnesHutTheta: n < 2000 ? .8 : 1.2,
   };
 }

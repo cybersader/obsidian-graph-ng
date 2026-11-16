@@ -35,8 +35,11 @@ test('Filters relationships exposes the existing Lines and Notes save/rebuild ac
   f.settings.declaration.edges.push({ kind: 'reified', name: 'relation', sourceProperty: 'source', targetProperty: 'target' });
   f.host.setRelationshipDisplay = async (nodes: boolean) => { calls.push(nodes); f.settings.declaration.display.reifiedAsNodes = nodes; };
   f.panel.show('filters'); const section = f.root.querySelector('.graph-ng-explore-edges')!;
-  expect(section.textContent).toContain('Relationship notes'); expect(section.textContent).toContain('Saves globally and rebuilds');
+  expect(section.textContent).toContain('Relationship notes'); expect(section.textContent).toContain('Switching saves globally and rebuilds');
   const button: any = section.querySelectorAll('button').find(e => e.textContent === 'Notes'); expect(button).toBeDefined(); await button.onclick();
+  expect(calls).toEqual([]);
+  expect(f.root.textContent).toContain('Switch to Notes?');
+  await (f.root.querySelectorAll('button').find(e => e.textContent === 'Switch') as any).onclick();
   expect(calls).toEqual([true]); f.panel.show('appearance');
   expect(f.root.querySelectorAll('button').find(e => e.textContent === 'Notes')!.getAttribute('aria-pressed')).toBe('true'); f.panel.dispose();
 });

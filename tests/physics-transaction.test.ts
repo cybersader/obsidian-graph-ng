@@ -190,12 +190,44 @@ function retained(f: Awaited<ReturnType<typeof fixture>>) {
 test('production software Apply preserves renderer/canvas/camera/frame/selection and changes picking once', async () => {
   const f = await fixture(), canvas = f.renderer.canvas, frame = f.renderer[compiled('cameraFrame')], camera = { ...f.renderer.camera }, center = [f.renderer[compiled('centerX')], f.renderer[compiled('centerY')], f.renderer.scale];
   const atlas = f.renderer.atlas;
-  f.renderer.fitAll = () => { throw new Error('Hidden Fit'); };
+  f.renderer.fitAll = () => { throw new Error('Fit after manual pan'); };
+  const begin = f.renderer.beginLayout.bind(f.renderer); f.renderer.beginLayout = () => { const finish = begin(); f.renderer.controls()[compiled('stopFlight')](); return finish; };
   Renderer.create = new Proxy(Renderer.create, { apply() { throw new Error('Renderer reconstructed'); } });
   try { await f.view[compiled('applyLayout')](values); } finally { Renderer.create = originalFactory; }
   expect(f.view.detailRenderer).toBe(f.renderer); expect(f.renderer.canvas).toBe(canvas); expect(f.renderer[compiled('cameraFrame')]).toBe(frame); expect(f.renderer.camera).toEqual(camera); expect([f.renderer[compiled('centerX')], f.renderer[compiled('centerY')], f.renderer.scale]).toEqual(center);
   expect(f.renderer.selected).toBe(2); expect(f.renderer.grid.pick(80, 90, .1)).toBe(0); expect(f.renderer.grid.pick(0, 0, .1)).toBe(-1);
   expect(f.renderer.positions).toBe(f.next); expect(f.renderer.atlas).not.toBe(atlas); expect(f.view.contentEl.dataset.mode).toBe('nodes'); expect(f.requests()).toBe(1); expect(f.writes.length).toBe(1);
+});
+test('settled Apply adopts only committed positions and persists through encode', async () => {
+  const f = await fixture(), calls: string[] = [], generation = { meta: { key: 'refined' } };
+  f.plugin.settings.persistLayout = true; f.view[compiled('provisional')] = false; f.plugin.adapter = { [compiled('linksResolved')]: true };
+  f.plugin.pipeline.request = async (_revision: number, request: any) => {
+    calls.push(request.kind);
+    if (request.kind === 'recompute') return { positions: f.next, settled: true };
+    expect(f.view.positions).toBe(f.next); expect(f.writes.length).toBe(1);
+    return generation;
+  };
+  f.plugin.cache = async (value: any, current: () => boolean) => { expect(value).toBe(generation); expect(current()).toBe(true); calls.push('cache'); };
+  await f.view[compiled('applyLayout')](values);
+  expect(calls).toEqual(['recompute', 'adoptLayout', 'encode', 'cache']);
+  expect(f.view.contentEl.dataset.cacheError).toBe('');
+});
+test('failed settings save never adopts or persists a settled refinement', async () => {
+  const f = await fixture(), calls: string[] = [];
+  f.plugin.saveData = async () => { throw new Error('save rejected'); };
+  f.plugin.pipeline.request = async (_revision: number, request: any) => { calls.push(request.kind); return { positions: f.next, settled: true }; };
+  expect(await outcome(f.view[compiled('applyLayout')](values))).toContain('save rejected');
+  expect(calls).toEqual(['recompute']); expect(f.view.positions).toBe(f.positions);
+});
+test('streaming follows growing extent until manual input, respecting disabled motion', async () => {
+  const f = await fixture(), r = f.renderer;
+  f.plugin.settings.visuals.motion = 'off';
+  const finish = r.beginLayout(), before = r.camera.ratio;
+  r[compiled('streamPositions')](Float32Array.from(f.positions, (x: number) => x * 100));
+  expect(r.camera.ratio).toBeGreaterThan(before);
+  r.controls()[compiled('panBy')](12, 0); const held = { ...r.camera };
+  r[compiled('streamPositions')](Float32Array.from(f.positions, (x: number) => x * 1000));
+  expect(r.camera).toEqual(held); finish(true); expect(r.camera).toEqual(held);
 });
 const onScreen = (r: any, ids: number[]) => ids.map(i => r.screenPoint(i)).every(p => p.x >= 0 && p.x <= r.width && p.y >= 0 && p.y <= r.height);
 test('batch 4 L3 Fit graph frames current coordinates of a small set after Apply without replacing the camera frame', async () => {

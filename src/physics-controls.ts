@@ -3,13 +3,14 @@ import { DEFAULT_LAYOUT, type ForceSettings } from './core/layout-options';
 type Force = Settings['layout']['force'];
 /** Basic numbers are required; advanced engine knobs are optional so older callers keep untouched values. */
 export type PhysicsValues = Pick<Force, 'scalingRatio' | 'gravity' | 'slowDown'>
-  & Partial<Pick<Force, 'familyPull' | 'linLogMode' | 'outboundAttractionDistribution' | 'adjustSizes' | 'strongGravityMode' | 'barnesHutTheta'>> & { iterations?: number };
+  & Partial<Pick<Force, 'familyPull' | 'hubGravity' | 'linLogMode' | 'outboundAttractionDistribution' | 'adjustSizes' | 'strongGravityMode' | 'barnesHutTheta'>> & { iterations?: number };
 export type PhysicsKey = keyof Required<PhysicsValues>;
 /** [key, label, visible effect, advanced]. Values remain drafts until explicit Apply. */
 export const PHYSICS_FIELDS: readonly [PhysicsKey, string, string, boolean][] = [
   ['scalingRatio', 'Spread notes', 'Pushes every note away from the others. Higher = more space between notes and clusters; lower = a denser picture.', false],
   ['gravity', 'Pull to center', 'Draws everything toward the middle. Higher = rounder, tighter graph with disconnected parts pulled in; 0 = no pull, so disconnected parts can drift far away.', false],
   ['familyPull', 'Family pull', 'Pulls notes toward their declared parents, gathering siblings, independently of links. 0 is off; try 5 for family grouping.', false],
+  ['hubGravity', 'Hub gravity', 'Larger neighbours pull harder along existing links. Pulls only the smaller note; 0 is off.', false],
   ['linLogMode', 'Tighter clusters (LinLog)', 'Weakens long-distance edge pull so densely connected regions separate into distinct clusters. Often pairs well with more Spread.', true],
   ['outboundAttractionDistribution', 'Dissuade hubs', 'High-degree notes pull less, so hubs drift to the outside of their cluster and their neighbours spread out.', true],
   ['adjustSizes', 'Prevent overlap', 'Treats each dot as having size so dots stop stacking on top of each other. Settles more slowly.', true],
