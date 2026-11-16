@@ -446,9 +446,13 @@ test('UI foundation uses host type roles, one spacing scale and scalable control
 test('UI foundation keeps aligned settings, wrapping labels and inline help exceptions', () => {
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const rule = (selector: string) => css.split(`\n${selector} {`)[1]!.split('}')[0]!;
-  for (const selector of ['.graph-ng-setting', '.graph-ng-slider-line']) {
-    expect(rule(selector)).toContain('grid-template-columns:minmax(0,1fr) var(--gng-value-w) var(--gng-row-h)');
-  }
+  expect(rule('.graph-ng-setting')).toContain('grid-template-columns:minmax(0,1fr) var(--gng-value-w) var(--gng-row-h)');
+  expect(rule('.graph-ng-slider-line')).toContain('display:contents');
+  expect(rule('.graph-ng-slider-track')).toContain('grid-column:1 / -1; grid-row:2');
+  expect(rule('.graph-ng-slider-chip')).toContain('grid-column:2; grid-row:1');
+  expect(css).toContain('.graph-ng-setting > .checkbox-container:focus-within');
+  expect(css).toContain('text-align:start; justify-content:flex-start');
+  expect(css).not.toContain('.graph-ng-stat-warning > .graph-ng-stat-icon { color:var(--text-warning)');
   expect(rule('.graph-ng-setting-name')).toContain('line-height:var(--gng-leading-tight)');
   expect(rule('.graph-ng-stat-label')).toContain('overflow-wrap:anywhere');
   expect(rule('button.graph-ng-help-trigger')).toContain('min-height:0');

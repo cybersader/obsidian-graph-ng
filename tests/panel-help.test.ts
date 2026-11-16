@@ -89,7 +89,9 @@ test('toggle names retain native labels and help names activate their checkbox',
   const f = fixture(); f.panel.show('appearance');
   for (const row of f.root.querySelectorAll('.graph-ng-toggle').filter(r => r.classes.has('graph-ng-setting'))) {
     expect(row.tagName).toBe('LABEL');
-    expect(row.children[0]!.tagName).toBe('INPUT');
+    expect(row.classes.has('setting-item')).toBe(true);
+    expect(row.children[0]!.classes.has('checkbox-container')).toBe(true);
+    expect(row.children[0]!.querySelector('input')!.type).toBe('checkbox');
     const input = row.querySelector('input')!, trigger: any = row.querySelector('.graph-ng-help-trigger');
     if (trigger) {
       let clicks = 0; input.click = () => { clicks++; };
@@ -101,6 +103,32 @@ test('toggle names retain native labels and help names activate their checkbox',
   f.panel.show('layout');
   for (const row of f.root.querySelectorAll('.graph-ng-toggle')) expect(row.tagName).toBe('LABEL');
   f.panel.dispose();
+});
+
+test('Motion uses a default and saves all choices through the live appearance path', () => {
+  const f = fixture(); let updates = 0; f.host.visualsChanged = () => updates++; f.panel.show('appearance');
+  const motion: any = f.root.querySelectorAll('select').find(e => e.getAttribute('aria-label') === 'Motion');
+  expect(motion.value).toBe('full'); expect(motion.children.map((e: any) => e.textContent)).toEqual(['Full (default)', 'Reduced', 'Off']);
+  for (const value of ['reduced', 'off', 'full']) { motion.value = value; motion.onchange(); expect((f.settings.visuals as any).motion).toBe(value); }
+  expect(updates).toBe(3); expect(motion.parentElement.querySelector('.graph-ng-help-popover').hidden).toBe(true); f.panel.dispose();
+});
+
+test('working text returns to idle when summary and apply operations finish', async () => {
+  const f = fixture(); f.host.loading = () => ({ stage: 'Reading notes 50%' }); f.panel.show('layout');
+  expect(f.panel.counts.querySelector('.graph-ng-working')!.textContent).toBe('Reading notes 50%');
+  f.host.loading = () => undefined; f.panel.updateSummary(); expect(f.panel.counts.querySelector('.graph-ng-working')).toBeUndefined();
+  let finish!: () => void; f.host.applyLayout = () => new Promise<void>(resolve => { finish = resolve; });
+  const action = f.root.querySelectorAll('button').find(e => e.textContent === 'Apply layout')!;
+  const pending = action.onclick!(); expect(f.root.querySelector('.graph-ng-working')!.textContent).toBe('Recomputing…');
+  finish(); await pending; expect(f.root.querySelector('.graph-ng-working')).toBeUndefined(); f.panel.dispose();
+});
+
+test('saved view working text clears after either opening or saving completes', () => {
+  const f = fixture(); f.panel.viewMessage = 'Opening ‘Synthetic’…'; f.panel.show('views');
+  expect(f.root.querySelector('.graph-ng-working')!.textContent).toContain('Opening');
+  f.panel.viewMessage = 'Opened ‘Synthetic’.'; f.panel.render(); expect(f.root.querySelector('.graph-ng-working')).toBeUndefined();
+  f.panel.viewBusy = true; f.panel.viewMessage = 'Saving…'; f.panel.render(); expect(f.root.querySelector('.graph-ng-working')!.textContent).toBe('Saving…');
+  f.panel.viewBusy = false; f.panel.viewMessage = 'Saved'; f.panel.render(); expect(f.root.querySelector('.graph-ng-working')).toBeUndefined(); f.panel.dispose();
 });
 
 test('builder JSON disclosure has the shared chevron and an accessible name', () => {

@@ -4,6 +4,8 @@ The owner-approved bounded download ceilings for this UI pass are **375,000 raw 
 
 ## Unreleased Nodes sizing successor
 
+- Native panel polish: align Graph information labels and counts, remove the filter icon's warning color, and match Obsidian's compact header, setting rows, switches and slider thumb styling. Keep exact slider values beside names, full-width tracks below, on-demand help, keyboard controls and a single scrolling body. Saved views puts Open and Delete beside each name. Add the Motion picker and working-state text hooks for the coordinated motion/status tracks; their runtime effects require the merged wave.
+
 - Visual cleanup: make Members rows stay unboxed under host button styles, reduce Appearance suggestions to one change label with on-demand help, name the Layout and folder-view actions plainly, and add a keyboard-accessible X to note search. Closing search returns focus to the graph and discards late results.
 
 - Graph information attention items now stack as plain rows with aligned labels and counts, a small filter-help icon and a compact X to remove the named filter. No orange box, full-width action or always-visible explanation. Filter review, keyboard focus and on-demand help remain available at narrow widths.

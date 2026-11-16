@@ -110,9 +110,9 @@ export function renderInformation(host: HTMLElement, message: string, state: str
   host.scrollTop = scroll;
 }
 function renderBody(host: HTMLElement, message: string, state: string | undefined, r: InformationReport | undefined, view: Explored | undefined, act: InformationActions, loading?: { indexed?: number; listed?: number }) {
-  if (message) host.createDiv({ cls: state === 'error' ? 'graph-ng-status-message graph-ng-explore-error' : 'graph-ng-status-message', text: message });
+  if (message) host.createDiv({ cls: `graph-ng-status-message ${state === 'error' ? 'graph-ng-explore-error' : state === 'building' ? 'graph-ng-working' : ''}`, text: message });
   if (state === 'building' || r?.provisional) {
-    host.createDiv({ cls: 'graph-ng-coverage-state', attr: { role: 'status' }, text: r?.provisional ? pendingText(r) : 'Counts available when the graph is ready' });
+    host.createDiv({ cls: 'graph-ng-coverage-state graph-ng-working', attr: { role: 'status' }, text: r?.provisional ? pendingText(r) : 'Counts available when the graph is ready' });
     if (loading?.indexed !== undefined && loading.listed !== undefined) {
       statRow(host, 'files', 'Notes read', n(loading.indexed)); statRow(host, 'loader', 'Notes pending', n(Math.max(0, loading.listed - loading.indexed)));
     }

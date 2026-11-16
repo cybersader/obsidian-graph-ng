@@ -80,9 +80,9 @@ export async function setRelationshipDisplay(plugin: { settings: Settings; apply
 }
 /** Short setting name; explanations share the same on-demand help as sliders. */
 function settingRow(host: HTMLElement, label: string, cls: string, desc?: string) {
-  const row = host.createEl(cls.includes('graph-ng-toggle') ? 'label' : 'div', { cls: `graph-ng-setting ${cls}` }), [, name = label, a, b] = (!desc && /^(.+?)(?: \((.+)\)|: (.+))$/.exec(label)) || [];
-  if (row.tagName === 'LABEL') row.createEl('input', { attr: { type: 'checkbox', 'aria-label': name } });
-  panelHelp(row, name, desc ?? a ?? b, 'graph-ng-setting-name');
+  const row = host.createEl(cls.includes('graph-ng-toggle') ? 'label' : 'div', { cls: `setting-item graph-ng-setting ${cls}` }), [, name = label, a, b] = (!desc && /^(.+?)(?: \((.+)\)|: (.+))$/.exec(label)) || [];
+  if (row.tagName === 'LABEL') row.createSpan({ cls: 'checkbox-container' }).createEl('input', { attr: { type: 'checkbox', 'aria-label': name } });
+  panelHelp(row, name, desc ?? a ?? b, 'setting-item-name graph-ng-setting-name');
   return row;
 }
 let expressionPanelId = 0;
@@ -266,11 +266,11 @@ export class ExplorePanel {
     this.counts.hidden = this.tool === 'information'; this.counts.empty();
     if (this.host.scoped?.()) this.counts.createDiv({ cls: 'graph-ng-scope-name', text: `In ${this.host.scope?.()}` });
     const loading = this.host.loading?.();
-    if (external || !r) { this.note(this.counts, loading?.stage ?? (external ? 'External aggregate' : 'Waiting for projection…')); return; }
+    if (external || !r) { this.note(this.counts, loading?.stage ?? (external ? 'External aggregate' : 'Waiting for projection…')).toggleClass('graph-ng-working', !!loading); return; }
     const stats = this.counts.createDiv({ cls: 'graph-ng-stats' });
     const shown = sum(r.visible), notes = r.nodes - shown, edges = r.edges - r.visibleEdges;
     statRow(stats, 'circle-dot', loading ? 'Notes shown so far' : 'Notes shown', num(shown)); statRow(stats, 'spline', loading ? 'Edges drawn so far' : 'Edges drawn', num(r.visibleEdges));
-    if (loading) { statRow(stats, 'loader', loading.stage, '', 'graph-ng-loading-counts'); return; }
+    if (loading) { statRow(stats, 'loader', loading.stage, '', 'graph-ng-loading-counts').querySelector('.graph-ng-stat-label')!.addClass('graph-ng-working'); return; }
     if (notes || edges) statRow(stats, 'eye-off', 'Hidden, see why', `${plural(notes, 'note')}, ${plural(edges, 'edge')}`, '', () => this.show('information'));
   }
   private note(host: HTMLElement, text: string) { return host.createDiv({ cls: 'graph-ng-explore-note', text }); }
@@ -568,7 +568,7 @@ export class ExplorePanel {
     summarize();
     host.createDiv({ cls: 'graph-ng-explore-error', text: this.physicsError, attr: { role: 'alert' } });
     const actions = host.createDiv({ cls: 'graph-ng-form' });
-    const apply = actions.createEl('button', { text: this.physicsBusy ? 'Recomputing…' : 'Apply layout', cls: 'mod-cta' });
+    const apply = actions.createEl('button', { text: this.physicsBusy ? 'Recomputing…' : 'Apply layout', cls: this.physicsBusy ? 'mod-cta graph-ng-working' : 'mod-cta' });
     apply.disabled = this.physicsBusy;
     apply.onclick = () => run();
     const run = async () => {
@@ -617,7 +617,7 @@ export class ExplorePanel {
     const actions = group.createDiv({ cls: 'graph-ng-form' });
     const preview = actions.createEl('button', { text: 'Preview sizing' }); preview.disabled = this.sizingBusy || !this.host.previewSizing;
     preview.onclick = () => { try { this.host.previewSizing?.(values()); this.sizingPreview = true; this.sizingMessage = 'Previewing. Not saved.'; } catch (e) { this.host.previewSizing?.(null); this.sizingMessage = `Not previewed: ${String(e)}`; } message.textContent = this.sizingMessage; this.updateSizingReadout(); };
-    const apply = actions.createEl('button', { text: this.sizingBusy ? 'Saving…' : 'Apply sizing' }); apply.disabled = this.sizingBusy || !this.host.applySizing;
+    const apply = actions.createEl('button', { cls: this.sizingBusy ? 'graph-ng-working' : '', text: this.sizingBusy ? 'Saving…' : 'Apply sizing' }); apply.disabled = this.sizingBusy || !this.host.applySizing;
     apply.onclick = async () => {
       if (this.sizingBusy || this.disposed) return;
       try { const v = values(); this.sizingBusy = true; this.render(); await this.host.applySizing!(v); this.sizingDraft = undefined; this.sizingPreview = false; this.sizingMessage = 'Saved'; }
@@ -651,7 +651,7 @@ export class ExplorePanel {
       this.suggestPreview = !this.suggestPreview; this.host.previewSuggestions!(this.suggestPreview ? list : null);
       this.suggestMessage = this.suggestPreview ? 'Previewing. Not saved.' : ''; this.render();
     };
-    const all = actions.createEl('button', { text: this.suggestBusy ? 'Saving…' : 'Apply all', cls: 'mod-cta' }); all.disabled = this.suggestBusy || !this.host.applySuggestions; all.onclick = () => apply(list);
+    const all = actions.createEl('button', { text: this.suggestBusy ? 'Saving…' : 'Apply all', cls: this.suggestBusy ? 'mod-cta graph-ng-working' : 'mod-cta' }); all.disabled = this.suggestBusy || !this.host.applySuggestions; all.onclick = () => apply(list);
   }
   private display(host: HTMLElement) {
     const s = this.settings, v = s.visuals;
@@ -705,6 +705,11 @@ export class ExplorePanel {
       this.flag(host, 'labelFade', 'Fade labels (by zoom and importance)', true);
       this.slider(host, 'Label size range', { min: 1, max: 1.6, k: 1.5 }, () => v.labelTierScale, x => { v.labelTierScale = x; }, true, { def: initial.labelTierScale, desc: 'Focus and well-connected notes get larger names. 1 keeps names one size.' });
     }
+    const motionState = v as Visuals & { motion?: 'full' | 'reduced' | 'off' };
+    const motion = settingRow(host, 'Motion', '', 'Reduced and Off also follow your system’s reduced-motion setting.').createEl('select', { attr: { 'aria-label': 'Motion' } });
+    for (const [value, text] of [['full', 'Full (default)'], ['reduced', 'Reduced'], ['off', 'Off']]) motion.createEl('option', { value, text });
+    motion.value = motionState.motion ?? 'full';
+    motion.onchange = () => { motionState.motion = motion.value as typeof motionState.motion; this.host.visualsChanged(false); };
     this.flag(host, 'labelPlates', 'Label backgrounds');
     this.flag(host, 'zoomAdapt', 'Adapt to zoom: fade crowded edges and shrink hubs when zoomed out');
     if (this.host.setRelationshipDisplay && hasReified(s.declaration)) this.relationshipDisplay(host);
@@ -742,7 +747,7 @@ export class ExplorePanel {
         finally { this.relationBusy = false; if (!this.disposed) this.render(); }
       };
     }
-    if (this.relationMessage) host.createDiv({ cls: 'graph-ng-explore-note', text: this.relationMessage, attr: { role: 'status' } });
+    if (this.relationMessage) host.createDiv({ cls: this.relationBusy ? 'graph-ng-explore-note graph-ng-working' : 'graph-ng-explore-note', text: this.relationMessage, attr: { role: 'status' } });
   }
   private viewDefinition(host: HTMLElement, saved: SavedView) {
     const v = saved.view, none = (x: string[]) => x.join(', ') || '(none)';
@@ -789,7 +794,7 @@ export class ExplorePanel {
     };
   }
   private views(host: HTMLElement) {
-    host.createDiv({ text: this.viewMessage, attr: { role: 'status', 'aria-live': 'polite' } });
+    host.createDiv({ cls: this.viewBusy || this.viewMessage.startsWith('Opening ') ? 'graph-ng-working' : '', text: this.viewMessage, attr: { role: 'status', 'aria-live': 'polite' } });
     panelHelp(host, 'What a view saves', 'Views save filters, grouping and camera in plugin settings, not files. Appearance, layout, relationship display and selected-group scope are not included.');
     const back = () => { this.viewDraft = undefined; this.viewCollision = undefined; this.viewSaved = undefined; this.viewMessage = ''; this.render(); this.body.querySelector<HTMLButtonElement>('button')?.focus(); };
     const draft = this.viewDraft;

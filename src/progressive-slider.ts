@@ -57,8 +57,8 @@ export interface SliderOptions {
 /** Name with on-demand help, then track, exact value and a fixed reset slot. */
 export function progressiveSlider(parent: HTMLElement, o: SliderOptions) {
   const { curve: c, unit = '', def } = o, name = o.name ?? o.label;
-  const row = parent.createDiv({ cls: `graph-ng-setting graph-ng-slider${o.cls ? ` ${o.cls}` : ''}` });
-  panelHelp(row, name, o.desc, 'graph-ng-setting-name');
+  const row = parent.createDiv({ cls: `setting-item graph-ng-setting graph-ng-slider${o.cls ? ` ${o.cls}` : ''}` });
+  panelHelp(row, name, o.desc, 'setting-item-name graph-ng-setting-name');
   const reset = row.createEl('button', { cls: 'clickable-icon graph-ng-slider-reset', attr: { 'aria-label': `Reset ${name} to ${def}${unit ? ` ${unit}` : ''}` } });
   setIcon(reset, 'rotate-ccw');
   const line = row.createDiv({ cls: 'graph-ng-slider-line' }), track = line.createDiv({ cls: 'graph-ng-slider-track' });
