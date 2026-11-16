@@ -427,7 +427,7 @@ export class GraphView extends ItemView {
     if (this.closed || this.plugin.settings.projectionFile || !this.groupGraph || this.detailGeneration !== this.activeRevision) return;
     this.provisional = !this.plugin.adapter.factsComplete(); this.contentEl.dataset.verified = String(!this.provisional);
     if (this.report) { this.report.provisional = this.provisional; this.report.linksPending = this.plugin.adapter.linksPending(); this.report.pendingProperties = this.plugin.adapter.pendingProperties(); }
-    this.statusText = this.layoutWorking || this.contentEl.dataset.state === 'building' ? this.statusText : this.provisional ? pendingText(this.report) : '';
+    this.statusText = this.layoutWorking || this.contentEl.dataset.state === 'building' ? this.statusText : this.provisional ? pendingText(this.report) : this.layoutSettled ? '' : 'Layout not settled';
   }
   async onClose() { this.explorePanel?.dispose(); this.contributionPage.clear(); this.closed = true; this.renderRevision++; this.revision++; this.renderer?.dispose(); this.unsubscribe?.(); }
   refresh(): Promise<void> {
@@ -585,7 +585,7 @@ export class GraphView extends ItemView {
     const start = performance.now();
     this.renderer?.dispose(); this.detailRenderer = undefined; this.stage.empty(); this.panel.empty();
     const projection = this.groupGraph, generation = this.groupGeneration, source = this.viewSource; if (!projection) return;
-    const settings = this.plugin.settings, size = Math.max(12, Math.min(24, settings.groupCanvasPageSize)), pages = groupPages(projection, size);
+    const settings = this.plugin.settings, size = Math.min(100, settings.groupCanvasPageSize), pages = groupPages(projection, size);
     const back = this.returnTo?.projection === this.projection ? this.returnTo : undefined, ring = back?.group === undefined ? undefined : String(back.group);
     let canvasPage = Math.max(0, Math.floor(pages.ranked.findIndex(g => g.id === ring) / size));
     const draw = (focus = '') => {
@@ -600,11 +600,12 @@ export class GraphView extends ItemView {
       const choice = head.createEl('button', { text: settings.projectionFile ? 'declared groups' : group ? groupLabel(group) : 'all notes', cls: 'graph-ng-help-trigger' });
       choice.disabled = !!settings.projectionFile; choice.onclick = () => { this.explorePanel?.show('filters'); this.explorePanel?.root.querySelector<HTMLSelectElement>('[aria-label="Group by"]')?.focus(); };
       head.createSpan({ text: ', largest first' });
-      const controls = this.stage.createDiv({ cls: 'graph-ng-canvas-pager' });
+      if (size !== settings.groupCanvasPageSize) head.createSpan({ text: ` (${size} groups per page limit)` });
+      const controls = this.stage.createDiv({ cls: 'graph-ng-canvas-pager' }); controls.hidden = projection.groups.length <= size;
       const previous = iconButton(controls, 'Previous groups', 'chevron-left'); previous.disabled = canvasPage === 0; previous.onclick = () => { canvasPage--; draw('previous'); };
       controls.createSpan({ text: `Groups ${projection.groups.length ? canvasPage * size + 1 : 0}–${Math.min((canvasPage + 1) * size, projection.groups.length)}, ${projection.groups.length} total` });
       const more = Math.max(0, projection.groups.length - (canvasPage + 1) * size);
-      const next = controls.createEl('button', { text: `+${more} more`, attr: { 'aria-label': 'Next groups' } }); next.disabled = !more; next.onclick = () => { canvasPage++; draw('next'); };
+      const next = controls.createEl('button', { text: `+${more} more`, attr: { 'aria-label': 'Next groups' } }); next.hidden = next.disabled = !more; next.onclick = () => { canvasPage++; draw('next'); };
       controls.createEl('button', { text: 'List' }).onclick = () => this.explorePanel?.show('members');
       if (focus) (focus === 'previous' && !previous.disabled ? previous : !next.disabled ? next : previous).focus();
       this.contentEl.dataset.canvasGroups = String(selected.groups.length);
@@ -1016,6 +1017,7 @@ export class GraphView extends ItemView {
         this.gpu = { available: false, reason: 'WebGL context could not be restored' };
         this.showGroups(); void this.showDetails(bits, clearPanel);
       }, this.renderView());
+      const moved = preview && this.detailRenderer.adoptCamera(preview);
       preview?.dispose();
       this.renderer = this.detailRenderer; this.contentEl.dataset.mode = 'nodes'; this.detailFallback = ''; this.statusText = this.statusText;
       const detailGeneration = this.detailGeneration;
@@ -1034,7 +1036,7 @@ export class GraphView extends ItemView {
       this.detailRenderer.onMoreConnections = focus => this.detailRenderer?.showConnections(focus);
       this.detailRenderer.onHub = group => { const key = this.explored?.groupKeys[group]; if (key !== undefined) this.setView({ ...this.view, collapsedGroups: this.view.collapsedGroups.filter(k => k !== key) }, () => this.focusGroup(group)); };
       if (this.pendingCamera) { const c = this.pendingCamera; this.pendingCamera = undefined; this.detailRenderer.flyTo(c.x, c.y, c.ratio); }
-      else this.detailRenderer.fitAll(0);
+      else if (!moved) this.detailRenderer.fitAll(0);
       if (focus?.projection === this.projection) this.detailRenderer.focusNote(focus.node, focus.lens);
       this.explorePanel?.render();
     } catch (e) { if (renderRevision !== this.renderRevision) return; this.gpu = { available: false, reason: String(e) }; this.detailFallback = `Notes could not be drawn: ${String(e)}. Showing Groups.`; this.showGroups(); this.statusText = ''; }

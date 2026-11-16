@@ -2146,3 +2146,101 @@ test('anchored name priorities reuse bounded atlas candidates and put direct not
   r[k('selectNote')](-1, false); r[k('focusLevel')] = 0; settings.visuals.namePriority = 'selection'; expect(paint()).toEqual([]);
   settings.visuals.namePriority = 'connected'; expect(paint().length).toBeGreaterThan(0);
 });
+
+test('wave12: streaming preview gestures survive final renderer adoption in world coordinates', async () => {
+  for (const gesture of ['panBy', 'zoomAt', 'none']) {
+    const f = await fixture({ loading: true }), r = f.renderer, k = (name: string) => mangle[name] ?? name;
+    f.view.detailRenderer = undefined; f.view.panel = new Element();
+    f.view.gpu = { available: false, reason: 'synthetic Canvas' };
+    f.view.app = { workspace: { requestSaveLayout() {} } };
+    f.view[k('toolsOverlap')] = () => 0;
+    f.view.positions = new Float32Array([100, 200, 300, 400, 900, 1200]);
+    const create = Renderer.create; let before: number[] = [], fits = 0;
+    Renderer.create = async (...args: any[]) => {
+      const final = await create(...args); renderers.push(final);
+      // Include gestures made while the replacement renderer is being prepared.
+      if (gesture !== 'none') r.controls()[k(gesture)](...(gesture === 'panBy' ? [40, 20] : [1.5, 120, 80]));
+      const fit = final.fitAll.bind(final); final.fitAll = (...args: any[]) => { fits++; return fit(...args); };
+      before = [r[k('centerX')], r[k('centerY')], r[k('scale')]];
+      return final;
+    };
+    try { await f.view[k('showDetails')](); } finally { Renderer.create = create; }
+    const final = f.view.detailRenderer;
+    expect(f.view.contentEl.dataset.mode).toBe('nodes'); expect(final).not.toBe(r);
+    if (gesture !== 'none') [final[k('centerX')], final[k('centerY')], final[k('scale')]].forEach((v: number, i: number) => expect(v).toBeCloseTo(before[i]!, 8));
+    expect(final[k('followLayout')]).toBe(gesture === 'none'); expect(fits).toBe(gesture === 'none' ? 1 : 0);
+  }
+});
+
+test('wave12: property promotion preserves unsettled status until a layout settles', async () => {
+  const f = await fixture(), k = (name: string) => mangle[name] ?? name;
+  f.view.groupGraph = {}; f.view.contentEl.dataset.state = 'ready';
+  f.plugin.adapter = { [k('factsComplete')]: () => true, [k('linksPending')]: () => false, [k('pendingProperties')]: () => 0 };
+  f.view[k('layoutSettled')] = false; f.view.statusText = 'Layout not settled';
+  f.view[k('promoteProperties')](); expect(f.view.statusText).toBe('Layout not settled');
+  f.view[k('layoutSettled')] = true; f.view[k('promoteProperties')](); expect(f.view.statusText).toBe('');
+});
+
+test('wave12: selection captions survive pointer leave without connection highlighting', async () => {
+  for (const style of ['anchored', 'ranked'] as const) {
+    const f = await graduated([[0, 1], [1, 2], [3, 4]], 5), { r, k, settings } = f;
+    settings.visuals.labelStyle = style;
+    settings.visuals.namePriority = 'selection'; settings.visuals.hoverHighlight = false;
+    r[k('selectNote')](0, true); f.hover(3); r[k('pointerLeave')]();
+    r[k('placeOverlay')]();
+    const names = r[k('anchorNames')].map((n: any) => n.node);
+    expect(names).toContain(0); expect(names).toContain(1); expect(names).not.toContain(3);
+    expect(r[k('anchorPool')].some((e: any) => !e.hidden)).toBe(true);
+    expect(r[k('focusTarget')]).toBe(0); expect(f.tiers()).toEqual([0, 0, 0, 0, 0]);
+    r[k('placeAnchored')](1, 0, () => 2, () => false);
+    expect(r[k('anchorPool')].filter((e: any) => !e.hidden).length).toBeGreaterThanOrEqual(2);
+    expect(!r[k('moreButton')] || r[k('moreButton')].hidden).toBe(true);
+    r[k('selectNote')](3, true); r[k('pointerLeave')](); r[k('placeOverlay')]();
+    expect(r[k('anchorNames')].map((n: any) => n.node)).toEqual(expect.arrayContaining([3, 4]));
+    expect(r[k('anchorNames')].map((n: any) => n.node)).not.toContain(0);
+    let opened = -1; r[k('onMoreConnections')] = (n: number) => { opened = n; };
+    r.moreControl().onclick(); expect(opened).toBe(3);
+    r.setView(new Uint8Array(5).fill(1), { [k('typeHidden')]: new Uint8Array([1]) }); r[k('placeOverlay')]();
+    expect(r[k('anchorNames')].map((n: any) => n.node)).toEqual([3]);
+    r[k('selectNote')](-1); r[k('placeOverlay')](); expect(r[k('anchorNames')]).toEqual([]);
+  }
+});
+
+async function groupCanvasFixture(count: number, size: number) {
+  const f = await fixture(), k = (name: string) => mangle[name] ?? name;
+  f.plugin.settings.groupCanvasPageSize = size;
+  f.view.groupGraph = { groups: Array.from({ length: count }, (_, i) => ({ id: String(i), label: `Group ${i}`, count: count - i })), groupEdges: [] };
+  f.view.panel = new Element(); f.view[k('paginate')] = () => {}; f.view[k('section')] = () => new Element(); f.view[k('toolsOverlap')] = () => 0;
+  f.view.showGroups();
+  return { ...f, pager: () => f.stage.children.find((e: any) => e.className === 'graph-ng-canvas-pager')! };
+}
+
+test('wave12: canvas respects saved page sizes below 12 and above 24', async () => {
+  for (const size of [6, 30, 1000]) {
+    const f = await groupCanvasFixture(120, size);
+    try {
+      expect(f.view.contentEl.dataset.canvasGroups).toBe(String(Math.min(100, size)));
+      if (size > 100) expect(f.stage.textContent).toContain('100 groups per page limit');
+    }
+    finally { f.view.renderer.dispose(); }
+  }
+});
+
+test('wave12: last group page hides zero-more while retaining back navigation', async () => {
+  const f = await groupCanvasFixture(25, 12);
+  try {
+    control(f.pager(), 'Next groups').click(); control(f.pager(), 'Next groups').click();
+    const pager = f.pager(), next = pager.querySelectorAll('button').find((e: any) => e.getAttribute('aria-label') === 'Next groups');
+    expect(!next || next.hidden).toBe(true); expect(pager.hidden).toBe(false);
+    const previous = control(pager, 'Previous groups'); expect(previous.disabled).toBe(false); expect(ControlElement.active).toBe(previous); previous.click();
+    expect(control(f.pager(), 'Next groups').hidden).toBe(false);
+  } finally { f.view.renderer.dispose(); }
+});
+
+test('wave12: one-page group canvas hides its entire pager', async () => {
+  for (const count of [0, 5, 12]) {
+    const f = await groupCanvasFixture(count, 12);
+    try { expect(!f.pager() || f.pager().hidden).toBe(true); }
+    finally { f.view.renderer.dispose(); }
+  }
+});

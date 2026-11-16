@@ -497,7 +497,7 @@ test('final renderer replaces the retained preview only after create confirms it
   const view: any = Object.create(GraphView.prototype), preview: any = Object.create(DetailRenderer.prototype);
   let painted = false, disposed = 0, emptied = 0, release!: () => void;
   Object.assign(preview, { canvas: { style: {} }, dispose() { expect(painted).toBe(true); disposed++; } });
-  const final: any = { fitAll() {}, syncTools() {} }, original = DetailRenderer.create;
+  const final: any = { fitAll() {}, syncTools() {}, adoptCamera() { expect(painted).toBe(true); return false; } }, original = DetailRenderer.create;
   Object.assign(view, { contentEl: { dataset: { state: 'ready', mode: 'nodes-building' } }, renderer: preview, detailRenderer: undefined,
     projection: {}, positions: new Float32Array(2), visible: new Uint8Array([1]), colors: new Uint32Array(1), gpu: { available: true, reason: 'fixture' },
     renderRevision: 1, plugin: { settings: {}, pipeline: {} }, app: {}, stage: { empty() { emptied++; } }, panel: { empty() {} },

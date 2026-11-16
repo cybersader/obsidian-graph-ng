@@ -46,7 +46,7 @@
 .graph-ng-tooltip { overflow-wrap:anywhere; position:absolute; pointer-events:none; color:var(--text-normal); background:var(--background-secondary); border:1px solid var(--background-modifier-border); padding:var(--gng-space-1) var(--gng-space-2); border-radius:var(--radius-s); max-width:80%; z-index:2; font-size:var(--gng-text-sm); }
 .graph-ng-tooltip:empty { display:none; }
 .graph-ng-canvas-pager,.graph-ng-page-controls { display:flex; align-items:center; gap:var(--gng-space-2); flex-wrap:wrap; margin:var(--gng-space-1) 0; }
-.graph-ng-canvas-pager[hidden],.graph-ng-page-controls[hidden] { display:none; }
+.graph-ng-canvas-pager[hidden],.graph-ng-canvas-pager button[hidden],.graph-ng-page-controls[hidden] { display:none; }
 .graph-ng-quarantine { margin:var(--gng-space-2) 0; border-left:3px solid var(--text-warning); padding-left:var(--gng-space-2); }
 
 /* In-view controls: host variables only, so light/dark and community themes apply. */

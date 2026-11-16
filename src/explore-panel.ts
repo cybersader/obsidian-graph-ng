@@ -631,14 +631,14 @@ export class ExplorePanel {
     const group = host.createDiv({ cls: 'graph-ng-nodes' }); group.createEl('h4', { text: 'Nodes' });
     const current = sizingValues(this.settings);
     const draft = this.sizingDraft ??= { radius: String(current.radius), prominence: String(current.prominence), compensation: String(current.compensation * 100), floor: String(current.floor * 100), curve: current.curve };
+    const sync: (() => void)[] = [];
     const tune = (value: string) => {
-      Object.assign(draft, { radius: String(Math.max(1, Number(draft.radius) || 1)), prominence: value, curve: 'linear', compensation: '0', floor: '100' });
-      for (const [label, value] of [['Node size', draft.radius], ['Shrink crowded dots', draft.compensation], ['Retain base size', draft.floor], ['Size by connections', draft.curve]]) { const field = group.querySelector<HTMLInputElement>(`[aria-label="${label}"]`); if (field) field.value = value!; }
-      preview(); this.updateSizingReadout();
+      draft.radius = String(Math.max(1, Number(draft.radius) || 1)); draft.prominence = value;
+      sync.forEach(update => update()); preview(); this.updateSizingReadout();
     };
-    progressiveSlider(group, { label: 'Hub size', unit: '×', desc: 'Live preview from None (1×) through Balanced (5×), Strong (9×), up to 25×. Keeps a base of at least 1 px. Apply sizing saves; Restore cancels.', curve: { min: 1, max: 25 }, value: draft.prominence, def: 5, attr: { min: '1', max: '25' }, disabled: this.sizingBusy || !this.host.previewSizing, changed: tune });
+    progressiveSlider(group, { label: 'Hub size', unit: '×', desc: 'Live preview from 1× to 25×. Keeps a base of at least 1 px; other advanced values stay unchanged. None/Balanced/Strong presets also reset the curve to Linear, shrinking to 0% and retained base to 100%. Apply sizing saves; Restore cancels.', curve: { min: 1, max: 25 }, value: draft.prominence, def: 5, attr: { min: '1', max: '25' }, disabled: this.sizingBusy || !this.host.previewSizing, changed: tune });
     const presets = group.createDiv({ cls: 'graph-ng-form' });
-    for (const [label, value] of [['None', 1], ['Balanced', 5], ['Strong', 9]] as const) panelButton(presets, label, () => { tune(String(value)); this.render(); }, this.sizingBusy || !this.host.previewSizing);
+    for (const [label, value] of [['None', 1], ['Balanced', 5], ['Strong', 9]] as const) panelButton(presets, label, () => { Object.assign(draft, { curve: 'linear', compensation: '0', floor: '100' }); tune(String(value)); this.render(); }, this.sizingBusy || !this.host.previewSizing);
     group.createDiv({ cls: 'graph-ng-explore-note graph-ng-sizing-readout', text: this.host.sizingReadout?.() ?? '' });
     const advanced = group.createEl('details'); disclosure(advanced, 'Advanced sizing');
     const fields: [Exclude<keyof NodeSizingValues, 'curve'>, string, string, Curve][] = [
@@ -648,10 +648,12 @@ export class ExplorePanel {
     const help = { radius: 'Dot radius before zoom and crowding adjustments. Type a larger value for larger dots.', prominence: 'Largest hub radius compared with an unconnected note. 1 keeps dots the same size.', compensation: 'How much crowding shrinks dots, not the space between them. 0 turns shrinking off.', floor: 'Minimum base radius kept after crowding shrink, not a percentage of hub size. Applies equally to every note. Tiny dots also have a one-device-pixel radius minimum.' };
     const message = group.createDiv({ cls: 'graph-ng-explore-note', attr: { role: 'status', 'aria-live': 'polite' } }); message.textContent = this.sizingMessage;
     const changed = (key: keyof NodeSizingValues, value: string) => { draft[key] = value; this.sizingPreview = false; this.host.previewSizing?.(null); this.sizingMessage = message.textContent = 'Draft not previewed or saved.'; };
-    settingSelect(advanced, 'Size by connections', 'Chooses how connection counts change dot sizes. Previous keeps the earlier sizing curve.', [['sqrt', 'Square root'], ['log', 'Logarithmic'], ['linear', 'Linear'], ['legacy', 'Previous']], draft.curve, value => changed('curve', value), 'graph-ng-select', this.sizingBusy);
+    const curve = settingSelect(advanced, 'Size by connections', 'Chooses how connection counts change dot sizes. Previous keeps the earlier sizing curve.', [['sqrt', 'Square root'], ['log', 'Logarithmic'], ['linear', 'Linear'], ['legacy', 'Previous']], draft.curve, value => changed('curve', value), 'graph-ng-select', this.sizingBusy);
+    sync.push(() => { curve.value = draft.curve; });
     const base = sizingValues(defaults('links')), initial = { ...base, compensation: base.compensation * 100, floor: base.floor * 100 };
     for (const [key, title, unit, range] of fields) {
-      progressiveSlider(advanced, { label: title, unit, desc: help[key], curve: range, value: draft[key], def: initial[key], disabled: this.sizingBusy, cls: 'graph-ng-sizing-row', attr: { min: key === 'prominence' ? '1' : '0', max: String(key === 'radius' ? MAX_NODE_RADIUS : key === 'prominence' ? 25 : 100) }, changed: value => changed(key, value) });
+      const field = progressiveSlider(advanced, { label: title, unit, desc: help[key], curve: range, value: draft[key], def: initial[key], disabled: this.sizingBusy, cls: 'graph-ng-sizing-row', attr: { min: key === 'prominence' ? '1' : '0', max: String(key === 'radius' ? MAX_NODE_RADIUS : key === 'prominence' ? 25 : 100) }, changed: value => changed(key, value) });
+      sync.push(() => field.sync(draft[key]));
     }
     const values = () => {
       const parsed = Object.fromEntries(Object.entries(draft).map(([key, value]) => [key, key === 'curve' ? value : value.trim() ? Number(value) : NaN])) as unknown as NodeSizingValues;

@@ -271,3 +271,32 @@ test('name-priority migration preserves every saved click behavior without mutat
   }
   const invalid: any = defaults('links'); invalid.visuals.namePriority = 'arbitrary'; expect(() => validateSettings(invalid)).toThrow();
 });
+
+test('wave12: Hub size preserves advanced drafts and saves only intended sizing changes', async () => {
+  const f = panelFixture();
+  f.plugin.settings = sizingSettings(f.plugin.settings, { radius: .16, prominence: 5, curve: 'log', compensation: .92, floor: .885 });
+  f.panel.sizingDraft = undefined; f.panel.render();
+  f.input('Hub size', '9');
+  expect(f.preview()).toEqual({ radius: 1, prominence: 9, curve: 'log', compensation: .92, floor: .885 });
+  await (control(f.panel.body, 'Apply sizing') as any).onclick();
+  expect(sizingValues(f.plugin.settings)).toEqual({ radius: 1, prominence: 9, curve: 'log', compensation: .92, floor: .885 });
+  f.panel.dispose();
+});
+
+test('wave12: Hub size and presets synchronize advanced numbers, thumbs and accessibility values', () => {
+  const f = panelFixture();
+  f.input('Node size', '.16'); f.input('Shrink crowded dots', '92'); f.input('Retain base size', '88.5');
+  const field = (name: string) => f.panel.body.querySelectorAll('input,select').find((e: any) => e.getAttribute('aria-label') === name);
+  f.input('Hub size', '9');
+  expect(field('Node size').value).toBe('1');
+  expect(field('Node size slider').getAttribute('aria-valuenow')).toBe('1');
+  expect(Number(field('Node size slider').value)).toBeCloseTo(1000 * ((1 - .01) / (20 - .01)) ** (1 / 3), 8);
+  for (const [name, value] of [['Shrink crowded dots', '92'], ['Retain base size', '88.5']]) {
+    expect(field(name!).value).toBe(value); expect(field(name! + ' slider').getAttribute('aria-valuenow')).toBe(value);
+  }
+  field('Node size slider').onkeydown({ key: 'ArrowRight', shiftKey: false, preventDefault() {} });
+  expect(Number(field('Node size').value)).toBeGreaterThan(1);
+  control(f.panel.body, 'Balanced').click();
+  expect(field('Shrink crowded dots slider').value).toBe('0'); expect(field('Retain base size slider').value).toBe('1000');
+  expect(field('Size by connections').value).toBe('linear'); f.panel.dispose();
+});

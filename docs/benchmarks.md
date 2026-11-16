@@ -1129,6 +1129,14 @@ Ordered final `gates:fast`, `build`, `test --timeout 10000`, and `gates` all pas
 
 ## Large relationship-note layouts (wave 12, 2026-11-16)
 
+### Merged-wave review corrections
+
+The follow-up preserves world-space camera center and scale when a streaming preview is replaced, including gestures during final renderer preparation; untouched previews still fit the completed layout. Property promotion retains unsettled status. Hub size leaves advanced curve/shrink/floor drafts intact, with number chips, thumbs and accessible values synchronized. Full presets retain their explicit reset behavior. Selection-only captions use the selected note's filtered connections independently of highlight focus in both label styles. Group canvas pages honor saved values through 100; larger values visibly report the effective limit. Empty Next actions and unnecessary pagers are hidden without losing backward keyboard navigation.
+
+Eight new deterministic regressions failed against merged baseline `1a5e407` before production edits (739 passed, eight failed, one optional test skipped). Verification uses `flock -w 3000 -E 75 /tmp/openclast-bun.lock timeout --kill-after=5s 1800s ./scripts/run.sh <target>`, in order `build`, `test --timeout 10000`, `gates`, on a Linux x86-64 workstation. Build passed; **747 tests passed, zero failed, one optional test skipped**, with 983,325 expectations across 37 files. Secrets, attribution (current/index and all reachable commits), privacy, frozen-lock/install-policy and runtime-license gates passed. Full gates failed only on bundle size: **391,362 raw / 132,232 gzip bytes**, against unchanged 385,000 / 130,000 ceilings (6,362 / 2,232 bytes over). This is 821 raw / 263 gzip bytes above the merged baseline. Ignored receipts are in `.workspace/evidence/wave12-review/`; the bundle receipt is `.workspace/evidence/bundle-size.json`. These synthetic DOM/Canvas/production-bundle tests do not extend native visual, hardware-WebGL, mobile or private-vault acceptance.
+
+### Original layout measurements
+
 Synthetic-only CPU measurements on a Linux x86-64 workstation class with 32 GiB RAM. The deterministic fixture in `scripts/large-layout-benchmark.ts` has 26.2% endpoint notes, 73.8% two-legged relationship notes, sixteen planted groups, about three edges per note, local hubs, 1% cross-group relationships and 5% disconnected endpoint notes. No private vault was read. The seed and topology are fixed; groups score the output but never drive the solver.
 
 The archived baseline is commit `2bfcf8e`, with 100 iterations, LinLog on, spread 26.23, normal gravity 0.1, slowdown 1, theta 1.2 and no optional family/hub force. Measuring displacement disproves the hypothesis that seeds barely move: repulsion expands this graph dramatically while groups remain mixed. This does not establish why every note in an owner's screenshot lies outside its dense area.

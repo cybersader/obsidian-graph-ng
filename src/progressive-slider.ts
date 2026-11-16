@@ -112,5 +112,5 @@ export function progressiveSlider(parent: HTMLElement, o: SliderOptions) {
   };
   range.onpointerup = range.onpointercancel = range.onlostpointercapture = e => { if (!drag || e.pointerId !== drag.id) return; drag = null; bubble.hidden = true; fine(1); o.commit?.(); };
   range.onkeydown = e => { const d = keyStep(e.key, e.shiftKey); if (d === null || range.disabled) return; e.preventDefault(); move(pos + d); o.commit?.(); };
-  return { row, range, number, reset };
+  return { row, range, number, reset, sync: (value: string) => { number.value = value; show(value, toPosition(c, numeric(value))); } };
 }

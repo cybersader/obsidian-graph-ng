@@ -418,7 +418,7 @@ export class DetailRenderer {
   private tierLeaders: HTMLElement[] = [];
   private anchorPool: HTMLElement[] = [];
   private anchorKey: unknown[] = [];
-  private anchorNames: { node: number; rank: number; text: string; w: number }[] = [];
+  private anchorNames: { node: number; rank: number; tier: number; text: string; w: number }[] = [];
   private anchorPrevious = new Map<number, number>();
   /** Direct connections without a label fold into one "+N more" button beside the focus. */
   private moreButton?: HTMLButtonElement;
@@ -603,6 +603,15 @@ export class DetailRenderer {
   private layoutActive = false;
   private followLayout = true;
   private labelsPending = false;
+  /** A preview and its replacement have different normalized frames. Preserve world center/scale,
+   * including gestures made while the replacement was preparing, and keep follow cancelled. */
+  adoptCamera(previous: DetailRenderer) {
+    this.followLayout = previous.followLayout;
+    if (this.followLayout) return false;
+    const f = this.cameraFrame;
+    this.setCamera((previous.centerX - f.minX) / f.width, (previous.centerY - f.minY) / f.height, previous.camera.ratio * this.fit / previous.fit);
+    return true;
+  }
   /** Keep pan/zoom and the last layout, suppress stale labels and picking until adoption.
    * Failed/superseded applies restore CPU geometry without rolling back the user's camera. */
   beginLayout() {
@@ -1559,7 +1568,7 @@ export class DetailRenderer {
     }
     const lod = this.lodLevel(), s = this.settings, tier = v.labelTierScale, hover = this.hoverLabel;
     let taken: number[][] = [];
-    if (v.labelStyle === 'anchored') {
+    if (v.labelStyle === 'anchored' || v.namePriority === 'selection' && (ego !== this.selected || focus <= .5)) {
       hover.hidden = true;
       for (const el of [...this.tierLabels, ...this.tierLeaders]) el.hidden = true;
       taken = this.placeAnchored(node, focus, radius, under);
@@ -1642,25 +1651,31 @@ export class DetailRenderer {
    * Candidate captions are measured only when focus, settings or atlas change. Collision uses actual
    * screen positions (including animated lens/radii), not a conservative atlas LOD approximation. */
   private placeAnchored(node: number, focus: number, radius: (n: number) => number, under: (x: number, y: number, w: number, h: number) => boolean) {
-    const s = this.settings, ego = focus > .5 ? this.focusNode : -1, size = s.labelSize, h = Math.ceil(size * 1.5) + 4, lod = this.lodLevel();
+    const s = this.settings, ego = s.visuals.namePriority === 'selection' ? this.selected : focus > .5 ? this.focusNode : -1, size = s.labelSize, h = Math.ceil(size * 1.5) + 4, lod = this.lodLevel();
     const key = [this.atlas, ego, node, size, this.theme, this.tierMask, this.visible, lod, s.visuals.namePriority];
     if (key.some((v, i) => v !== this.anchorKey[i])) {
       const m = this.measure ??= document.createElement('canvas').getContext('2d')!;
       m.font = `${size}px ${this.theme.font}`;
       const overview = s.visuals.namePriority === 'all' ? [...this.atlas?.widths.keys() ?? []] : Array.from(this.atlas?.nodes[lod] ?? []);
-      const ranked = ego < 0 ? { list: [] as (readonly [number, number])[], direct: 0 } : rankFocus(ego, this.near, this.stateBytes, this.visible, this.projection.offsets, ANCHORED_CANDIDATES, this.projection.carrierNodes, this.interestOf(ego), DIRECT_LABELS);
+      // Naming follows selection even when highlight focus is off or held on a different lens.
+      let near = this.near, state = this.stateBytes;
+      if (ego >= 0 && ego !== this.focusNode) {
+        near = []; state = new Uint8Array(state.length);
+        focusTiers(ego, this.edges, this.projection, this.edgeOn, this.filterVisible, state, new Uint8Array(this.edgeTier.length), near, [], 65536, this.settings.declaration.groupContext ? this.view.groupCodes : undefined);
+      }
+      const ranked = ego < 0 ? { list: [] as (readonly [number, number])[], direct: 0 } : rankFocus(ego, near, state, this.visible, this.projection.offsets, ANCHORED_CANDIDATES, this.projection.carrierNodes, this.interestOf(ego), DIRECT_LABELS);
       if (s.visuals.namePriority !== 'selection') { const seen = new Set(ranked.list.map(([n]) => n)); for (const n of overview) if (!seen.has(n) && (ego < 0 || ranked.list.length < ANCHORED_CANDIDATES)) ranked.list.push([n, 5]); }
       this.moreTotal = ranked.direct; this.moreSize = [m.measureText(`${ranked.direct} more connections`).width + 32, Math.max(32, h + 4)];
       const list = node >= 0 ? [[node, 0] as const, ...ranked.list.filter(([n]) => n !== node)] : ranked.list;
-      this.anchorNames = list.map(([n, rank]) => { const text = middleTruncate(n === node ? this.noteCaption(n) : this.name(n), n === node ? 48 : 32); return { node: n, rank, text, w: Math.ceil(m.measureText(text).width) + 12 }; });
+      this.anchorNames = list.map(([n, rank]) => { const text = middleTruncate(n === node ? this.noteCaption(n) : this.name(n), n === node ? 48 : 32); return { node: n, rank, tier: state[n * 4 + 1]!, text, w: Math.ceil(m.measureText(text).width) + 12 }; });
       this.anchorKey = key;
     }
     // Fewer overview names; a sticky LOD and spatial clearance prevent threshold chatter.
     const budget = Math.max(1, Math.min(ANCHORED_LABELS, s.labelsMaxPerViewport, Math.floor(this.width * this.height / Math.max(160, s.labelGridCellSize) ** 2 * s.labelDensity / Math.max(1, lod - 1))));
     // Reuse the ranked grid's bounded LOD placements. Cull offscreen notes BEFORE the collision cap.
-    const names: (LabelItem & { text: string })[] = [];
+    const names: (LabelItem & { text: string; tier: number })[] = [];
     for (const it of this.anchorNames) {
-      if (!this.visible[it.node] || it.rank < 5 && ego >= 0 && it.node !== ego && it.node !== node && !shownTier(this.stateBytes[it.node * 4 + 1]!, this.tierMask)) continue;
+      if (!this.visible[it.node] || it.rank < 5 && ego >= 0 && it.node !== ego && it.node !== node && !shownTier(it.tier, this.tierMask)) continue;
       const p = this.screenPoint(it.node); if (under(p.x, p.y, 0, 0)) continue;
       names.push({ ...it, ...p, r: radius(it.node), h }); if (names.length >= ANCHORED_CANDIDATES) break;
     }
@@ -1677,7 +1692,7 @@ export class DetailRenderer {
     });
     const taken = slots.map(it => it.box);
     if (this.moreButton) this.moreButton.hidden = true;
-    const rest = this.moreTotal - slots.filter(it => it.node !== ego && this.stateBytes[it.node * 4 + 1] === 255).length, anchor = slots.find(it => it.node === ego);
+    const rest = this.moreTotal - slots.filter(it => it.node !== ego && names.find(n => n.node === it.node)?.tier === 255).length, anchor = slots.find(it => it.node === ego);
     if (ego >= 0 && rest > 0 && anchor) {
       const b = this.moreControl();
       const x = anchor.left, y = anchor.top + h + 4, [w, bh] = this.moreSize;
@@ -1697,7 +1712,7 @@ export class DetailRenderer {
     if (!(n >= 0 && n < this.visible.length && this.filterVisible[n])) return;
     this.selectNote(n, true); if (lens) this.setLens(n);
   }
-  private moreControl() { return this.moreButton ??= this.overlay.appendChild(Object.assign(document.createElement('button'), { className: 'graph-ng-more', onclick: () => { if (this.focusNode >= 0) this.onMoreConnections(this.focusNode); } })); }
+  private moreControl() { return this.moreButton ??= this.overlay.appendChild(Object.assign(document.createElement('button'), { className: 'graph-ng-more', onclick: () => { const n = this.settings.visuals.namePriority === 'selection' ? this.selected : this.focusNode; if (n >= 0) this.onMoreConnections(n); } })); }
   private updateLegend() { paintLegend(this.legendRows, this.legendCounts, this.tierMask, this.tierTotals); }
   /** Centre the note in measured free space, keeping zoom unless travel supplies a target. */
   private panTo(n: number, ratio = this.camera.ratio) {
