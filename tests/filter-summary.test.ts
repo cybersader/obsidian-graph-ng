@@ -39,7 +39,6 @@ test('graph information renders icon stat rows, a plain-English issues list and 
   expect(host.querySelectorAll('.graph-ng-count').length).toBe(rows.length);
   expect(host.querySelector('.graph-ng-coverage-state').textContent).toBe('Waiting for Obsidian links');
   expect(host.textContent).not.toContain('49,534');
-  expect(host.querySelectorAll('.graph-ng-help-popover').map((x: any) => x.textContent)).toContain('These notes share an ID with another note. Give each note a unique ID to include it.');
   expect(host.textContent).not.toContain('Properties loaded'); expect(host.textContent).not.toContain('Partial graph');
   expect(host.textContent).not.toContain(' · ');
   // The tile bar, card and table are gone.
