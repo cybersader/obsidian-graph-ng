@@ -2,6 +2,8 @@
 
 Authority: `src/core/group-projection.ts` (`GroupProjection`, `validateGroupProjection`). This is an aggregate-only **local JSON file input**, not a network protocol, grant model, or individual-node dataset. The schema is draft; consumers must not infer authorization or completeness from it.
 
+The Groups canvas sorts a presentation copy by descending member count, then label and ID; it never reorders the typed-array authority. Canvas pages contain 12 to 24 groups (the configured canvas page size clamped to that range), with a visible named range, remaining-group action, Previous control and full paged list. Bubble area uses the largest count across all pages, with a five-pixel visibility floor. Labels truncate in the middle; hovering a bubble or its label reveals the full name. Local colours use the existing group palette and declared overrides once the group dictionary is available; aggregate-only inputs retain their existing neutral fallback.
+
 Set tuning `projectionFile` to an existing vault-relative JSON file. Generic synthetic example:
 
 ```json

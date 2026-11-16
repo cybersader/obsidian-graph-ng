@@ -102,3 +102,16 @@ test('fine drag ends on lost capture and ignores a second pointer without trappi
   m.range.value = '1000'; m.range.oninput(); expect(m.number.value).toBe('1');
   m.range.onpointermove(ev(1, 0)); expect(m.number.value).toBe('1');
 });
+
+test('fine drag snaps to the pointer only when it re-enters the track hit band', () => {
+  const m = mount('0.25'), ev = (x: number, y: number) => ({ clientX: x, clientY: y, pointerId: 1, button: 0, preventDefault() {} });
+  m.range.onpointerdown(ev(100, 16));
+  m.range.onpointermove(ev(146, 200)); expect(Number(m.range.value)).toBeCloseTo(525, 6);
+  m.range.onpointermove(ev(146, 46)); expect(Number(m.range.value)).toBeCloseTo(525, 6); // still 30px from centre
+  m.range.onpointermove(ev(146, 45)); expect(Number(m.range.value)).toBeCloseTo(750, 6);
+  expect(m.mode.hidden).toBe(true); expect(m.track.classes.has('is-fine')).toBe(false);
+  m.range.onpointermove(ev(100, 16)); expect(Number(m.range.value)).toBeCloseTo(500, 6);
+  m.range.onpointerup(ev(100, 16)); expect(m.commits()).toBe(1);
+  m.range.onkeydown({ key: 'ArrowRight', shiftKey: false, preventDefault() {} });
+  expect(Number(m.range.value)).toBeCloseTo(504, 6);
+});

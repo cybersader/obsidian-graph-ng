@@ -10,7 +10,7 @@ import { Modal, ItemView, Menu, Plugin, PluginSettingTab, Setting, Notice, TFile
 import { obsidianMenu } from './context-menu';
 import { LocalAdapter, type PropertySource } from './adapter/local';
 import { canonical, digest, layoutDeclaration, migrateDeclaration, validateDeclaration, type GraphDeclaration, type Predicate } from './core/declaration';
-import { canonicalView, validateSaved, NO_COLOR, type SavedView, type ExploreResult, type ExploreView, type ViewCamera } from './core/explore';
+import { groupLabel, canonicalView, validateSaved, NO_COLOR, type SavedView, type ExploreResult, type ExploreView, type ViewCamera } from './core/explore';
 import { ExplorePanel, setRelationshipDisplay } from './explore-panel';
 import { graphStats, layoutAdvice, recommend, suggestionSettings, type GraphStats, type Suggestion } from './recommend';
 import { categorical, NEUTRAL_GROUPS } from './render-effects';
@@ -308,6 +308,7 @@ export class GraphView extends ItemView {
   /** Worker view generation and grouping identity of the adopted groupGraph/explored. */
   private viewGeneration = -1;
   private viewSource = '';
+  private appliedView?: ExploreView;
   private contributionScope = '';
   private contributionPage: ContributionPage;
   private queuedRefresh?: Promise<void>;
@@ -398,12 +399,13 @@ export class GraphView extends ItemView {
         finally { renderer?.previewSettings(null); if (this.contentEl.dataset.mode === 'groups') this.showGroups(true); }
       },
       commitSavedView: (saved, expected) => this.plugin.commitSavedView(saved, expected),
+      viewCurrent: () => !!this.explored && canonical(this.appliedView) === canonical(this.view),
       savedViewIssue: saved => this.savedViewIssue(saved), openSavedView: saved => this.openSavedView(saved),
       applyLayout: values => this.applyLayout(values), settings: () => this.plugin.settings, result: () => this.explored, loading: () => this.loading(), mode: () => this.contentEl.dataset.mode ?? 'groups',
       policy: () => this.detailRenderer?.policy.reasons ?? [], carriers: () => this.detailRenderer?.carrierCount ?? 0, relationshipNotes: () => this.relationshipNotes(), setRelationshipDisplay: nodes => setRelationshipDisplay(this.plugin, nodes), setView: (view, after) => this.setView(view, after), setColors: colors => this.setColors(colors), preview: (expr, context) => this.previewExpression(expr, context),
       lens: () => { const r = this.contentEl.dataset.mode === 'nodes' ? this.detailRenderer : undefined; return { active: !!r && r.lensNode >= 0, available: !!r && (r.lensNode >= 0 || r.selected >= 0 || r.hovered >= 0) }; },
       toggleLens: () => this.detailRenderer?.toggleLens(), toolsChanged: () => this.renderer?.syncTools?.(),
-      visualsChanged: labels => { this.plugin.saveSoon(); this.detailRenderer?.refreshVisuals(labels); if (this.contentEl.dataset.mode === 'groups') this.showGroups(true); },
+      visualsChanged: labels => { this.plugin.saveSoon(); this.detailRenderer?.refreshVisuals(labels); if (this.contentEl.dataset.mode === 'groups') this.renderer?.refreshTheme?.(); },
       groupColor: code => this.groupColor(code), focusGroup: code => this.focusGroup(code), fit: () => this.detailRenderer?.fitAll(),
       camera: () => this.detailRenderer ? { ...this.detailRenderer.camera } : null, restoreCamera: camera => this.restoreCamera(camera), persist: () => this.plugin.saveSoon(),
     }, this.view, this.toolbar);
@@ -500,7 +502,7 @@ export class GraphView extends ItemView {
       this.plugin.pipeline.onGroups = event => {
         if (event.revision !== revision || !current()) return;
         const groupsAt = performance.now();
-        this.groupGraph = event.projection; this.groupGeneration = revision; this.viewGeneration = event.view; this.viewSource = configuredSource; if (this.presentation !== 'nodes') this.showGroups(true); settled();
+        this.appliedView = config.view; this.groupGraph = event.projection; this.groupGeneration = revision; this.viewGeneration = event.view; this.viewSource = configuredSource; if (this.presentation !== 'nodes') this.showGroups(true); settled();
         const painted = performance.now(), firstGroupMs = painted - start;
         this.startupTrace.push({ revision, start, groupsAt, drawMs: painted - groupsAt, firstGroupMs }); if (this.startupTrace.length > 16) this.startupTrace.shift();
         // A queued metadata refresh must not relabel its later paint as cold startup.
@@ -520,7 +522,7 @@ export class GraphView extends ItemView {
       await yieldTask();
       const detail = await this.plugin.pipeline.request<DetailResult>(revision, { kind: 'detail' });
       if (!current()) return;
-      this.projection = detail.projection; this.detailGeneration = revision; this.viewGeneration = detail.view; this.viewSource = configuredSource; this.visible = detail.visible; this.colors = detail.colors; this.explored = detail.explore; this.contentEl.dataset.visibleNodes = String(sum(detail.explore.visible)); this.explorePanel?.render(); this.statusText = this.statusText; settled();
+      this.appliedView = config.view; this.projection = detail.projection; this.detailGeneration = revision; this.viewGeneration = detail.view; this.viewSource = configuredSource; this.visible = detail.visible; this.colors = detail.colors; this.explored = detail.explore; this.renderer?.refreshTheme?.(); this.contentEl.dataset.visibleNodes = String(sum(detail.explore.visible)); this.explorePanel?.render(); this.statusText = this.statusText; settled();
       this.contributionPage.update(this.contributionContext());
       const recycle = (p: Float32Array) => this.plugin.pipeline.recycle(p.buffer as ArrayBuffer);
       preview = new LayoutPreview(async (positions, active) => {
@@ -583,26 +585,32 @@ export class GraphView extends ItemView {
     const start = performance.now();
     this.renderer?.dispose(); this.detailRenderer = undefined; this.stage.empty(); this.panel.empty();
     const projection = this.groupGraph, generation = this.groupGeneration, source = this.viewSource; if (!projection) return;
-    const settings = this.plugin.settings, pages = groupPages(projection, settings.groupCanvasPageSize);
+    const settings = this.plugin.settings, size = Math.max(12, Math.min(24, settings.groupCanvasPageSize)), pages = groupPages(projection, size);
     const back = this.returnTo?.projection === this.projection ? this.returnTo : undefined, ring = back?.group === undefined ? undefined : String(back.group);
-    let canvasPage = Math.max(0, Math.floor(projection.groups.findIndex(g => g.id === ring) / settings.groupCanvasPageSize));
-    const canvasControls = this.panel.createDiv({ cls: 'graph-ng-canvas-pager' });
-    const previous = canvasControls.createEl('button', { text: 'Previous canvas groups' });
-    const label = canvasControls.createSpan();
-    const next = canvasControls.createEl('button', { text: 'Next canvas groups' });
-    canvasControls.hidden = projection.groups.length <= settings.groupCanvasPageSize;
-    const draw = () => {
+    let canvasPage = Math.max(0, Math.floor(pages.ranked.findIndex(g => g.id === ring) / size));
+    const draw = (focus = '') => {
       this.renderer?.dispose(); this.stage.empty();
       const selected = pages.canvas(canvasPage);
-      this.renderer = new GroupRenderer(this.stage, selected, settings, id => this.drill(id), edge => this.edgeList(edge, projection, generation, source), id => this.groupColor(Number(id)), ring, () => this.toolsOverlap());
+      this.renderer = new GroupRenderer(this.stage, selected, settings, id => this.drill(id), edge => this.edgeList(edge, projection, generation, source), id => this.groupColor(Number(id)), ring, () => this.toolsOverlap(), pages.ranked[0]?.count);
       if (this.detailFallback) this.stage.createEl('button', { cls: 'graph-ng-back-chip', text: 'Narrow filters to see notes' }).onclick = () => this.explorePanel?.show('filters');
       if (back) this.stage.createEl('button', { cls: 'graph-ng-back-chip', text: 'Back to ' + back.name }).onclick = () => { this.pendingCamera = back.camera; this.pendingFocus = back; void this.showDetails(); };
-      previous.disabled = canvasPage === 0; next.disabled = (canvasPage + 1) * settings.groupCanvasPageSize >= projection.groups.length;
-      label.textContent = ` Canvas groups ${canvasPage * settings.groupCanvasPageSize + 1}–${Math.min((canvasPage + 1) * settings.groupCanvasPageSize, projection.groups.length)}, ${projection.groups.length} total `;
+      const head = this.stage.createDiv({ cls: 'graph-ng-groups-heading' });
+      head.createSpan({ text: `${plural(projection.groups.length, 'group')} by ` });
+      const group = this.appliedView?.group ?? settings.declaration.groups[settings.groupLevel];
+      const choice = head.createEl('button', { text: settings.projectionFile ? 'declared groups' : group ? groupLabel(group) : 'all notes', cls: 'graph-ng-help-trigger' });
+      choice.disabled = !!settings.projectionFile; choice.onclick = () => { this.explorePanel?.show('filters'); this.explorePanel?.root.querySelector<HTMLSelectElement>('[aria-label="Group by"]')?.focus(); };
+      head.createSpan({ text: ', largest first' });
+      const controls = this.stage.createDiv({ cls: 'graph-ng-canvas-pager' });
+      const previous = iconButton(controls, 'Previous groups', 'chevron-left'); previous.disabled = canvasPage === 0; previous.onclick = () => { canvasPage--; draw('previous'); };
+      controls.createSpan({ text: `Groups ${projection.groups.length ? canvasPage * size + 1 : 0}–${Math.min((canvasPage + 1) * size, projection.groups.length)}, ${projection.groups.length} total` });
+      const more = Math.max(0, projection.groups.length - (canvasPage + 1) * size);
+      const next = controls.createEl('button', { text: `+${more} more`, attr: { 'aria-label': 'Next groups' } }); next.disabled = !more; next.onclick = () => { canvasPage++; draw('next'); };
+      controls.createEl('button', { text: 'List' }).onclick = () => this.explorePanel?.show('members');
+      if (focus) (focus === 'previous' && !previous.disabled ? previous : !next.disabled ? next : previous).focus();
       this.contentEl.dataset.canvasGroups = String(selected.groups.length);
     };
-    previous.onclick = () => { canvasPage--; draw(); }; next.onclick = () => { canvasPage++; draw(); }; draw();
-    this.paginate(projection.groups, (g, host) => { const b = host.createEl('button', { cls: 'graph-ng-count-row', attr: { 'data-group': g.id } }); b.createSpan({ text: g.label }); b.createSpan({ cls: 'graph-ng-count', text: plural(g.count, 'note') }); b.onclick = () => this.drill(g.id); }, this.panel, 'graph-ng-group-controls', 'Groups');
+    draw();
+    this.paginate(pages.ranked, (g, host) => { const b = host.createEl('button', { cls: 'graph-ng-count-row', attr: { 'data-group': g.id } }); b.createSpan({ text: g.label }); b.createSpan({ cls: 'graph-ng-count', text: plural(g.count, 'note') }); b.onclick = () => this.drill(g.id); }, this.panel, 'graph-ng-group-controls', 'Groups');
     const edges = this.section('relationships'); disclosure(edges, `Relationships (${plural(projection.groupEdges.length, 'group pair')})`);
     this.paginate(projection.groupEdges, (edge, host) => {
       host.createEl('button', { text: `${pages.labels.get(edge.a)} ↔ ${pages.labels.get(edge.b)} (${plural(edge.total, 'edge')})`, cls: 'graph-ng-edge' }).onclick = () => this.edgeList(edge, projection, generation, source);
@@ -879,7 +887,7 @@ export class GraphView extends ItemView {
         const detail = this.contentEl.dataset.mode === 'nodes' ? this.detailRenderer : undefined, scope = this.detailScope;
         const fits = !detail || this.admitDetail(scope ? result.explore.visible.map((v, i) => v & scope[i]!) : result.explore.visible, !detail.gpu, !completion);
         if (!fits && completion) throw new Error('Detail limit exceeded; displayed graph is unchanged');
-        this.explored = result.explore; this.colors = result.colors; this.visible = result.explore.visible; this.groupGraph = result.groups; this.groupGeneration = revision;
+        this.appliedView = sent; this.explored = result.explore; this.colors = result.colors; this.visible = result.explore.visible; this.groupGraph = result.groups; this.groupGeneration = revision;
         this.viewGeneration = result.view; this.viewSource = this.sourceKey(sent);
         this.contentEl.dataset.exploreMs = String(performance.now() - started); const g = this.view.group; this.contentEl.dataset.groupSource = !g ? 'declared' : g.from === 'folder' ? `folder:${g.depth}` : g.from === 'expr' ? 'expression' : `${g.from}:${g.key}`; this.contentEl.dataset.visibleNodes = String(sum(result.explore.visible));
         this.contributionPage.update(this.contributionContext()); this.statusText = this.statusText;

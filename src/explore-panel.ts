@@ -1,3 +1,4 @@
+import { setIcon } from 'obsidian';
 import { workingText } from './working';
 import { panelHelp, disclosure, settingRow, settingSelect, panelButton, iconButton } from './panel-help';
 import { everythingView, folderPredicate, folderView } from './saved-views';
@@ -29,6 +30,7 @@ export interface PanelHost {
   presentation?(mode: string): void;
   preview(expr: string, context: 'filter' | 'group'): Promise<{ matched: number; total: number; groups?: number }>;
   result(): ExploreResult | undefined;
+  viewCurrent?(): boolean;
   mode(): string;
   policy(): string[];
   /** Edge notes (reified edges drawn as nodes) in the detail view; 0 otherwise. */
@@ -93,6 +95,7 @@ export class ExplorePanel {
   private viewMessage = '';
   private viewBusy = false;
   private openRequest = 0;
+  private viewOrigin?: string;
   private physicsDraft?: Record<PhysicsKey, string | boolean>;
   private physicsAdvanced = false;
   private sizingDraft?: Record<keyof NodeSizingValues, string>;
@@ -818,14 +821,13 @@ export class ExplorePanel {
     panelButton(host, label, async () => {
       const request = ++this.openRequest;
       this.viewMessage = `Opening ‘${saved.name}’… Requested view; displayed graph may still show the previous result.`; this.render();
-      try { await this.host.openSavedView!(saved); if (request === this.openRequest) this.viewMessage = `Opened ‘${saved.name}’.${saved.camera && this.host.mode() !== 'nodes' ? ' Saved camera applies in Notes.' : ''}`; }
+      try { await this.host.openSavedView!(saved); if (request === this.openRequest) { this.viewOrigin = saved.name; this.viewMessage = `Opened ‘${saved.name}’.${saved.camera && this.host.mode() !== 'nodes' ? ' Saved camera applies in Notes.' : ''}`; } }
       catch (error) { if (request === this.openRequest) this.viewMessage = `Could not finish opening ‘${saved.name}’: ${String(error)}. Displayed graph may still show the previous result.`; }
       if (!this.disposed) this.render();
     }, Boolean(issue), '', { 'aria-label': `Open view ${saved.name}` });
   }
   private views(host: HTMLElement) {
     workingText(host.createDiv({ attr: { role: 'status', 'aria-live': 'polite' } }), this.viewMessage, this.viewBusy || this.viewMessage.startsWith('Opening '));
-    panelHelp(host, 'What a view saves', 'Views save filters, grouping and camera in plugin settings, not files. Appearance, layout, relationship display and selected-group scope are not included.');
     const back = () => { this.viewDraft = undefined; this.viewCollision = undefined; this.viewSaved = undefined; this.viewMessage = ''; this.render(); this.body.querySelector<HTMLButtonElement>('button')?.focus(); };
     const draft = this.viewDraft;
     if (draft) {
@@ -860,24 +862,34 @@ export class ExplorePanel {
     }
     if (this.viewSaved) { this.viewOpen(host, this.viewSaved); panelButton(host, 'Back to views', back); return; }
     const s = this.settings;
-    const start = host.createDiv({ cls: 'graph-ng-row' });
-    this.viewOpen(start, everythingView(this.view), 'Show everything');
-    panelHelp(start, 'What changes', 'Clears search, filters, hidden items and collapsed groups. Keeps grouping and camera. Declared exclusions and relationship display still apply.');
+    const start = host.createDiv({ cls: 'graph-ng-saved-record' });
+    start.createSpan({ cls: 'graph-ng-saved-name', text: 'Show everything' });
+    const actions = start.createDiv({ cls: 'graph-ng-row' });
+    this.viewOpen(actions, everythingView(this.view));
+    const help = panelHelp(actions, '', 'Clears search, filters, hidden items and collapsed groups. Keeps grouping and camera. Views save filters, grouping and camera in plugin settings, not files. Appearance, layout and selected-group scope stay unchanged. Active compares filters and grouping; the camera restores on Open. Declared exclusions still apply.');
+    const info = help.parentElement!.querySelector('button')!; info.setAttribute('aria-label', 'About saved views and Show everything'); setIcon(info, 'info');
     if (!s.explore.savedViews.length) this.note(host, 'No saved views yet.');
     for (const saved of s.explore.savedViews) {
       const item = host.createDiv({ cls: 'graph-ng-saved-record' });
-      item.createEl('strong', { cls: 'graph-ng-saved-name', text: saved.name });
+      const name = item.createDiv({ cls: 'graph-ng-saved-name', text: saved.name });
+      const matches = canonical(saved.view) === canonical(this.view), active = matches && this.host.viewCurrent?.() !== false && !this.host.scoped?.() && !this.host.loading?.();
+      if (active) this.viewOrigin ??= saved.name;
+      if (active || !matches && this.viewOrigin === saved.name) {
+        const state = name.createSpan({ cls: 'graph-ng-view-state' });
+        if (active) { setIcon(state.createSpan(), 'check'); item.dataset.active = 'true'; }
+        state.createSpan({ text: active ? 'Active' : 'Modified' });
+      }
       const definition = item.createEl('details'); definition.open = this.viewDefinitions.has(saved.name);
       definition.ontoggle = () => { if (definition.open) this.viewDefinitions.add(saved.name); else this.viewDefinitions.delete(saved.name); };
       disclosure(definition, 'View definition', { 'aria-label': `View definition: ${saved.name}` }); this.viewDefinition(definition, saved);
       const actions = item.createDiv({ cls: 'graph-ng-row' });
       this.viewOpen(actions, saved);
-      panelButton(actions, 'Delete', async () => {
+      const remove = iconButton(actions, `Delete view ${saved.name}`, 'trash-2'); remove.disabled = this.viewBusy; remove.onclick = async () => {
         this.viewBusy = true; this.viewMessage = 'Saving…'; this.render();
         try { await this.host.commitSavedView!(null, saved); this.viewMessage = `Deleted ‘${saved.name}’. Current graph unchanged.`; }
         catch (error) { this.viewMessage = `View was not deleted: ${String(error)}`; }
         finally { this.viewBusy = false; if (!this.disposed) this.render(); }
-      }, this.viewBusy, '', { 'aria-label': `Delete view ${saved.name}` });
+      };
     }
     const prepare = (folder?: string) => {
       this.viewSaved = undefined; this.viewMessage = ''; this.viewCollision = undefined;

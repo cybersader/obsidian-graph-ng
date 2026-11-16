@@ -59,7 +59,7 @@ test('UX named view opening is inert; only explicit Open restores existing recor
   const f = fixture(); f.settings.explore.savedViews = [{ name: 'Synthetic selection', view: { ...emptyView(), query: 'sample' }, camera: { x: .1, y: .2, ratio: 1 } }];
   f.panel.show('views'); expect(f.state.viewCalls).toBe(0); expect(f.state.restored).toBe(0);
   f.host.openSavedView = async (saved: any) => { f.host.setView(saved.view, () => f.host.restoreCamera(saved.camera)); f.panel.setState(saved.view); };
-  await (control(f.panel.root, 'Open') as any).onclick(); expect(f.state.viewCalls).toBe(1); expect(f.state.view.query).toBe('sample'); expect(f.state.restored).toBe(1);
+  await (control(f.panel.root, 'Open view Synthetic selection') as any).onclick(); expect(f.state.viewCalls).toBe(1); expect(f.state.view.query).toBe('sample'); expect(f.state.restored).toBe(1);
   expect(f.panel.buttons.get('views').title).toContain('Synthetic selection'); expect(f.state.layout).toBe(0); f.panel.dispose();
 });
 test('UX honest empty picker and explicit presentation choices preserve opening mode', () => {
@@ -204,10 +204,10 @@ test('scout W3 aggregate graphs disable note search and drop pending search disp
 test('scout N1 saved records stack a wrapping full name above definition and actions', () => {
   const f = fixture(), name = 'A long synthetic saved view name that must remain readable';
   f.settings.explore.savedViews = [{ name, view: { ...emptyView(), query: 'x'.repeat(200) }, camera: null }]; f.panel.show('views');
-  const record = f.panel.body.querySelector('.graph-ng-saved-record'); expect(record).toBeDefined();
+  const record = f.panel.body.querySelectorAll('.graph-ng-saved-record').find((e: any) => e.querySelector('details')); expect(record).toBeDefined();
   expect(record.querySelector('.graph-ng-saved-name').textContent).toBe(name); expect(record.querySelector('.graph-ng-legend-name')).toBeUndefined();
   const actions = record.children.at(-1); expect(actions.classes.has('graph-ng-row')).toBe(true);
-  expect(actions.querySelectorAll('button').map((b: ControlElement) => b.textContent)).toEqual(['Open', 'Delete']);
+  expect(actions.querySelectorAll('button').map((b: ControlElement) => b.getAttribute('aria-label'))).toEqual([`Open view ${name}`, `Delete view ${name}`]);
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   expect(css).toContain('.graph-ng-saved-record { display:grid;'); expect(css).toContain('.graph-ng-saved-record > * { min-width:0; overflow-wrap:anywhere; white-space:normal; }');
   // Scoped markup/CSS evidence only; rendered 320/480 px visibility still needs native inspection.
@@ -226,7 +226,7 @@ test('UX actual group Canvas draw suppresses edge strokes at zero without deleti
   const s = defaults('links'); let kind = '', strokes: number[] = [];
   const ctx: any = new Proxy({ globalAlpha: 1, beginPath() { kind = ''; }, moveTo() { kind = 'edge'; }, arc() { kind = 'node'; }, stroke() { if (kind === 'edge') strokes.push(this.globalAlpha); }, createLinearGradient: () => ({ addColorStop() {} }), measureText: () => ({ width: 20 }) }, { get: (o: any, k: any) => k in o ? o[k] : () => {} });
   const graph = { groups: [{ id: 'a', label: 'Alpha', count: 1 }, { id: 'b', label: 'Beta', count: 1 }], groupEdges: [{ a: 'a', b: 'b', typeCounts: { link: 1 }, total: 1 }] };
-  const renderer: any = Object.create(GroupRenderer.prototype); Object.assign(renderer, { s, p: graph, container: { clientWidth: 800, clientHeight: 600 }, canvas: { clientWidth: 800, style: {}, getContext: () => ctx }, nodes: new Map(), radii: new Map(), groupColors: [] });
+  const renderer: any = Object.create(GroupRenderer.prototype); Object.assign(renderer, { s, p: graph, largest: 20, container: { clientWidth: 800, clientHeight: 600 }, canvas: { clientWidth: 800, style: {}, getContext: () => ctx }, nodes: new Map(), radii: new Map(), groupColors: [] });
   for (const opacity of [0, .0001, .5]) { s.visuals.edgeOpacity = opacity; strokes = []; renderer.draw(); expect(strokes.length).toBe(opacity ? 1 : 0); if (opacity) expect(strokes[0]).toBeCloseTo(edgeAlpha(s.visuals, 1, 1, false), 12); expect(graph.groupEdges.length).toBe(1); }
 });
 
@@ -235,7 +235,7 @@ test('group framing snaps clear of opening tools, eases closed, and respects red
   globalThis.matchMedia = (() => ({ matches: reduced })) as any;
   try {
     const renderer: any = Object.create(GroupRenderer.prototype), canvas = { style: { width: '1080px', transition: '' } };
-    Object.assign(renderer, { base: defaults('links'), canvas, container: { clientWidth: 1080 }, measureTools: () => overlap });
+    Object.assign(renderer, { base: defaults('links'), canvas, container: { clientWidth: 1080, style: { setProperty() {} } }, measureTools: () => overlap });
     overlap = 368; renderer.syncTools(); expect(canvas.style.width).toBe('712px'); expect(canvas.style.transition).toBe('none');
     overlap = 0; renderer.syncTools(); expect(canvas.style.width).toBe('1080px'); expect(canvas.style.transition).toBe('width 180ms ease-out');
     renderer.syncTools(); expect(canvas.style.transition).toBe('width 180ms ease-out'); // ResizeObserver does not restart it.
@@ -250,7 +250,7 @@ test('group circles, labels and hit targets fit the available canvas, not the co
   const s = defaults('links'), ctx: any = new Proxy({ measureText: (text: string) => ({ width: text.length * 7 }) }, { get: (o: any, k: any) => k in o ? o[k] : () => {} });
   const graph = { groups: Array.from({ length: 6 }, (_, i) => ({ id: String(i), label: `Group ${i}`, count: 20 })), groupEdges: [] };
   const canvas = { clientWidth: 712, style: {}, getContext: () => ctx }, renderer: any = Object.create(GroupRenderer.prototype);
-  Object.assign(renderer, { s, p: graph, container: { clientWidth: 1080, clientHeight: 674 }, canvas, nodes: new Map(), radii: new Map(), groupColors: [] });
+  Object.assign(renderer, { s, p: graph, largest: 20, container: { clientWidth: 1080, clientHeight: 674 }, canvas, nodes: new Map(), radii: new Map(), groupColors: [] });
   for (const width of [712, 1080, 500]) {
     canvas.clientWidth = width; renderer.draw();
     for (const g of graph.groups) {
@@ -657,4 +657,18 @@ test.skipIf(!process.env.CHROME_BIN)('search left edge is identical in Notes and
   expect(rows.map((r: any) => r.width)).toEqual([1100, 760, 420, 320, 240]);
   for (const row of rows) expect(row.notes).toBe(row.groups);
   f.panel.dispose();
+});
+
+test('ranked bubbles use global member-area scale, shared colours and middle-truncated labels', () => {
+  const s = defaults('links'), labels: string[] = [], fills: string[] = [];
+  const ctx: any = new Proxy({ measureText: (text: string) => ({ width: text.length * 7 }), fillText: (text: string) => labels.push(text), fill() { fills.push(this.fillStyle); } }, { get: (o: any, k: any) => k in o ? o[k] : () => {} });
+  const long = 'Shared prefix with a very long collection name and distinctive suffix';
+  const graph = { groups: [{ id: 'a', label: long, count: 400 }, { id: 'b', label: 'Small group', count: 100 }], groupEdges: [] };
+  const renderer: any = Object.create(GroupRenderer.prototype);
+  Object.assign(renderer, { s, p: graph, largest: 400, container: { clientHeight: 700 }, canvas: { clientWidth: 500, style: {}, getContext: () => ctx }, nodes: new Map(), radii: new Map(), groupColors: [], colorOf: (id: string) => id === 'a' ? '#2468aa' : '#aa6824' });
+  renderer.draw(); expect(renderer.radii.get('a') ** 2 / renderer.radii.get('b') ** 2).toBeCloseTo(4, 6);
+  expect(fills).toEqual(['#2468aa', '#aa6824']);
+  expect(labels[0]).toContain('…'); expect(long.startsWith(labels[0]!.split('…')[0]!)).toBe(true); expect(long.endsWith(labels[0]!.split('…')[1]!)).toBe(true);
+  const centre = renderer.nodes.get('a'); expect(renderer.nodeAt({ x: centre.x, y: centre.y + 50 })?.label).toBe(long);
+  graph.groups = [graph.groups[1]!]; renderer.draw(); expect(renderer.radii.get('b')).toBeCloseTo(19.5, 6); // no page-local rescaling
 });

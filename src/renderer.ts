@@ -24,7 +24,7 @@ export class GroupRenderer implements Renderer {
   private media = matchMedia('(prefers-color-scheme: dark)');
   private base: Settings;
   constructor(private container: HTMLElement, private p: GroupProjection, private s: Settings,
-    private onGroup: (id: string) => void, private onEdge: (edge: GroupProjection['groupEdges'][number]) => void, private colorOf?: (id: string) => string, private ring?: string, private measureTools = () => 0) {
+    private onGroup: (id: string) => void, private onEdge: (edge: GroupProjection['groupEdges'][number]) => void, private colorOf?: (id: string) => string, private ring?: string, private measureTools = () => 0, private largest = Math.max(1, ...p.groups.map(g => g.count))) {
     this.base = s; this.refreshTheme();
     this.media.addEventListener('change', this.refreshTheme);
     this.canvas = document.createElement('canvas'); this.canvas.className = 'graph-ng-groups'; this.canvas.setAttribute('aria-label', 'Declared groups and counted relationships'); container.append(this.canvas);
@@ -39,11 +39,11 @@ export class GroupRenderer implements Renderer {
     const width = Math.max(0, this.container.clientWidth - this.measureTools()), old = parseFloat(this.canvas.style.width) || 0;
     if (width === old) return;
     this.canvas.style.transition = width > old && this.base.visuals.motion === 'full' && !matchMedia('(prefers-reduced-motion: reduce)').matches ? 'width 180ms ease-out' : 'none';
-    this.canvas.style.width = `${width}px`;
+    this.canvas.style.width = `${width}px`; this.container.style.setProperty('--gng-group-width', `${width}px`);
   }
-  refreshTheme = () => { const t = readTheme(this.container, this.base); this.groupColors = this.base.declaration.colors.map((_, i) => { const k = (i + 5) * 4, p = t.palette; return `rgba(${p[k]},${p[k+1]},${p[k+2]},${p[k+3]! / 255})`; }); this.s = { ...this.s, backgroundColor: t.background, nodeColor: t.node, edgeColor: t.edge, groupColor: t.group, textColor: t.text }; if (this.canvas) this.draw(); };
+  refreshTheme = () => { const t = readTheme(this.container, this.base); this.groupColors = this.base.declaration.colors.map((_, i) => { const k = (i + 5) * 4, p = t.palette; return `rgba(${p[k]},${p[k+1]},${p[k+2]},${p[k+3]! / 255})`; }); this.s = { ...this.s, backgroundColor: t.background, nodeColor: t.node, edgeColor: t.edge, groupColor: t.group, textColor: t.text, labelSize: parseFloat(getComputedStyle(this.container).fontSize) || this.base.labelSize }; if (this.canvas) this.draw(); };
   private point(event: MouseEvent) { const r = this.canvas.getBoundingClientRect(); return { x: event.clientX - r.left, y: event.clientY - r.top }; }
-  private nodeAt(point: Point) { return this.p.groups.find(g => { const n = this.nodes.get(g.id)!; return Math.hypot(n.x - point.x, n.y - point.y) <= (this.radii.get(g.id) ?? this.s.groupRadius); }); }
+  private nodeAt(point: Point) { return this.p.groups.find(g => { const n = this.nodes.get(g.id)!; return Math.hypot(n.x - point.x, n.y - point.y) <= Math.max(12, this.radii.get(g.id) ?? this.s.groupRadius) || Math.abs(n.x - point.x) < 80 && point.y > n.y && point.y < n.y + this.s.groupRadius * 1.5 + this.s.labelSize * 3; }); }
   private edgeAt(point: Point) {
     return this.edges.find(e => e.points.some((p, i) => { if (!i) return false; const q = e.points[i - 1]!; return segmentDistance(point.x, point.y, q.x, q.y, p.x, p.y) <= this.s.groupEdgeHitRadius; }));
   }
@@ -51,7 +51,7 @@ export class GroupRenderer implements Renderer {
   private hover = (e: MouseEvent) => {
     const p = this.point(e), g = this.nodeAt(p), edge = this.edgeAt(p);
     this.tooltip.textContent = g ? `${g.label}: ${g.count.toLocaleString()} members` : edge ? `${this.p.groups.find(g => g.id === edge.edge.a)?.label} ↔ ${this.p.groups.find(g => g.id === edge.edge.b)?.label}: ${Object.entries(edge.edge.typeCounts).map(([t, n]) => `${t}: ${n.toLocaleString()}`).join(', ')}` : '';
-    this.tooltip.style.left = `${p.x + 10}px`; this.tooltip.style.top = `${p.y + 10}px`;
+    this.tooltip.style.left = `${Math.max(8, Math.min(p.x + 10, this.canvas.clientWidth - this.tooltip.offsetWidth - 8))}px`; this.tooltip.style.top = `${Math.max(8, Math.min(p.y + 10, this.container.clientHeight - this.tooltip.offsetHeight - 8))}px`;
     this.canvas.style.cursor = g || edge ? 'pointer' : 'default';
   };
   private leave = () => { this.tooltip.textContent = ''; };
@@ -63,16 +63,14 @@ export class GroupRenderer implements Renderer {
     const ctx = this.canvas.getContext('2d'); if (!ctx) { this.container.textContent = 'Canvas unavailable. Use group member lists.'; return; }
     ctx.scale(dpr, dpr); ctx.fillStyle = this.s.backgroundColor; ctx.fillRect(0, 0, w, h);
     this.nodes.clear(); this.edges = []; this.radii.clear();
-    // Area-proportional radii within [0.65, 1.15] of the configured radius keep hit targets and labels stable.
-    const maxCount = Math.max(1, ...this.p.groups.map(g => g.count));
-    for (const g of this.p.groups) this.radii.set(g.id, this.s.groupRadius * (.65 + .5 * Math.sqrt(g.count / maxCount)));
+    // Bubble area follows member count, with a minimum visible/clickable mark.
+    const columns = Math.min(this.p.groups.length, Math.max(1, Math.floor(w / 170))), rows = Math.ceil(this.p.groups.length / columns);
+    const cellHeight = Math.max(1, (h - 180) / Math.max(1, rows)), maxRadius = Math.max(5, Math.min(this.s.groupRadius * 1.5, cellHeight / 2 - this.s.labelSize * 2));
+    for (const g of this.p.groups) this.radii.set(g.id, Math.max(5, maxRadius * Math.sqrt(g.count / Math.max(1, this.largest))));
     const fills = new Map(this.p.groups.map(g => [g.id, this.groupColors[this.s.declaration.colors.findIndex(c => c.name === g.label)] ?? this.colorOf?.(g.id) ?? this.s.groupColor]));
     const bg = this.s.backgroundColor, dark = /^#/.test(bg) ? Number.parseInt(bg.slice(1, 3), 16) + Number.parseInt(bg.slice(3, 5), 16) + Number.parseInt(bg.slice(5, 7), 16) < 384 : true;
-    const radius = Math.max(0, Math.min(w, h) / 2 - this.s.groupRadius - this.s.groupRingPadding);
     this.p.groups.forEach((g, i) => {
-      const angle = i / Math.max(1, this.p.groups.length) * Math.PI * 2 - Math.PI / 2;
-      const columns = Math.ceil(Math.sqrt(this.p.groups.length)), rows = Math.ceil(this.p.groups.length / columns);
-      this.nodes.set(g.id, h < 420 || this.p.groups.length > 8 ? { x: (i % columns + 0.5) * w / columns, y: (Math.floor(i / columns) + 0.5) * h / rows - this.s.labelSize } : { x: w / 2 + Math.cos(angle) * radius, y: h / 2 + Math.sin(angle) * radius });
+      this.nodes.set(g.id, { x: (i % columns + 0.5) * w / columns, y: 72 + (Math.floor(i / columns) + 0.5) * cellHeight - this.s.labelSize });
     });
     const reserved = [...this.nodes.values()].map(p => ({ x: p.x - this.s.groupRadius - 4, y: p.y - this.s.groupRadius - 4, w: this.s.groupRadius * 2 + 8, h: this.s.groupRadius * 2 + this.s.labelSize * 3 + 12 }));
     const edgeLabels: { text: string; x: number; box: { x: number; y: number; w: number; h: number } }[] = [];
@@ -110,13 +108,13 @@ export class GroupRenderer implements Renderer {
       if (g.id === this.ring) { ctx.beginPath(); ctx.arc(p.x, p.y, r + 6, 0, Math.PI * 2); ctx.strokeStyle = this.s.textColor; ctx.lineWidth = 3; ctx.stroke(); }
       ctx.beginPath(); ctx.arc(p.x, p.y, r - 1.5, 0, Math.PI * 2); ctx.strokeStyle = bg; ctx.globalAlpha = .35; ctx.lineWidth = 2; ctx.stroke(); ctx.globalAlpha = 1;
       ctx.font = `600 ${this.s.labelSize}px sans-serif`; ctx.textAlign = 'center';
-      const countLabel = `${g.count.toLocaleString()} members`, maxWidth = Math.min(180, w / Math.max(2, Math.ceil(Math.sqrt(this.p.groups.length))) - 12);
-      let title = g.label; while (title.length > 1 && ctx.measureText(title + '…').width > maxWidth) title = title.slice(0, -1);
-      if (title !== g.label) title += '…';
+      const countLabel = `${g.count.toLocaleString()} members`, maxWidth = Math.min(220, w / Math.max(1, columns) - 16);
+      let title = g.label, length = Math.min(80, title.length);
+      while (length > 2 && ctx.measureText(title).width > maxWidth) { length--; title = g.label.slice(0, Math.ceil(length / 2)) + '…' + g.label.slice(-Math.floor(length / 2)); }
       const labelWidth = Math.max(ctx.measureText(title).width, ctx.measureText(countLabel).width);
-      ctx.fillStyle = this.s.backgroundColor; ctx.fillRect(p.x - labelWidth / 2 - 4, p.y + this.s.groupRadius + 4, labelWidth + 8, this.s.labelSize * 3);
-      ctx.fillStyle = this.s.textColor; ctx.fillText(title, p.x, p.y + this.s.groupRadius + this.s.labelSize * 1.5);
-      ctx.font = `${this.s.labelSize}px sans-serif`; ctx.fillText(countLabel, p.x, p.y + this.s.groupRadius + this.s.labelSize * 2.8);
+      ctx.fillStyle = this.s.backgroundColor; ctx.fillRect(p.x - labelWidth / 2 - 4, p.y + maxRadius + 4, labelWidth + 8, this.s.labelSize * 3);
+      ctx.fillStyle = this.s.textColor; ctx.fillText(title, p.x, p.y + maxRadius + this.s.labelSize * 1.5);
+      ctx.font = `${this.s.labelSize}px sans-serif`; ctx.fillText(countLabel, p.x, p.y + maxRadius + this.s.labelSize * 2.8);
     }
   }
   dispose() { this.media.removeEventListener('change', this.refreshTheme); this.observer.disconnect(); this.canvas.removeEventListener('click', this.click); this.canvas.removeEventListener('mousemove', this.hover); this.canvas.removeEventListener('mouseleave', this.leave); this.canvas.remove(); this.tooltip.remove(); }

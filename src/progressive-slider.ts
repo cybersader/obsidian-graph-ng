@@ -108,7 +108,7 @@ export function progressiveSlider(parent: HTMLElement, o: SliderOptions) {
     const f = fineFactor(Math.abs(e.clientY - r.top - r.height / 2)); fine(f);
     // The magnified scale travels with the pointer while the thumb moves f times as far.
     scale.style.backgroundPosition = `${Math.round(e.clientX - r.left)}px 0`;
-    move(pos + (e.clientX - drag.x) / Math.max(1, r.width - THUMB) * f); drag.x = e.clientX;
+    move(f === 1 ? (e.clientX - r.left - THUMB / 2) / Math.max(1, r.width - THUMB) : pos + (e.clientX - drag.x) / Math.max(1, r.width - THUMB) * f); drag.x = e.clientX;
   };
   range.onpointerup = range.onpointercancel = range.onlostpointercapture = e => { if (!drag || e.pointerId !== drag.id) return; drag = null; bubble.hidden = true; fine(1); o.commit?.(); };
   range.onkeydown = e => { const d = keyStep(e.key, e.shiftKey); if (d === null || range.disabled) return; e.preventDefault(); move(pos + d); o.commit?.(); };

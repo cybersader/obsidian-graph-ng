@@ -20,6 +20,7 @@
   --gng-chrome-radius:var(--radius-m, 8px);
   --gng-section-gap:var(--gng-space-5);
   --gng-value-w:7em;
+  --gng-group-width:100%;
   font-family:var(--font-interface);
   font-size:var(--gng-text-sm);
   font-weight:var(--gng-weight-normal);
@@ -42,7 +43,7 @@
 .graph-ng-edge,.graph-ng-member,.graph-ng-carrier { display:block; margin:var(--gng-space-1) 0; max-width:100%; white-space:normal; height:auto; text-align:left; }
 .graph-ng-contribution { padding:var(--gng-space-1); border-bottom:1px solid var(--background-modifier-border); overflow-wrap:anywhere; }
 .graph-ng-json { width:100%; min-height:260px; font-family:var(--font-monospace); font-size:var(--font-ui-smaller); }
-.graph-ng-tooltip { position:absolute; pointer-events:none; color:var(--text-normal); background:var(--background-secondary); border:1px solid var(--background-modifier-border); padding:var(--gng-space-1) var(--gng-space-2); border-radius:var(--radius-s); max-width:80%; z-index:2; font-size:var(--gng-text-sm); }
+.graph-ng-tooltip { overflow-wrap:anywhere; position:absolute; pointer-events:none; color:var(--text-normal); background:var(--background-secondary); border:1px solid var(--background-modifier-border); padding:var(--gng-space-1) var(--gng-space-2); border-radius:var(--radius-s); max-width:80%; z-index:2; font-size:var(--gng-text-sm); }
 .graph-ng-tooltip:empty { display:none; }
 .graph-ng-canvas-pager,.graph-ng-page-controls { display:flex; align-items:center; gap:var(--gng-space-2); flex-wrap:wrap; margin:var(--gng-space-1) 0; }
 .graph-ng-canvas-pager[hidden],.graph-ng-page-controls[hidden] { display:none; }
@@ -576,3 +577,17 @@ button.graph-ng-help-trigger:hover { color:var(--text-accent); }
 .graph-ng-explore-views [role=status]:empty { display:none; }
 @media (prefers-reduced-motion: reduce) { .graph-ng-setting > .checkbox-container, .graph-ng-setting > .checkbox-container::after { transition:none; } }
 .graph-ng-explore-counts[hidden] ~ .graph-ng-status { border-top:0; }
+
+/* Saved views and group navigation share the native panel rhythm. */
+.graph-ng-view-state { display:flex; align-items:center; gap:var(--gng-space-1); color:var(--gng-text-muted); font-size:var(--gng-text-xs); }
+.graph-ng-view-state svg { width:1em; height:1em; }
+.graph-ng-saved-record[data-active=true] .graph-ng-view-state { color:var(--text-accent); }
+.graph-ng-saved-record .graph-ng-help-trigger { text-decoration:none; }
+.graph-ng-groups-heading,.graph-ng-stage > .graph-ng-canvas-pager { position:absolute; left:var(--gng-space-3); width:calc(var(--gng-group-width, 100%) - 24px); box-sizing:border-box; }
+.graph-ng-groups-heading { top:var(--gng-space-3); font-size:var(--gng-text-sm); }
+.graph-ng-stage > .graph-ng-canvas-pager { bottom:52px; justify-content:center; background:var(--background-primary); border-radius:var(--gng-chrome-radius); }
+
+.graph-ng-saved-record > .graph-ng-row > :last-child { width:var(--gng-row-h); display:flex; justify-content:center; }
+
+.graph-ng-stage:has(.graph-ng-groups-heading) > .graph-ng-back-chip { top:44px; }
+.graph-ng-groups-heading button { max-width:60%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; vertical-align:middle; }

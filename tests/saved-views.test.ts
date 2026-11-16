@@ -1,12 +1,19 @@
 import { test, expect, beforeEach, afterEach } from 'bun:test';
 import './support/obsidian-fixture';
-import { ControlElement, control } from './support/controls-dom';
+import { ControlElement, control as findControl } from './support/controls-dom';
 import GraphPlugin, { GraphView } from '../src/main';
 import { folderPredicate, folderView } from '../src/saved-views';
 import { emptyView, explore, validateSaved, type SavedView } from '../src/core/explore';
 import { buildProjection, colorGroups } from '../src/core/projection';
 import { defaults, loadSettings, settingsForSave } from '../src/settings';
 
+function control(root: ControlElement, text: string) {
+  if (text === 'Open') {
+    const saved = root.querySelectorAll('button').find(b => b.textContent === text && b.getAttribute('aria-label') !== 'Open view Everything');
+    if (saved) return saved;
+  }
+  return findControl(root, text);
+}
 const old = new Map<string, any>();
 beforeEach(() => {
   for (const key of ['document', 'HTMLElement', 'HTMLInputElement']) old.set(key, (globalThis as any)[key]);
@@ -31,6 +38,16 @@ async function fixture() {
   view.contentEl.dataset.mode = 'nodes'; await view.onOpen(); view.explorePanel.show('views');
   return { ...f, view, panel: view.explorePanel as any, renderer, camera, projection, result };
 }
+test('group visual changes repaint without replacing active panel controls or paging', async () => {
+  const f = await fixture(); let paints = 0;
+  f.view.contentEl.dataset.mode = 'groups'; f.view.detailRenderer = undefined;
+  f.view.renderer = { refreshTheme() { paints++; } };
+  f.view.showGroups = () => { throw Error('Group page reset during drag'); };
+  f.panel.render = () => { throw Error('Active controls replaced during drag'); };
+  f.panel.host.visualsChanged(false); f.panel.host.visualsChanged(true);
+  expect(paints).toBe(2); expect(f.calls.filter(c => c === 'coalesced preference').length).toBeGreaterThanOrEqual(2);
+  f.panel.dispose();
+});
 function input(panel: any, label: string, value: string) {
   const element: any = panel.body.querySelectorAll('input').find((e: ControlElement) => e.getAttribute('aria-label') === label);
   expect(element).toBeDefined(); element.value = value; element.oninput();
@@ -45,22 +62,22 @@ test('Show everything clears every restriction, keeps grouping/camera and never 
   const requested = { ...folderView('Notes', 'Focus').view, query: 'a', hiddenGroups: ['Sub'], collapsedGroups: ['Notes'], hiddenColors: ['red'], hiddenTypes: ['link'] };
   f.view.view = requested; f.panel.setState(requested);
   const camera = { ...f.camera }, before = structuredClone(f.plugin.settings.explore.savedViews);
-  await (control(f.panel.body, 'Show everything') as any).onclick();
+  await (control(f.panel.body, 'Open view Everything') as any).onclick();
   expect(f.view.view).toEqual({ ...emptyView(), group: requested.group });
   expect(f.view.view.group).not.toBe(requested.group);
   expect(f.camera).toEqual(camera); expect(f.plugin.settings.explore.savedViews).toEqual(before);
   expect(f.calls.filter(c => c === 'write')).toEqual([]);
-  expect(f.panel.body.querySelectorAll('button').filter((b: any) => b.textContent === 'Show everything')).toHaveLength(1);
-  expect(f.panel.body.querySelectorAll('button').filter((b: any) => b.textContent === 'Delete')).toHaveLength(1);
+  expect(f.panel.body.querySelectorAll('button').filter((b: any) => b.getAttribute('aria-label') === 'Open view Everything')).toHaveLength(2);
+  expect(f.panel.body.querySelectorAll('button').filter((b: any) => b.getAttribute('aria-label')?.startsWith('Delete view '))).toHaveLength(1);
   expect(f.panel.body.textContent).not.toContain('Default view'); f.panel.dispose();
 });
 test('Show everything respects loading and selected-group scope', async () => {
   const f = await fixture();
   f.view.detailScope = new Uint8Array([1, 0, 0, 0]); f.panel.render();
-  expect(control(f.panel.body, 'Show everything').disabled).toBe(true);
+  expect(control(f.panel.body, 'Open view Everything').disabled).toBe(true);
   expect(f.panel.body.textContent).toContain('Workspace scope');
   f.view.detailScope = undefined; f.view.detailGeneration = 0; f.panel.render();
-  expect(control(f.panel.body, 'Show everything').disabled).toBe(true); f.panel.dispose();
+  expect(control(f.panel.body, 'Open view Everything').disabled).toBe(true); f.panel.dispose();
 });
 
 test('scout W1 opened saved folder grouping remains selected without another graph request', async () => {
@@ -338,4 +355,30 @@ test('generation/configuration change during Open rejects completion and camera;
   const f = await fixture(); f.view.contentEl.dataset.mode = 'groups'; let groups = 0; f.view.showGroups = () => { groups++; };
   await f.view.openSavedView({ ...folderView('Notes', 'Focus'), camera: { x: 0, y: 0, ratio: 1 } });
   expect(groups).toBe(1); expect(f.view.contentEl.dataset.mode).toBe('groups'); expect(f.renderer.calls).toEqual([]); f.panel.dispose();
+});
+
+test('saved rows show Active only for the applied definition and Modified for its opened origin', async () => {
+  const f = await fixture(), saved = folderView('Notes', 'Folder focus');
+  f.plugin.settings.explore.savedViews = [saved]; f.panel.render();
+  expect(f.panel.body.querySelectorAll('.graph-ng-view-state').map((e: ControlElement) => e.textContent)).not.toContain('Active');
+  await (control(f.panel.body, 'Open view Folder focus') as any).onclick();
+  expect(f.panel.body.querySelectorAll('.graph-ng-view-state').map((e: ControlElement) => e.textContent)).toEqual(['Active']);
+  f.panel.update({ query: 'a' }); await tick(); f.panel.show('views');
+  expect(f.panel.body.querySelectorAll('.graph-ng-view-state').map((e: ControlElement) => e.textContent)).toEqual(['Modified']);
+  f.panel.update({ query: '' }); await tick(); f.panel.show('views');
+  expect(f.panel.body.querySelectorAll('.graph-ng-view-state').map((e: ControlElement) => e.textContent)).toContain('Active');
+  const displayed = f.view.appliedView;
+  f.plugin.pipeline.request = async () => { throw Error('Synthetic rejection'); };
+  f.panel.update({ query: 'b' }); await tick(); f.panel.show('views');
+  expect(f.view.appliedView).toBe(displayed); expect(f.panel.body.querySelectorAll('.graph-ng-view-state').map((e: ControlElement) => e.textContent)).not.toContain('Active');
+  expect(f.panel.body.textContent).toContain('Modified'); f.panel.dispose();
+});
+test('a matching saved view is marked on reopen without an Open click; failed Open does not become its origin', async () => {
+  const f = await fixture(), saved = folderView('Notes', 'Folder focus');
+  f.plugin.settings.explore.savedViews = [saved]; f.view.appliedView = saved.view; f.panel.setState(saved.view);
+  expect(f.panel.body.querySelectorAll('.graph-ng-view-state').map((e: ControlElement) => e.textContent)).not.toContain('Active'); // requested view still differs
+  f.view.view = saved.view; f.panel.render(); expect(f.panel.body.querySelectorAll('.graph-ng-view-state').map((e: ControlElement) => e.textContent)).toContain('Active');
+  f.panel.viewOrigin = undefined; f.view.view = emptyView(); f.panel.setState(f.view.view); f.panel.host.openSavedView = async () => { throw Error('Synthetic rejection'); };
+  await (control(f.panel.body, 'Open view Folder focus') as any).onclick();
+  expect(f.panel.body.querySelectorAll('.graph-ng-view-state')).toHaveLength(0); f.panel.dispose();
 });

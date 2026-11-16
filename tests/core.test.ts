@@ -176,3 +176,18 @@ describe('independent review probes A–F', () => {
     expect(() => validateGroupProjection({ ...projection, groupEdges: [...projection.groupEdges, ...projection.groupEdges] }, { groups: 0, pairs: 1, carriers: 0 })).toThrow('pair limit');
   });
 });
+
+test('group canvas ranks largest first without mutating authority; every group remains reachable', () => {
+  const groups = Array.from({ length: 20000 }, (_, i) => ({ id: String(i), label: `Group ${i}`, count: i % 93 + 1 }));
+  const original = groups.map(g => g.id), projection = { groups, groupEdges: [] };
+  const start = performance.now(), pages = groupPages(projection, 12), seen = new Set<string>();
+  let last = Infinity;
+  for (let page = 0; page < Math.ceil(groups.length / 12); page++) {
+    const result = pages.canvas(page); expect(result.groups.length).toBeLessThanOrEqual(12);
+    for (const g of result.groups) { expect(g.count).toBeLessThanOrEqual(last); last = g.count; seen.add(g.id); }
+  }
+  expect(seen.size).toBe(20000); expect(groups.map(g => g.id)).toEqual(original);
+  expect(performance.now() - start).toBeLessThan(1000);
+  const tied = [{ id: 'b', label: 'Beta', count: 5 }, { id: 'a', label: 'Alpha', count: 5 }];
+  expect(groupPages({ groups: tied, groupEdges: [] }, 1).canvas(0).groups[0]?.id).toBe('a');
+});
