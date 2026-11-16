@@ -396,3 +396,10 @@ button.graph-ng-stat > .graph-ng-stat-label { text-decoration:underline dotted v
 .graph-ng-explore .graph-ng-help-trigger:hover { color:var(--text-accent); }
 .graph-ng-help-trigger:focus-visible { outline:2px solid var(--interactive-accent); outline-offset:3px; }
 .graph-ng-help-popover { position:fixed; inset:auto; margin:0; width:max-content; max-width:min(280px,calc(100vw - 16px)); padding:10px 12px; box-sizing:border-box; border:1px solid var(--background-modifier-border); border-radius:var(--radius-s,4px); background:var(--background-secondary); color:var(--text-normal); box-shadow:var(--shadow-s); font:var(--font-ui-small)/1.45 var(--font-interface); text-align:start; white-space:normal; overflow-wrap:anywhere; }
+/* Anchored canvas names: text tokens, opaque plates, and a ring on the named dot. */
+.graph-ng-anchor-text { position:absolute; left:0; top:0; white-space:nowrap; padding:2px 6px; border-radius:3px; color:var(--text-normal); pointer-events:none; text-shadow:0 0 2px var(--background-primary); }
+.graph-ng-anchor-text::before, .graph-ng-anchor-text::after { content:""; position:absolute; left:var(--anchor-x); top:var(--anchor-y); pointer-events:none; }
+.graph-ng-anchor-text::before { box-sizing:border-box; width:calc(2 * var(--anchor-radius)); height:calc(2 * var(--anchor-radius)); transform:translate(-50%, -50%); border:1px solid var(--text-muted); border-radius:50%; }
+.graph-ng-anchor-text::after { width:8px; height:1px; background:var(--text-faint); transform-origin:0 50%; transform:rotate(var(--anchor-angle)) translateX(var(--anchor-radius)); }
+.graph-ng-anchor-text[hidden], .graph-ng-leader[hidden] { display:none; }
+.graph-ng-screen-reader { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }

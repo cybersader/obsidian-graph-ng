@@ -14,7 +14,7 @@ const rendererName = source.match(/this\.detailRenderer=await ([\w$]+)\.create\(
 if (!rendererName) throw new Error('Production renderer seam missing: build before tests');
 const ctx: any = new Proxy({ fillStyle: '#ffffff', measureText: (s: string) => ({ width: s.length * 7 }), getImageData: () => ({ data: new Uint8ClampedArray([80, 90, 100, 255]) }) }, { get: (o: any, k: any) => k in o ? o[k] : () => {} });
 class Element extends ControlElement {
-  style: any = {}; width = 0; height = 0; clientWidth = 800; clientHeight = 600; title = '';
+  style: any = { setProperty(key: string, value: string) { this[key] = value; } }; width = 0; height = 0; clientWidth = 800; clientHeight = 600; title = '';
   append(...nodes: any[]) { nodes.forEach(node => this.appendChild(node)); }
   appendChild(node: any) { node.parent = this; this.children.push(node); return node; }
   getContext(kind: string) { return kind === '2d' ? ctx : null; }
@@ -24,6 +24,7 @@ class Element extends ControlElement {
   removeEventListener(type: string, listener: unknown) { if (this.listeners.get(type) === listener) this.listeners.delete(type); }
   setPointerCapture() {} releasePointerCapture() {} hasPointerCapture() { return false; }
   createDiv(options: any = {}) { const e = new Element(); e.className = options.cls; return this.appendChild(e); }
+  removeAttribute(key: string) { delete this.attributes[key]; }
   className = '';
 }
 const document = { createElement: (tag: string) => new Element(tag.toUpperCase()), documentElement: { style: {} } };
@@ -367,6 +368,7 @@ test('zoom DPR-only change updates backing resolution on next production paint w
 // recorded GL upload calls only. No GPU raster, native visual quality, FPS or device input is claimed.
 async function graduated(pairs: [number, number][], n = 5, max = 0, paths?: string[], xy?: Float32Array) {
   const settings = defaults('links'), opened: number[] = [], p: any = projection(n);
+  settings.visuals.labelStyle = 'ranked'; // Existing graduated-label fixtures explicitly exercise the legacy style.
   if (paths) p.paths = encodeStrings(paths);
   if (max) { settings.canvasMaxDetailNodes = max; settings.canvasMaxDetailEdges = max; }
   Object.assign(p, { source: Uint32Array.from(pairs, x => x[0]), target: Uint32Array.from(pairs, x => x[1]), type: new Uint32Array(pairs.length), types: ['link'], carrier: new Uint32Array(pairs.length).fill(0xffffffff) });
@@ -470,8 +472,8 @@ test('graduated production labels: focus largest, direct then 2-hop by priority,
   expect(first).toEqual([[name(0), 'graph-ng-focus-label graph-ng-tier-1', '1'], [name(2), 'graph-ng-focus-label graph-ng-tier-1', '1'], [name(3), 'graph-ng-focus-label graph-ng-tier-3', '1']]);
   expect(r[k('hoverLabel')].className).toBe('graph-ng-hover-label graph-ng-focus'); expect(r[k('hoverLabel')].textContent).toBe(name(1));
   // Per frame only translates; the placement is reused until focus or LOD changes.
-  const ranked = r[k('ranked')]; r.setCamera(r.camera.x + .01, r.camera.y, r.camera.ratio); paint(); expect(r[k('ranked')]).toBe(ranked);
-  r.setCamera(r.camera.x, r.camera.y, r.camera.ratio * 16); paint(); expect(r[k('ranked')]).not.toBe(ranked);
+  const ranked = r[k('rankedLabels')]; r.setCamera(r.camera.x + .01, r.camera.y, r.camera.ratio); paint(); expect(r[k('rankedLabels')]).toBe(ranked);
+  r.setCamera(r.camera.x, r.camera.y, r.camera.ratio * 16); paint(); expect(r[k('rankedLabels')]).not.toBe(ranked);
   // Budget: one label per viewport keeps only the focus (shown by the focus readout).
   f.settings.labelsMaxPerViewport = 1; f.tap(2); expect(paint()).toEqual([]); f.settings.labelsMaxPerViewport = 400;
   f.tap(3); expect(paint().map((x: string[]) => x[0])).toEqual([name(2), name(4), name(1)]);
@@ -486,26 +488,26 @@ test('graduated labels fold unlabelled direct connections into a "+N more" butto
   const paint = () => { r[k('focusLevel')] = 1; r[k('placeOverlay')](); };
   f.tap(0); paint();
   // "+N more" counts direct connections without a label shown this frame (one may sit under the card).
-  const more = r[k('moreButton')], shown = r[k('tierLabels')].filter((el: any, i: number) => !el.hidden && r[k('ranked')][i].rank === 1).length, hidden = 40 - shown;
+  const more = r[k('moreButton')], shown = r[k('tierLabels')].filter((el: any, i: number) => !el.hidden && r[k('rankedLabels')][i].rank === 1).length, hidden = 40 - shown;
   expect(shown).toBeGreaterThan(0); expect(shown).toBeLessThanOrEqual(24); expect(more.hidden).toBe(false); expect(more.tagName).toBe('BUTTON');
   expect(more.textContent).toBe(`+${hidden} more`); expect(more.attributes['aria-label']).toBe(`Show ${hidden} more direct connections of ${r[k('name')](0)}`);
   // The default hook is a safe no-op; a host hook receives the focus.
   more.click(); r.onMoreConnections = (n: number) => asked.push(n); more.click(); expect(asked).toEqual([0]); expect(f.opened).toEqual([]);
-  // Labels carry the full name for tooltips and assistive technology.
-  for (const el of r[k('tierLabels')]) expect(el.attributes['aria-label']).toBe(el.textContent);
+  // Labels carry the full name for assistive technology without hover tooltips.
+  for (const el of r[k('tierLabels')]) expect(el.attributes['aria-description']).toBe(el.textContent);
   f.tap(EMPTY); paint(); expect(more.hidden).toBe(true); expect(r[k('tierLabels')]).toEqual([]);
 });
 test('focus-label placement re-runs on coordinate change at constant zoom and on viewport resize; DOM font matches the measured font', async () => {
   const f = await graduated([[0, 1], [1, 2], [2, 3], [3, 4]]), { r, k } = f;
   const paint = () => { r[k('focusLevel')] = 1; r[k('placeOverlay')](); };
-  f.tap(1); paint(); const ranked = r[k('ranked')];
-  paint(); expect(r[k('ranked')]).toBe(ranked);
+  f.tap(1); paint(); const ranked = r[k('rankedLabels')];
+  paint(); expect(r[k('rankedLabels')]).toBe(ranked);
   // Labels render with the exact font string used for measureText during placement.
   const el = r[k('tierLabels')][0]; expect(el.style.font).toBe(`600 ${f.settings.labelSize}px ${r[k('theme')].font}`);
   // Coordinate adoption or rollback swaps the display array without touching the camera.
-  const display = r[k('display')]; r[k('display')] = Float32Array.from(display, (x: number) => x + 3); paint(); expect(r[k('ranked')]).not.toBe(ranked);
-  const moved = r[k('ranked')]; r[k('display')] = display; paint(); expect(r[k('ranked')]).not.toBe(moved);
-  const back = r[k('ranked')]; r[k('width')] += 40; paint(); expect(r[k('ranked')]).not.toBe(back);
+  const display = r[k('display')]; r[k('display')] = Float32Array.from(display, (x: number) => x + 3); paint(); expect(r[k('rankedLabels')]).not.toBe(ranked);
+  const moved = r[k('rankedLabels')]; r[k('display')] = display; paint(); expect(r[k('rankedLabels')]).not.toBe(moved);
+  const back = r[k('rankedLabels')]; r[k('width')] += 40; paint(); expect(r[k('rankedLabels')]).not.toBe(back);
 });
 test('graduated production WebGL uploads the tier column and state on focus and on view re-upload', async () => {
   const f = await graduated([[0, 1], [1, 2], [2, 3]]), { r, k } = f;
@@ -552,7 +554,7 @@ test('graduated production touch tap selects with a text-only connection card an
 });
 test('graduated production keyboard path: focusable canvas, arrows select, Enter opens, Escape clears and returns focus', async () => {
   const f = await graduated([[0, 1], [1, 2], [2, 3]]), { r, k } = f, key = (name: string, target = r.canvas) => { let prevented = false; r[k('keyDown')]({ key: name, target, preventDefault: () => { prevented = true; } }); return prevented; };
-  expect(r.canvas.tabIndex).toBe(0); expect(r.canvas.getAttribute('aria-label')).toContain('Escape');
+  expect(r.canvas.tabIndex).toBe(0); expect(r.overlay.children.find((e: any) => e.id === r.canvas.getAttribute('aria-describedby'))?.textContent).toContain('Escape');
   expect(key('ArrowRight')).toBe(true); const first = r.selected; expect(first).toBeGreaterThanOrEqual(0); expect(f.actual()).toEqual(f.expected(first)); control(r[k('noteCard')], 'Open');
   const p = r.screenPoint(first); expect(key('ArrowRight')).toBe(true); expect(r.screenPoint(r.selected).x).toBeGreaterThan(p.x); expect(f.actual()).toEqual(f.expected(r.selected));
   expect(key('ArrowLeft')).toBe(true); expect(r.selected).toBe(first); expect(f.opened).toEqual([]);
@@ -735,7 +737,7 @@ test('relationship card resolves rule names and relationship notes per parallel 
 });
 test('relationship keyboard: R cycles the selected note relationships one stop per neighbour; Escape clears; nothing opens', async () => {
   const f = await relationships(), { r } = f;
-  expect(r.canvas.getAttribute('aria-label')).toContain('R cycles relationships');
+  expect(r.overlay.children.find((e: any) => e.id === r.canvas.getAttribute('aria-describedby'))?.textContent).toContain('R cycles relationships');
   expect(f.key('r')).toBe(false); expect(f.edges()).toEqual([]);
   f.tap(1, 'touch'); expect(f.key('r')).toBe(true); expect(f.edges()).toEqual([0, 1]);
   expect(f.key('r')).toBe(true); expect(f.edges()).toEqual([2]);
@@ -883,7 +885,7 @@ test('top-left hub: no label, hover label or "+N more" meets the card, Recent st
   const cx = r.width / 2 - 100, cy = r.height / 2 - 80; r.setCamera((cx - frame.minX) / frame.width, (cy - frame.minY) / frame.height, ratio);
   expect(r.screenPoint(0).x).toBeCloseTo(100, 3); expect(r.screenPoint(0).y).toBeCloseTo(80, 3);
   f.tap(0); expect(r.selected).toBe(0); r[k('panelRects')] = [STACK, [0, 0, 0, 0]]; r[k('focusLevel')] = 1; r[k('placeOverlay')]();
-  const card = r[k('cardRect')], panels = [card, STACK], labels = r[k('tierLabels')], slots = r[k('ranked')];
+  const card = r[k('cardRect')], panels = [card, STACK], labels = r[k('tierLabels')], slots = r[k('rankedLabels')];
   expect(card[2]).toBeGreaterThan(0); expect(slots.length).toBeGreaterThan(0);
   // The fixture reproduces the complaint: some label's dot and anchor clear the stack but its text would run under it.
   const caught = slots.filter((s: any, i: number) => { const p = r.screenPoint(s.node); return labels[i].hidden && !panels.some(b => meets([p.x, p.y, 1, 1], b)); });
@@ -990,7 +992,7 @@ test('review: carrier dots neither consume direct-label slots nor inflate the co
   const f = await graduated(pairs, 81), { r, k } = f;
   for (let i = 0; i < 40; i++) { r.projection.carrierNodes[i + 41] = i + 1; r.projection.carrier[i * 2] = r.projection.carrier[i * 2 + 1] = i; }
   r.setView(new Uint8Array(81).fill(1), {}); f.tap(0); r[k('focusLevel')] = 1; r[k('placeOverlay')]();
-  const direct = r[k('ranked')].filter((slot: any) => slot.rank === 1);
+  const direct = r[k('rankedLabels')].filter((slot: any) => slot.rank === 1);
   expect(direct.length).toBeGreaterThan(0); expect(direct.every((slot: any) => slot.node < 41)).toBe(true);
   expect(r[k('moreButton')].textContent).toBe(`+${40 - direct.length} more`);
   expect(r[k('tierTotals')][0]).toBe(40); expect(r[k('noteCard')].textContent).toContain('40 direct connections');
@@ -1087,7 +1089,7 @@ test('focus model: hover never retiers or opens the card; a click commits a stic
   // Sticky: hovering, resting, Alt and leaving the graph keep the focus.
   f.hover(3); alt(2); await Bun.sleep(40); r[k('pointerLeave')](); expect(f.actual()).toEqual(f.expected(0)); expect(r.card.node).toBe(0);
   // There is no lock anymore: no K binding, no card chip.
-  expect(key('k')).toBe(false); expect(card().textContent).not.toContain('Lock'); expect(r.canvas.getAttribute('aria-label')).not.toContain('K ');
+  expect(key('k')).toBe(false); expect(card().textContent).not.toContain('Lock'); expect(r.overlay.children.find((e: any) => e.id === r.canvas.getAttribute('aria-describedby'))?.textContent).not.toContain('K ');
   f.tap(2); expect(f.actual()).toEqual(f.expected(2));
   card().querySelectorAll('button').find((b: any) => b.className === 'graph-ng-connection' && b.attributes['aria-label']?.startsWith('Go to 3:')).click(); expect(f.actual()).toEqual(f.expected(3));
   control(card(), 'Back').click(); expect(f.actual()).toEqual(f.expected(2));
@@ -1114,7 +1116,7 @@ test('docked card: a fixed right-edge panel that never moves with the camera; la
   // A graduated label or hover name anchored under the card is hidden; outside it is shown.
   r.setCamera(r.camera.x - .2, r.camera.y + .1, r.camera.ratio * 2); r[k('placeOverlay')]();
   const inside = (q: { x: number; y: number }) => q.x >= rect[0]! && q.x <= rect[0]! + rect[2]! && q.y >= rect[1]! && q.y <= rect[1]! + rect[3]!;
-  const labels = () => r[k('ranked')].map((slot: any, i: number) => [inside(r.screenPoint(slot.node)), r[k('tierLabels')][i].hidden]);
+  const labels = () => r[k('rankedLabels')].map((slot: any, i: number) => [inside(r.screenPoint(slot.node)), r[k('tierLabels')][i].hidden]);
   const pan = (dx: number) => { const p = r.screenPoint(1); r.setCamera(r.camera.x + (p.x - (rect[0]! + 40 + dx)) / r.scale / r[k('cameraFrame')].width, r.camera.y + (p.y - 150) / r.scale / r[k('cameraFrame')].height, r.camera.ratio); r[k('placeOverlay')](); };
   pan(0); const under = labels(); expect(under.some(([x]: boolean[]) => x)).toBe(true); for (const [x, hidden] of under) if (x) expect(hidden).toBe(true);
   pan(-400); expect(labels().some(([, hidden]: boolean[]) => !hidden)).toBe(true);
@@ -1499,8 +1501,8 @@ test('large hub labels are a six-note preview while the full topology remains av
   const f = await graduated(Array.from({ length: 221 }, (_, i) => [0, i + 1] as [number, number]), 222), { r, k } = f;
   f.tap(0); r[k('focusLevel')] = 1; r[k('placeOverlay')]();
   expect(r[k('directs')].length).toBe(221);
-  expect(r[k('ranked')].filter((slot: any) => slot.rank === 1).length).toBeLessThanOrEqual(6);
-  expect(r[k('ranked')].every((slot: any) => slot.rank === 1)).toBe(true);
+  expect(r[k('rankedLabels')].filter((slot: any) => slot.rank === 1).length).toBeLessThanOrEqual(6);
+  expect(r[k('rankedLabels')].every((slot: any) => slot.rank === 1)).toBe(true);
   expect(r[k('moreButton')].textContent).toMatch(/^\+21[5-9] more$|^\+22[01] more$/);
   expect(f.actual()).toEqual(f.expected(0));
 });
@@ -1782,4 +1784,32 @@ test('review: the density target upsamples with linear filtering', async () => {
   d.gl.texParameteri = (_t: number, name: number, value: number) => params.push([name, value]);
   r[k('densitySize')] = [0, 0]; r[k('densityTarget')]();
   expect(params.slice(-2)).toEqual([[d.gl.TEXTURE_MIN_FILTER, d.gl.LINEAR], [d.gl.TEXTURE_MAG_FILTER, d.gl.LINEAR]]);
+});
+
+
+test('anchored overview reuses ranked LOD candidates and culls offscreen names before its collision cap', async () => {
+  const { r, k } = await graduated([], 302);
+  let lod = 0; r[k('lodLevel')] = () => lod;
+  r.atlas.nodes = [Uint32Array.from({ length: 301 }, (_, n) => n), new Uint32Array([301])];
+  r.screenPoint = (n: number) => ({ x: n < 300 ? -100 : 200, y: 200 });
+  const place = () => r[k('placeAnchored')](-1, 0, () => 2, (x: number) => x < 0);
+  place(); expect([...r[k('anchorPrevious')].keys()]).toEqual([300]);
+  const measured = r[k('anchorNames')]; place(); expect(r[k('anchorNames')]).toBe(measured);
+  lod = 1; place(); expect([...r[k('anchorPrevious')].keys()]).toEqual([301]);
+  expect(r[k('anchorPool')]).toHaveLength(1);
+});
+
+test('anchored production labels pool opaque uniform names, preserve tier toggles, and clear on style switch', async () => {
+  const f = await graduated([[0, 1], [0, 2], [2, 3]], 4), { r, k } = f;
+  f.settings.visuals.labelStyle = 'anchored';
+  const paint = () => { r[k('focusLevel')] = 1; r[k('placeOverlay')](); return r[k('anchorPool')].filter((p: any) => !p.hidden); };
+  f.hover(0); let shown = paint(); expect(shown.length).toBeGreaterThan(0);
+  expect(r.canvas.getAttribute('aria-label')).toBeNull(); expect(r.canvas.getAttribute('aria-describedby')).toBeTruthy(); expect(r.container.title).toBe('');
+  for (const p of shown) { expect(p.style.font).toStartWith('13px '); expect(p.style.opacity).toBeUndefined(); expect(p.style['--anchor-radius']).toEndWith('px'); expect(p.style['--anchor-angle']).toEndWith('deg'); }
+  const pool = [...r[k('anchorPool')]]; paint(); expect(r[k('anchorPool')]).toEqual(pool);
+  expect(pool.length).toBeLessThanOrEqual(64);
+  f.tap(0); paint(); r[k('tierMask')] = 0; paint();
+  expect([...r[k('anchorPrevious')].keys()]).toEqual([0]);
+  f.settings.visuals.labelStyle = 'ranked'; r[k('rankedKey')] = []; r[k('placeOverlay')]();
+  expect(r[k('anchorPool')].every((p: any) => p.hidden)).toBe(true);
 });

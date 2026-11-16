@@ -28,6 +28,7 @@ export interface Visuals {
   haloOpacity: number;
   autoPalette: boolean;
   labelFade: boolean;
+  /** Anchored names stay uniform and opaque; ranked preserves the graduated atlas. */
   labelStyle: 'anchored' | 'ranked';
   cameraAnimationMs: number;
   glowMaxNodes: number;

@@ -80,3 +80,26 @@ export function radialLabels(items: readonly LabelItem[], budget: number, direct
 export const labelInView = (x: number, y: number, w: number, h: number, width: number, height: number) => x >= h && y >= h && x + w <= width - h && y + h <= height - h;
 /** Reposition a focus annotation inside that margin; a too-small viewport still fails labelInView. */
 export const insetLabel = (x: number, y: number, w: number, h: number, width: number, height: number) => [Math.max(h, Math.min(width - w - h, x)), Math.max(h, Math.min(height - 2 * h, y))];
+
+/** Hard bounds for the shared anchored overlay, independent of graph cardinality. */
+export const ANCHORED_LABELS = 64, ANCHORED_CANDIDATES = 256;
+export interface AnchorSlot extends LabelItem { left: number; top: number; side: number; box: number[] }
+/** Actual-screen placement, including the anchor and short leader in each reserved rectangle.
+ * Previously shown labels need no extra clearance; new labels need 4px, a spatial hysteresis band.
+ * Four fixed alternatives, <=256 candidates and <=64 accepted boxes: bounded work, no DOM reads. */
+export function anchoredLabels(items: readonly LabelItem[], budget: number, previous: ReadonlyMap<number, number>, blocked: (x: number, y: number, w: number, h: number) => boolean): AnchorSlot[] {
+  const slots: AnchorSlot[] = [];
+  for (const it of items.slice(0, ANCHORED_CANDIDATES)) {
+    if (slots.length >= Math.min(ANCHORED_LABELS, budget)) break;
+    const r = Math.max(3, it.r + 2), gap = r + 8, old = previous.get(it.node);
+    const spots = [[it.x + gap, it.y - it.h / 2], [it.x - gap - it.w, it.y - it.h / 2], [it.x - it.w / 2, it.y - gap - it.h], [it.x - it.w / 2, it.y + gap]];
+    for (const side of old === undefined ? [0, 1, 2, 3] : [old, ...[0, 1, 2, 3].filter(s => s !== old)]) {
+      const [left, top] = spots[side]!, pad = old === side ? 0 : 4;
+      const x = Math.min(left!, it.x - r) - pad, y = Math.min(top!, it.y - r) - pad;
+      const w = Math.max(left! + it.w, it.x + r) + pad - x, h = Math.max(top! + it.h, it.y + r) + pad - y;
+      if (blocked(x, y, w, h) || slots.some(s => x < s.box[0]! + s.box[2]! && x + w > s.box[0]! && y < s.box[1]! + s.box[3]! && y + h > s.box[1]!)) continue;
+      slots.push({ ...it, left: left!, top: top!, side, box: [x, y, w, h] }); break;
+    }
+  }
+  return slots;
+}

@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { DIRECT_LABELS, middleTruncate, overviewScale, radialLabels, stickyLevel, tierFont, tierType, type LabelItem } from '../src/label-layout';
+import { anchoredLabels, ANCHORED_LABELS, ANCHORED_CANDIDATES, DIRECT_LABELS, middleTruncate, overviewScale, radialLabels, stickyLevel, tierFont, tierType, type LabelItem } from '../src/label-layout';
 import { LABEL_RATIOS } from '../src/render-data';
 import { labelFade } from '../src/render-effects';
 import { defaultVisuals, validateVisuals } from '../src/settings';
@@ -101,4 +101,58 @@ test('annotation boxes reserve their own height at every view edge', async () =>
   expect(labelInView(32, 32, 80, 32, 800, 600)).toBe(true);
   const [x, y] = insetLabel(0, 0, 800, 32, 800, 600);
   expect(labelInView(x!, y!, 800, 32, 800, 600)).toBe(false);
+});
+
+
+test('anchored names default on, ranked remains selectable, bad style values fail closed', () => {
+  const v = defaultVisuals(); expect(v.labelStyle).toBe('anchored');
+  validateVisuals({ ...v, labelStyle: 'ranked' });
+  for (const labelStyle of ['auto', '', true, 1, null]) expect(() => validateVisuals({ ...v, labelStyle })).toThrow('labelStyle');
+});
+
+test('anchored placement reserves plates, dot rings and leaders without overlap at any zoom', () => {
+  let previous = new Map<number, number>();
+  const blocks = [[300, 200, 100, 180], [10, 10, 500, 40], [650, 450, 140, 140]];
+  const overlaps = (a: number[], b: number[]) => a[0]! < b[0]! + b[2]! && a[0]! + a[2]! > b[0]! && a[1]! < b[1]! + b[3]! && a[1]! + a[3]! > b[1]!;
+  const blocked = (x: number, y: number, w: number, h: number) => x < 0 || y < 0 || x + w > 800 || y + h > 600 || blocks.some(b => overlaps([x, y, w, h], b));
+  for (const zoom of [.1, .2, .5, .99, 1, 1.05, 1.2, 2, 4]) {
+    const items = Array.from({ length: 256 }, (_, i) => item(i, i ? 1 : 0, 400 + Math.sin(i * 17) * 500 * zoom, 300 + Math.cos(i * 3) * 300 * zoom, 40 + i % 5 * 20, 24, .16));
+    const slots = anchoredLabels(items, 64, previous, blocked);
+    expect(slots.length).toBeGreaterThan(0); expect(slots.length).toBeLessThanOrEqual(ANCHORED_LABELS);
+    slots.forEach((s, i) => {
+      expect(blocked(...s.box as [number, number, number, number])).toBe(false);
+      expect(s.left).toBeGreaterThanOrEqual(s.box[0]!); expect(s.left + s.w).toBeLessThanOrEqual(s.box[0]! + s.box[2]!);
+      expect(s.x - 3).toBeGreaterThanOrEqual(s.box[0]!); expect(s.x + 3).toBeLessThanOrEqual(s.box[0]! + s.box[2]!);
+      for (const b of slots.slice(i + 1)) expect(overlaps(s.box, b.box)).toBe(false);
+    });
+    previous = new Map(slots.map(s => [s.node, s.side]));
+  }
+});
+
+test('anchored placement has hard candidate and output caps and stable side preference', () => {
+  const items = Array.from({ length: 1000 }, (_, i) => item(i, 5, i * 200, 200, 80, 24));
+  const free = () => false;
+  expect(anchoredLabels(items, 1000, new Map(), free).length).toBe(64);
+  expect(anchoredLabels(items, 3, new Map(), free).length).toBe(3);
+  expect(anchoredLabels(items, 0, new Map(), free).length).toBe(0);
+  expect(anchoredLabels(items, 64, new Map(), x => x < ANCHORED_CANDIDATES * 200).length).toBe(0);
+  const prev = new Map([[0, 1]]), kept = anchoredLabels(items.slice(0, 1), 1, prev, free)[0]!;
+  expect(kept.side).toBe(1); expect(kept.left + kept.w).toBeLessThan(kept.x);
+  // Four pixels of entry clearance, but an already shown label survives the same boundary.
+  const edge = (x: number) => x < -6;
+  expect(anchoredLabels([item(0, 0, 0, 200)], 1, new Map(), edge)).toHaveLength(0);
+  expect(anchoredLabels([item(0, 0, 0, 200)], 1, new Map([[0, 0]]), edge)).toHaveLength(1);
+});
+
+test('anchored renderer parity uses one overlay and preserves accessible help without hover tooltips', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(new URL('../src/webgl-renderer.ts', import.meta.url), 'utf8');
+  expect(source).toContain('this.drawCanvas(); this.placeOverlay()');
+  expect(source).toContain("v.labelStyle === 'ranked' && this.atlas");
+  expect(source).toContain("s.visuals.labelStyle === 'ranked' && nodes");
+  expect(source).toContain("this.canvas.setAttribute('aria-describedby', help.id)");
+  expect(source).toContain('Graph notes. Arrows select, Enter opens');
+  expect(source).not.toContain("this.canvas.setAttribute('aria-label'");
+  expect(source).not.toContain('this.container.title = hub');
+  expect(source).not.toContain('el.title = full');
 });

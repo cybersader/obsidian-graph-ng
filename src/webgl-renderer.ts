@@ -4,7 +4,7 @@ import { adaptiveRadius, PickGrid, positionTexture, incidentEdges, focusTiers, t
 import { readTheme, type GraphTheme } from './render-theme';
 import { baseRadius, sizedRadius, sizingSettings, type NodeSizingValues } from './node-sizing';
 import { buildLabels, rankFocus, type LabelAtlas } from './render-labels';
-import { DIRECT_LABELS, LABEL_CHARS, middleTruncate, radialLabels, stickyLevel, tierFont, tierType, type LabelSlot, labelInView, insetLabel } from './label-layout';
+import { anchoredLabels, ANCHORED_LABELS, ANCHORED_CANDIDATES, DIRECT_LABELS, LABEL_CHARS, middleTruncate, radialLabels, stickyLevel, tierFont, tierType, type LabelSlot, type LabelItem, labelInView, insetLabel } from './label-layout';
 import { carrierAlpha, carrierColors, carrierVisibility, categorical, degreeSizes, densityScale, edgeAlpha, edgeInk, overdraw, inkShare, edgeRanks, fadeLength, lengthFade, type EdgeInk, effectPolicy, prominenceKeep, zoomFade, neutralizeGroups, easeInOut, hoverPulse, groupHalos, isDark, labelFade, nodeColors, type EffectPolicy, type Halo, type RGB } from './render-effects';
 import { yieldTask } from './core/scheduler';
 import { generationCurrent } from './physics-controls';
@@ -26,6 +26,7 @@ const TOOLS_MIN_ROOM = 240;
 const FOCUS_LABELS = 64;
 /** Selection ripple length (ms), and the inset of off-screen pips from the view border (CSS px). */
 const RIPPLE_MS = 250, PIP_INSET = 56;
+let descriptionId = 0;
 export interface CoordinateToken { current(): boolean; commit(): void; rollback(): void; discard(): void }
 
 /** Identity tag; the production build strips GLSL whitespace/comments at load time. */
@@ -402,9 +403,13 @@ export class DetailRenderer {
   private isolationBar: HTMLElement;
   private hubLabels: HTMLElement[] = [];
   /** Graduated focus labels: placed slots (radial offsets, optional leader), their DOM text and leader lines, and the key they were placed at. */
-  private ranked: LabelSlot[] = [];
+  private rankedLabels: LabelSlot[] = [];
   private tierLabels: HTMLElement[] = [];
   private tierLeaders: HTMLElement[] = [];
+  private anchorPool: HTMLElement[] = [];
+  private anchorKey: unknown[] = [];
+  private anchorNames: { node: number; rank: number; text: string; w: number }[] = [];
+  private anchorPrevious = new Map<number, number>();
   /** Direct connections without a label fold into one "+N more" button beside the focus. */
   private moreButton?: HTMLButtonElement;
   private moreAt?: { dx: number; dy: number };
@@ -474,8 +479,10 @@ export class DetailRenderer {
     this.timings.grid = performance.now() - started; started = performance.now();
     this.theme = readTheme(container, settings);
     this.timings.theme = performance.now() - started; started = performance.now();
-    this.canvas = document.createElement('canvas'); this.canvas.className = 'graph-ng-detail'; this.canvas.setAttribute('aria-label', 'Graph notes. Arrows select, Enter opens, R cycles relationships, L toggles connection lens, Shift+F10 opens the menu, Alt+Left goes back, Escape clears.'); this.canvas.tabIndex = 0; this.canvas.style.touchAction = 'none'; container.append(this.canvas);
+    this.canvas = document.createElement('canvas'); this.canvas.className = 'graph-ng-detail'; this.canvas.tabIndex = 0; this.canvas.style.touchAction = 'none'; container.append(this.canvas);
     this.overlay = container.createDiv ? container.createDiv({ cls: 'graph-ng-overlay' }) : container.appendChild(Object.assign(document.createElement('div'), { className: 'graph-ng-overlay' }));
+    const help = this.overlay.appendChild(el('span', 'Graph notes. Arrows select, Enter opens, R cycles relationships, L toggles connection lens, Shift+F10 opens the menu, Alt+Left goes back, Escape clears.', 'graph-ng-screen-reader'));
+    help.id = `graph-ng-help-${++descriptionId}`; this.canvas.setAttribute('aria-describedby', help.id);
     this.hoverLabel = this.overlay.appendChild(Object.assign(document.createElement('div'), { className: 'graph-ng-hover-label' }));
     const div = (className: string) => this.overlay.appendChild(Object.assign(document.createElement('div'), { className }));
     this.cueLine = div('graph-ng-cue-line'); this.cueRing = div('graph-ng-cue'); this.cueLine.hidden = this.cueRing.hidden = true;
@@ -486,7 +493,7 @@ export class DetailRenderer {
     ({ pointerDown: this.pointerDown, pointerMove: this.pointerMove, pointerUp: this.pointerUp, pointerLeave: this.pointerLeave, keyDown: this.keyDown } = input);
     this.noteCard.onkeydown = input.cardKeyDown;
     let stack: HTMLElement;
-    ({ ripple: this.rippleEl, stack, legend: this.legend, rows: this.legendRows, counts: this.legendCounts, pips: this.pipEls, parts: this.pipParts } = highlightOverlay(this.overlay, i => { this.tierMask ^= 1 << i; this.updateLegend(); this.rankedKey = []; this.refresh(); }, i => this.panTo(this.pipTargets[i] ?? -1)));
+    ({ ripple: this.rippleEl, stack, legend: this.legend, rows: this.legendRows, counts: this.legendCounts, pips: this.pipEls, parts: this.pipParts } = highlightOverlay(this.overlay, i => { this.tierMask ^= 1 << i; this.updateLegend(); this.rankedKey = []; this.anchorKey = []; this.refresh(); }, i => this.panTo(this.pipTargets[i] ?? -1)));
     stack.appendChild(this.isolationBar);
     this.crumbTrail = new Breadcrumb(stack, n => this.name(n), by => this.card.step(by), () => this.clearTrail());
     this.panels = [stack, this.miniMap.root];
@@ -1124,7 +1131,7 @@ export class DetailRenderer {
     if (key !== this.tierSource || immediate) {
       for (const i of this.near) s[i * 4 + 1] = 0;
       for (const e of this.tierEdges) t[e] = 0;
-      this.near = []; this.tierEdges = []; this.tierSource = key; this.focusNode = edges ? -1 : node; this.rankedKey = []; this.tierPartial = 0;
+      this.near = []; this.tierEdges = []; this.tierSource = key; this.focusNode = edges ? -1 : node; this.rankedKey = []; this.anchorKey = []; this.tierPartial = 0;
       // A selected relationship lights its rows and both endpoints as direct tiers, without a focus ring.
       if (edges) for (const e of edges) { t[e] = edges === this.pathView?.edges ? PATH_EDGE : 255; this.tierEdges.push(e); for (const n of [this.projection.source[e]!, this.projection.target[e]!]) if (!s[n * 4 + 1]) { s[n * 4 + 1] = 255; this.near.push(n); } }
       else this.tierPartial = focusTiers(node, this.edges, this.projection, this.edgeOn, this.filterVisible, s, t, this.near, this.tierEdges, 65536, this.settings.declaration.groupContext ? this.view.groupCodes : undefined);
@@ -1392,7 +1399,7 @@ export class DetailRenderer {
     passes.push([1, 1, 0, 1]);
     if (edgePass && edgesOnTop) passes.push([0, 0, 0]);
     if (this.discData[1]!.length) passes.push([3, 3, 1]);
-    if (this.atlas && fade.alpha > .004) passes.push([2, -1, 0]);
+    if (v.labelStyle === 'ranked' && this.atlas && fade.alpha > .004) passes.push([2, -1, 0]);
     for (const [i, vaoIndex, hub, layer = 1] of passes) {
       const program = this.programs[i]!, u = program.uniforms;
       gl.useProgram(program.handle); gl.uniform1i(u.lensPositions!, 5); gl.uniform1f(u.lensBlend!, this.lensBlend); gl.uniform1i(u.lensAnchor!, this.lensAnchor); gl.uniform1i(u.positions!, 0); gl.uniform1i(u.palette!, 1); gl.uniform1i(u.atlas!, 2); gl.uniform1i(u.nodeColors!, 3); gl.uniform1i(u.nodeState!, 4); gl.uniform1i(u.positionWidth!, this.positionWidth);
@@ -1441,6 +1448,13 @@ export class DetailRenderer {
       if (!b.hidden) { b.style.transform = `translate(${x}px, ${y}px)`; badgeBoxes.push([x, y, width, 32]); }
     }
     const lod = this.lodLevel(), s = this.settings, tier = v.labelTierScale, hover = this.hoverLabel;
+    let taken: number[][] = [];
+    if (v.labelStyle === 'anchored') {
+      hover.hidden = true;
+      for (const el of [...this.tierLabels, ...this.tierLeaders]) el.hidden = true;
+      taken = this.placeAnchored(node, focus, radius, under);
+    } else {
+    for (const p of this.anchorPool) p.hidden = true;
     if (node >= 0) {
       const text = this.noteCaption(node), cls = 'graph-ng-hover-label' + (node === ego && focus ? ' graph-ng-focus' : ''), font = node === ego && focus ? tierFont(0, s.labelSize, tier, this.theme.font) : '', key = text + '\n' + cls + '\n' + font;
       if (this.hoverBox[0] !== key) {
@@ -1452,7 +1466,7 @@ export class DetailRenderer {
     // The previewed name fades in with the node's growth.
     hover.style.opacity = node === this.hoverFx.n && node !== ego ? String((this.fx[0]! - 1) / .6) : '';
     // Graduated labels: placed once per focus or LOD change, translated per frame (bounded DOM).
-    if (!this.near.length) { this.ranked = []; this.moreAt = undefined; }
+    if (!this.near.length) { this.rankedLabels = []; this.moreAt = undefined; }
     else if ([lod, this.display, this.fit, this.width, this.height, this.lensRevision].some((x, i) => x !== this.rankedKey[i])) {
       // Placement measures each bounded candidate once with the font and text the DOM label then uses, at the radius offset it is shown with.
       const k = this.scale * this.camera.ratio / LABEL_RATIOS[lod]!, budget = Math.max(1, Math.min(s.labelsMaxPerViewport, FOCUS_LABELS, Math.floor(this.width * this.height / s.labelGridCellSize ** 2 * s.labelDensity))), m = this.measure ??= document.createElement('canvas').getContext('2d')!;
@@ -1461,16 +1475,16 @@ export class DetailRenderer {
       const items = list.map(([n, rank]) => { m.font = tierFont(rank, s.labelSize, tier, this.theme.font); const h = tierType(rank, s.labelSize, tier).size * 1.5 + 4; return { node: n, rank, x: this.renderCoordinate(n, 0, 1) * k, y: this.renderCoordinate(n, 1, 1) * k, r: radius(n), w: m.measureText(text(n, rank)).width + pad, h }; });
       m.font = tierFont(1, s.labelSize, tier, this.theme.font); this.moreSize = [m.measureText(`+${direct} more`).width + 24, 32]; this.moreTotal = direct;
       const layout = radialLabels(items, budget, direct > 50 ? 6 : DIRECT_LABELS, ego >= 0 ? direct : 0, this.moreSize[0]!, 32);
-      this.ranked = layout.slots.filter(x => x.node !== ego); this.moreAt = layout.more;
+      this.rankedLabels = layout.slots.filter(x => x.node !== ego); this.moreAt = layout.more;
       this.rankedKey = [lod, this.display, this.fit, this.width, this.height, this.lensRevision];
       this.overlay.className = 'graph-ng-overlay' + (v.labelPlates ? ' graph-ng-plates' : '');
       const pool = (list: HTMLElement[], count: number, cls: string) => { while (list.length > count) list.pop()!.remove(); while (list.length < count) list.push(this.overlay.appendChild(Object.assign(document.createElement('div'), { className: cls }))); };
-      pool(this.tierLabels, this.ranked.length, ''); pool(this.tierLeaders, this.ranked.filter(x => x.leader).length, 'graph-ng-leader');
+      pool(this.tierLabels, this.rankedLabels.length, ''); pool(this.tierLeaders, this.rankedLabels.filter(x => x.leader).length, 'graph-ng-leader');
       let j = 0;
-      this.ranked.forEach(({ node: n, rank, leader }, i) => {
+      this.rankedLabels.forEach(({ node: n, rank, leader }, i) => {
         const el = this.tierLabels[i]!, full = this.name(n); el.className = 'graph-ng-focus-label graph-ng-tier-' + rank; el.style.font = tierFont(rank, s.labelSize, tier, this.theme.font); el.textContent = text(n, rank);
-        // Truncated names keep the full name for tooltips and assistive technology.
-        el.title = full; el.setAttribute('aria-label', full);
+        // Text-only labels must not trigger native or host aria-label tooltips.
+        el.removeAttribute('title'); el.removeAttribute('aria-label'); el.setAttribute('aria-description', full);
         if (leader) this.tierLeaders[j++]!.style.width = `${Math.round(Math.hypot(leader[2] - leader[0], leader[3] - leader[1]))}px`;
       });
       if (layout.more) {
@@ -1478,9 +1492,9 @@ export class DetailRenderer {
         b.style.font = tierFont(1, s.labelSize, tier, this.theme.font);
       }
     }
-    if (!this.ranked.length) { while (this.tierLabels.length) this.tierLabels.pop()!.remove(); while (this.tierLeaders.length) this.tierLeaders.pop()!.remove(); }
-    let j = 0, shown = 0; const taken: number[][] = [];
-    this.ranked.forEach(({ node: n, rank, dx, dy, w, h, leader }, i) => {
+    if (!this.rankedLabels.length) { while (this.tierLabels.length) this.tierLabels.pop()!.remove(); while (this.tierLeaders.length) this.tierLeaders.pop()!.remove(); }
+    let j = 0, shown = 0;
+    this.rankedLabels.forEach(({ node: n, rank, dx, dy, w, h, leader }, i) => {
       const el = this.tierLabels[i]!, p = this.screenPoint(n), x = leader ? p.x + dx : p.x + radius(n) + 4, y = leader ? p.y + dy : p.y; el.hidden = under(x, y - h / 2, w, h) || under(p.x, p.y); if (!el.hidden) { taken.push([x, y - h / 2, w, h]); shown += +(rank === 1); } el.style.opacity = String(focus); el.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px) translateY(-50%)`;
       if (leader) { const line = this.tierLeaders[j++]!; line.hidden = el.hidden; line.style.opacity = String(focus); line.style.transform = `translate(${Math.round(p.x + leader[0])}px, ${Math.round(p.y + leader[1])}px) rotate(${Math.atan2(leader[3] - leader[1], leader[2] - leader[0])}rad)`; }
     });
@@ -1499,6 +1513,7 @@ export class DetailRenderer {
       const at = spots.find(([x, y]) => !taken.some(b => overlapsBox(x!, y!, w, h, b))) ?? spots[0];
       hover.hidden = !at; if (at) taken.push([at[0]!, at[1]!, w, h]); if (at) hover.style.transform = `translate(${Math.round(at[0]!)}px, ${Math.round(at[1]!)}px)`;
     }
+    }
     this.placePath(radius, focus);
     this.crumbTrail.update(v.breadcrumb, this.card.history, this.selected);
     this.miniMap.update({ on: v.minimap && this.width >= MINIMAP_MIN_CANVAS, positions: this.display, visible: this.visible, cx: this.camera.x, cy: this.camera.y, worldW: this.width / this.scale, worldH: this.height / this.scale, focus: this.visible[this.focusNode] ? this.focusNode : -1, directs: this.directs, ink: this.theme.text, accent: this.theme.accent });
@@ -1512,6 +1527,53 @@ export class DetailRenderer {
       // Visibility, not `hidden`: a covered label keeps its measured size, so it cannot flicker.
       el.style.visibility = under(x - half, y, 2 * half, line) || taken.some(b => overlapsBox(x - half, y, 2 * half, line, b)) ? 'hidden' : ''; placed.push([x, y, half]); el.style.transform = `translate(-50%, 0) translate(${Math.round(x)}px, ${Math.round(y)}px)`;
     });
+  }
+  /** Shared by WebGL and Canvas: <=64 pooled names with CSS ring/leader marks; no per-frame measurement.
+   * Candidate captions are measured only when focus, settings or atlas change. Collision uses actual
+   * screen positions (including animated lens/radii), not a conservative atlas LOD approximation. */
+  private placeAnchored(node: number, focus: number, radius: (n: number) => number, under: (x: number, y: number, w: number, h: number) => boolean) {
+    const s = this.settings, ego = focus > .5 ? this.focusNode : -1, size = s.labelSize, h = Math.ceil(size * 1.5) + 4, lod = this.lodLevel();
+    const key = [this.atlas, ego, node, size, this.theme, this.tierMask, this.visible, lod];
+    if (key.some((v, i) => v !== this.anchorKey[i])) {
+      const m = this.measure ??= document.createElement('canvas').getContext('2d')!;
+      m.font = `${size}px ${this.theme.font}`;
+      const ranked = ego < 0 ? { list: Array.from(this.atlas?.nodes[lod] ?? [], n => [n, 5] as const), direct: 0 } : rankFocus(ego, this.near, this.stateBytes, this.visible, this.projection.offsets, ANCHORED_CANDIDATES, this.projection.carrierNodes, this.interestOf(ego), 50);
+      this.moreTotal = ranked.direct; this.moreSize = [m.measureText(`${ranked.direct} more connections`).width + 32, Math.max(32, h + 4)];
+      const list = node >= 0 ? [[node, 0] as const, ...ranked.list.filter(([n]) => n !== node)] : ranked.list;
+      this.anchorNames = list.map(([n, rank]) => { const text = middleTruncate(n === node ? this.noteCaption(n) : this.name(n), n === node ? 48 : 32); return { node: n, rank, text, w: Math.ceil(m.measureText(text).width) + 12 }; });
+      this.anchorKey = key;
+    }
+    // Fewer overview names; a sticky LOD and spatial clearance prevent threshold chatter.
+    const budget = Math.max(1, Math.min(ANCHORED_LABELS, s.labelsMaxPerViewport, Math.floor(this.width * this.height / Math.max(160, s.labelGridCellSize) ** 2 * s.labelDensity / Math.max(1, lod - 1))));
+    // Reuse the ranked grid's bounded LOD placements. Cull offscreen notes BEFORE the collision cap.
+    const names: (LabelItem & { text: string })[] = [];
+    for (const it of this.anchorNames) {
+      if (!this.visible[it.node] || ego >= 0 && it.node !== ego && it.node !== node && !shownTier(this.stateBytes[it.node * 4 + 1]!, this.tierMask)) continue;
+      const p = this.screenPoint(it.node); if (under(p.x, p.y, 0, 0)) continue;
+      names.push({ ...it, ...p, r: radius(it.node), h }); if (names.length >= ANCHORED_CANDIDATES) break;
+    }
+    const slots = anchoredLabels(names, budget, this.anchorPrevious, under);
+    this.anchorPrevious = new Map(slots.map(it => [it.node, it.side]));
+    while (this.anchorPool.length < slots.length) this.anchorPool.push(this.overlay.appendChild(el('span', '', 'graph-ng-anchor-text')));
+    this.anchorPool.forEach((p, i) => {
+      const it = slots[i]; p.hidden = !it; if (!it) return;
+      const text = names.find(n => n.node === it.node)!.text; if (p.textContent !== text) { p.textContent = text; p.setAttribute('aria-description', this.name(it.node)); }
+      p.style.font = `${size}px ${this.theme.font}`; p.style.lineHeight = `${h - 4}px`; p.style.background = s.visuals.labelPlates ? this.theme.background : 'transparent';
+      p.style.transform = `translate(${it.left}px, ${it.top}px)`;
+      const values = [it.x - it.left, it.y - it.top, Math.max(3, it.r + 2), [0, 180, -90, 90][it.side]!];
+      ['x', 'y', 'radius', 'angle'].forEach((key, i) => p.style.setProperty(`--anchor-${key}`, `${values[i]}${i === 3 ? 'deg' : 'px'}`));
+    });
+    const taken = slots.map(it => it.box);
+    if (this.moreButton) this.moreButton.hidden = true;
+    const rest = this.moreTotal - slots.filter(it => it.node !== ego && this.stateBytes[it.node * 4 + 1] === 255).length, anchor = slots.find(it => it.node === ego);
+    if (ego >= 0 && rest > 0 && anchor) {
+      const b = this.moreButton ??= this.overlay.appendChild(Object.assign(document.createElement('button'), { className: 'graph-ng-more', onclick: () => { if (this.focusNode >= 0) this.onMoreConnections(this.focusNode); } }));
+      const x = anchor.left, y = anchor.top + h + 4, [w, bh] = this.moreSize;
+      b.hidden = under(x, y, w!, bh!) || taken.some(box => overlapsBox(x, y, w!, bh!, box));
+      b.textContent = `${rest} more connections`; b.removeAttribute('aria-label'); b.style.font = `${size}px ${this.theme.font}`; b.style.transform = `translate(${x}px, ${y}px)`;
+      if (!b.hidden) taken.push([x, y, w!, bh!]);
+    }
+    return taken;
   }
   /** Where Group overview leads back to: the selection (or lens), its group and the camera. */
   returnPoint() {
@@ -1626,7 +1688,7 @@ export class DetailRenderer {
     // The label shader's terms: zoom alpha, importance cut (degree rank), degree-weighted size, background outline.
     const lod = this.lodLevel(), fade = labelFade(s.nodeSize, s.labelRenderedSizeThreshold, this.camera.ratio, LABEL_RATIOS, s.visuals.labelFade, lod), nodes = this.atlas?.nodes[lod], scales = this.atlas?.scales[lod];
     ctx.textBaseline = 'top';
-    if (nodes && scales && fade.alpha > .004) nodes.forEach((n, i) => {
+    if (s.visuals.labelStyle === 'ranked' && nodes && scales && fade.alpha > .004) nodes.forEach((n, i) => {
       const cut = Math.min(1, Math.max(0, (1 - i / nodes.length - fade.cut) / .15)); ctx.globalAlpha = tierLabel(g[n * 4 + 1]! / 255, fade.alpha * cut * cut * (3 - 2 * cut), focus, dim);
       if (ctx.globalAlpha <= .004) return; ctx.font = `${s.labelSize * scales[i]!}px ${this.theme.font}`;
       const name = this.name(n), lx = x(n) + this.nodeRadius(n, false, radius) + 4, ly = y(n) - s.labelSize * scales[i]! / 2;
@@ -1663,7 +1725,7 @@ export class DetailRenderer {
       cycleEdge: step => this.cycleEdge(step),
       setHover: (node, edge) => { this.hovered = node; this.hoveredEdge = edge; this.refresh(); },
       hint: (hub, node, edge, cursor) => {
-        this.container.title = hub >= 0 ? `${this.view.groupLabels?.[hub] ?? ''} (collapsed) — click to expand` : node >= 0 ? this.path(node) : edge >= 0 ? `${this.path(p.source[edge]!)} → ${this.path(p.target[edge]!)} [${p.types[p.type[edge]!]!}]` : '';
+        this.container.removeAttribute('title');
         if (cursor) this.canvas.style.cursor = node >= 0 || hub >= 0 || edge >= 0 ? 'pointer' : 'grab';
       },
       openable: n => !!this.filterVisible[n],

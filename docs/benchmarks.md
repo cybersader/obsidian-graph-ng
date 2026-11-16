@@ -23,6 +23,38 @@ Receipts are `.workspace/visual-qa/runs/wave8-p-{before-small,final}.json`; both
 
 Known scope: Anchored/Ranked settings and UI are integrated here, but canvas implementation belongs to the label track. Independent senior review is scheduled over the merged wave before shipping. These receipts do not establish release readiness or broad performance acceptance.
 
+## Anchored canvas names — 2026-11-16
+
+Source: the commit carrying this section, based on `5bec048`. Linux x86-64 desktop-class host, 32 GB RAM, 11 GB available at launch. The browser-native Obsidian harness used a disposable synthetic vault with 16,000 notes and 52,511 edges, explicitly admitted SwiftShader WebGL2, and a 1210 × 700 renderer. This is not desktop Electron or hardware-GPU acceptance.
+
+Default `visuals.labelStyle` is `anchored`; `ranked` retains the existing atlas, graduated sizing and fades. The shared WebGL/Canvas anchored overlay uses uniform opaque text, dot rings and eight-pixel leaders. Actual-screen collision checks include each plate, ring and leader; placements retain their side with a four-pixel entry-clearance margin. The existing ranked LOD/grid placements provide the overview candidates, bounded by the existing label settings. Offscreen placements are culled before the collision pass's 256-candidate cap; at most 64 DOM labels are pooled. No new spatial index, per-frame graph scan, sort or text measurement is added.
+
+Verification: `./scripts/run.sh build`; `./scripts/run.sh test --timeout 10000` (588 pass, zero failures, 162,213 assertions across 35 files); `./scripts/run.sh gates`; `git diff --check`. Each Bun command was wrapped separately with `flock -w 3000 -E 75 /tmp/openclast-bun.lock timeout --kill-after=5s 1800s`; `scripts/run.sh` owns the separate local-verification lock. Secrets, attribution, privacy, frozen-lock/supply-chain and runtime-license checks passed. Full gates stopped at the unchanged gzip cap: **364,509 raw / 122,249 gzip bytes**, compared with base **360,925 / 120,920**, a delta of **+3,584 / +1,329**. Raw is within 365,000; gzip exceeds 122,000 by **249 bytes**. The cap was not raised. Built bundle SHA-256: `01c9302347318cb450bdd898503bf77fb820cb3cc9e42e32e160f989313519d0`. Independent merged-wave review remains pending.
+
+Native command, from the integration workspace: `bash .workspace/visual-qa/run.sh wave8-l-viewport plugin-wave8-l vault-16k steps-wave8-l-viewport.json 10`. The harness owns `flock -w 1800 /tmp/graph-ng-harness.lock`; it was not acquired recursively. Receipt: `.workspace/visual-qa/runs/wave8-l-viewport.json` (exit 0, 182.360 s, no page/console errors). Earlier `wave8-l` failed during renderer setup/admission; `wave8-l2` reached verified WebGL but its 120-frame sample exceeded the 20-second assertion deadline. Neither failed run is acceptance evidence. `wave8-l-final` completed but exposed close-viewport starvation from a global top-256 cutoff; the corrected shared-LOD selection and this replacement run supersede that implementation.
+
+All seven screenshot pairs were visually inspected in both themes. Under `.workspace/visual-qa/runs/`, use prefix `wave8-l-viewport.` and suffix `.dark.png` or `.light.png` with these stems:
+
+| View | Ranked | Anchored |
+| --- | --- | --- |
+| Overview | `step-19-ranked-overview` | `step-26-anchored-overview` |
+| Mid | `step-21-ranked-mid` | `step-28-anchored-mid` |
+| Close | `step-23-ranked-close` | `step-30-anchored-close` |
+| Focused | — | `step-33-anchored-focus` |
+
+Node size was 0.16, label size 13, label density 3; camera ratios were 0.4434134 / 0.1773654 / 0.0665120. The Saved views panel remained open and was excluded from label placement. Visible names at overview / mid / close were **Ranked 8 / 18 / 7**, **Anchored 25 / 45 / 27**, with eight names in the anchored focused capture. Ranked counts apply the glyph shader's opacity cutoff and whole-annotation viewport bounds, excluding panel-covered rectangles; they are not total atlas placements (37 / 89 / 249). Anchored uses the same LOD candidates without the rank-opacity cutoff, so more names remain crisp. All observed anchored text opacity was 1, no anchored plate intersections were detected, and the pool reached 45 elements. Canvas `aria-label` was absent, hidden keyboard help remained linked by `aria-describedby`, and the container title was empty. Production-bundle synthetic tests cover the pooled overlay, tier toggles, style-switch cleanup and accessible help; shared dispatch covers Canvas parity, not a separate native Canvas capture.
+
+Twenty-four ordered samples per style forced synchronous layout after draw; times below are CPU elapsed time, not GPU time:
+
+| Style | Draw + layout median / p95 / max | Overlay + layout median / p95 |
+| --- | --- | --- |
+| Ranked | 0.7 / 17.1 / 41.1 ms | 0.3 / 8.5 ms |
+| Anchored | 1.3 / 2.5 / 3.0 ms | 0.9 / 1.7 ms |
+
+Anchored added about 0.6 ms median draw CPU cost (0.6 ms overlay). Small, ordered samples do not establish better tail latency. Software-rendered rAF intervals were 594.7 / 771.4 ms ranked and 517.2 / 670.3 ms anchored (median / p95); do not infer hardware FPS from these captures.
+
+Known limits: the inherited ranked LOD/grid placements and settings budgets are not viewport-complete naming. The rejected top-256-global implementation is gone; a production regression places a visible candidate after 300 offscreen candidates and verifies LOD cache invalidation. Hover/focus can name another note. Collision checks protect named annotations and UI, not every unlabelled dot or edge; dense layouts remain dense. These screenshots do not establish perfect continuity while panning, ranked pixel equivalence across all states, screen-reader behavior in every host, native Canvas performance or physical-GPU acceptance.
+
 ## Centering — 2026-11-16
 
 Question: with the room force values (Spread 23.64, Pull to center 0.5, Strong gravity off, Step slowdown 3.607, Approximation 0.369, 100 steps), why do disconnected parts not gather around the middle? Answer: the settings, not the solver.
