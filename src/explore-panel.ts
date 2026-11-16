@@ -709,6 +709,7 @@ export class ExplorePanel {
   private relationMessage = '';
   private relationshipDisplay(host: HTMLElement) {
     const nodes = this.settings.declaration.display.reifiedAsNodes, count = this.host.relationshipNotes?.() ?? 0;
+    this.note(host, 'Changing relationship display saves globally and rebuilds the graph.');
     const row = host.createDiv({ cls: 'graph-ng-row graph-ng-segmented', attr: { role: 'group', 'aria-label': 'Relationship notes' } });
     panelHelp(row, 'Relationship notes', `Lines join the endpoints; Nodes makes each relationship a clickable dot${count ? ` (${plural(count, 'added dot')})` : ''}. Switching saves globally and rebuilds the layout.`);
     for (const [value, text] of [[false, 'Lines'], [true, 'Nodes']] as const) {

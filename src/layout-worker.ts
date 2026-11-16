@@ -18,6 +18,8 @@ import { carrierHiddenBy, emptyView, explore, groupColumn, hide, relationshipNot
 const rows = new Map<string, FactRow>();
 let config: PipelineConfig, meta: GenerationMeta, projection: Projection, visible: Uint8Array;
 let contracted: ReturnType<typeof contractGroups>, positions: Float32Array | undefined, saved: BinaryLayout | undefined;
+/** Unverified coordinates are same-declaration, in-memory hints only, never a disk generation. */
+let interim: BinaryLayout | undefined;
 const recycled: ArrayBuffer[] = [];
 const takeBuffer = (length: number) => { const i = recycled.findIndex(b => b.byteLength === length * 4); return i < 0 ? new Float32Array(length) : new Float32Array(recycled.splice(i, 1)[0]!); };
 let complete = true, projectionRevision = -1, colors: Uint32Array = new Uint32Array(), explored: ExploreResult | undefined;
@@ -83,8 +85,9 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       config = r.config;
       declarationHash = await digest(identityDeclaration(layoutDeclaration(config.declaration))); layoutHash = await digest({ layout: config.layout, streamEveryIterations: config.streamEveryIterations });
       if (saved && !compatible(saved.meta)) saved = undefined;
-      // held: this worker already has the exact generation, so the view can skip the disk read.
-      return { declarationHash, layoutHash, held: Boolean(saved && matches(saved.meta)), ingestHash: await digest({ declarationHash, keys: declaredKeys(config.declaration) }) };
+      if (interim && !matches(interim.meta)) interim = undefined;
+      // held: this worker already has compatible coordinates, so the view can skip the disk read.
+      return { declarationHash, layoutHash, held: Boolean(interim || saved && matches(saved.meta)), ingestHash: await digest({ declarationHash, keys: declaredKeys(config.declaration) }) };
     }
     case 'rows':
       if (r.reset) rows.clear();
@@ -138,24 +141,28 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
     }
     case 'layout': {
       const start = performance.now(), seed = Number.parseInt(meta.key.slice(0, 8), 16);
-      const stored = saved?.meta.key;
-      const exact = complete && saved && matches(saved.meta) && stored === meta.key && saved.identities.length === projection.identities.length && saved.identities.every((id, i) => id === projection.identities[i]);
+      const prior = complete && saved && matches(saved.meta) && saved.meta.key === meta.key ? saved : interim ?? saved, stored = prior?.meta.key;
+      const exact = complete && prior && matches(prior.meta) && stored === meta.key && prior.identities.length === projection.identities.length && prior.identities.every((id, i) => id === projection.identities[i]);
       let reused: LayoutResult['reused'] = exact ? 'all' : undefined;
-      if (exact) positions = saved!.positions;
+      if (exact) positions = prior!.positions;
       else {
         let input: LayoutInput | undefined;
         // An unverified build (metadata or links still resolving, e.g. right after an app reload) also
         // starts from saved positions; it is never persisted and the verified build re-checks identities.
-        if (saved) {
-          input = warmLayout({ identities: saved.identities, positions: saved.positions }, projection, seed, config.layout);
-          const old = edgeHashSet(saved.edgeKeys); let added = 0;
+        if (prior) {
+          input = warmLayout({ identities: prior.identities, positions: prior.positions }, projection, seed, config.layout);
+          const old = edgeHashSet(prior.edgeKeys); let added = 0;
           for (let i = 0; i < hashes.length; i += 2) if (!old.has(`${hashes[i]}:${hashes[i + 1]}`)) { added++; input.movable![projection.source[i / 2]!] = 1; input.movable![projection.target[i / 2]!] = 1; }
           const affected = input.movable!.slice();
           for (let i = 0; i < affected.length; i++) if (affected[i]) for (let j = projection.offsets[i]!; j < projection.offsets[i + 1]!; j++) input.movable![projection.targets[j]!] = 1;
           // Relaxing a mostly new graph from hints would be worse than a full cold layout. An
           // unverified build may lack most links, so only verified builds count edge churn (added + removed).
-          const edges = hashes.length / 2, before = saved.edgeKeys.length / 2;
-          if (input.movable!.reduce((n, m) => n + m, 0) * 2 > input.count || (complete && (added * 2 + before - edges) * 2 > Math.max(edges, before))) input = undefined;
+          const edges = hashes.length / 2, before = prior.edgeKeys.length / 2;
+          if (input.movable!.reduce((n, m) => n + m, 0) * 2 > input.count || (complete && (added * 2 + before - edges) * 2 > Math.max(edges, before))) {
+            // Native hydration may change most edges. Continue from the last live positions,
+            // but run the full budget rather than a short, partially pinned relaxation.
+            if (prior === interim) input.movable = undefined; else input = undefined;
+          }
         }
         if (!input) input = { count: projection.paths.length, source: projection.source, target: projection.target, offsets: projection.offsets, targets: projection.targets, seed };
         if (input.movable && !input.movable.some(Boolean)) { positions = input.initial!; reused = 'all'; }
@@ -163,7 +170,8 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       }
       const milliseconds = performance.now() - start;
       // An exact hit already holds this generation; skip re-contracting its group summary.
-      if (complete && !exact) saved = { meta, identities: projection.identities, positions, edgeKeys: hashes, groups: cacheSummary() };
+      if (complete && (!exact || prior === interim)) saved = { meta, identities: projection.identities, positions, edgeKeys: hashes, groups: cacheSummary() };
+      interim = complete ? undefined : { meta, identities: projection.identities, positions, edgeKeys: hashes };
       return { positions: positions.slice(), milliseconds, cached: Boolean(exact), reused, stored };
     }
     case 'encode':

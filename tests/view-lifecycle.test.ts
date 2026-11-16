@@ -522,3 +522,69 @@ test('fallback summary uses compact on-demand help outside the information butto
   expect(css).toMatch(/\.graph-ng-body:has\(> \.graph-ng-explore:not\(\[hidden\]\)\) > \.graph-ng-summary[^}]+max-width:calc\(100% - 384px\)/);
   expect(css).toMatch(/@container \(max-width: 480px\)[^\n]+\.graph-ng-summary[^\n]+display:none/);
 });
+
+test('relationship display rebuild settles despite unchanged metadata bursts; real edits still queue once', async () => {
+  const { default: GraphPlugin, GraphView } = await import('../src/main');
+  const { LocalAdapter } = await import('../src/adapter/local');
+  const { defaults } = await import('../src/settings');
+  const { setRelationshipDisplay } = await import('../src/explore-panel');
+  const { unpackRows } = await import('../src/core/columns');
+  const files = ['a.md', 'b.md', 'relation.md'].map(p => new FixtureFile(p));
+  const facts: Record<string, any> = { 'a.md': { id: 'a' }, 'b.md': { id: 'b' }, 'relation.md': { source: 'a', target: 'b' } };
+  const events = new Map<string, Function>(), links: Record<string, Record<string, number>> = {};
+  const app: any = { vault: { getMarkdownFiles: () => files, getAbstractFileByPath: (p: string) => files.find(f => f.path === p), on() {} }, metadataCache: { getFileCache: (f: FixtureFile) => ({ frontmatter: facts[f.path] }), resolvedLinks: links, on: (n: string, fn: Function) => events.set(n, fn) } };
+  const plugin: any = new GraphPlugin(app, {} as any); plugin.settings = defaults('p@1');
+  Object.assign(plugin.settings.declaration, { identity: [{ key: 'id' }], display: { reifiedAsNodes: true } });
+  plugin.settings.declaration.edges.unshift({ name: 'relation', kind: 'reified', sourceProperty: 'source', targetProperty: 'target' });
+  plugin.app = app; plugin.register = () => {}; plugin.registerEvent = () => {};
+  let saves = 0, cacheAttempts = 0, projects = 0, layouts = 0, hold = false, release!: () => void;
+  let begun!: () => void, running = Promise.resolve();
+  plugin.saveData = async () => { saves++; }; plugin.resetStore = () => {};
+  plugin.store = { async latest() {}, async write() { cacheAttempts++; throw Error('Buffer is not defined'); } };
+  const source = { get: (path: string) => ({ source: 'derived', state: 'current', verified: true, frontmatter: facts[path] }) };
+  plugin.propertySource = source;
+  plugin.adapter = new LocalAdapter(app, plugin, 'p@1', 5000, () => plugin.notify(), true, plugin.settings.declaration, source);
+  const rows = new Map<string, any>();
+  plugin.pipeline = { recycle() {}, async request(revision: number, r: any) {
+    switch (r.kind) {
+      case 'configure': return { declarationHash: 'd', layoutHash: 'l', ingestHash: String(r.config.declaration.display.reifiedAsNodes) };
+      case 'rows': if (r.reset) rows.clear(); for (const row of unpackRows(r.columns)) rows.set(row.path, row); for (const p of r.removed) rows.delete(p); return;
+      case 'project': projects++; return { nodes: 2, edges: 1, rows: 3, ruleNotes: { relation: 1 }, unresolved: 0, quarantined: [], meta: { key: 'k' } };
+      case 'detail': return { projection: {}, visible: new Uint8Array([1, 1]), colors: new Uint32Array(2), explore: { visible: new Uint8Array([1, 1]) }, view: 1 };
+      case 'layout':
+        layouts++; if (hold) { hold = false; begun(); await new Promise<void>(r => { release = r; }); }
+        return { positions: new Float32Array(4), milliseconds: 1, cached: false };
+      case 'encode': return {};
+    }
+  } };
+  const view: any = new GraphView(null as any, plugin);
+  Object.assign(view, { app, contentEl: { dataset: {} }, status: new ControlElement(), statusSummary: new ControlElement(), showGroups() {} });
+  plugin.subscribe(() => running = view.refresh());
+  // Flush represents the adapter's 5-second debounce, without wall-clock sleeps.
+  let irrelevant = 0;
+  const burst = () => { for (const f of files) { facts[f.path].unprojected = ++irrelevant; events.get('changed')!(f); events.get('resolve')!(f); } events.get('resolved')!(); plugin.adapter.index.flush(); };
+  try {
+    await view.refresh(); expect(layouts).toBe(1); expect(view.contentEl.dataset.verified).toBe('false');
+    const started = new Promise<void>(r => { begun = r; }); hold = true;
+    let switched = false; const switching = setRelationshipDisplay(plugin, false).then(() => { switched = true; });
+    await started; expect(switched).toBe(false);
+    burst(); burst(); burst(); // unchanged resolver batches during a layout longer than debounce
+    release(); await switching; expect(switched).toBe(true);
+    expect(projects).toBe(2); expect(layouts).toBe(2); expect(saves).toBe(1);
+    for (let elapsed = 0; elapsed < 120000; elapsed += 5000) { burst(); await running; }
+    expect(projects).toBe(2); expect(layouts).toBe(2); // two-minute simulated settle window
+    expect(plugin.settings.declaration.display.reifiedAsNodes).toBe(false);
+    // A declared edit is not swallowed; another edit during layout queues exactly one follow-up.
+    const next = new Promise<void>(r => { begun = r; }); hold = true;
+    facts['relation.md'].target = 'a'; events.get('changed')!(files[2]); plugin.adapter.index.flush(); await next;
+    facts['relation.md'].target = 'b'; events.get('changed')!(files[2]); plugin.adapter.index.flush();
+    release(); await running;
+    expect(rows.get('relation.md').properties.target).toBe('b'); expect(projects).toBe(4);
+    // Readiness is meaningful even with unchanged rows. Cache failure never schedules a retry.
+    for (const f of files) links[f.path] = {};
+    burst(); await running; expect(view.contentEl.dataset.verified).toBe('true'); expect(projects).toBe(5);
+    expect(cacheAttempts).toBe(1); expect(view.contentEl.dataset.cacheError).toContain('Buffer is not defined');
+    for (let i = 0; i < 24; i++) { burst(); await running; }
+    expect(projects).toBe(5); expect(cacheAttempts).toBe(1);
+  } finally { plugin.adapter.index.dispose(); await view.onClose(); }
+});

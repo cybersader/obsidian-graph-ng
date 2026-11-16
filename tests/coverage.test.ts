@@ -114,7 +114,7 @@ test('every edge found is drawn or not drawn for one named reason, every reason 
   expect(x.drawn + x.parts.reduce((s, q) => s + q.count, 0)).toBe(x.total); expect(x.total).toBe(p.source.length + 1 + 2 + 2);
   // Rendered: drawn plus every reason row equals Edges found; each reason with a cause is a button to it.
   const calls: unknown[] = [], host: any = new ControlElement();
-  renderInformation(host, '', 'ready', r, e, { relationships: () => calls.push(['relationships']), display: v => calls.push(['display', v]), filter: i => calls.push(['filter', i]) });
+  renderInformation(host, '', 'ready', r, e, { relationships: () => calls.push(['relationships']), display: v => { calls.push(['display', v]); }, filter: i => calls.push(['filter', i]) });
   const edgeRows = host.querySelectorAll('details').find((h: any) => h.dataset.info === 'edges');
   const value = (row: any) => Number(row.querySelector('.graph-ng-count').textContent.replace(/,/g, ''));
   const rowsOf = edgeRows.querySelectorAll('.graph-ng-stat').filter((s: any) => !s.classes.has('graph-ng-stat-sub') && s.querySelector('.graph-ng-stat-label').textContent !== 'Edge accounting');
@@ -165,7 +165,7 @@ test('relationship display has one explicit save/rebuild switch, separate from s
   e.carrierHidden = hiddenBy(carriers, e.filters); expect(e.carrierHidden).toEqual([4]);
   const r: InformationReport = { nodes: p.paths.length, edges: p.source.length, listed: rows.length, linksPending: false, provisional: false, unresolved: 0, duplicates: 0,
     rows: rows.length, ruleNotes: p.ruleNotes, rules: d.edges.map(x => x.name), vault: rows.length, excluded: [] };
-  const calls: unknown[] = [], host: any = new ControlElement(), act = { display: (nodes: boolean) => calls.push(['display', nodes]), remove: (i: number) => calls.push(['remove', i]) };
+  const calls: unknown[] = [], host: any = new ControlElement(), act = { display: (nodes: boolean) => { calls.push(['display', nodes]); }, remove: (i: number) => calls.push(['remove', i]) };
   renderInformation(host, '', 'ready', r, e, act);
   const show = host.querySelectorAll('button').find((b: any) => b.textContent === 'Show relationships as notes (save and rebuild)'); expect(show).toBeDefined();
   const display = host.querySelectorAll('details').find((c: any) => c.dataset.info === 'display');
@@ -237,7 +237,7 @@ test('relationship warning offers filter review without changing mode or filters
   const r: InformationReport = { nodes: p.paths.length, edges: p.source.length, listed: rows.length, linksPending: false, provisional: false, unresolved: 0, duplicates: p.quarantined.length, ruleNotes: p.ruleNotes };
   e.carrierHidden = carrierHiddenBy(relationshipNotes(rows, d)!, filters);
   const host: any = new ControlElement(), calls: unknown[] = [];
-  renderInformation(host, '', 'ready', r, e, { filter: i => calls.push(['filter', i]), display: n => calls.push(['display', n]), remove: i => calls.push(['remove', i]) });
+  renderInformation(host, '', 'ready', r, e, { filter: i => calls.push(['filter', i]), display: n => { calls.push(['display', n]); }, remove: i => calls.push(['remove', i]) });
   host.querySelector('.graph-ng-stat-warning').querySelectorAll('button').find((b: any) => b.getAttribute('aria-label') === 'Edit “kind is missing” filter').click();
   expect(calls).toEqual([['filter', 0]]);
 });

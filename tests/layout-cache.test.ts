@@ -48,6 +48,15 @@ async function boot(disk: MemoryAdapter, resolved: Record<string, Record<string,
 }
 const manifests = (disk: MemoryAdapter) => [...disk.files.keys()].filter(p => p.endsWith('/manifest.json'));
 
+test('successive provisional layouts reuse live coordinates without persisting an incomplete generation', async () => {
+  const disk = new MemoryAdapter(), app = await boot(disk, {});
+  try {
+    const first = await app.open(); expect(first.verified).toBe(false); expect(first.streamed).toBeGreaterThan(0);
+    const next = await app.open(); expect(next.verified).toBe(false); expect(next.layout.reused).toBe('all');
+    expect(next.positions).toEqual(first.positions); expect(next.streamed).toBe(0); expect(disk.files.size).toBe(0);
+  } finally { app.dispose(); }
+});
+
 test('(a) a second open of an unchanged graph is an exact hit: no layout iterations, no disk read, same positions', async () => {
   const disk = new MemoryAdapter(), app = await boot(disk, graph());
   try {

@@ -374,6 +374,39 @@ test('worker position events carry actual cold and warm solver iteration limits'
     await p.request(2, { kind: 'configure', config: { ...config, layout: { ...layout, iterations: 7, relaxIterations: 3 }, streamEveryIterations: 2 } });
     await p.request(2, { kind: 'rows', columns: packRows([{ path: 'c.md', properties: {} }], declaration) });
     await p.request(2, { kind: 'project', complete: true }); await p.request(2, { kind: 'layout' });
-    expect(events).toEqual([[0, 3], [2, 3]]);
+    expect(events).toEqual([[2, 3]]); // warm continuation never repaints the zero-step seed
+  } finally { p.dispose(); }
+});
+
+test('real edits queued during provisional layout warm-start by identity without a zero-step reset', async () => {
+  const p = pipeline(), streams: { revision: number; iteration: number }[] = [];
+  const d = { ...declaration, identity: [{ key: 'id' }], edges: [{ name: 'edge', kind: 'inline' as const, key: 'to', type: 'edge' }] };
+  const c = { ...config, declaration: d, layout: { ...layout, iterations: 20, relaxIterations: 6 }, streamEveryIterations: 1 };
+  const facts = Array.from({ length: 20 }, (_, i) => ({ path: `${String(i).padStart(2, '0')}.md`, properties: { id: String(i), ...(i === 0 ? { to: '1' } : {}) } }));
+  let follow: Promise<unknown> | undefined;
+  p.onPositions = e => {
+    streams.push({ revision: e.revision, iteration: e.iteration }); p.recycle(e.positions.buffer as ArrayBuffer);
+    if (e.revision === 1 && e.iteration === 5) {
+      // A real metadata edit arrives before the first layout finishes. RPCs serialize it behind layout.
+      follow = p.request(2, { kind: 'configure', config: c }).then(async () => {
+        await p.request(2, { kind: 'rows', columns: packRows([{ path: '00.md', properties: { id: '0', to: '2' } }], d) });
+        await p.request(2, { kind: 'project', complete: false });
+      });
+    }
+  };
+  try {
+    await p.request(1, { kind: 'configure', config: c });
+    await p.request(1, { kind: 'rows', columns: packRows(facts, d), reset: true });
+    await p.request(1, { kind: 'project', complete: false });
+    const first = await p.request<LayoutResult>(1, { kind: 'layout' });
+    expect(follow).toBeDefined(); await follow;
+    const next = await p.request<LayoutResult>(2, { kind: 'layout' });
+    expect(next.cached).toBe(false); expect(next.reused).toBe('some');
+    expect(streams.filter(e => e.revision === 2).map(e => e.iteration)).toEqual([1, 2, 3, 4, 5]);
+    expect(next.positions.slice(6)).toEqual(first.positions.slice(6));
+    await p.request(3, { kind: 'configure', config: { ...c, source: 'different-view' } });
+    await p.request(3, { kind: 'project', complete: false });
+    const isolated = await p.request<LayoutResult>(3, { kind: 'layout' });
+    expect(isolated.reused).toBeUndefined(); expect(streams.some(e => e.revision === 3 && e.iteration === 0)).toBe(true);
   } finally { p.dispose(); }
 });

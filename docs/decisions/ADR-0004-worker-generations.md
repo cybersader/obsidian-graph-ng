@@ -24,6 +24,12 @@ The last compatible group summary can paint before metadata is ready, explicitly
 
 External aggregate files have finite default byte/group/pair/carrier limits and remain labelled **unverified external aggregate**; they never merge into local rows. The headless export labels its caller-supplied one-view input and writes only to the explicit command-line destination. There is no in-app export or automatic vault export.
 
+### Metadata churn and provisional continuation (unreleased)
+
+The streaming adapter retains exact equality stamps of acknowledged declared rows and their property coverage. These are ephemeral event-deduplication state, never a source of facts or a persisted property cache. Unchanged per-file notifications do not queue a rebuild; real row/readiness changes still do. Events during an unacknowledged ingestion batch remain pending, including edits that revert to a previously acknowledged value. Existing refresh serialization coalesces real changes behind an active layout, and settings apply now waits for that shared refresh to settle.
+
+A completed provisional layout retains identity-keyed positions and edge hashes only in worker memory. Successive provisional generations with matching declaration, source, producer, layout, format and grouping can continue from them; extensive churn uses the full iteration budget while retaining coordinates rather than reseeding. Warm streams omit the iteration-zero seed. An exact verified saved generation still takes precedence over provisional hints. Source/configuration changes discard incompatible hints, persisted identity refusal/quarantine is unchanged, and incomplete generations remain ineligible for disk writes. Progress remains stage-local, not a promise that unrelated source changes share one percentage budget.
+
 ## Declaration compatibility
 
 Declaration v2 uses `sourceProperty`, `targetProperty`, `typeProperty`; v1 is migrated on input and never emitted by settings saves. Folder prefixes accept strings or path-segment arrays. Persisted declaration prefixes use segments so ordinary long nested paths do not resemble opaque credentials to conservative settings-sharing scanners. This does not weaken that scanner, permit credentials, or guarantee that every arbitrary user string is shareable. A single long opaque folder segment can still be refused by the host.

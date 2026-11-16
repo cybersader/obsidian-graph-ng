@@ -40,7 +40,7 @@ export default class GraphPlugin extends Plugin {
   settings!: Settings;
   adapter!: LocalAdapter;
   generations: Record<string, Generation> = Object.create(null);
-  private listeners = new Set<() => void>();
+  private listeners = new Set<() => void | Promise<void>>();
   private writes: Promise<void> = Promise.resolve();
   private work: Promise<unknown> = Promise.resolve();
   pipeline!: WorkerPipeline;
@@ -118,8 +118,8 @@ export default class GraphPlugin extends Plugin {
     changed();
   }
   resetAdapter() { this.adapter?.index.dispose(); this.adapter = new LocalAdapter(this.app, this, this.linkProducer, this.settings.debounceMs, () => this.notify(), true, this.settings.declaration, this.propertySource); this.ingestedHash = ''; }
-  subscribe(listener: () => void) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
-  notify() { for (const fn of this.listeners) fn(); }
+  subscribe(listener: () => void | Promise<void>) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
+  notify() { return Promise.all([...this.listeners].map(fn => fn())); }
   async open() {
     let leaf = this.app.workspace.getLeavesOfType(VIEW)[0];
     if (!leaf) { leaf = this.app.workspace.getLeaf('tab'); await leaf.setViewState({ type: VIEW, active: true }); }
@@ -220,7 +220,7 @@ export default class GraphPlugin extends Plugin {
       this.settings = settings; this.adapter.configure(settings.declaration); this.resetStore();
       // Event registrations are owned by the original adapter; use its debounce only after reload.
       await this.save();
-    }); this.notify();
+    }); await this.notify();
   }
   async cache(generation: BinaryGeneration, current = () => true) {
     if (!this.settings.persistLayout) return;
@@ -253,7 +253,7 @@ export class GraphView extends ItemView {
     relationships: () => this.explorePanel?.show('appearance'),
     exclusions: () => { const modal = new Modal(this.app), tab = new GraphSettings(this.plugin); modal.setTitle('Graph declaration'); tab.containerEl = modal.contentEl; tab.display(); modal.open(); },
     duplicates: () => { this.toGroups(); this.explorePanel?.show('members'); const list = this.panel.querySelector<HTMLDetailsElement>('.graph-ng-quarantine'); if (list) { list.open = true; list.querySelector('summary')?.focus(); list.scrollIntoView({ block: 'nearest' }); } },
-    display: (nodes: boolean) => { setRelationshipDisplay(this.plugin, nodes).catch(e => new Notice(String(e))); },
+    display: (nodes: boolean) => setRelationshipDisplay(this.plugin, nodes).catch(e => { new Notice(String(e)); }),
     remove: (i: number) => { if (i < this.view.filters.length) this.setView({ ...this.view, filters: this.view.filters.filter((_, j) => j !== i) }); },
     filter: (i: number) => this.explorePanel?.focusFilter(i),
   };
@@ -312,6 +312,7 @@ export class GraphView extends ItemView {
   /** Disclosure sections the user opened; a re-render restores them instead of collapsing. */
   private openSections = new Set<string>();
   private refreshing = false;
+  private refreshWork?: Promise<void>;
   private closed = false;
   private positions?: Float32Array;
   private visible?: Uint8Array;
@@ -405,7 +406,7 @@ export class GraphView extends ItemView {
     }, this.view, this.toolbar);
     // Creating even a probe GL context can block; the initial group view needs no GPU.
     this.registerEvent(this.app.workspace.on('css-change', () => this.renderer?.refreshTheme?.()));
-    this.unsubscribe = this.plugin.subscribe(() => { void this.refresh(); });
+    this.unsubscribe = this.plugin.subscribe(() => this.refresh());
     const source = this.plugin.propertySource;
     void Promise.resolve().then(() => !this.closed && source === this.plugin.propertySource && source?.load?.()).catch(() => {});
     await this.refresh();
@@ -424,12 +425,14 @@ export class GraphView extends ItemView {
     this.statusText = this.contentEl.dataset.state === 'building' ? this.statusText : this.provisional ? pendingText(this.report) : '';
   }
   async onClose() { this.explorePanel?.dispose(); this.contributionPage.clear(); this.closed = true; this.renderRevision++; this.revision++; this.renderer?.dispose(); this.unsubscribe?.(); }
-  async refresh() {
-    if (this.closed) return;
-    if (this.refreshing) { this.queued = true; return; }
+  refresh(): Promise<void> {
+    if (this.closed) return Promise.resolve();
+    if (this.refreshing) { this.queued = true; return this.refreshWork!; }
     this.refreshing = true;
-    try { do { this.queued = false; await this.plugin.serialize(() => this.refreshOnce()); } while (this.queued && !this.closed); }
-    finally { this.refreshing = false; if (!this.closed) this.explorePanel?.render(); }
+    return this.refreshWork = (async () => {
+      try { do { this.queued = false; await this.plugin.serialize(() => this.refreshOnce()); } while (this.queued && !this.closed); }
+      finally { this.refreshing = false; if (!this.closed) this.explorePanel?.render(); }
+    })();
   }
   private async refreshOnce() {
     const scope = JSON.stringify([this.plugin.sourceIdentity, this.plugin.settings.projectionFile, this.plugin.settings.groupLevel, this.plugin.settings.declaration.groups, this.view?.group ?? null]);

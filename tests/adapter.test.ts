@@ -57,10 +57,11 @@ test('empty/absent YAML is valid; parse errors, truncation and absent facts use 
 test('property verification cannot complete a declared native-edge graph; native readiness later upgrades it', async () => {
   const f = await propertyFixture({ get: p => fact(p, { verified: true }) }, true);
   try {
-    await f.rows(); expect(f.adapter.factsComplete()).toBe(false);
+    const held = new Map((await f.rows()).map(row => [row.path, row])); expect(f.adapter.factsComplete()).toBe(false);
     f.links['a.md'] = { 'b.md': 1 }; f.links['b.md'] = {};
     f.events.get('resolve')!(f.files[0]); f.events.get('resolve')!(f.files[1]); f.adapter.index.flush();
-    const p = buildProjection(await f.rows(false), f.declaration);
+    for (const row of await f.rows(false)) held.set(row.path, row);
+    const p = buildProjection([...held.values()], f.declaration);
     expect(p.source.length).toBe(1); expect(f.adapter.linksPending()).toBe(false); expect(f.adapter.factsComplete()).toBe(true);
   } finally { f.adapter.index.dispose(); }
 });
@@ -163,13 +164,13 @@ test('cancelled streaming batches remain pending, invalidate coverage, and force
   const rows: FactRow[] = []; let reset = false;
   for await (const batch of adapter.columns(false, { chunkRows: 1, budgetMs: 8 })) { reset ||= batch.reset; rows.push(...unpackRows(batch.columns)); }
   expect(reset).toBe(true); expect(rows.map(r => r.properties.id)).toEqual(['changed-a', 'changed-b', 'c.md']); expect(adapter.coverage()).toEqual({ indexed: 3, listed: 3 });
-  // A newer event for a yielded path must survive acknowledgement of its previous value.
+  // Even a reversion to the last acknowledged value must survive an in-flight newer batch.
   values.set('a.md', 'first'); events.get('changed')!(files[0]); adapter.index.flush();
   const active = adapter.columns(false, { chunkRows: 1, budgetMs: 8 }); await active.next();
-  values.set('a.md', 'second'); events.get('changed')!(files[0]); adapter.index.flush();
+  values.set('a.md', 'changed-a'); events.get('changed')!(files[0]); adapter.index.flush();
   while (!(await active.next()).done) {}
   const next: FactRow[] = []; for await (const b of adapter.columns(false, { chunkRows: 1, budgetMs: 8 })) next.push(...unpackRows(b.columns));
-  expect(next.map(r => r.properties.id)).toEqual(['second']); adapter.index.dispose();
+  expect(next.map(r => r.properties.id)).toEqual(['changed-a']); adapter.index.dispose();
 });
 
 test('property-only streaming declarations never extract unused producer targets', async () => {

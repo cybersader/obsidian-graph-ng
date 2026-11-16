@@ -28,7 +28,12 @@ export class LocalAdapter {
   private dirty = new Map<string, number>();
   private changeVersion = 0;
   private reloadRequired = true;
-  invalidate() { this.epoch++; this.reloadRequired = true; this.seedComplete = false; this.indexed.clear(); this.propertyVerified.clear(); this.linksResolved = false; }
+  /** Exact, ephemeral input stamps, never a source of rows. Adopt only after worker acknowledgement. */
+  private sent = new Map<string, string>();
+  private sentComplete = false;
+  private ingesting = false;
+  private stamp(row: FactRow | undefined) { return row && JSON.stringify([row, this.indexed.has(row.path), this.propertyVerified.has(row.path)]); }
+  invalidate() { this.epoch++; this.reloadRequired = true; this.seedComplete = false; this.indexed.clear(); this.propertyVerified.clear(); this.sent.clear(); this.sentComplete = false; this.linksResolved = false; }
   setPropertySource(source?: PropertySource) { this.propertySource = source; this.invalidate(); }
   private declaration?: GraphDeclaration;
   private excluded: string[] = [];
@@ -38,7 +43,17 @@ export class LocalAdapter {
   private keys?: string[];
   constructor(readonly app: App, plugin: Plugin, readonly producer: string, debounceMs: number, onChange: (changed: Set<string>) => void, private streaming = false, declaration?: GraphDeclaration, private propertySource?: PropertySource) {
     this.declaration = declaration; this.keys = declaration ? declaredKeys(declaration) : undefined; this.excluded = (declaration?.exclude ?? []).map(folderPath);
-    this.index = new IncrementalIndex(path => this.streaming ? undefined : this.read(path), changed => { for (const path of changed) { this.dirty.set(path, ++this.changeVersion); if (this.streaming) { this.indexed.delete(path); this.propertyVerified.delete(path); } } onChange(changed); }, debounceMs);
+    this.index = new IncrementalIndex(path => this.streaming ? undefined : this.read(path), changed => {
+      // Native resolution can report the same facts repeatedly while a large vault hydrates.
+      // Compare the declared input, not host object identity or irrelevant metadata/body fields.
+      // During ingestion the worker may already hold an unacknowledged batch, including a
+      // value later reverted by an event. Keep those events rather than compare older stamps.
+      if (this.streaming && !this.ingesting) changed = new Set([...changed].filter(path => {
+        try { return this.stamp(this.read(path)) !== this.sent.get(path); } catch { return true; }
+      }));
+      for (const path of changed) { this.dirty.set(path, ++this.changeVersion); if (this.streaming) { this.indexed.delete(path); this.propertyVerified.delete(path); } }
+      if (!this.streaming || changed.size || (!this.ingesting && this.factsComplete() !== this.sentComplete)) onChange(changed);
+    }, debounceMs);
     const files = this.markdown();
     this.paths = new Set(files.map(f => f.path));
     if (!this.streaming) this.index.seed([...this.paths]);
@@ -91,20 +106,24 @@ export class LocalAdapter {
     if (!this.declaration) throw new Error('Declared columns required');
     // A cancelled generator can have partially changed the worker; its next pass resets it.
     reset ||= this.reloadRequired;
-    if (reset) { this.paths = new Set(this.markdown().map(f => f.path)); this.indexed.clear(); this.propertyVerified.clear(); }
+    if (reset) { this.paths = new Set(this.markdown().map(f => f.path)); this.indexed.clear(); this.propertyVerified.clear(); for (const path of this.sent.keys()) if (!this.paths.has(path)) this.sent.delete(path); }
     const turn = this.epoch, source = this.propertySource;
     const current = () => { if (turn !== this.epoch || source !== this.propertySource) throw new Error('Property source changed'); };
     const pending = new Map(this.dirty), paths = reset ? [...this.paths] : [...pending.keys()];
-    let batch: FactRow[] = [], removed: string[] = [], acknowledged: string[] = [], start = performance.now(), first = reset, finished = false;
+    let batch: FactRow[] = [], removed: string[] = [], acknowledged: [string, string | undefined][] = [], start = performance.now(), first = reset, finished = false;
     const acknowledge = () => {
       current();
-      for (const path of acknowledged) if (this.dirty.get(path) === pending.get(path)) this.dirty.delete(path);
+      for (const [path, stamp] of acknowledged) {
+        if (stamp === undefined) this.sent.delete(path); else this.sent.set(path, stamp);
+        if (this.dirty.get(path) === pending.get(path)) this.dirty.delete(path);
+      }
       acknowledged = [];
     };
+    this.ingesting = true;
     try {
       for (const path of paths) {
         current();
-        const row = this.read(path); if (row) batch.push(row); else removed.push(path); acknowledged.push(path);
+        const row = this.read(path); if (row) batch.push(row); else removed.push(path); acknowledged.push([path, this.stamp(row)]);
         if (batch.length + removed.length >= options.chunkRows || performance.now() - start >= options.budgetMs) {
           yield { columns: packRows(batch, this.declaration), removed, reset: first };
           // Resuming acknowledges only this epoch and version of each dirty path.
@@ -117,8 +136,8 @@ export class LocalAdapter {
       this.reloadRequired = false;
       this.seedComplete = this.indexed.size === this.paths.size;
       if (this.seedComplete && [...this.paths].every(path => Object.hasOwn(this.app.metadataCache.resolvedLinks, path))) this.linksResolved = true;
-      finished = true;
-    } finally { if (!finished) this.invalidate(); }
+      this.sentComplete = this.factsComplete(); finished = true;
+    } finally { this.ingesting = false; if (!finished) this.invalidate(); }
   }
   /** Coverage-only audit: verification cannot change worker rows or their generation. */
   async verifyProperties(options: IngestOptions) {

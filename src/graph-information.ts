@@ -28,7 +28,7 @@ type Explored = Pick<ExploreResult, 'visible' | 'matched' | 'nodes' | 'filters' 
 /** One breakdown row. `go` leads to its cause: filter `go`'s chip (past the last chip: the Filters panel), -1 the search box, -2 relationship display controls. */
 export interface Part { icon: string; label: string; count: number; lines?: boolean; go?: number }
 /** Breakdown actions: switch relationship notes between lines and notes, remove one filter, or open Filters at one (negative: search). */
-export interface InformationActions { relationships?(): void; display?(nodes: boolean): void; remove?(filter: number): void; filter?(at: number): void; duplicates?(): void; exclusions?(): void }
+export interface InformationActions { relationships?(): void; display?(nodes: boolean): void | Promise<void>; remove?(filter: number): void; filter?(at: number): void; duplicates?(): void; exclusions?(): void }
 /** Every markdown note in the vault, in exactly one part; the parts sum to `total`. `hidden` are notes the view hides. */
 export interface Accounting { total: number; dots: number; lines: number; hidden: number; parts: Part[]; complete: boolean }
 /** Shared count text: locale digits, a counted noun, a total, and one tabular count element. */
@@ -157,7 +157,10 @@ function renderBody(host: HTMLElement, message: string, state: string | undefine
   if (Object.keys(r.ruleNotes ?? {}).length) {
     const nodes = !!r.relationshipNodes, display = section('display', 'spline', 'Relationship display', nodes ? 'Notes' : 'Lines');
     for (const [rule, count] of Object.entries(r.ruleNotes!)) statRow(display, nodes ? 'circle-dot' : 'spline', `${rule} relationship notes`, num(count));
-    if (act.display) display.createEl('button', { text: `Show relationships as ${nodes ? 'lines' : 'notes'} (save and rebuild)` }).onclick = () => act.display!(!nodes);
+    if (act.display) {
+      const button = display.createEl('button', { text: `Show relationships as ${nodes ? 'lines' : 'notes'} (save and rebuild)` });
+      button.onclick = async () => { button.disabled = true; try { await act.display!(!nodes); } finally { button.disabled = false; } };
+    }
     panelHelp(display, 'Lines / Notes', 'Lines join endpoints; Notes draw dots. Changing display saves and rebuilds; filters stay active.');
   }
   const layout = section('layout', 'timer', 'Layout', r.layout?.cached || r.layout?.reused ? 'Reused' : r.layout ? 'Computed' : 'Pending');
