@@ -275,8 +275,8 @@ test('TBR-3 Members exposes controlled region and expanded state across open, sw
 
 async function softwareNavigationFixture(maxNodes: number, maxEdges: number) {
   const f = await navigationFixture(), p = f.renderer.projection;
-  Object.assign(p, { source: new Uint32Array([0, 1, 0]), target: new Uint32Array([1, 2, 2]), type: new Uint32Array(3) });
-  Object.assign(f.renderer, { gpu: false, gl: null, ctx: {}, edgeOn: new Uint8Array(3) });
+  Object.assign(p, { offsets: new Uint32Array([0, 2, 4, 6]), source: new Uint32Array([0, 1, 0]), target: new Uint32Array([1, 2, 2]), type: new Uint32Array(3) });
+  Object.assign(f.renderer, { gpu: false, gl: null, ctx: {}, edgeOn: new Uint8Array(3), edgeDrawn: (e: number) => !!f.renderer.edgeOn[e] && !!f.renderer.filterVisible[p.source[e]!] && !!f.renderer.filterVisible[p.target[e]!] });
   Object.assign(f.view.plugin.settings, { canvasMaxDetailNodes: maxNodes, canvasMaxDetailEdges: maxEdges });
   Object.assign(f.view, { renderer: f.renderer, detailRenderer: f.renderer, visible: new Uint8Array([1, 1, 1]), detailScope: new Uint8Array([1, 1, 0]), gpu: { available: false, reason: 'Synthetic software renderer' } });
   f.view.contentEl.dataset.mode = 'nodes'; f.renderer.setView(f.view.detailScope, {}); f.view.explorePanel.render();

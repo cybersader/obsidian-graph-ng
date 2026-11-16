@@ -6,7 +6,7 @@ import { yieldTask } from './core/scheduler';
 import { overviewScale } from './label-layout';
 interface Glyph { x: number; y: number; w: number; advance: number }
 /** Per level: glyph quads, placed nodes in degree-rank order and each node's degree-weighted size factor. */
-export interface LabelAtlas { canvas: HTMLCanvasElement; levels: Float32Array[]; nodes: Uint32Array[]; scales: Float32Array[] }
+export interface LabelAtlas { canvas: HTMLCanvasElement; levels: Float32Array[]; nodes: Uint32Array[]; scales: Float32Array[]; widths: Map<number, number> }
 /** Graduated labels, ranked focus (0) > direct (1) > ancestor (2) > 2-hop (3) > same group (4), then degree and id; `near` is the
  * touched list from `focusTiers`, `state` its tier bytes. Candidates are capped like the atlas and
  * placed with the same budget and collision grid. Runs once per focus or level-of-detail change. */
@@ -77,5 +77,5 @@ export async function buildLabels(p: RenderProjection, grid: Pick<PickGrid, 'pos
     levels.push(new Float32Array(data)); nodes.push(Uint32Array.from(placed, b => b.node)); scales.push(Float32Array.from(placed, b => grow.get(b.node)!));
     await yieldTask(); if (!current()) throw new Error('Renderer superseded');
   }
-  return { canvas, levels, nodes, scales };
+  return { canvas, levels, nodes, scales, widths };
 }

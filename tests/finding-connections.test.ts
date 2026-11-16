@@ -1,6 +1,6 @@
 import { test, expect } from 'bun:test';
 import { readFileSync } from 'node:fs';
-import { focusTiers, incidentEdges, tierLift, liftRadius, strongEdge, offscreenPips, tierCounts, shownTier, shownEdgeTier, TIERS, ALL_TIERS, PIP_DIRECTIONS } from '../src/render-data';
+import { focusTiers, incidentEdges, tierLift, liftRadius, strongEdge, focusAlpha, offscreenPips, tierCounts, shownTier, shownEdgeTier, TIERS, ALL_TIERS, PIP_DIRECTIONS } from '../src/render-data';
 
 // Graduated connection highlighting finding aids: pure helpers and the shader scalar expressions
 // they mirror. Deterministic only; no GPU raster, native visibility or frame-time claim.
@@ -43,14 +43,13 @@ test('strong focus lines: shader expressions equal the shared helper; zero opaci
   const edge = shader('edgeVertex'), alphaLine = expr(edge.match(/if \(strong > 0\.\) alpha = ([^;]+);/)![1]!), wide = expr(edge.match(/if \(strong > 0\.\) wide \*= ([^;]+);/)![1]!);
   for (const tier of [0, 127, 128, 254, 255]) for (const alpha of [0, .01, .3, 1]) for (const focus of [0, .4, 1]) {
     const [a, w] = strongEdge(tier, alpha, focus);
-    expect(alphaLine({ tier, alpha, focus })).toBeCloseTo(a, 12); expect(wide({ tier, focus })).toBeCloseTo(w, 12);
+    expect(alphaLine({ tier, alpha, focus, strong: .95 })).toBeCloseTo(a, 12); expect(wide({ tier, focus })).toBeCloseTo(w, 12);
     if (!alpha) expect(a).toBe(0);
     expect(a).toBeLessThanOrEqual(1);
   }
   for (const alpha of [.05, .3]) { const [d] = strongEdge(255, alpha, 1), [c] = strongEdge(128, alpha, 1), [x] = strongEdge(0, alpha, 1); expect(d).toBe(.95); expect(c).toBe(alpha * .5); expect(x).toBeCloseTo(alpha * .35, 12); }
-  // Direction ramp along the focus line: 35% at the source end, full at the target end, only when strong.
-  expect(edge).toContain('if (strong > 0. && tier > 200u) alpha *= mix(1., mix(.35, 1., u), focus);');
-  expect(mix(1, mix(.35, 1, 0), 1)).toBeCloseTo(.35, 12);
+  // Uniform fan opacity matches Canvas union strokes; explicit direction remains independent.
+  expect(edge).toContain('direction > .5 ? mix(.12, 1., u) : 1.');
 });
 test('legend masks: a switched-off tier draws as context, the focus never does', () => {
   for (const [, byte] of TIERS) expect(shownTier(byte, ALL_TIERS)).toBe(byte);
@@ -96,4 +95,23 @@ test('off-screen pips stay O(direct connections): a 50,000-point projection is o
   for (let i = 0; i < n; i++) { const a = i * 2.399963; xy[i * 2] = 400 + (300 + i) * Math.cos(a); xy[i * 2 + 1] = 300 + (300 + i) * Math.sin(a); }
   const started = performance.now(), pips = offscreenPips(ids, xy, 800, 600, 20), ms = performance.now() - started;
   expect(pips.reduce((s, p) => s + p.count, 0)).toBeLessThanOrEqual(n); expect(pips.length).toBe(8); expect(ms).toBeLessThan(250);
+});
+
+
+test('selected hub fan has a continuous degree-scaled target without the 50-connection cutoff', () => {
+  const alphaLine = expr(shader('edgeVertex').match(/if \(strong > 0\.\) alpha = ([^;]+);/)![1]!);
+  let last = 1;
+  for (const degree of [0, 1, 24, 49, 50, 51, 483, 5000]) {
+    const strong = focusAlpha(degree); expect(strong).toBeLessThanOrEqual(last); last = strong;
+    expect(strong).toBeGreaterThanOrEqual(.18);
+    for (const alpha of [0, .005, .06, .8]) for (const focus of [0, .4, 1]) {
+      const [a] = strongEdge(255, alpha, focus, strong);
+      expect(alphaLine({ tier: 255, alpha, focus, strong })).toBeCloseTo(a, 12);
+      if (!alpha) expect(a).toBe(0);
+      if (alpha && focus === 1) expect(a).toBeCloseTo(strong, 12);
+    }
+  }
+  expect(focusAlpha(483)).toBeGreaterThan(.21); expect(focusAlpha(483)).toBeLessThan(.22);
+  expect(focusAlpha(50) - focusAlpha(51)).toBeLessThan(.01);
+  expect(source).not.toContain('focusEdges && this.directs.length <= 50');
 });

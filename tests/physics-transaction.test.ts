@@ -1368,8 +1368,8 @@ test('WebGL picking follows the ink share and long-line fade without culling hov
   let share = 0, reach = Infinity;
   r[k('edgeQuiet')] = () => [share, reach];
   try {
-    // Canvas still draws every admitted line, irrespective of the WebGL sampling budget.
-    expect(pick()).toBe(1); r.gl = {};
+    // Both paths omit the same context edges, including from picking.
+    expect(pick()).toBe(-1); share = 1; expect(pick()).toBe(1); share = 0; r.gl = {};
     expect(pick()).toBe(-1); share = 1; expect(pick()).toBe(1);
     reach = 1; expect(pick()).toBe(-1); reach = Infinity; share = 0;
     r[k('hoveredEdge')] = 1; expect(pick()).toBe(1); r[k('hoveredEdge')] = -1;
@@ -1513,4 +1513,18 @@ test('navigator bounds group headers, searches beyond the page, and preserves co
   r[k('focusNote')](1); const section = card.querySelectorAll('button').find((b: any) => b.className === 'graph-ng-connection-group');
   expect(section.attributes['aria-expanded']).toBe('true'); section.click(); r.card.show(1);
   expect(card.querySelectorAll('button').find((b: any) => b.className === 'graph-ng-connection-group').attributes['aria-expanded']).toBe('false');
+});
+
+
+test('overview base radius is shared by Canvas/WebGL, preserves degree sizing and honours opt-out', async () => {
+  const f = await graduated([[0, 1], [0, 2], [0, 3]], 4), { r, k, settings } = f;
+  r.visibleNodes = 100000; r.camera.ratio = r[k('homeRatio')] * 100;
+  const original = r.gl;
+  for (const size of [.4, 3, 12]) {
+    settings.nodeSize = size; settings.visuals.zoomAdapt = true;
+    r.gl = null; const canvas = r[k('baseNodeRadius')](); r.gl = {};
+    expect(r[k('baseNodeRadius')]()).toBe(canvas); expect(canvas).toBeGreaterThanOrEqual(Math.min(size, 1.2)); expect(canvas).toBeLessThanOrEqual(size);
+    settings.visuals.zoomAdapt = false; r.gl = null; expect(r[k('baseNodeRadius')]()).toBe(size);
+  }
+  r.gl = original;
 });

@@ -142,9 +142,10 @@ export function tierCounts(focus: number, nodes: readonly number[], state: Uint8
 export const tierLift = (g: number, isFocus: boolean, f: number, px: number) => px * f * (isFocus || g > .9 ? 1 : g > .7 ? .75 : g > .4 ? .57 : 0);
 /** Smooth minimum radius: unchanged at or above 2 * lift, never below lift, C1-continuous between. */
 export const liftRadius = (r: number, lift: number) => lift > 0 && r < 2 * lift ? lift + r * r / (4 * lift) : r;
-/** Strong focus edges, applied after `tierEdge` when on: focus-incident strokes go near-opaque and
- * widen a further 60%, neighbours-of-neighbours strokes halve, context strokes keep 35%. Zero stays zero. */
-export const strongEdge = (tier: number, alpha: number, f: number) => [tier > 200 ? alpha + ((alpha > 0 ? .95 : 0) - alpha) * f : alpha * (1 - f * (tier ? .5 : .65)), 1 + f * (tier > 200 ? .6 : 0)] as const;
+/** Strong focus edges: a continuous degree-scaled target (at least .18), no hub cutoff.
+ * A uniform fan replaces the extra direction ramp; the explicit direction setting is independent. */
+export const focusAlpha = (degree: number) => Math.max(.18, .95 / Math.sqrt(Math.max(1, degree / 24)));
+export const strongEdge = (tier: number, alpha: number, f: number, target = .95) => [tier > 200 ? alpha + ((alpha > 0 ? target : 0) - alpha) * f : alpha * (1 - f * (tier ? .5 : .65)), 1 + f * (tier > 200 ? .6 : 0)] as const;
 export interface Pip { x: number; y: number; sector: number; count: number; node: number }
 /** Off-screen indicators: points outside the w × h viewport are binned into `sectors` directions
  * around its centre; each bin yields one pip on the inset border along the ray to its nearest

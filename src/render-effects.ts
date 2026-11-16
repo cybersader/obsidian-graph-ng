@@ -96,10 +96,9 @@ export function zoomFade(v: Pick<Visuals, 'zoomAdapt' | 'edgeDensityReference'>,
   const crowd = visibleEdges * Math.max(zoom, 1e-6) * Math.sqrt(1024000 / Math.max(1, width * height)) / v.edgeDensityReference;
   return Math.min(1, Math.max(.35, 1 / Math.sqrt(crowd)));
 }
-/** Screen-space edge ink. WebGL draws about LINES whole context lines per pixel in the core of the web
- * (coverage near 1 − e^(−LINES)) at every zoom, at the normal line alpha; Canvas unions its strokes to
- * 1 − e^(−INK × opacity). LENGTH_FADE × the mean edge length is the screen length beyond which a line is
- * kept (WebGL) or faded (Canvas) as ref / length, so a long line adds no more ink than a typical one. */
+/** Screen-space edge ink. Both paths admit a LINES / overlap share of context lines.
+ * LENGTH_FADE × mean edge length limits long lines by reducing their admission threshold.
+ * Canvas unions the admitted strokes; WebGL blends them individually. */
 export const INK = .3, LINES = .2, LENGTH_FADE = 1.5;
 /** Sampled geometry of the drawn web in world units: mean edge length, mean length after the long-line
  * fade, and the core area (π × endpoint variance). Bounded: at most `samples` edges, recomputed only
@@ -122,8 +121,22 @@ export const overdraw = (ink: EdgeInk, edges: number, width: number, scale: numb
 /** Share of context lines WebGL draws when `layers` lines overlap a core pixel: LINES / layers, 1 when off or
  * sparse. Lines too faint to resolve add up to a grey veil; the same budget as fewer whole lines reads as structure. */
 export const inkShare = (v: Pick<Visuals, 'zoomAdapt'>, layers: number) => v.zoomAdapt && layers > 0 ? Math.min(1, LINES / layers) : 1;
-/** Canvas2D strokes one path per tier, so overlaps union instead of accumulating: coverage is
- * alpha × (1 − e^(−layers)). This alpha gives the same core coverage as the WebGL budget. */
+/** Stable weighted sampling without replacement. A view's eligible edges get unique quantiles,
+ * so importance redistributes (never enlarges) the line share. Hub spokes, declared interest and
+ * cross-group edges compete with deterministic hash ties. Rebuilt on view changes, not camera frames. */
+export function edgeRanks(source: Uint32Array, target: Uint32Array, offsets: Uint32Array, groups: Uint32Array | undefined, interest: Float32Array | undefined, drawn: (e: number) => boolean): Uint32Array {
+  const ranks = new Uint32Array(source.length), scores = new Float64Array(source.length), ids: number[] = [];
+  for (let e = 0; e < source.length; e++) if (drawn(e)) {
+    const a = source[e]!, b = target[e]!;
+    let k = Math.imul(e, 2654435769); k ^= k >>> 15; k = Math.imul(k, 2246822519);
+    const weight = 1 + Math.sqrt(Math.max(offsets[a + 1]! - offsets[a]!, offsets[b + 1]! - offsets[b]!)) + (groups && groups[a] !== groups[b] ? 2 : 0) + 4 * Math.max(interest?.[a] ?? 0, interest?.[b] ?? 0);
+    scores[e] = ((k ^ k >>> 13) >>> 8) / weight; ids.push(e);
+  }
+  ids.sort((a, b) => scores[a]! - scores[b]! || a - b);
+  ids.forEach((e, i) => ranks[e] = Math.floor((i + .5) * 16777216 / ids.length));
+  return ranks;
+}
+/** Historical union-alpha reference for the earlier haze receipts, not used by either renderer. */
 export const unionAlpha = (v: Pick<Visuals, 'zoomAdapt' | 'edgeOpacity'>, layers: number) => v.zoomAdapt && layers > 0 ? Math.min(1, (1 - Math.exp(-INK * v.edgeOpacity)) / (1 - Math.exp(-layers))) : 1;
 /** Screen length (CSS px) above which context lines fade as fadeLength / length. Grows without
  * bound as the web thins below one layer, so zoomed-in or sparse views keep every line. */

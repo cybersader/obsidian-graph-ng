@@ -1,7 +1,7 @@
 import { test, expect } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { defaults, validateVisuals, upgradeSettings, EDGE_MODES } from '../src/settings';
-import { edgeInk, overdraw, inkShare, unionAlpha, fadeLength, lengthFade, INK, LINES, LENGTH_FADE, type EdgeInk } from '../src/render-effects';
+import { edgeInk, edgeRanks, overdraw, inkShare, unionAlpha, fadeLength, lengthFade, INK, LINES, LENGTH_FADE, type EdgeInk } from '../src/render-effects';
 const source = readFileSync(new URL('../src/webgl-renderer.ts', import.meta.url), 'utf8');
 const edgeShader = source.match(/const edgeVertex = common \+ glsl`([\s\S]*?)`;/)![1]!;
 const visuals = (o: Partial<ReturnType<typeof defaults>['visuals']> = {}) => ({ ...defaults('links').visuals, edgeOpacity: .155, ...o });
@@ -59,7 +59,7 @@ test('length fade: a long line adds no more ink than a typical one, and only whi
 // The shader's stable line rank, evaluated in 32-bit unsigned arithmetic like GLSL.
 const rankOf = (id: number) => { let k = Math.imul(id, 2654435769) >>> 0; k = (k ^ k >>> 15) >>> 0; k = Math.imul(k, 2246822519) >>> 0; return ((k ^ k >>> 13) >>> 0) >>> 8; };
 test('edge shader keeps a stable share of whole context lines; focus tiers fade back to full alpha', () => {
-  expect(edgeShader).toContain('uint k = uint(gl_InstanceID) * 2654435769u; k ^= k >> 15u; k *= 2246822519u; float quiet = share * 16777216. > float((k ^ k >> 13u) >> 8u) ? 1. : 0.;');
+  expect(edgeShader).toContain('float quiet = share * 16777216. > float(lineRank) ? 1. : 0.;');
   const fn = (line: string) => new Function('s', `with (s) { return (${line}); }`) as (s: any) => number;
   const env = { min: Math.min, max: Math.max, mix: (a: number, b: number, t: number) => a + (b - a) * t };
   const share = fn(edgeShader.match(/float share = (.*);/)![1]!), factor = fn(edgeShader.match(/alpha \*= (.*);/)![1]!.replace(/(\d)u\b/g, '$1'));
@@ -104,4 +104,38 @@ test('edge dither rounds premultiplied RGBA together: zero stays zero, no clampe
     }
     sum.forEach((v, i) => expect(Math.abs(v / 1024 - tint[i]!)).toBeLessThanOrEqual(1 / (2048 * 255) + 1e-12));
   }
+});
+
+
+test('importance ranks conserve the exact share while favouring hub spokes, bridges and declared interest', () => {
+  const m = 12000, source = Uint32Array.from({ length: m }, (_, e) => e * 2), target = source.map(n => n + 1);
+  const offsets = Uint32Array.from({ length: 2 * m + 1 }, (_, n) => n);
+  const groups = new Uint32Array(2 * m), interest = new Float32Array(2 * m);
+  // Same degree for all pairs. Half bridge groups, one quarter also has declared interest.
+  for (let e = m / 2; e < m; e++) groups[target[e]!] = 1;
+  for (let e = 3 * m / 4; e < m; e++) interest[source[e]!] = 1;
+  const ranked = edgeRanks(source, target, offsets, groups, interest, () => true);
+  expect(edgeRanks(source, target, offsets, groups, interest, () => true)).toEqual(ranked);
+  for (const share of [0, .01, .1, .5, 1]) expect([...ranked].filter(r => r < share * 16777216)).toHaveLength(m * share);
+  const buckets = [0, 0, 0, 0]; ranked.forEach((r, e) => { if (r < .1 * 16777216) buckets[Math.floor(e / (m / 4))]!++; });
+  expect(buckets[2]!).toBeGreaterThan(buckets[0]! * 1.5); expect(buckets[3]!).toBeGreaterThan(buckets[2]! * 1.5);
+  // Hub degree alone biases selection, without dependence on displayed node-size settings.
+  const high = Uint32Array.from(offsets, (n, i) => n + (i > 0 ? 10000 : 0)); source.fill(0, m / 2);
+  const hubs = edgeRanks(source, target, high, undefined, undefined, () => true);
+  expect([...hubs.slice(m / 2)].filter(r => r < .1 * 16777216).length).toBeGreaterThan(1000);
+  // Hidden rows do not consume the share. Sparse/off admission includes every eligible row.
+  const subset = edgeRanks(source, target, high, groups, interest, e => e % 2 === 0);
+  expect([...subset].filter((r, e) => e % 2 === 0 && r < .1 * 16777216)).toHaveLength(m / 20);
+  expect(edgeRanks(new Uint32Array(), new Uint32Array(), new Uint32Array([0]), undefined, undefined, () => true)).toHaveLength(0);
+});
+
+test('both renderers and picking consume the same importance column and context share', () => {
+  expect(edgeShader).toContain('layout(location=4) in uint lineRank;');
+  expect(source).toContain('this.integer(4, this.lineRanks)');
+  expect(source).toContain('this.lineRanks[e]! >= ink * lengthFade');
+  expect(source).toContain('* 16777216 <= this.lineRanks[e]!');
+  expect(source).not.toContain('unionAlpha');
+  expect(source).toContain('edgeAlpha(v, v.zoomAdapt ? 0 : this.visibleEdges');
+  expect(source).toContain('edgeAlpha(s.visuals, s.visuals.zoomAdapt ? 0 : this.visibleEdges');
+  expect(source).toContain('ctx.lineWidth = 2 * Math.max(.5, width) * wide');
 });
