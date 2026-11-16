@@ -399,6 +399,44 @@ test('count lists: group legend rows keep the name and the count in separate ele
 });
 
 
+test('UI foundation uses host type roles, one spacing scale and scalable control rows', () => {
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+  const foundation = css.match(/\.graph-ng-view \{([^}]+)\}/)![1]!;
+  for (const [role, host] of [['xs', 'smaller'], ['sm', 'small'], ['md', 'medium'], ['lg', 'large']]) {
+    expect(foundation).toContain(`--gng-text-${role}:var(--font-ui-${host})`);
+  }
+  for (const [index, size] of [4, 8, 12, 16, 24].entries()) {
+    expect(foundation).toMatch(new RegExp(`--gng-space-${index + 1}:var\\(--size-[\\w-]+, ${size}px\\)`));
+  }
+  expect(foundation).toContain('--gng-row-h:max(var(--size-4-8, 32px), 2.25em)');
+  expect(foundation).toContain('font-family:var(--font-interface)');
+  expect(foundation).toContain('--gng-text-muted:color-mix(in srgb, var(--text-muted) 80%, var(--text-normal))');
+  expect(css).not.toMatch(/font-size:\s*\d+(?:\.\d+)?px/);
+  expect(css).not.toMatch(/font-weight:\s*\d/);
+  expect(css).not.toMatch(/text-transform:\s*uppercase/);
+  const defined = [...css.matchAll(/(--gng-[\w-]+):/g)].map(m => m[1]);
+  expect(new Set(defined).size).toBe(defined.length);
+  for (const [, token] of css.matchAll(/var\((--gng-[\w-]+)/g)) expect(defined).toContain(token);
+});
+test('UI foundation keeps aligned settings, wrapping labels and inline help exceptions', () => {
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+  const rule = (selector: string) => css.split(`\n${selector} {`)[1]!.split('}')[0]!;
+  for (const selector of ['.graph-ng-setting', '.graph-ng-slider-line']) {
+    expect(rule(selector)).toContain('grid-template-columns:minmax(0,1fr) var(--gng-value-w) var(--gng-row-h)');
+  }
+  expect(rule('.graph-ng-setting-name')).toContain('line-height:var(--gng-leading-tight)');
+  expect(rule('.graph-ng-stat-label')).toContain('overflow-wrap:anywhere');
+  expect(rule('button.graph-ng-help-trigger')).toContain('min-height:0');
+  expect(rule('.graph-ng-explore .graph-ng-slider-chip input[type=number]')).toContain('min-height:0');
+  expect(css).toContain('scrollbar-gutter:stable');
+  expect(css).toContain('@container graph-ng-tools (max-width: 260px)');
+  expect(css).toContain('min-height:44px');
+  // The renderer reserves exactly +12 width / +4 height for these canvas labels.
+  // UI spacing changes must not enlarge their DOM box past the collision footprint.
+  expect(rule('.graph-ng-anchor-text')).toContain('padding:2px 6px');
+  expect(rule('.graph-ng-more')).toContain('min-height:32px');
+});
+
 test('adaptive emphasis control switches live without moving the camera or rebuilding the view', () => {
   const f = fixture(); f.panel.show('appearance');
   const field: any = f.panel.root.querySelectorAll('select').find((e: any) => e.getAttribute('aria-label') === 'Highlight emphasis');

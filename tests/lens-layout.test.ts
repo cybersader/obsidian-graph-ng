@@ -83,5 +83,5 @@ test('lens Appearance control exposes temporary pressed/disabled state and calls
   button.click(); expect(toggles).toBe(1); expect(button.getAttribute('aria-pressed')).toBe('true');
   state.active = false; panel.updateLensControl(); expect(button.getAttribute('aria-pressed')).toBe('false');
   expect(JSON.stringify(settings)).toBe(saved);
-  expect(readFileSync(new URL('../styles.css', import.meta.url), 'utf8')).toContain('.graph-ng-lens-toggle { min-height: 32px; min-width: 32px; }');
+  expect(readFileSync(new URL('../styles.css', import.meta.url), 'utf8')).toContain('.graph-ng-lens-toggle { min-height:var(--gng-row-h); min-width:var(--gng-row-h); }');
 });
