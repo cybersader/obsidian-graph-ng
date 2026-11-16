@@ -824,13 +824,18 @@ export class DetailRenderer {
   private nodeRadius(node: number, hot = false, base = this.baseNodeRadius()) { return sizedRadius(base, this.sizes[node]!, this.projection.carrierNodes[node] ? this.settings.visuals.carrierSize : 1, hot); }
   private sizingRange: [number, number] = [0, 0];
   private updateSizingRange() {
-    let lo = Infinity, hi = 0;
-    for (let i = 0; i < this.visible.length; i++) if (this.visible[i] && !this.projection.carrierNodes[i]) { lo = Math.min(lo, this.sizes[i]!); hi = Math.max(hi, this.sizes[i]!); }
-    this.sizingRange = [lo, hi];
+    let max = 0, hi = 0;
+    for (let i = 0; i < this.visible.length; i++) {
+      max = Math.max(max, this.projection.offsets[i + 1]! - this.projection.offsets[i]!);
+      if (this.visible[i] && !this.projection.carrierNodes[i]) hi = Math.max(hi, this.sizes[i]!);
+    }
+    this.sizingRange = [max, hi];
   }
   sizingReadout() {
-    const [lo, hi] = this.sizingRange, b = this.baseNodeRadius();
-    return hi ? `Ordinary unhighlighted radius: ${(b * lo).toFixed(2)}–${(b * hi).toFixed(2)} CSS px at this zoom${this.nodePreview ? ' (preview, unsaved)' : ''}` : 'No ordinary nodes shown';
+    const [max, hi] = this.sizingRange, b = this.baseNodeRadius(), v = this.sizingSettings().visuals;
+    const one = max ? degreeSizes(new Uint32Array([0, 1, max + 1]), v.degreeSizing * this.keep, v.degreeCurve)[0]! : 1;
+    const px = (m: number) => Math.max(1 / this.dpr, b * m).toFixed(2);
+    return hi ? `Radius at this zoom: 1 edge ${px(one)} px; largest visible hub ${px(hi)} px` : 'No ordinary nodes shown';
   }
   private savedSettings?: Settings;
   /** Unsaved whole-settings candidate (suggestions); null restores the live settings object and

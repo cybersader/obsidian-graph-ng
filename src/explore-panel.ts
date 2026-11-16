@@ -577,30 +577,46 @@ export class ExplorePanel {
     this.lensButton.disabled = !state?.available; this.lensButton.setAttribute('aria-pressed', String(!!state?.active));
     this.lensButton.textContent = state?.active ? 'Connection lens: on' : 'Connection lens: off';
   }
-  updateSizingReadout() { /* Renderer compatibility: no live sizing paragraph. */ }
+  updateSizingReadout() {
+    const readout = this.body.querySelector('.graph-ng-sizing-readout');
+    if (readout) readout.textContent = this.host.sizingReadout?.() ?? '';
+  }
   private nodes(host: HTMLElement) {
     const group = host.createDiv({ cls: 'graph-ng-nodes' }); group.createEl('h4', { text: 'Nodes' });
     const current = sizingValues(this.settings);
     const draft = this.sizingDraft ??= { radius: String(current.radius), prominence: String(current.prominence), compensation: String(current.compensation * 100), floor: String(current.floor * 100), curve: current.curve };
-    panelHelp(group, 'Preview and save', 'Preview is temporary; Apply sizing saves these sizes. Restore returns to your saved sizes.');
+    const presets: Record<string, [number, number]> = { none: [1, 1], balanced: [1, 5], strong: [1, 9] };
+    const preset = Object.keys(presets).find(key => draft.radius === String(presets[key]![0]) && draft.prominence === String(presets[key]![1]) && draft.curve === 'linear' && draft.compensation === '0' && draft.floor === '100') ?? 'custom';
+    const hub = settingSelect(group, 'Hub size', 'Live preview. Apply sizing saves; Restore returns to saved sizes. Presets use a 1 px base, area proportional to connections, and no crowding shrink. Zoom adaptation still applies.', [['custom', 'Custom'], ['none', 'None'], ['balanced', 'Balanced'], ['strong', 'Strong']], preset, key => {
+      const p = presets[key]; if (!p) return;
+      Object.assign(draft, { radius: String(p[0]), prominence: String(p[1]), curve: 'linear', compensation: '0', floor: '100' });
+      preview(); this.render(); this.body.querySelector<HTMLSelectElement>('[aria-label="Hub size"]')?.focus();
+    }, 'graph-ng-select', this.sizingBusy || !this.host.previewSizing);
+    if (Number(draft.radius) < 1) {
+      const advice = settingRow(group, 'Tiny base size limits hubs', 'graph-ng-suggestion-row', 'Suggested for this graph: Strong. Below 1 px, notes can hit the minimum dot radius. Strong raises Node size to 1 px as well as increasing hub contrast.');
+      panelButton(advice, 'Try Strong', () => { hub.value = 'strong'; hub.dispatchEvent(new Event('change')); }, hub.disabled);
+    }
+    group.createDiv({ cls: 'graph-ng-explore-note graph-ng-sizing-readout', text: this.host.sizingReadout?.() ?? '' });
+    const advanced = group.createEl('details'); disclosure(advanced, 'Advanced sizing');
     const fields: [Exclude<keyof NodeSizingValues, 'curve'>, string, string, Curve][] = [
       ['radius', 'Node size', 'px', { min: .01, max: 20, k: 3 }], ['prominence', 'Hub size limit', '×', { min: 1, max: 9, k: 2 }],
-      ['compensation', 'Shrink crowded dots', '%', { min: 0, max: 100 }], ['floor', 'Smallest dot size', '%', { min: .1, max: 100, k: 2 }],
+      ['compensation', 'Shrink crowded dots', '%', { min: 0, max: 100 }], ['floor', 'Retain base size', '%', { min: .1, max: 100, k: 2 }],
     ];
-    const help = { radius: 'Dot radius before zoom and crowding adjustments. Type a larger value for larger dots.', prominence: 'Largest hub radius compared with an unconnected note. 1 keeps dots the same size.', compensation: 'How much crowding shrinks dots, not the space between them. 0 turns shrinking off.', floor: 'Minimum size kept after shrinking, as a percentage of the requested size. Must be greater than 0.' };
+    const help = { radius: 'Dot radius before zoom and crowding adjustments. Type a larger value for larger dots.', prominence: 'Largest hub radius compared with an unconnected note. 1 keeps dots the same size.', compensation: 'How much crowding shrinks dots, not the space between them. 0 turns shrinking off.', floor: 'Minimum base radius kept after crowding shrink, not a percentage of hub size. Applies equally to every note. Tiny dots also have a one-device-pixel radius minimum.' };
     const message = group.createDiv({ cls: 'graph-ng-explore-note', attr: { role: 'status', 'aria-live': 'polite' } }); message.textContent = this.sizingMessage;
-    const changed = (key: keyof NodeSizingValues, value: string) => { draft[key] = value; this.sizingPreview = false; this.host.previewSizing?.(null); this.sizingMessage = message.textContent = 'Draft not previewed or saved.'; };
-    settingSelect(group, 'Size by connections', 'Chooses how connection counts change dot sizes. Previous keeps the earlier sizing curve.', [['sqrt', 'Square root'], ['log', 'Logarithmic'], ['linear', 'Linear'], ['legacy', 'Previous']], draft.curve, value => changed('curve', value), 'graph-ng-select', this.sizingBusy);
+    const changed = (key: keyof NodeSizingValues, value: string) => { draft[key] = value; hub.value = 'custom'; this.sizingPreview = false; this.host.previewSizing?.(null); this.sizingMessage = message.textContent = 'Draft not previewed or saved.'; };
+    settingSelect(advanced, 'Size by connections', 'Chooses how connection counts change dot sizes. Previous keeps the earlier sizing curve.', [['sqrt', 'Square root'], ['log', 'Logarithmic'], ['linear', 'Linear'], ['legacy', 'Previous']], draft.curve, value => changed('curve', value), 'graph-ng-select', this.sizingBusy);
     const base = sizingValues(defaults('links')), initial = { ...base, compensation: base.compensation * 100, floor: base.floor * 100 };
     for (const [key, title, unit, range] of fields) {
-      progressiveSlider(group, { label: title, unit, desc: help[key], curve: range, value: draft[key], def: initial[key], disabled: this.sizingBusy, cls: 'graph-ng-sizing-row', attr: { min: key === 'prominence' ? '1' : '0', max: String(key === 'radius' ? MAX_NODE_RADIUS : key === 'prominence' ? 9 : 100) }, changed: value => changed(key, value) });
+      progressiveSlider(advanced, { label: title, unit, desc: help[key], curve: range, value: draft[key], def: initial[key], disabled: this.sizingBusy, cls: 'graph-ng-sizing-row', attr: { min: key === 'prominence' ? '1' : '0', max: String(key === 'radius' ? MAX_NODE_RADIUS : key === 'prominence' ? 9 : 100) }, changed: value => changed(key, value) });
     }
     const values = () => {
       const parsed = Object.fromEntries(Object.entries(draft).map(([key, value]) => [key, key === 'curve' ? value : value.trim() ? Number(value) : NaN])) as unknown as NodeSizingValues;
       parsed.compensation /= 100; parsed.floor /= 100; sizingSettings(this.settings, parsed); return parsed;
     };
+    const preview = () => { try { this.host.previewSizing?.(values()); this.sizingPreview = true; this.sizingMessage = 'Previewing. Not saved.'; } catch (e) { this.host.previewSizing?.(null); this.sizingPreview = false; this.sizingMessage = `Not previewed: ${String(e)}`; } message.textContent = this.sizingMessage; };
     const actions = group.createDiv({ cls: 'graph-ng-form' });
-    panelButton(actions, 'Preview sizing', () => { try { this.host.previewSizing?.(values()); this.sizingPreview = true; this.sizingMessage = 'Previewing. Not saved.'; } catch (e) { this.host.previewSizing?.(null); this.sizingMessage = `Not previewed: ${String(e)}`; } message.textContent = this.sizingMessage; }, this.sizingBusy || !this.host.previewSizing);
+    panelButton(actions, 'Preview sizing', preview, this.sizingBusy || !this.host.previewSizing);
     const apply = actions.createEl('button'); workingText(apply, this.sizingBusy ? 'Saving…' : 'Apply sizing', this.sizingBusy); apply.disabled = this.sizingBusy || !this.host.applySizing;
     apply.onclick = async () => {
       if (this.sizingBusy || this.disposed) return;

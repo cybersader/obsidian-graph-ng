@@ -241,6 +241,14 @@ test('production token discard/rollback cannot overwrite a newer winning token',
 });
 
 
+test('production sizing readout includes the device-pixel minimum', async () => {
+  const f = await fixture();
+  f.renderer[compiled('previewSizing')]({ radius: .16, prominence: 9, compensation: .92, floor: .885, curve: 'legacy' });
+  expect(f.renderer[compiled('sizingReadout')]()).toContain('1 edge 1.00 px; largest visible hub 1.00 px');
+  f.renderer.dpr = 2;
+  expect(f.renderer[compiled('sizingReadout')]()).toContain('1 edge 0.50 px; largest visible hub 0.50 px');
+  f.renderer.dispose();
+});
 test('production sizing preview/cancel keeps renderer camera selection scope settings and layout unchanged', async () => {
   const f = await fixture(); f.plugin.settings.visuals.emphasis = 'scale';
   const original = structuredClone(f.plugin.settings), camera = { ...f.renderer.camera }, positions = f.renderer.positions, canvas = f.renderer.canvas;
@@ -248,7 +256,7 @@ test('production sizing preview/cancel keeps renderer camera selection scope set
   f.renderer[compiled('previewSizing')](value);
   expect(f.plugin.settings).toEqual(original); expect(f.writes.length).toBe(0); expect(f.requests()).toBe(0);
   expect(f.renderer.camera).toEqual(camera); expect(f.renderer.selected).toBe(2); expect(f.renderer.positions).toBe(positions); expect(f.renderer.canvas).toBe(canvas);
-  expect(f.renderer[compiled('sizingReadout')]()).toContain('12.00–12.00');
+  expect(f.renderer[compiled('sizingReadout')]()).toContain('1 edge 12.00 px; largest visible hub 12.00 px');
   const point = f.renderer.screenPoint(2); expect(f.renderer.pick(point.x + 16, point.y)).toBe(2);
   const radii: number[] = []; ctx.arc = (_x: number, _y: number, radius: number) => radii.push(radius);
   f.renderer[compiled('drawCanvas')](); expect(radii.slice(0, 2)).toEqual([12, 12]);

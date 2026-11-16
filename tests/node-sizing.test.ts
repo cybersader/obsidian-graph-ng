@@ -3,7 +3,7 @@ import { test, expect } from 'bun:test';
 import './support/obsidian-fixture';
 import { defaults, upgradeSettings, settingsForSave, validateSettings, loadSettings } from '../src/settings';
 import { baseRadius, sizedRadius, sizingSettings, sizingValues, MAX_NODE_RADIUS } from '../src/node-sizing';
-import { degreeSizes, densityScale } from '../src/render-effects';
+import { degreeSizes, densityScale, prominenceKeep } from '../src/render-effects';
 import { ExplorePanel } from '../src/explore-panel';
 import { emptyView } from '../src/core/explore';
 import { ControlElement, control } from './support/controls-dom';
@@ -86,6 +86,54 @@ test('numeric drafts preview/apply/cancel, invalid blank never reaches renderer 
   f.input('Node size', '12'); control(f.panel.body, 'Preview sizing').click(); expect(f.preview().radius).toBe(12); expect(f.plugin.settings).toEqual(before);
   control(f.panel.body, 'Restore sizing').click(); expect(f.preview()).toBeNull(); expect(f.writes.length).toBe(0);
   f.input('Hub size limit', '9'); await (control(f.panel.body, 'Apply sizing') as any).onclick(); expect(f.plugin.settings.visuals.degreeSizing).toBe(8); expect(f.panel.sizingMessage).toBe('Saved'); f.panel.dispose();
+});
+test('large-graph radius diagnosis at overview, mid and close zoom includes the pixel minimum', () => {
+  const owner = sizingSettings(defaults('links'), { radius: .16, prominence: 9, compensation: .92, floor: .885, curve: 'legacy' });
+  const normal = defaults('links'), strong = sizingSettings(owner, { radius: 1, prominence: 9, compensation: 0, floor: 1, curve: 'linear' });
+  const radii = (s: typeof owner, count: number, zoom: number) => {
+    let b = baseRadius(s, 1280, 800, count, zoom);
+    if (s.nodeSizing.policy === 'legacy') b = Math.max(Math.min(s.nodeSize, 1.2), b);
+    const keep = prominenceKeep(zoom, densityScale(1280, 800, count, zoom, s.nodeSize, 0) < 1);
+    return [...degreeSizes(new Uint32Array([0, 1, 11, 111, 711]), s.visuals.degreeSizing * keep, s.visuals.degreeCurve)].map(m => Math.max(1, b * m));
+  };
+  const cases: [typeof owner, number, number, number[]][] = [
+    [owner, 61000, 1, [1, 1, 1, 1.27]], [owner, 61000, .4, [1, 1, 1, 1.33]], [owner, 61000, .1, [1, 1, 1.08, 1.44]],
+    [normal, 61000, 1, [1.69, 2.43, 3.94, 6]], [normal, 61000, .4, [3.88, 5.58, 9.05, 13.77]], [normal, 61000, .1, [4.22, 6.07, 9.86, 15]],
+    [owner, 16000, 1, [1, 1, 1, 1.27]], [owner, 16000, .4, [1, 1, 1.08, 1.44]], [owner, 16000, .1, [1, 1, 1.08, 1.44]],
+    [normal, 16000, 1, [3.03, 4.36, 7.07, 10.76]], [normal, 16000, .4, [4.22, 6.07, 9.86, 15]], [normal, 16000, .1, [4.22, 6.07, 9.86, 15]],
+    [owner, 61000, 4, [1, 1, 1, 1]], [strong, 61000, 4, [1.02, 1.18, 2.24, 5]],
+  ];
+  for (const [s, count, zoom, expected] of cases) radii(s, count, zoom).forEach((v, i) => expect(v).toBeCloseTo(expected[i]!, 2));
+  for (const count of [16000, 61000]) for (const zoom of [1, .4, .1]) radii(strong, count, zoom).forEach((v, i) => expect(v).toBeCloseTo([1.06, 1.53, 3.79, 9][i]!, 2));
+  // Retained base size scales leaves and hubs together, never clamps leaves to hub size.
+  expect(baseRadius(owner, 1280, 800, 61000, 1)).toBeCloseTo(.16 * .885, 8);
+});
+test('hub presets visibly separate leaf and hub radii without saving until Apply', async () => {
+  const f = panelFixture();
+  Object.assign(f.plugin.settings, { nodeSize: .16, nodeSizing: { policy: 'predictable', compensation: .92, floor: .885 } });
+  Object.assign(f.plugin.settings.visuals, { degreeSizing: 8, degreeCurve: 'legacy' });
+  f.panel.sizingDraft = undefined; f.panel.render();
+  const saved = structuredClone(f.plugin.settings);
+  const hub = () => f.panel.body.querySelectorAll('select').find((e: any) => e.getAttribute('aria-label') === 'Hub size');
+  const choose = (value: string) => { const select = hub(); select.value = value; select.onchange(); };
+  expect(hub().value).toBe('custom');
+  expect(f.panel.body.querySelectorAll('details').some((e: any) => e.textContent.includes('Advanced sizing'))).toBe(true);
+  control(f.panel.body, 'Try Strong').click();
+  expect(f.preview()).toEqual({ radius: 1, prominence: 9, curve: 'linear', compensation: 0, floor: 1 });
+  expect(f.plugin.settings).toEqual(saved); expect(f.writes).toHaveLength(0);
+  const s = sizingSettings(saved, f.preview()), multipliers = degreeSizes(new Uint32Array([0, 1, 601]), 8, 'linear');
+  for (const count of [16000, 61000]) for (const zoom of [1, .25, .05]) {
+    const b = baseRadius(s, 1280, 800, count, zoom);
+    expect(b * multipliers[1]!).toBe(9); expect(b * multipliers[0]!).toBeLessThan(1.1);
+  }
+  f.host.sizingReadout = () => '1 edge 1.06 px; largest visible hub 9.00 px'; f.panel.updateSizingReadout();
+  expect(f.panel.body.querySelector('.graph-ng-sizing-readout').textContent).toContain('9.00');
+  f.input('Node size', '2'); expect(hub().value).toBe('custom');
+  choose('none'); expect(f.preview().prominence).toBe(1);
+  choose('balanced'); expect(f.preview().prominence).toBe(5);
+  control(f.panel.body, 'Restore sizing').click(); expect(f.plugin.settings).toEqual(saved); expect(f.preview()).toBeNull();
+  choose('strong'); await (control(f.panel.body, 'Apply sizing') as any).onclick();
+  expect(f.plugin.settings).toEqual(s); f.panel.dispose();
 });
 test('shared rendering source contract keeps appearance out of layout and uses dynamic label offsets', () => {
   const renderer = readFileSync(new URL('../src/webgl-renderer.ts', import.meta.url), 'utf8');

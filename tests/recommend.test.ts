@@ -29,6 +29,13 @@ test('hub-heavy graph: softer degree sizing; many groups and edge notes dimmed',
   const moderate = graphStats(offsets([20, ...new Array(99).fill(2)]), 109);
   expect(values(moderate).degreeSizing).toBe(2.2);
 });
+test('predictable sizing is not contradicted by topology-only smaller-hub advice', () => {
+  const s = defaults('links'); s.nodeSizing = { policy: 'predictable', compensation: .92, floor: .885 }; s.nodeSize = .16; s.visuals.degreeSizing = 8;
+  expect(values(hub(), s).degreeSizing).toBeUndefined();
+  s.nodeSize = 1; s.nodeSizing.compensation = 0; s.nodeSizing.floor = 1; s.visuals.degreeCurve = 'linear';
+  expect(values(hub(), s).degreeSizing).toBeUndefined();
+  expect(values(hub()).degreeSizing).toBe(1);
+});
 test('haze advice only lowers edge opacity: a fainter hand-tuned value is not pushed back up', () => {
   const crowded = graphStats(offsets(new Array(3000).fill(8)), 12000), faint = defaults('links'); faint.visuals.edgeOpacity = .155;
   expect(values(crowded).edgeOpacity).toBe(.25); expect(values(crowded, faint).edgeOpacity).toBeUndefined();

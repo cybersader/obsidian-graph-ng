@@ -63,7 +63,7 @@ export function recommend(t: GraphStats, s: Settings): Suggestion[] {
   // Degree prominence (log curve normalized to the biggest hub). Hub ratio = max degree / mean.
   // ≥ 25: a few hubs would dwarf everything, so soften. 4–25: a real but readable skew, so make
   // the connected notes stand out. < 4: degrees are nearly equal and size carries little meaning.
-  if (n >= 20) add('degreeSizing', h >= 25 ? 1 : h >= 4 ? 2.2 : .6, h >= 25 ? `hubs of degree ${t.maxDegree.toLocaleString()} dwarf the rest` : h >= 4 ? 'skewed; let hubs stand out' : 'even degrees; size says little');
+  if (n >= 20 && s.nodeSizing.policy === 'legacy') add('degreeSizing', h >= 25 ? 1 : h >= 4 ? 2.2 : .6, h >= 25 ? `hubs of degree ${t.maxDegree.toLocaleString()} dwarf the rest` : h >= 4 ? 'skewed; let hubs stand out' : 'even degrees; size says little');
   // Labels: candidates scale with notes; thin them for big graphs, allow more for small ones.
   if (n >= 5000) add('labelDensity', n >= 20000 ? .5 : .75, `${n.toLocaleString()} notes; declutter`);
   else if (n < 300) add('labelDensity', 1.5, 'few notes; room to label');
