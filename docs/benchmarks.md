@@ -2,6 +2,23 @@
 
 Results belong to an exact invocation, fixture, source revision and hardware class. They do not establish all-scale acceptance. Original slice-1 source is `041e1382` (2026-11-10); release-readiness baseline is `9b8cc07`. Historical tables below remain dated evidence. The slice-2 section records the new worker/browser/native invocations and unmet targets separately. Raw receipts remain ignored and local; publish only scrubbed summaries without hostnames, usernames, real-vault paths or private projections.
 
+## Dense hubs and inset overview, wave 10 track H (2026-11-16)
+
+Source: the commit carrying this section, based on `2063a4e`. Hardware class: Linux x86-64 desktop, 32 GB RAM. Changes are bounded to label admission, focus-ring density and Group overview framing. Anchored remains the default; Ranked remains selectable. The core, topology, worker layout, node picking and connection-card contents are unchanged.
+
+Build and **638 tests across 36 files pass**, with **163,185 expectations**. Three added tests exercise dense direct-name caps with blocked candidates and hover priority, inset opening/closing/reduced motion, and actual group draw/hit geometry within the available canvas. One older group mock now supplies the canvas width used by production. Exact commands, each under `flock -w 3000 -E 75 /tmp/openclast-bun.lock timeout --kill-after=5s 1800s`:
+
+- `./scripts/run.sh gates:fast`
+- `./scripts/run.sh build`
+- `./scripts/run.sh test --timeout 10000`
+- `./scripts/run.sh gates`
+
+Bundle: **372,840 raw / 125,002 gzip bytes**, versus **372,405 / 124,844** at baseline: **+435 raw / +158 gzip** (level 9). Caps remain **375,000 / 126,000**. Ignored receipts: `.workspace/{preflight,build-before,build-after,tests-final,gates-final}.log` and `.workspace/evidence/bundle-size.json`.
+
+Native commands: `bash .workspace/visual-qa/capture.sh before`, `after`, and `final`. The wrapper serializes the synthetic-only browser-native harness with `/tmp/graph-ng-harness.lock`; memory checks exceeded 8 GB available. Paired before/after captures show the same 120-note, 199-edge fixture with 45 direct hub neighbours, and six overview groups beside Members in both themes. Final pass: **23/23 steps**, no console/page errors or unhandled rejections. Explicit WebGL and Canvas lanes each retain all 45 card connections and admit seven anchored names (focus plus six neighbours); Ranked admits three names at this camera after collisions and panel exclusion. This is software WebGL, not hardware-GPU or desktop Electron acceptance. The live style-switch run's dark Ranked WebGL screenshot lost selection after its passing assertion; its light counterpart retained selection. A separate `bash .workspace/visual-qa/capture.sh ranked` cold-configured Ranked pass (**6/6 steps**) retains the selected hub in both themes (`runs/ranked.step-06-ranked-webgl-hub.{light,dark}.png`). The transient style-switch observation is not claimed fixed by this patch.
+
+At view widths 1100 / 850 / 420 px, the group canvas stays one pixel before the panel, measuring 706 / 456 / 6 px. The narrow panel deliberately consumes almost all graph space; Members remains usable instead of obscuring an unseen graph. Closing samples monotonically expand 812 / 903 / 979 / 1037 / 1070 / 1074 px from 706; 11 redraws occur during the transition and zero in the following 250 ms idle window. No permanent animation loop was added. Visually inspected paired captures include `runs/before.step-08-hub-card`, `runs/before.step-11-group-panel`, `runs/final.step-06-webgl-hub`, `runs/final.step-11-canvas-hub`, `runs/final.step-17-group-panel`, and `runs/final.step-19-group-midwidth` under `.workspace/visual-qa/`, with `.light.png` and `.dark.png` suffixes. The full reports retain the harness's unknown trust verdict. Independent merged-wave review remains parent-owned.
+
 ## Answer-first Graph information — 2026-11-16
 
 Source: the commit carrying this section, based on `aa781eb`. Hardware class: Linux x86-64 desktop, 32 GB RAM. Graph information now leads with state and named counts, keeps reconciled note/edge accounting in disclosures, and separates navigation from explicit filter removal and relationship-display changes. Shared help replaces persistent Saved views explanations. Existing graph authorities and security boundaries are unchanged.

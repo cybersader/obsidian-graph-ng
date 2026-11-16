@@ -62,6 +62,19 @@ test('radial placement: labels stay beside their dots when free; collisions push
   expect(radialLabels(dense, 10, DIRECT_LABELS, 4, 50, 32)).toEqual(out);
 });
 
+test('dense anchored and ranked hubs share six direct labels without spending slots on blocked names', () => {
+  const items = Array.from({ length: 46 }, (_, i) => item(i, i ? 1 : 0, i % 8 * 200 + 50, Math.floor(i / 8) * 100 + 50));
+  const blocked = (x: number, y: number, w: number, h: number) => x < 260 && x + w > 240 && y < 60 && y + h > 40;
+  const anchored = anchoredLabels(items, 64, new Map(), blocked, 6), ranked = radialLabels(items, 64, 6, 45, 120, 32);
+  expect(anchored.filter(s => s.rank === 1).length).toBe(6); expect(anchored[0]!.node).toBe(0);
+  expect(anchored.some(s => s.node === 1)).toBe(false); expect(anchored.some(s => s.node === 7)).toBe(true);
+  expect(ranked.slots.filter(s => s.rank === 1).length).toBe(6); expect(ranked.hidden).toBe(39);
+  // Hover keeps a separate priority slot even after the six direct names have been admitted.
+  const hovered = anchoredLabels([...items, { ...items[45]!, rank: 0 }], 64, new Map(), blocked, 6);
+  expect(hovered.some(s => s.node === 45)).toBe(true);
+  expect(anchoredLabels(items.slice(0, 8), 64, new Map(), () => false, DIRECT_LABELS).length).toBe(8);
+});
+
 test('radial placement caps direct labels and folds the rest into one "+N more" beside the focus', () => {
   const focus = item(0, 0, 0, 0, 60, 20), dots = Array.from({ length: 40 }, (_, i) => item(i + 1, 1, 300 * Math.cos(i), 300 * Math.sin(i), 30, 12));
   const out = radialLabels([focus, ...dots], 64, 5, 40, 70, 32);

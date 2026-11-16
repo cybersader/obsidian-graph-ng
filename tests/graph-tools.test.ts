@@ -188,8 +188,38 @@ test('UX actual group Canvas draw suppresses edge strokes at zero without deleti
   const s = defaults('links'); let kind = '', strokes: number[] = [];
   const ctx: any = new Proxy({ globalAlpha: 1, beginPath() { kind = ''; }, moveTo() { kind = 'edge'; }, arc() { kind = 'node'; }, stroke() { if (kind === 'edge') strokes.push(this.globalAlpha); }, createLinearGradient: () => ({ addColorStop() {} }), measureText: () => ({ width: 20 }) }, { get: (o: any, k: any) => k in o ? o[k] : () => {} });
   const graph = { groups: [{ id: 'a', label: 'Alpha', count: 1 }, { id: 'b', label: 'Beta', count: 1 }], groupEdges: [{ a: 'a', b: 'b', typeCounts: { link: 1 }, total: 1 }] };
-  const renderer: any = Object.create(GroupRenderer.prototype); Object.assign(renderer, { s, p: graph, container: { clientWidth: 800, clientHeight: 600 }, canvas: { style: {}, getContext: () => ctx }, nodes: new Map(), radii: new Map(), groupColors: [] });
+  const renderer: any = Object.create(GroupRenderer.prototype); Object.assign(renderer, { s, p: graph, container: { clientWidth: 800, clientHeight: 600 }, canvas: { clientWidth: 800, style: {}, getContext: () => ctx }, nodes: new Map(), radii: new Map(), groupColors: [] });
   for (const opacity of [0, .0001, .5]) { s.visuals.edgeOpacity = opacity; strokes = []; renderer.draw(); expect(strokes.length).toBe(opacity ? 1 : 0); if (opacity) expect(strokes[0]).toBeCloseTo(edgeAlpha(s.visuals, 1, 1, false), 12); expect(graph.groupEdges.length).toBe(1); }
+});
+
+test('group framing snaps clear of opening tools, eases closed, and respects reduced motion', () => {
+  const previous = globalThis.matchMedia; let reduced = false, overlap = 0;
+  globalThis.matchMedia = (() => ({ matches: reduced })) as any;
+  try {
+    const renderer: any = Object.create(GroupRenderer.prototype), canvas = { style: { width: '1080px', transition: '' } };
+    Object.assign(renderer, { canvas, container: { clientWidth: 1080 }, measureTools: () => overlap });
+    overlap = 368; renderer.syncTools(); expect(canvas.style.width).toBe('712px'); expect(canvas.style.transition).toBe('none');
+    overlap = 0; renderer.syncTools(); expect(canvas.style.width).toBe('1080px'); expect(canvas.style.transition).toBe('width 180ms ease-out');
+    renderer.syncTools(); expect(canvas.style.transition).toBe('width 180ms ease-out'); // ResizeObserver does not restart it.
+    overlap = 368; renderer.syncTools(); reduced = true; overlap = 0; renderer.syncTools(); expect(canvas.style.transition).toBe('none');
+    overlap = 2000; renderer.syncTools(); expect(canvas.style.width).toBe('0px');
+  } finally { globalThis.matchMedia = previous; }
+});
+
+test('group circles, labels and hit targets fit the available canvas, not the covered stage', () => {
+  const s = defaults('links'), ctx: any = new Proxy({ measureText: (text: string) => ({ width: text.length * 7 }) }, { get: (o: any, k: any) => k in o ? o[k] : () => {} });
+  const graph = { groups: Array.from({ length: 6 }, (_, i) => ({ id: String(i), label: `Group ${i}`, count: 20 })), groupEdges: [] };
+  const canvas = { clientWidth: 712, style: {}, getContext: () => ctx }, renderer: any = Object.create(GroupRenderer.prototype);
+  Object.assign(renderer, { s, p: graph, container: { clientWidth: 1080, clientHeight: 674 }, canvas, nodes: new Map(), radii: new Map(), groupColors: [] });
+  for (const width of [712, 1080, 500]) {
+    canvas.clientWidth = width; renderer.draw();
+    for (const g of graph.groups) {
+      const p = renderer.nodes.get(g.id), radius = renderer.radii.get(g.id);
+      expect(p.x - Math.max(radius, 45)).toBeGreaterThanOrEqual(0); expect(p.x + Math.max(radius, 45)).toBeLessThanOrEqual(width);
+      expect(p.y - radius).toBeGreaterThanOrEqual(0); expect(p.y + s.groupRadius + s.labelSize * 3 + 4).toBeLessThanOrEqual(674);
+      expect(renderer.nodeAt(p)?.id).toBe(g.id);
+    }
+  }
 });
 
 test('UX representation buttons, saved views and workspace scope have distinct accessible destinations', () => {

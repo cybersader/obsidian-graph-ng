@@ -1417,7 +1417,7 @@ export class DetailRenderer {
       gl.uniform2f(u.center!, this.centerX, this.centerY); gl.uniform2f(u.viewport!, this.width, this.height); gl.uniform1f(u.scale!, this.scale); gl.uniform1f(u.nodeSize!, nodeSize); gl.uniform1f(u.edgeSize!, edgeWidth); gl.uniform1i(u.hovered!, this.hoverFx.n); gl.uniform2f(u.pulse!, this.fx[0]!, this.fx[1]!); gl.uniform1i(u.selected!, this.selected); gl.uniform1i(u.focusNode!, this.focusNode); gl.uniform1i(u.edgeHovered!, this.hoveredEdge);
       gl.uniform1f(u.focus!, focus); gl.uniform1f(u.dim!, this.emphasisDim()); gl.uniform1f(u.emphasis!, this.emphasisBudget()); gl.uniform1f(u.glow!, layer ? policy.glow : 0);
       gl.uniform1f(u.carrierAlpha!, notes.alpha); gl.uniform1f(u.carrierFold!, notes.visibility); gl.uniform1f(u.carrierSize!, v.carrierSize); gl.uniform1i(u.layer!, layer);
-      gl.uniform1i(u.tierMask!, this.tierMask); gl.uniform1f(u.minSize!, v.tierMinSize); gl.uniform1f(u.rings!, v.tierRings ? (this.directs.length > 50 ? .5 : 1) : 0); gl.uniform1f(u.strong!, v.focusEdges ? focusAlpha(this.directs.length) : 0);
+      gl.uniform1i(u.tierMask!, this.tierMask); gl.uniform1f(u.minSize!, v.tierMinSize); gl.uniform1f(u.rings!, v.tierRings ? (this.directs.length > DIRECT_LABELS ? .5 : 1) : 0); gl.uniform1f(u.strong!, v.focusEdges ? focusAlpha(this.directs.length) : 0);
       gl.uniform1i(u.segments!, policy.segments); gl.uniform1f(u.curvature!, policy.curves ? v.curvature : 0); gl.uniform1f(u.edgeAlpha!, alpha); gl.uniform1f(u.direction!, v.edgeDirection ? 1 : 0); gl.uniform1f(u.colorMix!, v.edgeColorMix); gl.uniform1f(u.inkShare!, ink); gl.uniform1f(u.fadeLength!, Math.min(reach, 1e9)); gl.uniform1f(u.focusOnly!, v.edgeMode === 'focus' ? 1 : 0);
       gl.uniform1f(u.labelAlpha!, fade.alpha); gl.uniform1f(u.labelCut!, fade.cut); gl.uniform3f(u.outline!, p[8]! / 255, p[9]! / 255, p[10]! / 255); gl.uniform1f(u.plates!, v.labelPlates ? .92 : 0); gl.uniform1f(u.discAlpha!, hub ? 1 : haloAlpha); gl.uniform1f(u.hub!, hub);
       gl.bindVertexArray(vaoIndex < 0 ? this.labelVaos[lod]! : this.vaos[vaoIndex]!);
@@ -1483,10 +1483,10 @@ export class DetailRenderer {
       // Placement measures each bounded candidate once with the font and text the DOM label then uses, at the radius offset it is shown with.
       const k = this.scale * this.camera.ratio / LABEL_RATIOS[lod]!, budget = Math.max(1, Math.min(s.labelsMaxPerViewport, FOCUS_LABELS, Math.floor(this.width * this.height / s.labelGridCellSize ** 2 * s.labelDensity))), m = this.measure ??= document.createElement('canvas').getContext('2d')!;
       const pad = v.labelPlates ? 16 : 4, text = (n: number, rank: number) => n === ego ? this.noteCaption(n) : middleTruncate(this.name(n), LABEL_CHARS[rank]!);
-      const { list, direct } = rankFocus(ego, this.near, this.stateBytes, this.visible, this.projection.offsets, budget * s.labelCandidateMultiplier, this.projection.carrierNodes, ego >= 0 ? this.interestOf(ego) : undefined, 50);
+      const { list, direct } = rankFocus(ego, this.near, this.stateBytes, this.visible, this.projection.offsets, budget * s.labelCandidateMultiplier, this.projection.carrierNodes, ego >= 0 ? this.interestOf(ego) : undefined, DIRECT_LABELS);
       const items = list.map(([n, rank]) => { m.font = tierFont(rank, s.labelSize, tier, this.theme.font); const h = tierType(rank, s.labelSize, tier).size * 1.5 + 4; return { node: n, rank, x: this.renderCoordinate(n, 0, 1) * k, y: this.renderCoordinate(n, 1, 1) * k, r: radius(n), w: m.measureText(text(n, rank)).width + pad, h }; });
       m.font = tierFont(1, s.labelSize, tier, this.theme.font); this.moreSize = [m.measureText(`+${direct} more`).width + 24, 32]; this.moreTotal = direct;
-      const layout = radialLabels(items, budget, direct > 50 ? 6 : DIRECT_LABELS, ego >= 0 ? direct : 0, this.moreSize[0]!, 32);
+      const layout = radialLabels(items, budget, direct > DIRECT_LABELS ? 6 : DIRECT_LABELS, ego >= 0 ? direct : 0, this.moreSize[0]!, 32);
       this.rankedLabels = layout.slots.filter(x => x.node !== ego); this.moreAt = layout.more;
       this.rankedKey = [lod, this.display, this.fit, this.width, this.height, this.lensRevision];
       this.overlay.className = 'graph-ng-overlay' + (v.labelPlates ? ' graph-ng-plates' : '');
@@ -1549,7 +1549,7 @@ export class DetailRenderer {
     if (key.some((v, i) => v !== this.anchorKey[i])) {
       const m = this.measure ??= document.createElement('canvas').getContext('2d')!;
       m.font = `${size}px ${this.theme.font}`;
-      const ranked = ego < 0 ? { list: Array.from(this.atlas?.nodes[lod] ?? [], n => [n, 5] as const), direct: 0 } : rankFocus(ego, this.near, this.stateBytes, this.visible, this.projection.offsets, ANCHORED_CANDIDATES, this.projection.carrierNodes, this.interestOf(ego), 50);
+      const ranked = ego < 0 ? { list: Array.from(this.atlas?.nodes[lod] ?? [], n => [n, 5] as const), direct: 0 } : rankFocus(ego, this.near, this.stateBytes, this.visible, this.projection.offsets, ANCHORED_CANDIDATES, this.projection.carrierNodes, this.interestOf(ego), DIRECT_LABELS);
       this.moreTotal = ranked.direct; this.moreSize = [m.measureText(`${ranked.direct} more connections`).width + 32, Math.max(32, h + 4)];
       const list = node >= 0 ? [[node, 0] as const, ...ranked.list.filter(([n]) => n !== node)] : ranked.list;
       this.anchorNames = list.map(([n, rank]) => { const text = middleTruncate(n === node ? this.noteCaption(n) : this.name(n), n === node ? 48 : 32); return { node: n, rank, text, w: Math.ceil(m.measureText(text).width) + 12 }; });
@@ -1564,7 +1564,7 @@ export class DetailRenderer {
       const p = this.screenPoint(it.node); if (under(p.x, p.y, 0, 0)) continue;
       names.push({ ...it, ...p, r: radius(it.node), h }); if (names.length >= ANCHORED_CANDIDATES) break;
     }
-    const slots = anchoredLabels(names, budget, this.anchorPrevious, under);
+    const slots = anchoredLabels(names, budget, this.anchorPrevious, under, this.moreTotal > DIRECT_LABELS ? 6 : DIRECT_LABELS);
     this.anchorPrevious = new Map(slots.map(it => [it.node, it.side]));
     while (this.anchorPool.length < slots.length) this.anchorPool.push(this.overlay.appendChild(el('span', '', 'graph-ng-anchor-text')));
     this.anchorPool.forEach((p, i) => {
@@ -1691,7 +1691,7 @@ export class DetailRenderer {
       // The shader's outer ring band (1.1–1.34 radii) as one stroke.
       if (ring) { ctx.globalAlpha = a * ring; ctx.lineWidth = r * .2; ctx.beginPath(); ctx.arc(x(n), y(n), r * 1.22, 0, Math.PI * 2); ctx.stroke(); }
       // Contrast rings in the text colour: direct band 1.07–1.25, focus outer band 1.49–1.65 radii.
-      const band = !layer && s.visuals.tierRings && focus ? (ego ? 1.57 : shown > .9 && this.directs.length <= 50 ? 1.16 : 0) : 0;
+      const band = !layer && s.visuals.tierRings && focus ? (ego ? 1.57 : shown > .9 && this.directs.length <= DIRECT_LABELS ? 1.16 : 0) : 0;
       if (band) { ctx.globalAlpha = a * fade * focus; ctx.strokeStyle = this.theme.text; ctx.lineWidth = r * (ego ? .16 : .18); ctx.beginPath(); ctx.arc(x(n), y(n), r * band, 0, Math.PI * 2); ctx.stroke(); }
     }
     if (edgesOnTop) drawEdges();

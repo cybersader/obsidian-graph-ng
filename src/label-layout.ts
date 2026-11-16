@@ -87,10 +87,11 @@ export interface AnchorSlot extends LabelItem { left: number; top: number; side:
 /** Actual-screen placement, including the anchor and short leader in each reserved rectangle.
  * Previously shown labels need no extra clearance; new labels need 4px, a spatial hysteresis band.
  * Four fixed alternatives, <=256 candidates and <=64 accepted boxes: bounded work, no DOM reads. */
-export function anchoredLabels(items: readonly LabelItem[], budget: number, previous: ReadonlyMap<number, number>, blocked: (x: number, y: number, w: number, h: number) => boolean): AnchorSlot[] {
-  const slots: AnchorSlot[] = [];
+export function anchoredLabels(items: readonly LabelItem[], budget: number, previous: ReadonlyMap<number, number>, blocked: (x: number, y: number, w: number, h: number) => boolean, directCap = Infinity): AnchorSlot[] {
+  const slots: AnchorSlot[] = []; let direct = 0;
   for (const it of items.slice(0, ANCHORED_CANDIDATES)) {
     if (slots.length >= Math.min(ANCHORED_LABELS, budget)) break;
+    if (it.rank === 1 && direct >= directCap) continue;
     const r = Math.max(3, it.r + 2), gap = r + 8, old = previous.get(it.node);
     const spots = [[it.x + gap, it.y - it.h / 2], [it.x - gap - it.w, it.y - it.h / 2], [it.x - it.w / 2, it.y - gap - it.h], [it.x - it.w / 2, it.y + gap]];
     for (const side of old === undefined ? [0, 1, 2, 3] : [old, ...[0, 1, 2, 3].filter(s => s !== old)]) {
@@ -98,7 +99,7 @@ export function anchoredLabels(items: readonly LabelItem[], budget: number, prev
       const x = Math.min(left!, it.x - r) - pad, y = Math.min(top!, it.y - r) - pad;
       const w = Math.max(left! + it.w, it.x + r) + pad - x, h = Math.max(top! + it.h, it.y + r) + pad - y;
       if (blocked(x, y, w, h) || slots.some(s => x < s.box[0]! + s.box[2]! && x + w > s.box[0]! && y < s.box[1]! + s.box[3]! && y + h > s.box[1]!)) continue;
-      slots.push({ ...it, left: left!, top: top!, side, box: [x, y, w, h] }); break;
+      slots.push({ ...it, left: left!, top: top!, side, box: [x, y, w, h] }); if (it.rank === 1) direct++; break;
     }
   }
   return slots;

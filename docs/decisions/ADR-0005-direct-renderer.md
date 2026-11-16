@@ -22,6 +22,12 @@ Both renderers call the same anchored overlay. Overview reuses the ranked atlas'
 
 There is no new spatial index or ranking authority. The original globally degree-ranked candidate collection and its grid placements remain shared with Ranked; Anchored no longer truncates that collection to the first 256 global nodes. Offscreen placements cannot consume the 256-entry collision allowance. As with Ranked, this is not viewport-complete naming; hover names take priority and the connection card still provides navigation. Collisions with *unlabelled* dots and graph edges are not globally solved. Independent review, browser-native software-WebGL evidence and hardware-GPU acceptance remain distinct; see the benchmark record for measured costs and limitations.
 
+## Dense focus and overview insets (2026-11-16)
+
+The existing direct-label budget (24) is also the dense-hub threshold. Above it, both label styles admit at most six direct names and discard secondary label tiers before measurement; hover retains its priority slot. Canvas and WebGL suppress blanket direct rings at the same threshold while keeping the focus ring. Anchored retains its named-dot marks. No notes, edges, connection-card rows, positions or picking targets are removed. Anchored remains the default and Ranked remains selectable; no second density preference or layout authority is introduced.
+
+Group overview consumes the same right-edge tools-overlap measurement as detail. Its canvas and hit coordinates use the remaining width, including during stage resize. Opening snaps out from under the panel; closing expands the canvas with a 180 ms CSS width transition, disabled by reduced motion. ResizeObserver redraws only when canvas or container size changes, and disposal disconnects it. A panel that occupies nearly the entire narrow view leaves the canvas nearly hidden rather than painting groups behind the panel; the existing Members list remains the navigation surface there. This does not claim readable canvas groups at arbitrarily small available widths or solve global graph density.
+
 ## Haze and fitting review (2026-11-15)
 
 WebGL edge picking applies the same stable line rank and long-line threshold as the context-line ink budget. Omitted lines cannot acquire hover just because the pointer crosses their invisible geometry; already hovered, focused and path lines retain the shader's exemptions. Canvas keeps its union-stroke behavior. The bounded incident-edge picker remains the only edge hit-test authority; no GPU readback is added.

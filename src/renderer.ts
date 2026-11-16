@@ -4,7 +4,7 @@ import type { GroupProjection } from './core/group-projection';
 import type { Settings } from './settings';
 import { readTheme } from './render-theme';
 export { DetailRenderer, type RenderView } from './webgl-renderer';
-export interface Renderer { dispose(): void; refreshTheme?(): void }
+export interface Renderer { dispose(): void; refreshTheme?(): void; syncTools?(): void }
 export function gpuStatus(): { available: boolean; reason: string } {
   return probeGpu(document.createElement('canvas'));
 }
@@ -23,7 +23,7 @@ export class GroupRenderer implements Renderer {
   private media = matchMedia('(prefers-color-scheme: dark)');
   private base: Settings;
   constructor(private container: HTMLElement, private p: GroupProjection, private s: Settings,
-    private onGroup: (id: string) => void, private onEdge: (edge: GroupProjection['groupEdges'][number]) => void, private colorOf?: (id: string) => string, private ring?: string) {
+    private onGroup: (id: string) => void, private onEdge: (edge: GroupProjection['groupEdges'][number]) => void, private colorOf?: (id: string) => string, private ring?: string, private measureTools = () => 0) {
     this.base = s; this.refreshTheme();
     this.media.addEventListener('change', this.refreshTheme);
     this.canvas = document.createElement('canvas'); this.canvas.className = 'graph-ng-groups'; this.canvas.setAttribute('aria-label', 'Declared groups and counted relationships'); container.append(this.canvas);
@@ -31,7 +31,14 @@ export class GroupRenderer implements Renderer {
     this.canvas.addEventListener('click', this.click);
     this.canvas.addEventListener('mousemove', this.hover);
     this.canvas.addEventListener('mouseleave', this.leave);
-    this.observer = new ResizeObserver(() => this.draw()); this.observer.observe(container); this.draw();
+    this.observer = new ResizeObserver(() => { this.syncTools(); this.draw(); }); this.observer.observe(container); this.observer.observe(this.canvas); this.syncTools(); this.draw();
+  }
+  /** Opening snaps clear of the panel; closing expands briefly, with no idle draw loop. */
+  syncTools() {
+    const width = Math.max(0, this.container.clientWidth - this.measureTools()), old = parseFloat(this.canvas.style.width) || 0;
+    if (width === old) return;
+    this.canvas.style.transition = width > old && !matchMedia('(prefers-reduced-motion: reduce)').matches ? 'width 180ms ease-out' : 'none';
+    this.canvas.style.width = `${width}px`;
   }
   refreshTheme = () => { const t = readTheme(this.container, this.base); this.groupColors = this.base.declaration.colors.map((_, i) => { const k = (i + 5) * 4, p = t.palette; return `rgba(${p[k]},${p[k+1]},${p[k+2]},${p[k+3]! / 255})`; }); this.s = { ...this.s, backgroundColor: t.background, nodeColor: t.node, edgeColor: t.edge, groupColor: t.group, textColor: t.text }; if (this.canvas) this.draw(); };
   private point(event: MouseEvent) { const r = this.canvas.getBoundingClientRect(); return { x: event.clientX - r.left, y: event.clientY - r.top }; }
@@ -48,10 +55,10 @@ export class GroupRenderer implements Renderer {
   };
   private leave = () => { this.tooltip.textContent = ''; };
   private draw() {
-    const w = this.container.clientWidth, h = this.container.clientHeight;
+    const w = this.canvas.clientWidth, h = this.container.clientHeight;
     if (!w || !h) return;
     const dpr = window.devicePixelRatio || 1;
-    this.canvas.width = w * dpr; this.canvas.height = h * dpr; this.canvas.style.width = `${w}px`; this.canvas.style.height = `${h}px`;
+    this.canvas.width = w * dpr; this.canvas.height = h * dpr; this.canvas.style.height = `${h}px`;
     const ctx = this.canvas.getContext('2d'); if (!ctx) { this.container.textContent = 'Canvas unavailable. Use group member lists.'; return; }
     ctx.scale(dpr, dpr); ctx.fillStyle = this.s.backgroundColor; ctx.fillRect(0, 0, w, h);
     this.nodes.clear(); this.edges = []; this.radii.clear();
