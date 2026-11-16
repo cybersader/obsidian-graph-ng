@@ -2,6 +2,24 @@
 
 Results belong to an exact invocation, fixture, source revision and hardware class. They do not establish all-scale acceptance. Original slice-1 source is `041e1382` (2026-11-10); release-readiness baseline is `9b8cc07`. Historical tables below remain dated evidence. The slice-2 section records the new worker/browser/native invocations and unmet targets separately. Raw receipts remain ignored and local; publish only scrubbed summaries without hostnames, usernames, real-vault paths or private projections.
 
+## Merged wave 8 review fixes — 2026-11-16
+
+Source: the commit carrying this section, based on `99ec508`. Hardware class: Linux x86-64 desktop, 32 GB RAM. This is local deterministic evidence, not a release or native-rendering acceptance claim.
+
+Eleven new regression tests failed against unchanged source (**600 pass / 11 fail**) and pass with the fixes (**611 pass / 0 fail**, 162,489 expectations across 36 files). Coverage includes project/layout rejection and timeout recovery without losing Notes intent; explicit Group overview selection during fallback; disjoint help IDs; one loading percentage; singular pending-change copy; native toggle labels and help-name activation; the JSON builder icon/name; pooled anchored-label descriptions for equal captions; one loading host declaration; accessible reset names without titles; and compact fallback help markup/panel-exclusion CSS. Existing information-button focus identity is retained across status updates.
+
+Build passes. Secrets, attribution (current/index files and all reachable commit metadata), privacy, frozen-lock/supply-chain and runtime-license lanes pass. Full gates fail **only on bundle size**, as expected before the owner's cap decision. No cap was raised. `main.js` is **369,576 raw / 123,859 gzip bytes**, compared with **369,252 / 123,633** at the base: **+324 raw / +226 gzip**. Overage is **4,576 raw / 1,859 gzip** against **365,000 / 122,000**. SHA-256: `8b2273249d79994e6b88759ca15ffe96968108ffd4a5c01a255afe11dcb3562f`.
+
+Exact commands, run separately:
+
+- `flock -w 3000 -E 75 /tmp/openclast-bun.lock timeout --kill-after=5s 1800s ./scripts/run.sh build`
+- `flock -w 3000 -E 75 /tmp/openclast-bun.lock timeout --kill-after=5s 1800s ./scripts/run.sh test --timeout 10000`
+- `flock -w 3000 -E 75 /tmp/openclast-bun.lock timeout --kill-after=5s 1800s ./scripts/run.sh gates`
+
+Ignored receipts: `.workspace/evidence/wave8-fixes/{baseline-gates,regressions-before,build,tests-after,gates}.log`, plus `.workspace/evidence/bundle-size.json`. Native harness **not run**: `free -g` reported only 6–7 GB available at verification, below the owner's 8 GB launch floor. Panel bounds have deterministic CSS coverage only; no screenshot or rendered light/dark acceptance is claimed.
+
+**Deferred finding 3:** preview handoff remains unchanged. Preview/final construction shares one stage, failed constructor cleanup can remove stage canvases, and `DetailRenderer.create()` resolves after scheduling rather than completing a frame. Retaining a live preview until the final first frame while cancelling an in-flight preview safely would require coordinated stage ownership, cancellation and readiness changes. The brief explicitly permits deferral rather than a risky lifecycle expansion. The blank flash and initialization wait remain known gaps. Independent post-fix review belongs to the owning session.
+
 ## Compact graph tools, wave 8 track P — 2026-11-16
 
 Source: the commit carrying this section, based on `5bec048`. Hardware class: Linux x86-64 desktop, disposable browser-native Obsidian harness, Canvas fallback (WebGL unavailable). The synthetic fixture has 1,200 ordinary notes, 300 relationship notes and 48 groups; the captured projection shows 1,200 notes and 1,593 edges. This verifies panel presentation, not canvas label changes, Electron fidelity, physical GPU behavior or mobile/touch acceptance.

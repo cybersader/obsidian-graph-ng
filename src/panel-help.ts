@@ -5,7 +5,7 @@ let helpId = 0;
 export function panelHelp(host: HTMLElement, label: string, text?: string, cls = '') {
   const wrap = host.createSpan({ cls });
   if (!text) { wrap.textContent = label; return wrap; }
-  const id = `graph-ng-help-${++helpId}`;
+  const id = `graph-ng-panel-help-${++helpId}`;
   const trigger = wrap.createEl('button', { cls: 'graph-ng-help-trigger', text: label, attr: { type: 'button', 'aria-describedby': id } });
   const tip = wrap.createSpan({ cls: 'graph-ng-help-popover', text, attr: { id, popover: 'auto', role: 'tooltip' } });
   tip.hidden = true;
@@ -16,7 +16,9 @@ export function panelHelp(host: HTMLElement, label: string, text?: string, cls =
     tip.style.left = `${Math.max(8, Math.min(r.left, w.innerWidth - tip.offsetWidth - 8))}px`;
     tip.style.top = `${Math.max(8, Math.min(r.bottom, w.innerHeight - tip.offsetHeight - 8))}px`;
   };
-  trigger.onfocus = trigger.onpointerenter = trigger.onclick = open;
+  trigger.onfocus = trigger.onpointerenter = open;
+  // Buttons inside labels suppress native activation; forward name clicks to the toggle.
+  trigger.onclick = () => { open(); if (host.tagName === 'LABEL') host.querySelector('input')?.click(); };
   trigger.onblur = close;
   wrap.onpointerleave = () => { if (trigger.ownerDocument.activeElement !== trigger) close(); };
   trigger.onkeydown = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } };

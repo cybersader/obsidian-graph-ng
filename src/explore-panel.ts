@@ -19,7 +19,7 @@ import { recommendedPhysics, suggestionCopy, type Suggestion } from './recommend
 /** The view owns the worker, renderer and persistence; the panel only edits state. */
 export interface PanelHost {
   settings(): Settings;
-  loading?(): { stage: string; done?: number; total?: number } | undefined;
+  loading?(): { stage: string } | undefined;
   information?: HTMLElement;
   members?: HTMLElement;
   scope?(): string;
@@ -27,7 +27,6 @@ export interface PanelHost {
   presentation?(mode: string): void;
   preview(expr: string, context: 'filter' | 'group'): Promise<{ matched: number; total: number; groups?: number }>;
   result(): ExploreResult | undefined;
-  loading?(): { stage: string; done?: number; total?: number } | undefined;
   mode(): string;
   policy(): string[];
   /** Edge notes (reified edges drawn as nodes) in the detail view; 0 otherwise. */
@@ -80,8 +79,9 @@ export async function setRelationshipDisplay(plugin: { settings: Settings; apply
   await plugin.apply({ ...s, declaration: { ...s.declaration, display: { ...s.declaration.display, reifiedAsNodes: nodes } } });
 }
 /** Short setting name; explanations share the same on-demand help as sliders. */
-function settingRow(host: HTMLElement, label: string, cls: string, desc?: string, _tag?: string) {
-  const row = host.createDiv({ cls: `graph-ng-setting ${cls}` }), [, name = label, a, b] = (!desc && /^(.+?)(?: \((.+)\)|: (.+))$/.exec(label)) || [];
+function settingRow(host: HTMLElement, label: string, cls: string, desc?: string) {
+  const row = host.createEl(cls.includes('graph-ng-toggle') ? 'label' : 'div', { cls: `graph-ng-setting ${cls}` }), [, name = label, a, b] = (!desc && /^(.+?)(?: \((.+)\)|: (.+))$/.exec(label)) || [];
+  if (row.tagName === 'LABEL') row.createEl('input', { attr: { type: 'checkbox', 'aria-label': name } });
   panelHelp(row, name, desc ?? a ?? b, 'graph-ng-setting-name');
   return row;
 }
@@ -271,7 +271,7 @@ export class ExplorePanel {
     const stats = this.counts.createDiv({ cls: 'graph-ng-stats' });
     const shown = sum(r.visible), notes = r.nodes - shown, edges = r.edges - r.visibleEdges;
     statRow(stats, 'circle-dot', loading ? 'Notes shown so far' : 'Notes shown', num(shown)); statRow(stats, 'spline', loading ? 'Edges drawn so far' : 'Edges drawn', num(r.visibleEdges));
-    if (loading) { statRow(stats, 'loader', loading.stage, loading.total && loading.done !== undefined ? `${Math.min(100, Math.round(100 * loading.done / loading.total))}%` : '', 'graph-ng-loading-counts'); return; }
+    if (loading) { statRow(stats, 'loader', loading.stage, '', 'graph-ng-loading-counts'); return; }
     if (notes || edges) statRow(stats, 'eye-off', 'Hidden, see why', `${plural(notes, 'note')}, ${plural(edges, 'edge')}`, '', () => this.show('information'));
   }
   private note(host: HTMLElement, text: string) { return host.createDiv({ cls: 'graph-ng-explore-note', text }); }
@@ -326,7 +326,7 @@ export class ExplorePanel {
       edit.onclick = () => { this.drafts.set(`Edit filter ${i + 1}`, converted.text!); this.render(); };
       if (f.kind !== 'expr') {
         const builder = chip.createEl('details', { cls: 'graph-ng-chip-json' });
-        disclosure(builder, '', { 'aria-label': `Edit builder filter ${i + 1} as JSON` });
+        setIcon(builder.createEl('summary', { attr: { 'aria-label': `Edit builder filter ${i + 1} as JSON` } }), 'braces');
         const input = builder.createEl('textarea', { attr: { 'aria-label': `Builder filter ${i + 1}` } }); input.value = JSON.stringify(f, null, 2);
         const error = builder.createDiv({ cls: 'graph-ng-explore-error', attr: { role: 'alert' } });
         builder.createEl('button', { text: 'Save builder entry' }).onclick = () => { try { const value: unknown = JSON.parse(input.value); validatePredicate(value); this.update({ filters: this.view.filters.map((p, j) => j === i ? value : p) }); } catch (e) { error.textContent = String(e); } };
@@ -505,7 +505,7 @@ export class ExplorePanel {
     this.flag(host, 'edgeDirection', 'Show direction (fade from source to target)');
   }
   private flag(host: HTMLElement, key: { [K in keyof Visuals]: Visuals[K] extends boolean ? K : never }[keyof Visuals], label: string, labels = false) {
-    const row = settingRow(host, label, 'graph-ng-toggle'), box = row.createEl('input', { attr: { type: 'checkbox', 'aria-label': label.split(/ \(|: /)[0]! } });
+    const row = settingRow(host, label, 'graph-ng-toggle'), box = row.querySelector('input')!;
     box.checked = this.settings.visuals[key];
     box.onchange = () => { this.settings.visuals[key] = box.checked; this.host.visualsChanged(labels); this.guards.forEach(update => update()); };
   }
@@ -529,7 +529,7 @@ export class ExplorePanel {
     const fill = (values: Required<PhysicsValues>, note: string, name: string) => { this.physicsUndo = { values: { ...draft }, name, applied: false }; for (const [key] of PHYSICS_FIELDS) { const v = values[key]; draft[key] = typeof v === 'boolean' ? v : String(v); } this.physicsError = ''; this.physicsNote = note; this.render(); };
     const size = this.host.result(), recommended = recommendedPhysics(size?.nodes ?? 1000, size?.edges ?? 3000);
     panelHelp(host, 'Layout drafts', 'Changes stay here until Apply and recompute. Fit graph is separate.');
-    const presets = settingRow(host, 'Presets', 'graph-ng-presets', 'Groups apart loosens the layout; Fill the screen tightens it. Faster uses fewer steps; presets stay drafts until Apply.', 'div').createDiv({ cls: 'graph-ng-setting-line', attr: { role: 'group', 'aria-label': 'Layout presets' } });
+    const presets = settingRow(host, 'Presets', 'graph-ng-presets', 'Groups apart loosens the layout; Fill the screen tightens it. Faster uses fewer steps; presets stay drafts until Apply.').createDiv({ cls: 'graph-ng-setting-line', attr: { role: 'group', 'aria-label': 'Layout presets' } });
     const reset = presets.createEl('button', { text: 'Recommended' });
     reset.disabled = this.physicsBusy;
     reset.onclick = () => fill(recommended, 'Recommended values for this graph loaded.', 'Recommended');
@@ -553,7 +553,7 @@ export class ExplorePanel {
       if (this.physicsNote) changes.createDiv({ text: this.physicsNote });
       if (!diff.length) changes.createDiv({ text: 'No pending changes.' });
       else {
-        const details = changes.createEl('details'); disclosure(details, `${diff.length} pending changes`);
+        const details = changes.createEl('details'); disclosure(details, plural(diff.length, 'pending change'));
         for (const [key, title] of diff) statRow(details, 'minus', title, `${show(now[key])} → ${show(draft[key])}`);
       }
     };
@@ -562,7 +562,7 @@ export class ExplorePanel {
     for (const [key, title, help, more] of PHYSICS_FIELDS) {
       const parent = more ? advanced : basic, value = draft[key], def = recommended[key];
       if (typeof value === 'boolean') {
-        const row = settingRow(parent, title, 'graph-ng-toggle graph-ng-physics-field', help), input = row.createEl('input', { attr: { type: 'checkbox', 'aria-label': title } });
+        const row = settingRow(parent, title, 'graph-ng-toggle graph-ng-physics-field', help), input = row.querySelector('input')!;
         input.disabled = this.physicsBusy; input.checked = value; input.onchange = () => { draft[key] = input.checked; summarize(); };
       } else progressiveSlider(parent, { label: title, desc: help, curve: PHYSICS_CURVES[key]!, value, def: def as number, disabled: this.physicsBusy, cls: 'graph-ng-physics-field', attr: { step: key === 'iterations' ? '1' : 'any', ...(key === 'gravity' ? { min: '0' } : key === 'iterations' ? { min: '1' } : {}) }, changed: v => { draft[key] = v; summarize(); } });
     }
@@ -720,7 +720,7 @@ export class ExplorePanel {
   }
   /** Edges: All / Focus only / Off. Live, saved with plugin settings. */
   private edgeMode(host: HTMLElement) {
-    const v = this.settings.visuals, row = settingRow(host, 'Edges', 'graph-ng-segmented', 'Focus only draws edges just for the selected note and its connections.', 'div');
+    const v = this.settings.visuals, row = settingRow(host, 'Edges', 'graph-ng-segmented', 'Focus only draws edges just for the selected note and its connections.');
     const line = row.createDiv({ cls: 'graph-ng-setting-line', attr: { role: 'group', 'aria-label': 'Edges' } });
     const modes: [EdgeMode, string][] = [['all', 'All'], ['focus', 'Focus only'], ['off', 'Off']];
     const buttons = modes.map(([mode, text]) => {

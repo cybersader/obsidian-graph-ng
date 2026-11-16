@@ -195,7 +195,7 @@ button.graph-ng-stat > .graph-ng-stat-label { text-decoration:underline dotted v
 .graph-ng-toolbar > input { flex:1; width:0; min-width:90px; }
 .graph-ng-toolbar [aria-expanded=true] { background:var(--background-modifier-hover); color:var(--text-accent); }
 .graph-ng-explore { position:absolute; inset:8px 8px 8px auto; width:min(360px, calc(100% - 16px)); z-index:3; box-sizing:border-box; display:flex; flex-direction:column; gap:12px; padding:16px; background:var(--background-primary); color:var(--text-normal); border:1px solid var(--background-modifier-border); border-radius:var(--radius-s, 4px); box-shadow:var(--shadow-s); font-size:var(--font-ui-small); }
-.graph-ng-explore[hidden], .graph-ng-summary[hidden] { display:none; }
+.graph-ng-explore[hidden], .graph-ng-summary[hidden], .graph-ng-summary-info[hidden] { display:none; }
 .graph-ng-explore-head { flex:none; }
 .graph-ng-explore-head h3 { font-size:var(--font-ui-medium); margin:0; }
 .graph-ng-explore-section { border-top:1px solid var(--background-modifier-border); padding:12px 0; }
@@ -213,10 +213,10 @@ button.graph-ng-stat > .graph-ng-stat-label { text-decoration:underline dotted v
 .graph-ng-issues { margin:0; padding:0; list-style:none; display:grid; gap:6px; }
 .graph-ng-issues > li { padding:6px 8px; border-left:3px solid var(--text-warning); background:var(--background-secondary); border-radius:0 var(--radius-s,4px) var(--radius-s,4px) 0; }
 .graph-ng-issues > li > div { color:var(--text-muted); font-size:var(--font-ui-smaller); }
-.graph-ng-summary { position:absolute; left:8px; bottom:8px; z-index:2; max-width:calc(100% - 16px); white-space:normal; display:flex; flex-wrap:wrap; align-items:center; gap:4px 10px; font-variant-numeric:tabular-nums; }
-.graph-ng-summary-chip { padding:0 6px; border-radius:var(--radius-s,4px); background:var(--background-modifier-hover); }
-.graph-ng-readout { display:inline-flex; align-items:center; gap:4px; }
-.graph-ng-summary > .graph-ng-count { font-size:inherit; }
+.graph-ng-summary { position:absolute; left:8px; bottom:8px; z-index:2; max-width:calc(100% - 16px); box-sizing:border-box; overflow-wrap:anywhere; white-space:normal; display:flex; flex-wrap:wrap; align-items:center; gap:4px 10px; font-variant-numeric:tabular-nums; }
+.graph-ng-summary-chip { min-width:0; max-width:100%; box-sizing:border-box; padding:0 6px; border-radius:var(--radius-s,4px); background:var(--background-modifier-hover); }
+.graph-ng-readout { display:inline-flex; flex-wrap:wrap; align-items:center; gap:4px; }
+.graph-ng-summary-info > .graph-ng-count { font-size:inherit; }
 .graph-ng-guard { padding:6px 0; color:var(--text-normal); }
 .graph-ng-guard summary { cursor:pointer; font-weight:var(--font-semibold,600); }
 .graph-ng-guard > div { padding-top:6px; }
@@ -392,8 +392,8 @@ button.graph-ng-stat > .graph-ng-stat-label { text-decoration:underline dotted v
 .graph-ng-explore details[open] > summary > .graph-ng-chevron { transform:rotate(90deg); }
 .graph-ng-stat-list > summary > .graph-ng-stat { flex:1; }
 /* Dotted terms are buttons, not native title tooltips. Popovers use the top layer. */
-.graph-ng-explore .graph-ng-help-trigger { display:inline; min-height:0; height:auto; padding:0; margin:0; border:0; border-radius:2px; box-shadow:none; background:none; color:inherit; font:inherit; line-height:inherit; text-align:start; text-decoration:underline dotted; text-underline-offset:3px; cursor:help; }
-.graph-ng-explore .graph-ng-help-trigger:hover { color:var(--text-accent); }
+button.graph-ng-help-trigger { display:inline; min-height:0; height:auto; padding:0; margin:0; border:0; border-radius:2px; box-shadow:none; background:none; color:inherit; font:inherit; line-height:inherit; text-align:start; text-decoration:underline dotted; text-underline-offset:3px; cursor:help; }
+button.graph-ng-help-trigger:hover { color:var(--text-accent); }
 .graph-ng-help-trigger:focus-visible { outline:2px solid var(--interactive-accent); outline-offset:3px; }
 .graph-ng-help-popover { position:fixed; inset:auto; margin:0; width:max-content; max-width:min(280px,calc(100vw - 16px)); padding:10px 12px; box-sizing:border-box; border:1px solid var(--background-modifier-border); border-radius:var(--radius-s,4px); background:var(--background-secondary); color:var(--text-normal); box-shadow:var(--shadow-s); font:var(--font-ui-small)/1.45 var(--font-interface); text-align:start; white-space:normal; overflow-wrap:anywhere; }
 /* Anchored canvas names: text tokens, opaque plates, and a ring on the named dot. */
@@ -403,3 +403,8 @@ button.graph-ng-stat > .graph-ng-stat-label { text-decoration:underline dotted v
 .graph-ng-anchor-text::after { width:8px; height:1px; background:var(--text-faint); transform-origin:0 50%; transform:rotate(var(--anchor-angle)) translateX(var(--anchor-radius)); }
 .graph-ng-anchor-text[hidden], .graph-ng-leader[hidden] { display:none; }
 .graph-ng-screen-reader { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+
+/* Leave a gap beside the tools panel; on narrow views the panel owns the readout. */
+.graph-ng-summary-info { min-width:0; display:flex; flex-wrap:wrap; align-items:center; gap:4px 10px; max-width:100%; white-space:normal; overflow-wrap:anywhere; }
+.graph-ng-body:has(> .graph-ng-explore:not([hidden])) > .graph-ng-summary { max-width:calc(100% - 384px); }
+@container (max-width: 480px) { .graph-ng-body:has(> .graph-ng-explore:not([hidden])) > .graph-ng-summary { display:none; } }

@@ -156,3 +156,19 @@ test('anchored renderer parity uses one overlay and preserves accessible help wi
   expect(source).not.toContain('this.container.title = hub');
   expect(source).not.toContain('el.title = full');
 });
+
+test('pooled anchored labels update descriptions when different nodes have the same caption', async () => {
+  const { DetailRenderer } = await import('../src/webgl-renderer'), { ControlElement } = await import('./support/controls-dom');
+  const { defaults } = await import('../src/settings');
+  const r: any = Object.create(DetailRenderer.prototype), label = new ControlElement('SPAN');
+  (label.style as any).setProperty = () => {};
+  Object.assign(r, { settings: defaults('fixture'), theme: { font: 'sans-serif' }, width: 800, height: 600, focusNode: -1,
+    visible: new Uint8Array([1, 1]), anchorPrevious: new Map(), anchorPool: [label], stateBytes: new Uint8Array(8),
+    lodLevel: () => 0, screenPoint: () => ({ x: 200, y: 200 }), name: (n: number) => n ? 'Synthetic/B/Same.md' : 'Synthetic/A/Same.md' });
+  r.anchorKey = [r.atlas, -1, -1, r.settings.labelSize, r.theme, r.tierMask, r.visible, 0];
+  for (const node of [0, 1]) {
+    r.anchorNames = [{ node, rank: 5, text: 'Same', w: 60 }];
+    r.placeAnchored(-1, 0, () => 2, () => false);
+    expect(label.textContent).toBe('Same'); expect(label.getAttribute('aria-description')).toBe(r.name(node));
+  }
+});

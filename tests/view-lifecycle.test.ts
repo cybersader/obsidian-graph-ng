@@ -130,10 +130,10 @@ test('graph information retains full diagnostics while healthy summary stays qui
   view.statusText = text; expect(view.status.textContent).toBe(text); expect(view.statusSummary.hidden).toBe(false);
   expect(view.statusSummary.title).toBe(''); expect(view.status.parent).toBe(view.explorePanel.root);
   expect(persistedPanelStates).toEqual([]);
-  view.statusSummary.click(); expect(view.status.hidden).toBe(false); const status = view.status;
+  const info = control(view.statusSummary, 'Graph information'); info.click(); expect(view.status.hidden).toBe(false); const status = view.status; view.statusText = text; expect(control(view.statusSummary, 'Graph information')).toBe(info);
   expect(persistedPanelStates).toEqual([true]);
   view.explorePanel.close(); expect(persistedPanelStates).toEqual([true, false]);
-  expect(ControlElement.active).toBe(view.statusSummary);
+  expect(ControlElement.active).toBe(info);
   view.provisional = false; view.contentEl.dataset.state = 'ready'; view.statusText = '10 nodes verified.'; expect(view.statusSummary.hidden).toBe(true); expect(view.status).toBe(status);
   view.contentEl.dataset.state = 'error'; view.statusText = 'Graph NG: synthetic failure'; expect(view.statusSummary.hidden).toBe(false); expect(view.status.textContent).toContain('failure');
   view.explorePanel.dispose();
@@ -451,4 +451,58 @@ test('16k-note refresh preserves Notes intent, refuses software overflow visibly
   released({ positions: new Float32Array(count * 2), milliseconds: 1, cached: false }); await work;
   expect(view.contentEl.dataset.state).toBe('ready'); expect(view.contentEl.dataset.mode).toBe('groups'); expect(view.getState()).toEqual({ presentation: 'nodes' });
   expect(saves).toBeGreaterThan(0); expect(shown).toBeGreaterThan(0);
+});
+
+test('failed or timed-out Notes refresh paints available groups without changing Notes intent', async () => {
+  const { GraphView } = await import('../src/main'), { defaults } = await import('../src/settings');
+  for (const failed of ['project', 'layout']) for (const message of ['synthetic failure', 'Worker request timed out']) {
+    const settings = defaults('fixture'); settings.persistLayout = false;
+    const groups = { groups: [], groupEdges: [] }, visible = new Uint8Array([1]); let shown = 0;
+    const pipeline: any = { async request(revision: number, request: any) {
+      if (request.kind === 'configure') return { declarationHash: 'd', layoutHash: 'l', ingestHash: 'i' };
+      if (request.kind === 'project') pipeline.onGroups({ revision, view: 1, projection: groups });
+      if (request.kind === failed) throw Error(message);
+      if (request.kind === 'project') return { nodes: 1, edges: 0, rows: 1, unresolved: 0, quarantined: [], meta: { key: 'k' } };
+      if (request.kind === 'detail') return { projection: {}, visible, colors: new Uint32Array(1), explore: { visible }, view: 1 };
+    } };
+    const view: any = Object.create(GraphView.prototype);
+    Object.assign(view, { app: { vault: { getMarkdownFiles: () => [] } }, plugin: { settings, pipeline, nextRevision: 0, propertyRevision: 0,
+      adapter: { async *columns() {}, coverage: () => ({ listed: 1, indexed: 1 }), factsComplete: () => true, pendingProperties: () => 0, linksPending: () => false, invalidate() {} } },
+      contentEl: { dataset: {} }, status: new ControlElement(), statusSummary: new ControlElement(), stage: new ControlElement(), view: emptyView(), presentation: 'nodes', revision: 0, renderRevision: 0,
+      members: new Map(), contributions: new Map(), startupTrace: [], cacheTrace: [], contributionPage: { clear() {}, suspend() {}, update() {}, fail() {} },
+      showGroups() { expect(view.groupGraph).toBe(groups); shown++; view.stage.createEl('canvas'); view.contentEl.dataset.mode = 'groups'; } });
+    await view.refreshOnce();
+    expect(view.contentEl.dataset.state).toBe('error'); expect(view.status.textContent).toContain(message);
+    expect(shown).toBe(1); expect(view.stage.querySelector('canvas')).toBeDefined();
+    expect(view.contentEl.dataset.mode).toBe('groups'); expect(view.getState()).toEqual({ presentation: 'nodes' });
+  }
+});
+
+test('choosing the displayed Group overview replaces fallback Notes intent', async () => {
+  const { GraphView } = await import('../src/main');
+  const view: any = Object.create(GraphView.prototype), root = new ControlElement(), render = ExplorePanel.prototype.render; let saves = 0;
+  Object.assign(view, { contentEl: root, view: emptyView(), closed: false, presentation: 'nodes', detailFallback: 'Narrow filters to see notes',
+    plugin: { settings: { explore: { panelOpen: false, legendPageSize: 20 } }, subscribe: () => () => {}, saveSoon() {} },
+    app: { workspace: { on() {}, requestSaveLayout() { saves++; } } }, registerEvent() {}, async refresh() {},
+    showGroups() { view.contentEl.dataset.mode = 'groups'; } });
+  ExplorePanel.prototype.render = function () {};
+  try { await view.onOpen(); } finally { ExplorePanel.prototype.render = render; }
+  view.contentEl.dataset.mode = 'groups'; control(root, 'Group overview').click();
+  expect(view.getState()).toEqual({ presentation: 'groups' }); expect(view.detailFallback).toBe(''); expect(saves).toBe(1);
+  view.explorePanel.dispose();
+});
+
+test('fallback summary uses compact on-demand help outside the information button and panel footprint', async () => {
+  const { GraphView } = await import('../src/main'), { readFileSync } = await import('node:fs');
+  const view: any = Object.create(GraphView.prototype), summary = new ControlElement();
+  const explanation = 'Narrow filters to see notes. Synthetic renderer limit exceeded.';
+  Object.assign(view, { contentEl: { dataset: { state: 'ready' } }, status: new ControlElement(), statusSummary: summary, detailFallback: explanation, plugin: { settings: {} } });
+  view.statusText = '';
+  const tip = summary.querySelector('.graph-ng-help-popover')!, trigger = summary.querySelector('.graph-ng-help-trigger')!;
+  expect(tip).toBeDefined(); expect(tip.hidden).toBe(true); expect(tip.textContent).toBe(explanation);
+  expect(trigger.textContent.length).toBeLessThan(20); expect(trigger.getAttribute('title')).toBeNull();
+  for (const button of summary.querySelectorAll('button')) expect(button.querySelector('button')).toBeUndefined();
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+  expect(css).toMatch(/\.graph-ng-body:has\(> \.graph-ng-explore:not\(\[hidden\]\)\) > \.graph-ng-summary[^}]+max-width:calc\(100% - 384px\)/);
+  expect(css).toMatch(/@container \(max-width: 480px\)[^\n]+\.graph-ng-summary[^\n]+display:none/);
 });

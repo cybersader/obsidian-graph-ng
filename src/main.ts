@@ -1,3 +1,4 @@
+import { panelHelp } from './panel-help';
 import { LayoutPreview } from './layout-preview';
 import type { CoordinateToken } from './webgl-renderer';
 import { legacySizing, sizingSettings, type NodeSizingValues } from './node-sizing';
@@ -259,7 +260,7 @@ export class GraphView extends ItemView {
     this.viewFeedbackText = message; this.explorePanel?.operation?.(message, retry);
     if (this.status && this.statusSummary) this.statusText = this.statusText;
   }
-  private loading() { return this.contentEl.dataset.state === 'building' ? { stage: this.statusMessage, done: this.report?.progress?.iteration, total: this.report?.progress?.total } : this.contentEl.dataset.state === 'ready' && this.provisional && !this.plugin.settings.projectionFile ? { stage: pendingText(this.report) } : undefined; }
+  private loading() { return this.contentEl.dataset.state === 'building' ? { stage: this.statusMessage } : this.contentEl.dataset.state === 'ready' && this.provisional && !this.plugin.settings.projectionFile ? { stage: pendingText(this.report) } : undefined; }
   private progressAt = 0;
   private progressText(text: string) { const now = performance.now(); if (now - (this.progressAt ?? 0) >= 100) { this.progressAt = now; this.statusText = text; } }
   private get statusText() { return this.statusMessage; }
@@ -272,10 +273,15 @@ export class GraphView extends ItemView {
     const health = state === 'error' ? [text] : this.loading() ? [this.loading()!.stage]
       : this.plugin.settings.projectionFile ? ['External aggregate, not verified']
       : [];
-    const chips = [this.viewFeedbackText, this.detailFallback, ...health].filter(Boolean), readout = state === 'ready' && !this.provisional && this.report;
-    this.statusSummary.empty(); if (readout) renderReadout(this.statusSummary, accounting(readout, this.explored));
-    for (const chip of chips) this.statusSummary.createSpan({ cls: 'graph-ng-summary-chip', text: chip });
-    this.statusSummary.hidden = !chips.length && !readout; this.statusSummary.title = '';
+    const chips = [this.viewFeedbackText, ...health].filter(Boolean), readout = state === 'ready' && !this.provisional && this.report;
+    const info = this.statusSummary.querySelector<HTMLElement>('.graph-ng-summary-info') ?? this.statusSummary.createEl('button', { cls: 'graph-ng-summary-info', attr: { 'aria-label': 'Graph information' } });
+    info.empty(); info.hidden = !readout && !chips.length;
+    info.onclick = () => this.explorePanel?.show('information', info);
+    if (readout) renderReadout(info, accounting(readout, this.explored));
+    for (const chip of chips) info.createSpan({ cls: 'graph-ng-summary-chip', text: chip });
+    this.statusSummary.querySelector('.graph-ng-summary-help')?.remove();
+    if (this.detailFallback) panelHelp(this.statusSummary, 'Notes unavailable', this.detailFallback, 'graph-ng-summary-chip graph-ng-summary-help');
+    this.statusSummary.hidden = !chips.length && !readout && !this.detailFallback; this.statusSummary.title = '';
   }
   private stage!: HTMLElement;
   private panel!: HTMLElement;
@@ -348,8 +354,8 @@ export class GraphView extends ItemView {
       rank: (query, visible) => this.detailGeneration === this.activeRevision ? this.plugin.pipeline.request<number[]>(this.activeRevision, { kind: 'search', query, visible }) : Promise.resolve([]),
       filter: query => this.setView({ ...this.view, query }),
     });
-    this.statusSummary = this.body.createEl('button', { cls: 'graph-ng-summary', attr: { 'aria-live': 'polite', 'aria-label': 'Graph information' } });
-    this.statusSummary.hidden = true; this.statusSummary.onclick = () => this.explorePanel?.show('information', this.statusSummary);
+    this.statusSummary = this.body.createDiv({ cls: 'graph-ng-summary', attr: { 'aria-live': 'polite' } });
+    this.statusSummary.hidden = true;
     this.status = this.body.createDiv({ cls: 'graph-ng-status' });
     this.panel = this.body.createDiv({ cls: 'graph-ng-panel' });
     this.explorePanel = new ExplorePanel(this.body, {
@@ -364,7 +370,7 @@ export class GraphView extends ItemView {
           }
           this.detailScope = undefined; mode = 'nodes';
         }
-        if (mode !== this.contentEl.dataset.mode) { if (mode === 'groups') this.toGroups(); else return this.showDetails(); }
+        if (mode === 'groups') this.toGroups(); else if (mode !== this.contentEl.dataset.mode) return this.showDetails();
       },
       previewSizing: values => { if (values && !this.detailRenderer) throw new Error('Open Notes first'); this.detailRenderer?.previewSizing(values); },
       sizingReadout: () => this.detailRenderer?.sizingReadout() ?? 'Open Notes to inspect actual radii.',
@@ -538,7 +544,7 @@ export class GraphView extends ItemView {
       }
     } catch (e) {
       this.plugin.adapter.invalidate(); this.plugin.ingestedHash = ''; this.provisional = true; this.contentEl.dataset.verified = 'false';
-      if (current()) { this.report = undefined; this.contentEl.dataset.state = 'error'; this.statusText = `Projection refresh failed: ${String(e)}`; this.contributionPage.fail(`Projection refresh failed: ${String(e)}`); }
+      if (current()) { this.report = undefined; this.contentEl.dataset.state = 'error'; if (this.presentation === 'nodes') { this.contentEl.dataset.mode = 'groups'; this.showGroups(true); } this.statusText = `Projection refresh failed: ${String(e)}`; this.contributionPage.fail(`Projection refresh failed: ${String(e)}`); }
     } finally {
       await preview?.finish();
       if (!current()) { this.plugin.adapter.invalidate(); this.plugin.ingestedHash = ''; this.contentEl.dataset.verified = 'false'; }

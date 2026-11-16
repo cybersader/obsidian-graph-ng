@@ -1568,7 +1568,7 @@ export class DetailRenderer {
     while (this.anchorPool.length < slots.length) this.anchorPool.push(this.overlay.appendChild(el('span', '', 'graph-ng-anchor-text')));
     this.anchorPool.forEach((p, i) => {
       const it = slots[i]; p.hidden = !it; if (!it) return;
-      const text = names.find(n => n.node === it.node)!.text; if (p.textContent !== text) { p.textContent = text; p.setAttribute('aria-description', this.name(it.node)); }
+      const text = names.find(n => n.node === it.node)!.text; if (p.textContent !== text) p.textContent = text; p.setAttribute('aria-description', this.name(it.node));
       p.style.font = `${size}px ${this.theme.font}`; p.style.lineHeight = `${h - 4}px`; p.style.background = s.visuals.labelPlates ? this.theme.background : 'transparent';
       p.style.transform = `translate(${it.left}px, ${it.top}px)`;
       const values = [it.x - it.left, it.y - it.top, Math.max(3, it.r + 2), [0, 180, -90, 90][it.side]!];

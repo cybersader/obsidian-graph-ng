@@ -59,7 +59,7 @@ export function progressiveSlider(parent: HTMLElement, o: SliderOptions) {
   const { curve: c, unit = '', def } = o, name = o.name ?? o.label;
   const row = parent.createDiv({ cls: `graph-ng-setting graph-ng-slider${o.cls ? ` ${o.cls}` : ''}` });
   panelHelp(row, name, o.desc, 'graph-ng-setting-name');
-  const reset = row.createEl('button', { cls: 'clickable-icon graph-ng-slider-reset', attr: { 'aria-label': `Reset ${name} to ${def}${unit ? ` ${unit}` : ''}`, title: `Reset to default (${def})` } });
+  const reset = row.createEl('button', { cls: 'clickable-icon graph-ng-slider-reset', attr: { 'aria-label': `Reset ${name} to ${def}${unit ? ` ${unit}` : ''}` } });
   setIcon(reset, 'rotate-ccw');
   const line = row.createDiv({ cls: 'graph-ng-slider-line' }), track = line.createDiv({ cls: 'graph-ng-slider-track' });
   const scale = track.createSpan({ cls: 'graph-ng-slider-scale', attr: { 'aria-hidden': 'true' } });

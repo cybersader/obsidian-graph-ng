@@ -61,12 +61,70 @@ test('panel descriptions are hidden, values align, and Ranked-only controls stay
 });
 test('progress updates only the summary, preserving focused drafts and scroll, and is inert when closed', () => {
   const f = fixture(); let done = 0;
-  f.host.loading = () => ({ stage: 'Reading links', done, total: 100 }); f.panel.show('layout');
+  f.host.loading = () => ({ stage: `Reading links ${done}%` }); f.panel.show('layout');
   const body = f.panel.body, children = [...body.children], field = body.querySelector('input');
   field.focus(); body.scrollTop = 101;
   for (done = 1; done <= 100; done++) f.panel.updateSummary();
   expect(body.children).toEqual(children); expect(ControlElement.active).toBe(field); expect(body.scrollTop).toBe(101);
-  expect(f.panel.counts.textContent).toContain('Notes shown so far'); expect(f.panel.counts.textContent).toContain('Reading links100%'); expect(f.panel.counts.textContent).not.toContain('Hidden, see why');
+  expect(f.panel.counts.textContent).toContain('Notes shown so far'); expect(f.panel.counts.textContent).toContain('Reading links 100%'); expect(f.panel.counts.textContent).not.toContain('Hidden, see why');
   f.host.loading = () => undefined; f.panel.updateSummary(); expect(f.panel.counts.textContent).not.toContain('so far');
   f.panel.close(); const counts = [...f.panel.counts.children]; f.panel.updateSummary(); expect(f.panel.counts.children).toEqual(counts); f.panel.dispose();
+});
+
+test('layout loading percentage appears once', async () => {
+  const { layoutProgress } = await import('../src/graph-information');
+  const f = fixture(); f.host.loading = () => ({ stage: layoutProgress({ iteration: 35, total: 100 }), done: 35, total: 100 });
+  f.panel.updateSummary(); expect(f.panel.counts.textContent.match(/35%/g)).toHaveLength(1); f.panel.dispose();
+});
+
+test('one layout draft change uses singular copy', () => {
+  const f = fixture(); f.panel.show('layout');
+  const input: any = f.root.querySelectorAll('input').find(e => e.getAttribute('aria-label') === 'Pull to center');
+  expect(input).toBeDefined(); input.value = '2'; input.oninput();
+  expect(f.root.querySelector('.graph-ng-layout-changes')!.textContent).toContain('1 pending change');
+  expect(f.root.querySelector('.graph-ng-layout-changes')!.textContent).not.toContain('1 pending changes'); f.panel.dispose();
+});
+
+test('toggle names retain native labels and help names activate their checkbox', () => {
+  const f = fixture(); f.panel.show('appearance');
+  for (const row of f.root.querySelectorAll('.graph-ng-toggle').filter(r => r.classes.has('graph-ng-setting'))) {
+    expect(row.tagName).toBe('LABEL');
+    expect(row.children[0]!.tagName).toBe('INPUT');
+    const input = row.querySelector('input')!, trigger: any = row.querySelector('.graph-ng-help-trigger');
+    if (trigger) {
+      let clicks = 0; input.click = () => { clicks++; };
+      trigger.ownerDocument = { defaultView: { innerWidth: 800, innerHeight: 600 } };
+      trigger.getBoundingClientRect = () => ({ left: 0, bottom: 20 }); trigger.onclick();
+      expect(clicks).toBe(1);
+    }
+  }
+  f.panel.show('layout');
+  for (const row of f.root.querySelectorAll('.graph-ng-toggle')) expect(row.tagName).toBe('LABEL');
+  f.panel.dispose();
+});
+
+test('builder JSON disclosure has a code icon and an accessible name', () => {
+  const f = fixture(); f.panel.view = { ...emptyView(), filters: [{ kind: 'exists', key: 'rank' }] }; f.panel.body.empty(); f.panel.filters(f.panel.body, f.host.result());
+  const summary = f.root.querySelector('.graph-ng-chip-json')!.querySelector('summary')!;
+  expect(summary.getAttribute('aria-label')).toBe('Edit builder filter 1 as JSON');
+  expect(summary.querySelectorAll('svg').some(e => e.getAttribute('data-icon') === 'braces')).toBe(true); f.panel.dispose();
+});
+
+test('panel and canvas help ID namespaces cannot collide', () => {
+  const root = new ControlElement(), tip = panelHelp(root as any, 'Help', 'Synthetic help');
+  const source = readFileSync(new URL('../src/webgl-renderer.ts', import.meta.url), 'utf8');
+  const prefix = /help\.id = `([^$]+)\$/.exec(source)![1]!;
+  expect(tip.id.startsWith(prefix)).toBe(false);
+});
+
+test('PanelHost declares loading only once', () => {
+  const source = readFileSync(new URL('../src/explore-panel.ts', import.meta.url), 'utf8');
+  expect(source.match(/loading\?\(\)/g)).toHaveLength(1);
+});
+
+test('slider reset has an accessible name without a native tooltip', () => {
+  const f = fixture(); f.panel.show('appearance');
+  const resets = f.root.querySelectorAll('.graph-ng-slider-reset'); expect(resets.length).toBeGreaterThan(0);
+  for (const reset of resets) { expect(reset.getAttribute('aria-label')).toMatch(/^Reset /); expect(reset.getAttribute('title')).toBeNull(); }
+  f.panel.dispose();
 });
