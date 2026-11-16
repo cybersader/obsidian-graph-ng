@@ -102,9 +102,10 @@ export function zoomFade(v: Pick<Visuals, 'zoomAdapt' | 'edgeDensityReference'>,
 export const INK = .3, LINES = .2, LENGTH_FADE = 1.5;
 /** Sampled geometry of the drawn web in world units: mean edge length, mean length after the long-line
  * fade, and the core area (π × endpoint variance). Bounded: at most `samples` edges, recomputed only
- * when positions or the view change, never per frame. */
+ * when positions or the view change, never per frame. `whole` budgets full lengths when
+ * indivisible carrier legs cannot use the per-leg long-line fade. */
 export interface EdgeInk { length: number; clipped: number; area: number }
-export function edgeInk(positions: ArrayLike<number>, source: ArrayLike<number>, target: ArrayLike<number>, drawn: (e: number) => boolean, samples = 4096): EdgeInk {
+export function edgeInk(positions: ArrayLike<number>, source: ArrayLike<number>, target: ArrayLike<number>, drawn: (e: number) => boolean, samples = 4096, whole = false): EdgeInk {
   const step = Math.max(1, Math.ceil(source.length / samples)), lengths: number[] = [];
   let x = 0, y = 0, xx = 0, yy = 0;
   for (let e = 0; e < source.length; e += step) if (drawn(e)) {
@@ -113,7 +114,7 @@ export function edgeInk(positions: ArrayLike<number>, source: ArrayLike<number>,
   }
   const n = lengths.length; if (!n) return { length: 0, clipped: 0, area: 0 };
   const length = lengths.reduce((s, l) => s + l, 0) / n, ref = LENGTH_FADE * length, k = 2 * n;
-  return { length, clipped: lengths.reduce((s, l) => s + Math.min(l, ref), 0) / n, area: Math.PI * Math.max(0, xx / k - (x / k) ** 2 + yy / k - (y / k) ** 2) };
+  return { length, clipped: whole ? length : lengths.reduce((s, l) => s + Math.min(l, ref), 0) / n, area: Math.PI * Math.max(0, xx / k - (x / k) ** 2 + yy / k - (y / k) ** 2) };
 }
 /** Expected line layers per pixel in the core of the web: edges × faded length × stroke width (CSS px)
  * over the core area, at `scale` px per world unit. Falls as 1 / scale when zooming in. */
@@ -123,19 +124,38 @@ export const overdraw = (ink: EdgeInk, edges: number, width: number, scale: numb
 export const inkShare = (v: Pick<Visuals, 'zoomAdapt'>, layers: number) => v.zoomAdapt && layers > 0 ? Math.min(1, LINES / layers) : 1;
 /** Stable weighted sampling without replacement. A view's eligible edges get quantile ranks,
  * with a 10% admission discount for top-decile cross-group bridges. Hub spokes, declared interest and
- * cross-group edges compete with deterministic hash ties. Rebuilt on view changes, not camera frames. */
-export function edgeRanks(source: Uint32Array, target: Uint32Array, offsets: Uint32Array, groups: Uint32Array | undefined, interest: Float32Array | undefined, drawn: (e: number) => boolean): Uint32Array {
+ * cross-group edges compete with deterministic hash ties. Explicit carrier legs share a unit,
+ * weighted by its eligible row count; bit 24 marks whole-unit (no per-leg fade) admission.
+ * Rebuilt on view changes, not camera frames. */
+export function edgeRanks(source: Uint32Array, target: Uint32Array, offsets: Uint32Array, groups: Uint32Array | undefined, interest: Float32Array | undefined, drawn: (e: number) => boolean, carrier?: Uint32Array, carrierNodes?: Uint32Array): Uint32Array {
   const ranks = new Uint32Array(source.length), scores = new Float64Array(source.length), ids: number[] = [];
+  const units = new Uint32Array(source.length), counts = new Uint32Array(source.length), heads = new Map<number, number>();
+  let total = 0;
   for (let e = 0; e < source.length; e++) if (drawn(e)) {
-    const a = source[e]!, b = target[e]!;
-    let k = Math.imul(e, 2654435769); k ^= k >>> 15; k = Math.imul(k, 2246822519);
+    const a = source[e]!, b = target[e]!, own = carrier ? carrier[e]! + 1 : 0;
+    // Only explicit legs of this carrier: unrelated links touching it stay independent.
+    const grouped = own > 0 && (carrierNodes?.[a] === own || carrierNodes?.[b] === own);
+    const id = grouped ? heads.get(own) ?? e : e;
+    if (grouped) heads.set(own, id);
+    units[e] = id + 1; total++;
+    let k = Math.imul(id, 2654435769); k ^= k >>> 15; k = Math.imul(k, 2246822519);
     const weight = 1 + Math.sqrt(Math.max(offsets[a + 1]! - offsets[a]!, offsets[b + 1]! - offsets[b]!)) + (groups && groups[a] !== groups[b] ? 2 : 0) + 4 * Math.max(interest?.[a] || 0, interest?.[b] || 0);
-    scores[e] = ((k ^ k >>> 13) >>> 8) / weight; ids.push(e);
+    const score = ((k ^ k >>> 13) >>> 8) / weight;
+    if (!counts[id]!++) { scores[id] = score; ids.push(id); } else scores[id] = Math.min(scores[id]!, score);
   }
   ids.sort((a, b) => scores[a]! - scores[b]! || a - b);
-  ids.forEach((e, i) => ranks[e] = (i + .5) * 16777216 / ids.length * (i < ids.length / 10 && groups && groups[source[e]!] !== groups[target[e]!] ? .9 : 1)); // Uint32 stores truncate
+  let at = 0;
+  for (const e of ids) {
+    ranks[e] = (at + counts[e]! / 2) * 16777216 / total * (at < total / 10 && groups && groups[source[e]!] !== groups[target[e]!] ? .9 : 1);
+    at += counts[e]!;
+    // Bit 24 marks indivisible carrier legs: per-leg length fade must not split them.
+    if (heads.get(carrier?.[e]! + 1) === e) ranks[e]! |= 16777216;
+  }
+  for (let e = 0; e < units.length; e++) if (units[e]) ranks[e] = ranks[units[e]! - 1]!;
   return ranks;
 }
+/** Same packed rank and whole-relationship admission as the vertex shader. */
+export const lineAdmitted = (rank: number, share: number, length: number, fade: number) => (rank & 16777215) < share * (rank & 16777216 ? 1 : lengthFade(length, fade)) * 16777216;
 /** Historical union-alpha reference for the earlier haze receipts, not used by either renderer. */
 export const unionAlpha = (v: Pick<Visuals, 'zoomAdapt' | 'edgeOpacity'>, layers: number) => v.zoomAdapt && layers > 0 ? Math.min(1, (1 - Math.exp(-INK * v.edgeOpacity)) / (1 - Math.exp(-layers))) : 1;
 /** Screen length (CSS px) above which context lines fade as fadeLength / length. Grows without

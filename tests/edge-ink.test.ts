@@ -1,7 +1,8 @@
 import { test, expect } from 'bun:test';
+import './support/edge-continuity';
 import { readFileSync } from 'node:fs';
 import { defaults, validateVisuals, upgradeSettings, EDGE_MODES } from '../src/settings';
-import { edgeInk, edgeRanks, overdraw, inkShare, unionAlpha, fadeLength, lengthFade, INK, LINES, LENGTH_FADE, type EdgeInk } from '../src/render-effects';
+import { edgeInk, edgeRanks, overdraw, inkShare, unionAlpha, fadeLength, lengthFade, lineAdmitted, INK, LINES, LENGTH_FADE, type EdgeInk } from '../src/render-effects';
 const source = readFileSync(new URL('../src/webgl-renderer.ts', import.meta.url), 'utf8');
 const edgeShader = source.match(/const edgeVertex = common \+ glsl`([\s\S]*?)`;/)![1]!;
 const visuals = (o: Partial<ReturnType<typeof defaults>['visuals']> = {}) => ({ ...defaults('links').visuals, edgeOpacity: .155, ...o });
@@ -59,11 +60,11 @@ test('length fade: a long line adds no more ink than a typical one, and only whi
 // The shader's stable line rank, evaluated in 32-bit unsigned arithmetic like GLSL.
 const rankOf = (id: number) => { let k = Math.imul(id, 2654435769) >>> 0; k = (k ^ k >>> 15) >>> 0; k = Math.imul(k, 2246822519) >>> 0; return ((k ^ k >>> 13) >>> 0) >>> 8; };
 test('edge shader keeps a stable share of whole context lines; focus tiers fade back to full alpha', () => {
-  expect(edgeShader).toContain('float quiet = share * 16777216. > float(lineRank) ? 1. : 0.;');
+  expect(edgeShader).toContain('float quiet = share * 16777216. > float(lineRank & 16777215u) ? 1. : 0.;');
   const fn = (line: string) => new Function('s', `with (s) { return (${line}); }`) as (s: any) => number;
   const env = { min: Math.min, max: Math.max, mix: (a: number, b: number, t: number) => a + (b - a) * t };
-  const share = fn(edgeShader.match(/float share = (.*);/)![1]!), factor = fn(edgeShader.match(/alpha \*= (.*);/)![1]!.replace(/(\d)u\b/g, '$1'));
-  for (const [ink, f, len] of [[.1, 300, 900], [.5, 300, 100], [1, 1e9, 5000]] as const) expect(share({ ...env, inkShare: ink, fadeLength: f, len })).toBeCloseTo(ink * lengthFade(len, f), 12);
+  const share = fn(edgeShader.match(/float share = (.*);/)![1]!.replace(/(\d)u\b/g, '$1')), factor = fn(edgeShader.match(/alpha \*= (.*);/)![1]!.replace(/(\d)u\b/g, '$1'));
+  for (const [ink, f, len] of [[.1, 300, 900], [.5, 300, 100], [1, 1e9, 5000]] as const) expect(share({ ...env, inkShare: ink, fadeLength: f, len, lineRank: 0 })).toBeCloseTo(ink * lengthFade(len, f), 12);
   // The kept fraction matches the share; a larger share keeps a superset (zooming in only adds lines).
   const ids = 50000, kept = (s: number) => { const out: number[] = []; for (let i = 0; i < ids; i++) if (s * 16777216 > rankOf(i)) out.push(i); return out; };
   for (const s of [.02, .1, .37, .8]) expect(Math.abs(kept(s).length / ids - s)).toBeLessThan(.01);
@@ -132,8 +133,7 @@ test('importance ranks bound the bridge allowance while favouring hub spokes and
 test('both renderers and picking consume the same importance column and context share', () => {
   expect(edgeShader).toContain('layout(location=4) in uint lineRank;');
   expect(source).toContain('this.integer(4, this.lineRanks)');
-  expect(source).toContain('this.lineRanks[e]! >= ink * lengthFade');
-  expect(source).toContain('* 16777216 <= this.lineRanks[e]!');
+  expect(source.match(/!lineAdmitted\(this.lineRanks\[e\]!/g)).toHaveLength(2); // Canvas and picking
   expect(source).not.toContain('unionAlpha');
   expect(source).toContain('edgeAlpha(v, v.zoomAdapt ? 0 : this.visibleEdges');
   expect(source).toContain('edgeAlpha(s.visuals, s.visuals.zoomAdapt ? 0 : this.visibleEdges');
