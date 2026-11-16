@@ -37,7 +37,7 @@ export class GroupRenderer implements Renderer {
   syncTools() {
     const width = Math.max(0, this.container.clientWidth - this.measureTools()), old = parseFloat(this.canvas.style.width) || 0;
     if (width === old) return;
-    this.canvas.style.transition = width > old && !matchMedia('(prefers-reduced-motion: reduce)').matches ? 'width 180ms ease-out' : 'none';
+    this.canvas.style.transition = width > old && this.base.visuals.motion === 'full' && !matchMedia('(prefers-reduced-motion: reduce)').matches ? 'width 180ms ease-out' : 'none';
     this.canvas.style.width = `${width}px`;
   }
   refreshTheme = () => { const t = readTheme(this.container, this.base); this.groupColors = this.base.declaration.colors.map((_, i) => { const k = (i + 5) * 4, p = t.palette; return `rgba(${p[k]},${p[k+1]},${p[k+2]},${p[k+3]! / 255})`; }); this.s = { ...this.s, backgroundColor: t.background, nodeColor: t.node, edgeColor: t.edge, groupColor: t.group, textColor: t.text }; if (this.canvas) this.draw(); };

@@ -81,10 +81,11 @@
 .graph-ng-info-section { border-top:1px solid var(--background-modifier-border); padding:4px 0; }
 .graph-ng-info-section > summary > .graph-ng-stat { flex:1; }
 .graph-ng-stat-nav { grid-template-columns:16px minmax(0,1fr) auto 14px; }
-.graph-ng-status summary > .graph-ng-chevron { order:1; }
-.graph-ng-status .graph-ng-stat { grid-template-columns:16px minmax(0,1fr) auto var(--gng-row-h); }
-.graph-ng-info-section > summary > .graph-ng-stat, .graph-ng-stat-list > summary > .graph-ng-stat { grid-template-columns:16px minmax(0,1fr) auto; }
-.graph-ng-status summary > .graph-ng-chevron { width:var(--gng-row-h); justify-content:center; }
+/* Counts share the same trailing action slot, including native disclosures. */
+.graph-ng-status .graph-ng-stat, .graph-ng-explore .graph-ng-status summary { display:grid; grid-template-columns:16px minmax(0,1fr) auto var(--gng-row-h); gap:var(--gng-space-2); }
+.graph-ng-status summary > .graph-ng-stat { display:contents; }
+.graph-ng-status summary > .graph-ng-chevron { grid-column:4; grid-row:1; justify-content:center; }
+.graph-ng-status .graph-ng-stat > .graph-ng-stat-icon:last-child { justify-content:center; }
 .graph-ng-status .graph-ng-stat-label { white-space:normal; overflow:visible; }
 .graph-ng-status > * { flex-shrink:0; }
 .graph-ng-info-section > button { margin:8px 0; width:100%; }

@@ -1,3 +1,4 @@
+import { workingText } from './working';
 import { setIcon } from 'obsidian';
 import { disclosure, panelHelp } from './panel-help';
 import type { EdgeRuleCounts } from './pipeline';
@@ -110,9 +111,9 @@ export function renderInformation(host: HTMLElement, message: string, state: str
   host.scrollTop = scroll;
 }
 function renderBody(host: HTMLElement, message: string, state: string | undefined, r: InformationReport | undefined, view: Explored | undefined, act: InformationActions, loading?: { indexed?: number; listed?: number }) {
-  if (message) host.createDiv({ cls: `graph-ng-status-message ${state === 'error' ? 'graph-ng-explore-error' : state === 'building' ? 'graph-ng-working' : ''}`, text: message });
+  if (message) workingText(host.createDiv({ cls: `graph-ng-status-message ${state === 'error' ? 'graph-ng-explore-error' : ''}` }), message, state === 'building');
   if (state === 'building' || r?.provisional) {
-    host.createDiv({ cls: 'graph-ng-coverage-state graph-ng-working', attr: { role: 'status' }, text: r?.provisional ? pendingText(r) : 'Counts available when the graph is ready' });
+    workingText(host.createDiv({ cls: 'graph-ng-coverage-state', attr: { role: 'status' } }), r?.provisional ? pendingText(r) : 'Counts available when the graph is ready', true);
     if (loading?.indexed !== undefined && loading.listed !== undefined) {
       statRow(host, 'files', 'Notes read', n(loading.indexed)); statRow(host, 'loader', 'Notes pending', n(Math.max(0, loading.listed - loading.indexed)));
     }

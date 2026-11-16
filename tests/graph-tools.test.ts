@@ -197,11 +197,13 @@ test('group framing snaps clear of opening tools, eases closed, and respects red
   globalThis.matchMedia = (() => ({ matches: reduced })) as any;
   try {
     const renderer: any = Object.create(GroupRenderer.prototype), canvas = { style: { width: '1080px', transition: '' } };
-    Object.assign(renderer, { canvas, container: { clientWidth: 1080 }, measureTools: () => overlap });
+    Object.assign(renderer, { base: defaults('links'), canvas, container: { clientWidth: 1080 }, measureTools: () => overlap });
     overlap = 368; renderer.syncTools(); expect(canvas.style.width).toBe('712px'); expect(canvas.style.transition).toBe('none');
     overlap = 0; renderer.syncTools(); expect(canvas.style.width).toBe('1080px'); expect(canvas.style.transition).toBe('width 180ms ease-out');
     renderer.syncTools(); expect(canvas.style.transition).toBe('width 180ms ease-out'); // ResizeObserver does not restart it.
     overlap = 368; renderer.syncTools(); reduced = true; overlap = 0; renderer.syncTools(); expect(canvas.style.transition).toBe('none');
+    reduced = false;
+    for (const motion of ['reduced', 'off']) { renderer.base.visuals.motion = motion; overlap = 368; renderer.syncTools(); overlap = 0; renderer.syncTools(); expect(canvas.style.transition).toBe('none'); }
     overlap = 2000; renderer.syncTools(); expect(canvas.style.width).toBe('0px');
   } finally { globalThis.matchMedia = previous; }
 });
@@ -593,4 +595,13 @@ test('duplicate-ID inspection opens the existing quarantine destination and focu
   list.scrollIntoView = () => calls.push('scroll'); view.panel = panel; view.toGroups = () => calls.push('groups'); view.explorePanel = { show: (tool: string) => calls.push(tool) };
   view.informationActions.duplicates(); expect(calls).toEqual(['groups', 'members', 'scroll']);
   expect(list.open).toBe(true); expect(ControlElement.active).toBe(summary);
+});
+
+
+test('Graph information reserves one action slot for counts and disclosure chevrons', () => {
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+  expect(css).toContain('.graph-ng-status .graph-ng-stat, .graph-ng-explore .graph-ng-status summary { display:grid; grid-template-columns:16px minmax(0,1fr) auto var(--gng-row-h)');
+  expect(css).toContain('.graph-ng-status summary > .graph-ng-stat { display:contents; }');
+  expect(css).toContain('.graph-ng-status summary > .graph-ng-chevron { grid-column:4; grid-row:1;');
+  expect((css.match(/@keyframes gng-working/g) ?? []).length).toBe(1);
 });

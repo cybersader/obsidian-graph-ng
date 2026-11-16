@@ -109,7 +109,7 @@ test('Motion uses a default and saves all choices through the live appearance pa
   const f = fixture(); let updates = 0; f.host.visualsChanged = () => updates++; f.panel.show('appearance');
   const motion: any = f.root.querySelectorAll('select').find(e => e.getAttribute('aria-label') === 'Motion');
   expect(motion.value).toBe('full'); expect(motion.children.map((e: any) => e.textContent)).toEqual(['Full (default)', 'Reduced', 'Off']);
-  for (const value of ['reduced', 'off', 'full']) { motion.value = value; motion.onchange(); expect((f.settings.visuals as any).motion).toBe(value); }
+  for (const value of ['reduced', 'off', 'full'] as const) { motion.value = value; motion.onchange(); expect(f.settings.visuals.motion).toBe(value); }
   expect(updates).toBe(3); expect(motion.parentElement.querySelector('.graph-ng-help-popover').hidden).toBe(true); f.panel.dispose();
 });
 

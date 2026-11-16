@@ -317,7 +317,7 @@ test('pending target diagnostics remain provisional and issues never claim no is
 test('attention rows share the information grid without a box or expanded explanation', () => {
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   expect(css).not.toMatch(/\.graph-ng-stat-warning \{/);
-  expect(css).toContain('.graph-ng-status .graph-ng-stat { grid-template-columns:16px minmax(0,1fr) auto var(--gng-row-h); }');
+  expect(css).toContain('.graph-ng-status .graph-ng-stat, .graph-ng-explore .graph-ng-status summary { display:grid; grid-template-columns:16px minmax(0,1fr) auto var(--gng-row-h); gap:var(--gng-space-2); }');
   expect(css).toContain('.graph-ng-stat-remove { width:var(--gng-row-h); padding:var(--gng-space-1); }');
   const rows = vault(), p = buildProjection(rows, d), filters = [{ kind: 'exists' as const, key: 'kind' }, { kind: 'folder' as const, prefix: ['Synthetic'] }];
   const e = { ...explore(p, d, { ...emptyView(), filters }, new Uint32Array(p.paths.length), 0, { facetValues: 50 }), carrierHidden: [3, 1] };
