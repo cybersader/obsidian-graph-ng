@@ -137,7 +137,8 @@ test('both renderers and picking consume the same importance column and context 
   expect(source).not.toContain('unionAlpha');
   expect(source).toContain('edgeAlpha(v, v.zoomAdapt ? 0 : this.visibleEdges');
   expect(source).toContain('edgeAlpha(s.visuals, s.visuals.zoomAdapt ? 0 : this.visibleEdges');
-  expect(source).toContain('width = 2 * Math.max(.5, s.edgeSize * zoomFade('); expect(source).toContain('ctx.lineWidth = width * wide;');
+  expect(source).toContain('width = 2 * Math.max(.5, this.edgeWidth(zoom))'); expect(source).toContain('ctx.lineWidth = width * wide;');
+  expect(source).toContain('return this.settings.edgeSize * zoomFade(this.settings.visuals, this.visibleEdges, zoom, this.width, this.height)');
 });
 
 test('label plates are one quad per label: overlapping glyph padding neither hides a neighbour nor doubles plate alpha', () => {

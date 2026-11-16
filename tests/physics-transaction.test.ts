@@ -7,6 +7,7 @@ import { ControlElement, control } from './support/controls-dom';
 import { topLeftHub } from './support/top-left-hub';
 import { focusTiers, incidentEdges } from '../src/render-data';
 import { miniFit, miniBounds, toCamera } from '../src/minimap';
+import { shaderNames } from '../scripts/glsl.mjs';
 
 // Actual production classes; the DOM/driver seam does not establish native rendering/performance.
 const source = readFileSync(new URL('../main.js', import.meta.url), 'utf8');
@@ -1707,7 +1708,8 @@ test('density requested on Canvas uses identical existing strokes without an off
 
 // The shipped shader scalar expressions are evaluated against the compiled CPU renderer.
 // This is arithmetic/driver parity, not a substitute for GPU raster acceptance.
-const emphasisShader = source.match(/if\(emphasis>0\.\)\{([\s\S]*?)\}else\{/)![1]!;
+const shaderOriginalNames = Object.fromEntries(Object.entries(shaderNames).map(([name, short]) => [short, name]));
+const emphasisShader = source.match(/if\(emphasis>0\.\)\{([\s\S]*?)\}else\{/)![1]!.replace(/\b[A-Za-z_]\w*\b/g, name => shaderOriginalNames[name] ?? name);
 const emphasisGL = new Function('e', `with(e) { ${emphasisShader.replace(/\bfloat\b/g, 'let')} return radius; }`) as (e: any) => number;
 test('adaptive compiled Canvas, bundled GLSL and hit radii agree across tiers, zoom, fan-out and hover easing', async () => {
   const f = await graduated([[0, 1], [1, 2]], 5), { r, k } = f, v = f.settings.visuals;

@@ -3,6 +3,40 @@ import { PickGrid, positionTexture, incidentEdges, segmentDistance, placeLabels,
 import { buildProjection } from '../src/core/projection';
 import { defaultDeclaration, validateDeclaration } from '../src/core/declaration';
 import { defaults, upgradeSettings, validateSettings } from '../src/settings';
+import { minifyGlsl, shaderNames } from '../scripts/glsl.mjs';
+
+test('shader cleanup preserves public names, stage linkage, swizzles and nonshader text', () => {
+  const input = 'const ui = `alpha tint`; const a = glsl`#version 300 es\nuniform float focus;\nuniform float dim;\nlayout(location=0) in float size;\nout vec4 tint;\nvoid main() { float alpha = focus; vec3 rgb = vec3(alpha); tint = vec4(rgb, dim); }`; const b = glsl`#version 300 es\nin vec4 tint;\nout vec4 outputColor;\nvoid main() { outputColor = vec4(tint.rgb, tint.a); }`;';
+  const output = minifyGlsl(input);
+  expect(output).toContain('const ui = `alpha tint`');
+  expect(output).toContain('#version 300 es\n');
+  expect(output).toContain('uniform float focus,dim;');
+  expect(output).toContain('layout(location=0)in float size;');
+  expect(output).toContain(`out vec4 ${shaderNames.tint};`);
+  expect(output).toContain(`in vec4 ${shaderNames.tint};`);
+  expect(output).toContain(`vec4(${shaderNames.tint}.rgb,${shaderNames.tint}.a)`);
+  const qualifiers = minifyGlsl('glsl`flat out uint seed; out uint unqualified; layout(location=0) in float size; in float other;`');
+  expect(qualifiers).toContain(`flat out uint ${shaderNames.seed};out uint unqualified;`);
+  expect(qualifiers).toContain('layout(location=0)in float size;in float other;');
+});
+test('shader cleanup refuses private-name capture and public binding renames', () => {
+  expect(() => minifyGlsl('glsl`float A = 1.;`')).toThrow('GLSL_PRIVATE_NAME_COLLISION');
+  expect(() => minifyGlsl('glsl`uniform float tint;`')).toThrow('GLSL_PUBLIC_NAME_RENAME');
+  expect(() => minifyGlsl('glsl`layout(location=0) in float alpha;`')).toThrow('GLSL_PUBLIC_NAME_RENAME');
+});
+test('every production shader retains identical tokens after expanding private names and grouped declarations', () => {
+  const source = readZoomProbeSource(new URL('../src/webgl-renderer.ts', import.meta.url), 'utf8');
+  const bodies = (text: string) => [...text.matchAll(/glsl`([^`]*)`/g)].map(m => m[1]!);
+  const original = bodies(source), compact = bodies(minifyGlsl(source));
+  const reverse = Object.fromEntries(Object.entries(shaderNames).map(([name, short]) => [short, name]));
+  const tokens = (body: string) => body.replace(/\/\/[^\n]*/g, '').replace(/\s+/g, '');
+  expect(compact.length).toBe(original.length);
+  compact.forEach((body, i) => {
+    const restored = body.replace(/\b[A-Za-z_]\w*\b/g, name => reverse[name] ?? name)
+      .replace(/\b(uniform|in|out) (\w+) (\w+(?:,\w+)+);/g, (_, qualifier, type, names: string) => names.split(',').map(name => `${qualifier} ${type} ${name};`).join(''));
+    expect(tokens(restored)).toBe(tokens(original[i]!));
+  });
+});
 
 test('packed picking handles negative coordinates, ties, hidden and empty nodes', () => {
   const grid = new PickGrid(new Float32Array([-10, -5, -10, -5, 50, 50]), new Uint8Array([1, 1, 0]));

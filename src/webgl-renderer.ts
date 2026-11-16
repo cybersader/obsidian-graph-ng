@@ -484,11 +484,11 @@ export class DetailRenderer {
     this.theme = readTheme(container, settings);
     this.timings.theme = performance.now() - started; started = performance.now();
     this.canvas = document.createElement('canvas'); this.canvas.className = 'graph-ng-detail'; this.canvas.tabIndex = 0; this.canvas.style.touchAction = 'none'; container.append(this.canvas);
-    this.overlay = container.createDiv ? container.createDiv({ cls: 'graph-ng-overlay' }) : container.appendChild(Object.assign(document.createElement('div'), { className: 'graph-ng-overlay' }));
+    this.overlay = container.createDiv ? container.createDiv({ cls: 'graph-ng-overlay' }) : container.appendChild(el('div', '', 'graph-ng-overlay'));
     const help = this.overlay.appendChild(el('span', 'Graph notes. Arrows select, Enter opens, R cycles relationships, L toggles connection lens, Shift+F10 opens the menu, Alt+Left goes back, Escape clears.', 'graph-ng-screen-reader'));
     help.id = `graph-ng-help-${++descriptionId}`; this.canvas.setAttribute('aria-describedby', help.id);
-    this.hoverLabel = this.overlay.appendChild(Object.assign(document.createElement('div'), { className: 'graph-ng-hover-label' }));
-    const div = (className: string) => this.overlay.appendChild(Object.assign(document.createElement('div'), { className }));
+    this.hoverLabel = this.overlay.appendChild(el('div', '', 'graph-ng-hover-label'));
+    const div = (className: string) => this.overlay.appendChild(el('div', '', className));
     this.cueLine = div('graph-ng-cue-line'); this.cueRing = div('graph-ng-cue'); this.cueLine.hidden = this.cueRing.hidden = true;
     this.isolationBar = el('div', '', 'graph-ng-isolation');
     this.miniMap = new Minimap(this.overlay, this.cameraFrame, (x, y) => this.setCamera(x, y, this.camera.ratio), () => this.fitAll(), () => this.refresh()); this.limitChip = zoomChip(this.overlay, () => this.onZoomOut());
@@ -665,7 +665,7 @@ export class DetailRenderer {
   private packDiscs() {
     this.discData = this.discs(this.halos, this.hubs);
     while (this.hubLabels.length > Math.min(64, this.hubs.length)) this.hubLabels.pop()!.remove();
-    while (this.hubLabels.length < Math.min(64, this.hubs.length)) this.hubLabels.push(this.overlay.appendChild(Object.assign(document.createElement('div'), { className: 'graph-ng-hub-label' })));
+    while (this.hubLabels.length < Math.min(64, this.hubs.length)) this.hubLabels.push(this.overlay.appendChild(el('div', '', 'graph-ng-hub-label')));
     this.hubLabels.forEach((el, i) => { const h = this.hubs[i]!; el.textContent = `${this.view.groupLabels?.[h.group] ?? ''} (${h.count.toLocaleString()})`; });
   }
   private async program(vertex: string, fragment: string): Promise<Program> {
@@ -1099,7 +1099,7 @@ export class DetailRenderer {
     let best = -1, distance = this.settings.groupEdgeHitRadius / this.scale, budget = 32768;
     // Lines hidden by Edges mode or the shared ink budget are not pickable.
     if (mode === 'off' || !v.edgeOpacity || mode === 'focus' && !focus) return -1;
-    const [ink, reach] = this.edgeQuiet(2 * Math.max(.5, this.settings.edgeSize * zoomFade(v, this.visibleEdges, this.camera.ratio / this.homeRatio, this.width, this.height)));
+    const [ink, reach] = this.edgeQuiet(2 * Math.max(.5, this.edgeWidth()));
     // Deliberately budgeted incident-edge picking, not an O(m) all-segment scan or GPU readback.
     const visit = (node: number) => {
       for (let j = this.edges.offsets[node]!; j < this.edges.offsets[node + 1]! && budget-- > 0; j++) {
@@ -1122,6 +1122,8 @@ export class DetailRenderer {
   }
   /** Sampled web geometry for the ink budget; recomputed when positions or the view change, not per frame. */
   private ink?: EdgeInk & { display: Float32Array };
+  /** Same CSS-pixel width for WebGL, Canvas and line picking. */
+  private edgeWidth(zoom = this.camera.ratio / this.homeRatio) { return this.settings.edgeSize * zoomFade(this.settings.visuals, this.visibleEdges, zoom, this.width, this.height); }
   /** Shared context-line admission: [line share, long-line fade length in CSS px]. */
   private edgeQuiet(width: number) {
     const v = this.settings.visuals, edges = this.visibleEdges;
@@ -1324,7 +1326,7 @@ export class DetailRenderer {
   /** Per frame, O(path): ring both endpoints and number each later note by its hop. Decorative; the card holds the text. */
   private placePath(radius: (n: number) => number, focus: number) {
     const notes = this.pathView && focus ? pathNotes(this.pathView.hops) : [], k = notes.length, marks = this.pathMarks;
-    while (k && marks.length < k + 1) { const m = this.overlay.appendChild(Object.assign(document.createElement('div'), { className: marks.length < 2 ? 'graph-ng-path-end' : 'graph-ng-path-badge' })); m.setAttribute('aria-hidden', 'true'); marks.push(m); }
+    while (k && marks.length < k + 1) { const m = this.overlay.appendChild(el('div', '', marks.length < 2 ? 'graph-ng-path-end' : 'graph-ng-path-badge')); m.setAttribute('aria-hidden', 'true'); marks.push(m); }
     marks.forEach((m, i) => {
       m.hidden = !k || i > k; if (m.hidden) return;
       const n = i < 2 ? notes[i ? k - 1 : 0]! : notes[i - 1]!, q = this.screenPoint(n), r = radius(n), d = i < 2 ? 0 : r * .75 + 6;
@@ -1338,7 +1340,6 @@ export class DetailRenderer {
   private selectEdge(edge: number, anchor = -1) {
     const p = this.projection, c = this.noteCard, token = ++this.edgeToken;
     this.card.hide(); this.selected = this.hovered = -1; this.pathView = undefined; this.cue = -1; this.edgeAnchor = anchor; this.selectedEdges = this.edgeParallels(edge); this.emphasize(); this.refresh();
-    const el = (tag: string, text = '', cls = '') => Object.assign(document.createElement(tag), { textContent: text, className: cls });
     const a = p.source[edge]!, b = p.target[edge]!, box = el('div', '', 'graph-ng-relationships'), na = this.name(a), nb = this.name(b);
     box.append(el('strong', `${na} → ${nb}`));
     const rows = this.selectedEdges.map(e => { const row = el('div', '', 'graph-ng-relationship'); row.append(el('span', p.types[p.type[e]!]! + (p.source[e] !== a ? ' (reverse)' : ''))); box.append(row); return row; });
@@ -1401,7 +1402,7 @@ export class DetailRenderer {
     if (!gl) { this.drawCanvas(); this.placeOverlay(); if (more) this.refresh(); return; }
     gl.viewport(0, 0, this.canvas.width, this.canvas.height); gl.clearColor(p[8]! / 255, p[9]! / 255, p[10]! / 255, 1); gl.clear(gl.COLOR_BUFFER_BIT);
     const lod = this.lodLevel(), policy = this.policy, fade = labelFade(this.settings.nodeSize, this.settings.labelRenderedSizeThreshold, this.camera.ratio, LABEL_RATIOS, v.labelFade, lod);
-    const notes = this.carrierLevel(zoom), edgeWidth = this.settings.edgeSize * zoomFade(v, this.visibleEdges, zoom, this.width, this.height), alpha = edgeAlpha(v, v.zoomAdapt ? 0 : this.visibleEdges, v.zoomAdapt ? 1 : zoom, policy.dark);
+    const notes = this.carrierLevel(zoom), edgeWidth = this.edgeWidth(zoom), alpha = edgeAlpha(v, v.zoomAdapt ? 0 : this.visibleEdges, v.zoomAdapt ? 1 : zoom, policy.dark);
     const nodeSize = this.baseNodeRadius();
     const focus = v.hoverHighlight ? this.focusLevel : 0, haloAlpha = v.haloOpacity * Math.min(1, Math.max(0, (this.camera.ratio - .06) / .25));
     // Halos (under), edges, edge notes, other nodes, collapsed hubs, labels.
@@ -1416,15 +1417,16 @@ export class DetailRenderer {
     if (edgePass && edgesOnTop) passes.push([0, 0, 0]);
     if (this.discData[1]!.length) passes.push([3, 3, 1]);
     if (v.labelStyle === 'ranked' && this.atlas && fade.alpha > .004) passes.push([2, -1, 0]);
+    const f = (location: WebGLUniformLocation | null, value: number) => gl.uniform1f(location, value), integer = (location: WebGLUniformLocation | null, value: number) => gl.uniform1i(location, value);
     for (const [i, vaoIndex, hub, layer = 1] of passes) {
       const program = this.programs[i]!, u = program.uniforms;
-      gl.useProgram(program.handle); gl.uniform1i(u.lensPositions!, 5); gl.uniform1f(u.lensBlend!, this.lensBlend); gl.uniform1i(u.lensAnchor!, this.lensAnchor); gl.uniform1i(u.positions!, 0); gl.uniform1i(u.palette!, 1); gl.uniform1i(u.atlas!, 2); gl.uniform1i(u.nodeColors!, 3); gl.uniform1i(u.nodeState!, 4); gl.uniform1i(u.positionWidth!, this.positionWidth);
-      gl.uniform2f(u.center!, this.centerX, this.centerY); gl.uniform2f(u.viewport!, this.width, this.height); gl.uniform1f(u.scale!, this.scale); gl.uniform1f(u.nodeSize!, nodeSize); gl.uniform1f(u.edgeSize!, edgeWidth); gl.uniform1i(u.hovered!, this.hoverFx.n); gl.uniform2f(u.pulse!, this.fx[0]!, this.fx[1]!); gl.uniform1i(u.selected!, this.selected); gl.uniform1i(u.focusNode!, this.focusNode); gl.uniform1i(u.edgeHovered!, this.hoveredEdge);
-      gl.uniform1f(u.focus!, focus); gl.uniform1f(u.dim!, this.emphasisDim()); gl.uniform1f(u.emphasis!, this.emphasisBudget()); gl.uniform1f(u.glow!, layer ? policy.glow : 0);
-      gl.uniform1f(u.carrierAlpha!, notes.alpha); gl.uniform1f(u.carrierFold!, notes.visibility); gl.uniform1f(u.carrierSize!, v.carrierSize); gl.uniform1i(u.layer!, layer);
-      gl.uniform1i(u.tierMask!, this.tierMask); gl.uniform1f(u.minSize!, v.tierMinSize); gl.uniform1f(u.rings!, v.tierRings ? (this.directs.length > DIRECT_LABELS ? .5 : 1) : 0); gl.uniform1f(u.strong!, v.focusEdges ? focusAlpha(this.directs.length) : 0);
-      gl.uniform1i(u.segments!, policy.segments); gl.uniform1f(u.curvature!, policy.curves ? v.curvature : 0); gl.uniform1f(u.edgeAlpha!, alpha); gl.uniform1f(u.direction!, v.edgeDirection ? 1 : 0); gl.uniform1f(u.colorMix!, v.edgeColorMix); gl.uniform1f(u.inkShare!, ink); gl.uniform1f(u.fadeLength!, Math.min(reach, 1e9)); gl.uniform1f(u.focusOnly!, v.edgeMode === 'focus' ? 1 : 0);
-      gl.uniform1f(u.labelAlpha!, fade.alpha); gl.uniform1f(u.labelCut!, fade.cut); gl.uniform3f(u.outline!, p[8]! / 255, p[9]! / 255, p[10]! / 255); gl.uniform1f(u.plates!, v.labelPlates ? .92 : 0); gl.uniform1f(u.discAlpha!, hub ? 1 : haloAlpha); gl.uniform1f(u.hub!, hub);
+      gl.useProgram(program.handle); integer(u.lensPositions!, 5); f(u.lensBlend!, this.lensBlend); integer(u.lensAnchor!, this.lensAnchor); integer(u.positions!, 0); integer(u.palette!, 1); integer(u.atlas!, 2); integer(u.nodeColors!, 3); integer(u.nodeState!, 4); integer(u.positionWidth!, this.positionWidth);
+      gl.uniform2f(u.center!, this.centerX, this.centerY); gl.uniform2f(u.viewport!, this.width, this.height); f(u.scale!, this.scale); f(u.nodeSize!, nodeSize); f(u.edgeSize!, edgeWidth); integer(u.hovered!, this.hoverFx.n); gl.uniform2f(u.pulse!, this.fx[0]!, this.fx[1]!); integer(u.selected!, this.selected); integer(u.focusNode!, this.focusNode); integer(u.edgeHovered!, this.hoveredEdge);
+      f(u.focus!, focus); f(u.dim!, this.emphasisDim()); f(u.emphasis!, this.emphasisBudget()); f(u.glow!, layer ? policy.glow : 0);
+      f(u.carrierAlpha!, notes.alpha); f(u.carrierFold!, notes.visibility); f(u.carrierSize!, v.carrierSize); integer(u.layer!, layer);
+      integer(u.tierMask!, this.tierMask); f(u.minSize!, v.tierMinSize); f(u.rings!, v.tierRings ? (this.directs.length > DIRECT_LABELS ? .5 : 1) : 0); f(u.strong!, v.focusEdges ? focusAlpha(this.directs.length) : 0);
+      integer(u.segments!, policy.segments); f(u.curvature!, policy.curves ? v.curvature : 0); f(u.edgeAlpha!, alpha); f(u.direction!, v.edgeDirection ? 1 : 0); f(u.colorMix!, v.edgeColorMix); f(u.inkShare!, ink); f(u.fadeLength!, Math.min(reach, 1e9)); f(u.focusOnly!, v.edgeMode === 'focus' ? 1 : 0);
+      f(u.labelAlpha!, fade.alpha); f(u.labelCut!, fade.cut); gl.uniform3f(u.outline!, p[8]! / 255, p[9]! / 255, p[10]! / 255); f(u.plates!, v.labelPlates ? .92 : 0); f(u.discAlpha!, hub ? 1 : haloAlpha); f(u.hub!, hub);
       gl.bindVertexArray(vaoIndex < 0 ? this.labelVaos[lod]! : this.vaos[vaoIndex]!);
       if (i === 0) {
         if (density) {
@@ -1495,7 +1497,7 @@ export class DetailRenderer {
       this.rankedLabels = layout.slots.filter(x => x.node !== ego); this.moreAt = layout.more;
       this.rankedKey = [lod, this.display, this.fit, this.width, this.height, this.lensRevision];
       this.overlay.className = 'graph-ng-overlay' + (v.labelPlates ? ' graph-ng-plates' : '');
-      const pool = (list: HTMLElement[], count: number, cls: string) => { while (list.length > count) list.pop()!.remove(); while (list.length < count) list.push(this.overlay.appendChild(Object.assign(document.createElement('div'), { className: cls }))); };
+      const pool = (list: HTMLElement[], count: number, cls: string) => { while (list.length > count) list.pop()!.remove(); while (list.length < count) list.push(this.overlay.appendChild(el('div', '', cls))); };
       pool(this.tierLabels, this.rankedLabels.length, ''); pool(this.tierLeaders, this.rankedLabels.filter(x => x.leader).length, 'graph-ng-leader');
       let j = 0;
       this.rankedLabels.forEach(({ node: n, rank, leader }, i) => {
@@ -1505,7 +1507,7 @@ export class DetailRenderer {
         if (leader) this.tierLeaders[j++]!.style.width = `${Math.round(Math.hypot(leader[2] - leader[0], leader[3] - leader[1]))}px`;
       });
       if (layout.more) {
-        const b = this.moreButton ??= this.overlay.appendChild(Object.assign(document.createElement('button'), { className: 'graph-ng-more', onclick: () => { if (this.focusNode >= 0) this.onMoreConnections(this.focusNode); } }));
+        const b = this.moreControl();
         b.style.font = tierFont(1, s.labelSize, tier, this.theme.font);
       }
     }
@@ -1584,7 +1586,7 @@ export class DetailRenderer {
     if (this.moreButton) this.moreButton.hidden = true;
     const rest = this.moreTotal - slots.filter(it => it.node !== ego && this.stateBytes[it.node * 4 + 1] === 255).length, anchor = slots.find(it => it.node === ego);
     if (ego >= 0 && rest > 0 && anchor) {
-      const b = this.moreButton ??= this.overlay.appendChild(Object.assign(document.createElement('button'), { className: 'graph-ng-more', onclick: () => { if (this.focusNode >= 0) this.onMoreConnections(this.focusNode); } }));
+      const b = this.moreControl();
       const x = anchor.left, y = anchor.top + h + 4, [w, bh] = this.moreSize;
       b.hidden = under(x, y, w!, bh!) || taken.some(box => overlapsBox(x, y, w!, bh!, box));
       b.textContent = `${rest} more connections`; b.removeAttribute('aria-label'); b.style.font = `${size}px ${this.theme.font}`; b.style.transform = `translate(${x}px, ${y}px)`;
@@ -1602,6 +1604,7 @@ export class DetailRenderer {
     if (!(n >= 0 && n < this.visible.length && this.filterVisible[n])) return;
     this.selectNote(n, true); if (lens) this.setLens(n);
   }
+  private moreControl() { return this.moreButton ??= this.overlay.appendChild(Object.assign(document.createElement('button'), { className: 'graph-ng-more', onclick: () => { if (this.focusNode >= 0) this.onMoreConnections(this.focusNode); } })); }
   private updateLegend() { paintLegend(this.legendRows, this.legendCounts, this.tierMask, this.tierTotals); }
   /** Keep the zoom; centre the note. */
   private panTo(n: number) {
@@ -1668,7 +1671,7 @@ export class DetailRenderer {
     ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0); ctx.fillStyle = this.theme.background; ctx.fillRect(0, 0, this.width, this.height); ctx.strokeStyle = this.theme.edge; ctx.lineWidth = s.edgeSize;
     // The edge shader's tier weights: rest, neighbours of neighbours, then direct strokes on top.
-    const zoom = this.camera.ratio / this.homeRatio, base = edgeAlpha(s.visuals, s.visuals.zoomAdapt ? 0 : this.visibleEdges, s.visuals.zoomAdapt ? 1 : zoom, this.policy.dark), width = 2 * Math.max(.5, s.edgeSize * zoomFade(s.visuals, this.visibleEdges, zoom, this.width, this.height));
+    const zoom = this.camera.ratio / this.homeRatio, base = edgeAlpha(s.visuals, s.visuals.zoomAdapt ? 0 : this.visibleEdges, s.visuals.zoomAdapt ? 1 : zoom, this.policy.dark), width = 2 * Math.max(.5, this.edgeWidth(zoom));
     const mask = this.tierMask, strong = s.visuals.focusEdges ? focusAlpha(this.directs.length) : 0, mode = s.visuals.edgeMode, [ink, reach] = this.edgeQuiet(width);
     // The same quantile admission and long-line threshold as the shader; focus tiers are never sampled.
     const drawEdges = () => { for (const tier of mode === 'off' ? [] : focus ? mode === 'focus' ? [128, 255] : [0, 128, 255] : mode === 'focus' ? [] : [-1]) {

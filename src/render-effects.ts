@@ -50,9 +50,9 @@ export function nodeColors(colors: Uint32Array, ruleCount: number, palette: Uint
   const groupCount = groups ? groups.length / 4 : 0;
   for (let i = 0; i < colors.length; i++) {
     const c = colors[i]!, o = i * 4;
-    if (c < ruleCount) { const k = (c + 5) * 4; out[o] = palette[k]!; out[o + 1] = palette[k + 1]!; out[o + 2] = palette[k + 2]!; out[o + 3] = palette[k + 3]!; }
-    else if (groups && groupCodes && groupCount) { const k = (groupCodes[i]! % groupCount) * 4; out[o] = groups[k]!; out[o + 1] = groups[k + 1]!; out[o + 2] = groups[k + 2]!; out[o + 3] = 255; }
-    else { out[o] = palette[0]!; out[o + 1] = palette[1]!; out[o + 2] = palette[2]!; out[o + 3] = palette[3]!; }
+    const grouped = c >= ruleCount && groups && groupCodes && groupCount;
+    const bytes = grouped ? groups : palette, k = c < ruleCount ? (c + 5) * 4 : grouped ? (groupCodes[i]! % groupCount) * 4 : 0;
+    out[o] = bytes[k]!; out[o + 1] = bytes[k + 1]!; out[o + 2] = bytes[k + 2]!; out[o + 3] = grouped ? 255 : bytes[k + 3]!;
   }
   return out;
 }

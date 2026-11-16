@@ -1,4 +1,5 @@
 import { TIERS } from './render-data';
+import { el } from './connection-card';
 
 /** Elements of the bounded, text-only highlight overlay. */
 export interface HighlightOverlay {
@@ -17,7 +18,7 @@ export interface HighlightOverlay {
 /** Build the tier legend (4 toggle rows, in a top-left stack the trail joins), 8 off-screen pips and one ripple ring inside `overlay`.
  * Rows call `toggleTier(row)`; pips call `goToPip(pip)`. Text only, no markup from notes. */
 export function highlightOverlay(overlay: HTMLElement, toggleTier: (row: number) => void, goToPip: (pip: number) => void): HighlightOverlay {
-  const make = (tag: string, cls: string, parent: HTMLElement = overlay) => parent.appendChild(Object.assign(document.createElement(tag), { className: cls }));
+  const make = (tag: string, cls: string, parent: HTMLElement = overlay) => parent.appendChild(el(tag, '', cls));
   const ripple = make('div', 'graph-ng-ripple'); ripple.hidden = true; ripple.setAttribute('aria-hidden', 'true');
   const stack = make('div', 'graph-ng-focus-stack'), legend = make('div', 'graph-ng-tier-legend', stack); legend.hidden = true; legend.setAttribute('role', 'group'); legend.setAttribute('aria-label', 'Graduated connection highlighting');
   const counts: HTMLElement[] = [], pips: HTMLElement[] = [], parts: [HTMLElement, HTMLElement][] = [];

@@ -1,5 +1,6 @@
 import { probeGpu } from './gpu-probe';
 import { edgeAlpha } from './render-effects';
+import { segmentDistance } from './render-data';
 import type { GroupProjection } from './core/group-projection';
 import type { Settings } from './settings';
 import { readTheme } from './render-theme';
@@ -44,7 +45,7 @@ export class GroupRenderer implements Renderer {
   private point(event: MouseEvent) { const r = this.canvas.getBoundingClientRect(); return { x: event.clientX - r.left, y: event.clientY - r.top }; }
   private nodeAt(point: Point) { return this.p.groups.find(g => { const n = this.nodes.get(g.id)!; return Math.hypot(n.x - point.x, n.y - point.y) <= (this.radii.get(g.id) ?? this.s.groupRadius); }); }
   private edgeAt(point: Point) {
-    return this.edges.find(e => e.points.some((p, i) => { if (!i) return false; const q = e.points[i - 1]!, dx = p.x - q.x, dy = p.y - q.y; const t = Math.max(0, Math.min(1, ((point.x - q.x) * dx + (point.y - q.y) * dy) / (dx * dx + dy * dy || 1))); return Math.hypot(point.x - q.x - t * dx, point.y - q.y - t * dy) <= this.s.groupEdgeHitRadius; }));
+    return this.edges.find(e => e.points.some((p, i) => { if (!i) return false; const q = e.points[i - 1]!; return segmentDistance(point.x, point.y, q.x, q.y, p.x, p.y) <= this.s.groupEdgeHitRadius; }));
   }
   private click = (e: MouseEvent) => { const p = this.point(e), g = this.nodeAt(p); if (g) this.onGroup(g.id); else { const edge = this.edgeAt(p); if (edge) this.onEdge(edge.edge); } };
   private hover = (e: MouseEvent) => {
