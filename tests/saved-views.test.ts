@@ -85,10 +85,10 @@ test('scout R1 production apply rejection retains requested filter and retries o
   submitMissingFilter(f); await f.plugin.work.catch(() => {}); await tick();
   expect(writes).toBe(1); expect(notifications()).toBe(0); expect(f.view.projection).toBe(projection);
   expect(f.view.view.filters.length).toBe(1); expect(f.panel.alert.textContent).toContain('storage may be incomplete');
-  expect(f.view.statusSummary.textContent).toContain('Still loading'); expect(f.view.statusText).toBe('Base coverage warning');
+  expect(f.view.statusSummary.textContent).toContain('Waiting for property verification'); expect(f.view.statusText).toBe('Base coverage warning');
   control(f.panel.alert, 'Retry view').click(); await f.plugin.work; await tick();
   expect(writes).toBe(2); expect(notifications()).toBe(1); expect(f.panel.alert.textContent).toBe('');
-  expect(f.view.statusSummary.textContent).toContain('Still loading'); expect(f.renderer.calls).toEqual([]); f.panel.dispose();
+  expect(f.view.statusSummary.textContent).toContain('Waiting for property verification'); expect(f.renderer.calls).toEqual([]); f.panel.dispose();
 });
 for (const next of ['newer', 'closed']) test(`scout R1 late apply rejection is inert after ${next}`, async () => {
   const f = await fixture(), gate = deferred(); actualApply(f); f.plugin.saveData = () => gate.promise;
@@ -103,7 +103,7 @@ test('scout R2 current success retires view error while preserving base warnings
   f.view.setView({ ...emptyView(), query: 'a' }); await tick(); expect(f.view.statusSummary.textContent).toContain('View not applied');
   f.plugin.pipeline.request = request; f.view.setView({ ...emptyView(), query: 'b' }); await tick();
   expect(f.panel.alert.textContent).toBe(''); expect(f.view.statusSummary.textContent).not.toContain('View not applied');
-  expect(f.view.statusSummary.textContent).toContain('Still loading'); expect(f.view.statusText).toBe('Base coverage warning');
+  expect(f.view.statusSummary.textContent).toContain('Waiting for property verification'); expect(f.view.statusText).toBe('Base coverage warning');
   expect([...f.view.visible]).toEqual([...f.result(f.view.view).visible]); f.panel.dispose();
 });
 test('scout R2 superseded rejection cannot overwrite a queued newer request', async () => {
@@ -136,7 +136,7 @@ test('batch 4 F2 a refresh that rebuilds the requested view retires its stale fa
   const replies: Record<string, unknown> = { configure: { declarationHash: 'd', layoutHash: 'l', ingestHash: 'i' }, project: { nodes: 4, edges: 0, unresolved: 0, quarantined: [], meta: { key: 'k' } },
     detail: { projection, visible: new Uint8Array(4).fill(1), colors: f.view.colors, explore: explored, view: 3 }, layout: { positions: new Float32Array(8), milliseconds: 1, cached: true } };
   Object.assign(f.plugin, { serialize: (run: () => Promise<void>) => run(), nextRevision: 1, ingestedHash: '', pipeline: { async request(_revision: number, message: any) { return replies[message.kind]; } },
-    adapter: { configure() {}, async *columns() {}, coverage: () => ({ indexed: 1, listed: 1 }), factsComplete: () => true, linksPending: () => false, invalidate() {} } });
+    adapter: { configure() {}, async *columns() {}, coverage: () => ({ indexed: 1, listed: 1 }), factsComplete: () => true, pendingProperties: () => 0, linksPending: () => false, invalidate() {} } });
   f.plugin.settings.persistLayout = false;
   Object.assign(f.view, { refresh: GraphView.prototype.refresh, revision: 0, gpu: { available: true, reason: 'Synthetic' }, startupTrace: [], cacheTrace: [], contributionPage: { update() {}, clear() {}, suspend() {}, fail() {} } });
   await f.view.refresh();

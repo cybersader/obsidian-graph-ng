@@ -259,7 +259,7 @@ const UNIFORMS = ['lensPositions', 'lensBlend', 'lensAnchor', 'positions', 'pale
 interface Program { handle: WebGLProgram; uniforms: Record<string, WebGLUniformLocation | null> }
 interface Camera { x: number; y: number; ratio: number }
 /** Runtime view masks from the worker's explore result; colors stay worker-computed. */
-export interface RenderView { groupCodes?: Uint32Array; groupLabels?: readonly string[]; collapsed?: Uint8Array; typeHidden?: Uint8Array; colors?: Uint32Array }
+export interface RenderView { loading?: boolean; groupCodes?: Uint32Array; groupLabels?: readonly string[]; collapsed?: Uint8Array; typeHidden?: Uint8Array; colors?: Uint32Array }
 interface Hub { group: number; x: number; y: number; count: number; radius: number }
 const reducedMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -505,9 +505,10 @@ export class DetailRenderer {
       try { this.canvasEdges = canvasDetailEdges(projection, visible, settings.canvasMaxDetailNodes, settings.canvasMaxDetailEdges); } catch (e) { this.canvas.remove(); this.overlay.remove(); throw e; }
       this.ctx = this.canvas.getContext('2d'); if (!this.ctx) { this.canvas.remove(); this.overlay.remove(); throw new Error('CANVAS_UNAVAILABLE'); }
     }
-    this.packState(); this.setView(visible, view, false); this.fitAll(0);
+    this.packState(); this.setView(visible, view, false); if (!view.loading) this.fitAll(0);
+    this.overlay.hidden = !!view.loading;
     this.canvas.addEventListener('webglcontextlost', this.contextLost); this.canvas.addEventListener('webglcontextrestored', this.contextRestored);
-    input.attach(this.container);
+    if (!view.loading) input.attach(this.container);
     this.media.addEventListener('change', this.refreshTheme);
     this.observer = new ResizeObserver(() => { const changed = this.resize(); this.syncTools(); if (changed && this.ready) void this.prepareLabels(() => !this.disposed).catch(() => {}); }); this.observer.observe(container);
     this.panelObserver = new ResizeObserver(() => { if (this.measurePanels()) this.refresh(); }); for (const el of this.panels) this.panelObserver.observe(el);
@@ -580,6 +581,14 @@ export class DetailRenderer {
     const halos = all.filter(h => !collapsed?.[h.group] && h.radius < coherent);
     return { grid, display, visible: render, hubs, halos, picker: render === grid.visible ? grid : new PickGrid(positions, render) };
 
+  }
+  /** Noninteractive loading preview only. Keep its initial camera frame; no picking or labels use these coordinates. */
+  streamPositions(next: Float32Array) {
+    if (!this.view.loading || !this.usable || next.length !== this.positions.length || !next.every(Number.isFinite)) throw new Error('Layout preview unavailable');
+    const previous = this.positions;
+    this.positions = this.display = next;
+    if (this.gl) this.uploadCoordinates();
+    this.refresh(); return previous;
   }
   async preparePositions(next: Float32Array, current: () => boolean): Promise<CoordinateToken> {
     const revision = ++this.coordinateRevision; ++this.labelsRevision;
@@ -752,6 +761,7 @@ export class DetailRenderer {
   }
   private uploadPalette() { const gl = this.gl!; gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.textures[1]!); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 256, this.theme.palette.length / 1024, 0, gl.RGBA, gl.UNSIGNED_BYTE, this.theme.palette); this.paletteUploads++; }
   private async prepareLabels(current: () => boolean) {
+    if (this.view.loading) return;
     const revision = ++this.labelsRevision, w = this.width, h = this.height;
     const valid = () => !this.disposed && revision === this.labelsRevision && current();
     const started = performance.now();
@@ -1433,6 +1443,7 @@ export class DetailRenderer {
   private lodLevel() { return this.labelLevel = stickyLevel(this.labelLevel, this.camera.ratio, LABEL_RATIOS); }
   /** DOM text for the hovered note and collapsed groups only: bounded, text-only. */
   private placeOverlay() {
+    if (this.view.loading) return;
     this.onSizingChange?.();
     const v = this.settings.visuals, focus = v.hoverHighlight ? this.focusLevel : 0, ego = this.focusNode, node = this.hovered < 0 && focus ? ego : this.hovered;
     const radius = (n: number) => this.drawnRadius(n, true, focus);

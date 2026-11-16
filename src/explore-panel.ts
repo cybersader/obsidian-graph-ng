@@ -27,6 +27,7 @@ export interface PanelHost {
   presentation?(mode: string): void;
   preview(expr: string, context: 'filter' | 'group'): Promise<{ matched: number; total: number; groups?: number }>;
   result(): ExploreResult | undefined;
+  loading?(): { stage: string; done?: number; total?: number } | undefined;
   mode(): string;
   policy(): string[];
   /** Edge notes (reified edges drawn as nodes) in the detail view; 0 otherwise. */

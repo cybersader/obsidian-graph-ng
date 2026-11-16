@@ -132,6 +132,7 @@ export class LocalAdapter {
   }
   coverage() { return { indexed: this.indexed.size, listed: this.paths.size }; }
   linksPending() { return this.declaration?.edges.some(e => e.kind === 'producer' && (e.producer !== this.producer || !this.linksResolved)) ?? false; }
+  pendingProperties() { return this.paths.size - this.propertyVerified.size; }
   factsComplete() { return this.propertyVerified.size === this.paths.size && !this.linksPending(); }
   private read(path: string): FactRow | undefined {
     const file = this.app.vault.getAbstractFileByPath(path);

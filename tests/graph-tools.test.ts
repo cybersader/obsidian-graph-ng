@@ -210,13 +210,13 @@ test('UX representation buttons, saved views and workspace scope have distinct a
 test('UX graph status uses structured phase, coverage and failures rather than English keyword guesses', () => {
   const view: any = Object.create(GraphView.prototype);
   Object.assign(view, { contentEl: { dataset: { state: 'building' } }, status: new ControlElement(), statusSummary: new ControlElement(), plugin: { settings: {} }, provisional: true, gpu: { available: true } });
-  view.statusText = 'partial, provisional, pending'; expect(view.statusSummary.textContent).toBe('Preparing graph…');
-  view.contentEl.dataset.state = 'ready'; view.statusText = '0 unresolved'; expect(view.statusSummary.textContent).toBe('Still loading');
+  view.statusText = 'partial, provisional, pending'; expect(view.statusSummary.textContent).toBe('partial, provisional, pending');
+  view.contentEl.dataset.state = 'ready'; view.statusText = '0 unresolved'; expect(view.statusSummary.textContent).toBe('Waiting for property verification');
   view.provisional = false; view.statusText = 'error is a note name, not a health signal'; expect(view.statusSummary.hidden).toBe(true);
   view.report = { nodes: 4, edges: 2, indexed: 4, listed: 4, linksPending: false, provisional: false, unresolved: 3, duplicates: 0 }; view.statusText = 'details'; expect(view.statusSummary.textContent).toBe('4 notes2 edges'); expect(view.statusSummary.hidden).toBe(false); view.report = undefined;
   view.contentEl.dataset.state = 'error'; view.statusText = 'Projection refresh failed: synthetic missing file'; expect(view.statusSummary.textContent).toContain('synthetic missing file'); expect(view.statusSummary.textContent).not.toContain('Retry');
   view.contentEl.dataset.state = 'ready'; view.plugin.settings.projectionFile = 'synthetic.json'; view.statusText = 'aggregate'; expect(view.statusSummary.textContent).toContain('not verified');
-  view.plugin.settings.projectionFile = ''; view.gpu = { available: false, reason: 'Synthetic renderer unavailable' }; view.statusText = 'fallback'; expect(view.statusSummary.textContent).toContain('Synthetic renderer unavailable'); expect(view.statusSummary.textContent).toContain('Use group member lists');
+  view.plugin.settings.projectionFile = ''; view.gpu = { available: false, reason: 'Synthetic renderer unavailable' }; view.detailFallback = 'Synthetic renderer unavailable. Showing Group overview.'; view.statusText = 'fallback'; expect(view.statusSummary.textContent).toContain('Synthetic renderer unavailable'); expect(view.statusSummary.textContent).toContain('Showing Group overview');
 });
 
 /** Production shell/Notes transition and renderer visibility; only graphics/boot boundaries are fake. */
@@ -294,7 +294,7 @@ for (const [nodes, edges, reason] of [[2, 3, 'CANVAS_DETAIL_NODE_LIMIT'], [3, 1,
       expect(f.renderer.canvasEdges).toBe(oldEdges); expect([...oldEdges]).toEqual([0]); expect(f.renderer.visibleEdges).toBe(1); expect([...f.renderer.stateBytes]).toEqual(state);
       expect(f.renderer.camera).toBe(camera); expect(camera).toEqual({ x: .3, y: .4, ratio: .2 }); expect(f.renderer.selected).toBe(0);
       expect(f.view.stage.children).toContain(f.canvas); expect(f.renderer.canvas).toBe(f.canvas); expect(f.counts()).toEqual(counts); expect(f.requests).toEqual([]);
-      expect(JSON.stringify(f.view.view)).toBe(query); expect(f.view.status.textContent).toContain(reason); expect(f.view.status.textContent).toContain('use group member lists');
+      expect(JSON.stringify(f.view.view)).toBe(query); expect(f.view.status.textContent).toContain('limit'); expect(f.view.status.textContent).not.toContain('Showing Group overview');
     } finally { f.restore(); }
   });
 }
@@ -315,8 +315,13 @@ for (const [nodes, edges, reason] of [[2, 3, 'CANVAS_DETAIL_NODE_LIMIT'], [3, 1,
       // … but the software renderer never adopts an over-budget mask or keeps a stale edge subset.
       expect(groups).toBe(1); expect(f.view.contentEl.dataset.mode).toBe('groups'); expect(f.renderer.filterVisible).toBe(filterVisible); expect(f.renderer.canvasEdges).toBe(canvasEdges);
       expect(f.renderer.visibleNodes).toBe(2); expect([...f.renderer.stateBytes]).toEqual(state);
-      expect(f.view.explorePanel.alert.textContent).toContain('Too many notes to draw individually on this renderer'); expect(f.view.statusSummary.textContent).toContain('Narrow filters to see notes');
-      expect(f.view.explorePanel.alert.querySelectorAll('button').length).toBe(0); expect(f.view.status.textContent).toContain(reason);
+      expect(f.view.statusSummary.textContent).toContain('limit'); expect(f.view.statusSummary.textContent).toContain('Narrow filters to see notes');
+      expect(f.view.explorePanel.alert.querySelectorAll('button').length).toBe(0); expect(f.view.status.textContent).toContain('limit');
+      // Narrowing a refused Notes view retries Notes; explicit Group overview does not.
+      result.visible = shown; result.visibleEdges = 1; let notes = 0;
+      f.view.showDetails = async () => { expect(f.view.admitDetail(f.view.visible, true)).toBe(true); notes++; };
+      f.view.presentation = 'nodes'; f.view.setView({ ...f.view.view, query: 'narrow' }); await flush(); expect(notes).toBe(1);
+      f.view.presentation = 'groups'; f.view.setView({ ...f.view.view, query: 'narrower' }); await flush(); expect(notes).toBe(1);
     } finally { f.restore(); }
   });
 }

@@ -159,7 +159,7 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
         }
         if (!input) input = { count: projection.paths.length, source: projection.source, target: projection.target, offsets: projection.offsets, targets: projection.targets, seed };
         if (input.movable && !input.movable.some(Boolean)) { positions = input.initial!; reused = 'all'; }
-        else { if (input.initial) reused = 'some'; positions = await runLayoutStream(input, config.layout, config.streamEveryIterations, p => self.postMessage({ kind: 'positions', revision, positions: p }, { transfer: [p.buffer] }), yieldTask, takeBuffer); }
+        else { if (input.initial) reused = 'some'; positions = await runLayoutStream(input, config.layout, config.streamEveryIterations, (p, iteration, total) => self.postMessage({ kind: 'positions', revision, positions: p, iteration, total }, { transfer: [p.buffer] }), yieldTask, takeBuffer); }
       }
       const milliseconds = performance.now() - start;
       // An exact hit already holds this generation; skip re-contracting its group summary.

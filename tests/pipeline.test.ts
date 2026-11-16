@@ -361,3 +361,19 @@ test('relationship details: rule names and relationship-note paths per edge row,
     expect(await p.request(0, { kind: 'relationships', edges: [0] }).catch(String)).toContain('generation changed');
   } finally { p.dispose(); }
 });
+
+test('worker position events carry actual cold and warm solver iteration limits', async () => {
+  const p = pipeline(), events: [number, number][] = [];
+  p.onPositions = event => { events.push([event.iteration, event.total]); p.recycle(event.positions.buffer as ArrayBuffer); };
+  try {
+    await p.request(1, { kind: 'configure', config: { ...config, layout: { ...layout, iterations: 7, relaxIterations: 3 }, streamEveryIterations: 2 } });
+    await p.request(1, { kind: 'rows', columns: packRows([{ path: 'a.md', properties: {} }, { path: 'b.md', properties: {} }], declaration), reset: true });
+    await p.request(1, { kind: 'project', complete: true }); await p.request(1, { kind: 'layout' });
+    expect(events).toEqual([[0, 7], [2, 7], [4, 7], [6, 7]]);
+    events.length = 0;
+    await p.request(2, { kind: 'configure', config: { ...config, layout: { ...layout, iterations: 7, relaxIterations: 3 }, streamEveryIterations: 2 } });
+    await p.request(2, { kind: 'rows', columns: packRows([{ path: 'c.md', properties: {} }], declaration) });
+    await p.request(2, { kind: 'project', complete: true }); await p.request(2, { kind: 'layout' });
+    expect(events).toEqual([[0, 3], [2, 3]]);
+  } finally { p.dispose(); }
+});

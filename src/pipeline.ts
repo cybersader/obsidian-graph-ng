@@ -46,7 +46,7 @@ export class WorkerPipeline {
   private active?: Pending;
   private closed = false;
   private restarts = 0;
-  onPositions?: (event: { revision: number; positions: Float32Array }) => void;
+  onPositions?: (event: { revision: number; positions: Float32Array; iteration: number; total: number }) => void;
   onGroups?: (event: GroupEvent) => void;
   constructor(private worker: Transport, private timeoutMs: () => number, private cleanup = () => {}, private recovery?: Recovery) { this.attach(); }
   private attach() {

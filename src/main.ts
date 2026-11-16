@@ -1,3 +1,4 @@
+import { LayoutPreview } from './layout-preview';
 import type { CoordinateToken } from './webgl-renderer';
 import { legacySizing, sizingSettings, type NodeSizingValues } from './node-sizing';
 import { generationCurrent, physicsSettings, type PhysicsValues } from './physics-controls';
@@ -13,20 +14,20 @@ import { graphStats, layoutAdvice, recommend, suggestionSettings, type GraphStat
 import { categorical, NEUTRAL_GROUPS } from './render-effects';
 import { readTheme } from './render-theme';
 import { renderPath, type RenderProjection } from './render-projection';
-import { canvasDetailEdges } from './render-data';
+import { CanvasLimit, canvasDetailEdges } from './render-data';
 import { pairKey, carrierIndexer, indexCarriers, type GroupProjection, type GroupContribution } from './core/group-projection';
 import { BinaryLayoutStore, type BinaryGeneration } from './core/binary-layout';
 import { yieldTask, sliced } from './core/scheduler';
 import { WorkerPipeline, LAYOUT_PRODUCER, currentDetailGeneration, type ProjectResult, type DetailResult, type LayoutResult, type ViewResult } from './pipeline';
 import { groupPages, page } from './core/group-page';
 import { ContributionPage, type ContributionContext } from './contribution-page';
-import { accounting, num, plural, renderInformation, renderReadout, sum, type InformationReport } from './graph-information';
+import { accounting, layoutProgress, pendingText, readingProgress, num, plural, renderInformation, renderReadout, sum, type InformationReport } from './graph-information';
 import { canonicalExplore, loadSettings, settingsForSave, validateSettings, type Settings } from './settings';
 import { searchable } from './search';
 import { DetailRenderer, GroupRenderer, gpuStatus, type Renderer, type RenderView } from './renderer';
 declare const __LAYOUT_WORKER_SOURCE__: string;
 /** Notes read and still to read, for a loading message. */
-const left = (c: { indexed: number; listed: number }) => `${num(c.indexed)} read, ${num(c.listed - c.indexed)} left`;
+const left = (c: { indexed: number; listed: number }) => readingProgress(c);
 /** One message/check serves each boundary without dropping phase information. */
 function requireLayout(current: () => boolean, phase = '') { if (!current()) throw new Error(`Layout generation changed${phase}`); }
 function cleanupFailure(error: unknown, phase: string, cleanup: unknown) { return new Error(`${error}; ${phase} failed: ${cleanup}. Saved-state recovery uncertain; retry saving before closing.`); }
@@ -245,8 +246,11 @@ export class GraphView extends ItemView {
   private statusMessage = '';
   private report?: InformationReport;
   private viewFeedbackText = '';
+  /** An automatic fallback is not a new user choice. */
+  private detailFallback = '';
   /** Breakdown actions: the same Lines/Notes apply as Appearance, and removing one view filter. */
   private informationActions = {
+    relationships: () => this.explorePanel?.show('appearance'),
     display: (nodes: boolean) => { setRelationshipDisplay(this.plugin, nodes).catch(e => new Notice(String(e))); },
     remove: (i: number) => { if (i < this.view.filters.length) this.setView({ ...this.view, filters: this.view.filters.filter((_, j) => j !== i) }); },
     filter: (i: number) => this.explorePanel?.focusFilter(i),
@@ -255,20 +259,23 @@ export class GraphView extends ItemView {
     this.viewFeedbackText = message; this.explorePanel?.operation?.(message, retry);
     if (this.status && this.statusSummary) this.statusText = this.statusText;
   }
+  private loading() { return this.contentEl.dataset.state === 'building' ? { stage: this.statusMessage, done: this.report?.progress?.iteration, total: this.report?.progress?.total } : this.contentEl.dataset.state === 'ready' && this.provisional && !this.plugin.settings.projectionFile ? { stage: pendingText(this.report) } : undefined; }
+  private progressAt = 0;
+  private progressText(text: string) { const now = performance.now(); if (now - (this.progressAt ?? 0) >= 100) { this.progressAt = now; this.statusText = text; } }
   private get statusText() { return this.statusMessage; }
   /** Graph information: a short message over structured tiles/issues; the canvas summary shows separate chips. */
   private set statusText(text: string) {
     this.statusMessage = text;
+    (this.explorePanel as (ExplorePanel & { updateSummary?(): void }) | undefined)?.updateSummary?.();
     const state = this.contentEl.dataset.state;
-    renderInformation(this.status, text, state, this.report, this.explored, this.informationActions);
-    const health = state === 'error' ? [text] : state === 'building' ? ['Preparing graph…']
+    renderInformation(this.status, [text, this.detailFallback].filter(Boolean).join(' '), state, this.report, this.explored, this.informationActions);
+    const health = state === 'error' ? [text] : this.loading() ? [this.loading()!.stage]
       : this.plugin.settings.projectionFile ? ['External aggregate, not verified']
-      : this.gpu && !this.gpu.available && this.gpu.reason !== 'Not probed' ? [`Rendering fallback: ${this.gpu.reason}. Use group member lists.`]
-      : this.provisional ? ['Still loading'] : [];
-    const chips = [this.viewFeedbackText, ...health].filter(Boolean), readout = state !== 'error' && this.report;
+      : [];
+    const chips = [this.viewFeedbackText, this.detailFallback, ...health].filter(Boolean), readout = state === 'ready' && !this.provisional && this.report;
     this.statusSummary.empty(); if (readout) renderReadout(this.statusSummary, accounting(readout, this.explored));
     for (const chip of chips) this.statusSummary.createSpan({ cls: 'graph-ng-summary-chip', text: chip });
-    this.statusSummary.hidden = !chips.length && !readout; this.statusSummary.title = [this.viewFeedbackText, text, readout ? 'Open note coverage' : ''].filter(Boolean).join('\n');
+    this.statusSummary.hidden = !chips.length && !readout; this.statusSummary.title = '';
   }
   private stage!: HTMLElement;
   private panel!: HTMLElement;
@@ -341,7 +348,7 @@ export class GraphView extends ItemView {
       rank: (query, visible) => this.detailGeneration === this.activeRevision ? this.plugin.pipeline.request<number[]>(this.activeRevision, { kind: 'search', query, visible }) : Promise.resolve([]),
       filter: query => this.setView({ ...this.view, query }),
     });
-    this.statusSummary = this.body.createEl('button', { cls: 'graph-ng-summary', attr: { 'aria-live': 'polite', 'aria-label': 'Open graph information' } });
+    this.statusSummary = this.body.createEl('button', { cls: 'graph-ng-summary', attr: { 'aria-live': 'polite', 'aria-label': 'Graph information' } });
     this.statusSummary.hidden = true; this.statusSummary.onclick = () => this.explorePanel?.show('information', this.statusSummary);
     this.status = this.body.createDiv({ cls: 'graph-ng-status' });
     this.panel = this.body.createDiv({ cls: 'graph-ng-panel' });
@@ -352,7 +359,7 @@ export class GraphView extends ItemView {
         if (mode === 'workspace') {
           if (!this.detailScope) return;
           if (this.detailRenderer && this.contentEl.dataset.mode === 'nodes') {
-            if (!this.admitDetail(this.visible!, !this.detailRenderer.gpu)) return;
+            if (!this.admitDetail(this.visible!, !this.detailRenderer.gpu, false)) return;
             this.detailScope = undefined; this.detailRenderer.setView(this.visible!, this.renderView()); this.explorePanel?.render(); return;
           }
           this.detailScope = undefined; mode = 'nodes';
@@ -375,7 +382,7 @@ export class GraphView extends ItemView {
       },
       commitSavedView: (saved, expected) => this.plugin.commitSavedView(saved, expected),
       savedViewIssue: saved => this.savedViewIssue(saved), openSavedView: saved => this.openSavedView(saved),
-      applyLayout: values => this.applyLayout(values), settings: () => this.plugin.settings, result: () => this.explored, mode: () => this.contentEl.dataset.mode ?? 'groups',
+      applyLayout: values => this.applyLayout(values), settings: () => this.plugin.settings, result: () => this.explored, loading: () => this.loading(), mode: () => this.contentEl.dataset.mode ?? 'groups',
       policy: () => this.detailRenderer?.policy.reasons ?? [], carriers: () => this.detailRenderer?.carrierCount ?? 0, relationshipNotes: () => this.relationshipNotes(), setRelationshipDisplay: nodes => setRelationshipDisplay(this.plugin, nodes), setView: (view, after) => this.setView(view, after), setColors: colors => this.setColors(colors), preview: (expr, context) => this.previewExpression(expr, context),
       lens: () => { const r = this.contentEl.dataset.mode === 'nodes' ? this.detailRenderer : undefined; return { active: !!r && r.lensNode >= 0, available: !!r && (r.lensNode >= 0 || r.selected >= 0 || r.hovered >= 0) }; },
       toggleLens: () => this.detailRenderer?.toggleLens(), toolsChanged: () => this.detailRenderer?.syncTools?.(),
@@ -398,10 +405,10 @@ export class GraphView extends ItemView {
   }
   invalidateSource() { this.explored = undefined; this.explorePanel?.render(); this.contributionPage.clear(); this.groupGeneration = -1; this.revision++; this.renderRevision++; this.provisional = true; if (this.contentEl) this.contentEl.dataset.verified = 'false'; this.renderer?.dispose(); this.renderer = undefined; this.projection = undefined; this.detailGeneration = -1; this.positions = undefined; this.groupGraph = undefined; this.stage?.empty(); this.panel?.empty(); }
   promoteProperties() {
-    if (this.closed || this.plugin.settings.projectionFile || !this.groupGraph || this.detailGeneration !== this.activeRevision || !this.plugin.adapter.factsComplete()) return;
-    this.provisional = false; this.contentEl.dataset.verified = 'true';
-    if (this.report) this.report.provisional = false;
-    this.statusText = this.statusText;
+    if (this.closed || this.plugin.settings.projectionFile || !this.groupGraph || this.detailGeneration !== this.activeRevision) return;
+    this.provisional = !this.plugin.adapter.factsComplete(); this.contentEl.dataset.verified = String(!this.provisional);
+    if (this.report) { this.report.provisional = this.provisional; this.report.linksPending = this.plugin.adapter.linksPending(); this.report.pendingProperties = this.plugin.adapter.pendingProperties(); }
+    this.statusText = this.contentEl.dataset.state === 'building' ? this.statusText : this.provisional ? pendingText(this.report) : '';
   }
   async onClose() { this.explorePanel?.dispose(); this.contributionPage.clear(); this.closed = true; this.renderRevision++; this.revision++; this.renderer?.dispose(); this.unsubscribe?.(); }
   async refresh() {
@@ -420,7 +427,10 @@ export class GraphView extends ItemView {
     const current = () => !this.closed && rev === this.revision && source === this.plugin.propertySource && propertyRevision === this.plugin.propertyRevision;
     const settings = this.plugin.settings, start = performance.now();
     this.carrierLookup = undefined; this.renderRevision++; this.provisional = true; this.contentEl.dataset.verified = 'false';
-    this.report = undefined; this.contentEl.dataset.state = 'building'; this.statusText = 'Building projection from available properties…';
+    this.report = undefined; this.explored = undefined; this.positions = undefined;
+    this.contentEl.dataset.state = 'building'; this.statusText = 'Reading notes…';
+    if (this.presentation === 'nodes') { this.renderer?.dispose(); this.renderer = this.detailRenderer = undefined; this.stage.empty(); this.contentEl.dataset.mode = 'nodes-building'; }
+    let preview: LayoutPreview | undefined;
     try {
       if (settings.projectionFile) {
         const file = this.app.vault.getAbstractFileByPath(settings.projectionFile);
@@ -447,9 +457,9 @@ export class GraphView extends ItemView {
         if (saved) {
           try {
             const cache = await this.plugin.pipeline.request<{ groups?: GroupProjection } | undefined>(revision, { kind: 'load', generation: saved });
-            if (cache?.groups && current() && !this.predicate && !(this.view && viewNarrows(this.view))) {
+            if (cache?.groups && this.presentation !== 'nodes' && current() && !this.predicate && !(this.view && viewNarrows(this.view))) {
               this.projection = undefined; this.positions = undefined; this.groupGraph = cache.groups; this.groupGeneration = -revision; this.viewGeneration = -1; this.viewSource = this.sourceKey(null); this.members.clear(); this.contributions.clear(); this.showGroups(true);
-              this.statusText = `Showing cached groups while verifying notes: ${left(this.plugin.adapter.coverage())}. Filters and member lists are provisional.`;
+              this.statusText = left(this.plugin.adapter.coverage());
               this.contentEl.dataset.cachedPaintMs = String(performance.now() - start); await yieldTask();
             }
           } catch { await this.plugin.store.quarantine(saved.meta); }
@@ -460,43 +470,64 @@ export class GraphView extends ItemView {
         if (!current()) return;
         await this.plugin.pipeline.request(revision, { kind: 'rows', ...batch });
         const c = this.plugin.adapter.coverage();
-        this.statusText = `${this.groupGraph ? 'Showing cached groups while verifying notes:' : 'Reading properties:'} ${left(c)}. Filters and member lists are provisional.`;
+        this.progressText(left(c));
       }
       this.plugin.ingestedHash = hashes.ingestHash;
       this.plugin.pipeline.onGroups = event => {
         if (event.revision !== revision || !current()) return;
         const groupsAt = performance.now();
-        this.groupGraph = event.projection; this.groupGeneration = revision; this.viewGeneration = event.view; this.viewSource = configuredSource; this.members.clear(); this.contributions.clear(); this.showGroups(true); settled();
+        this.groupGraph = event.projection; this.groupGeneration = revision; this.viewGeneration = event.view; this.viewSource = configuredSource; this.members.clear(); this.contributions.clear(); if (this.presentation !== 'nodes') this.showGroups(true); settled();
         const painted = performance.now(), firstGroupMs = painted - start;
         this.startupTrace.push({ revision, start, groupsAt, drawMs: painted - groupsAt, firstGroupMs }); if (this.startupTrace.length > 16) this.startupTrace.shift();
         // A queued metadata refresh must not relabel its later paint as cold startup.
         this.contentEl.dataset.firstGroupMs ??= String(firstGroupMs);
         this.contentEl.dataset.refreshGroupMs = String(firstGroupMs);
       };
+      this.statusText = 'Resolving relationships…';
       const complete = this.plugin.adapter.factsComplete(); this.provisional = !complete;
       const result = await this.plugin.pipeline.request<ProjectResult>(revision, { kind: 'project', complete: !this.provisional });
       if (!current()) return;
       if (result.invalidSaved) await this.plugin.store.quarantine(result.invalidSaved);
       const coverage = this.plugin.adapter.coverage(); this.provisional = !this.plugin.adapter.factsComplete();
       this.contentEl.dataset.verified = String(!this.provisional);
-      const report: InformationReport = this.report = { nodes: result.nodes, edges: result.edges, listed: coverage.listed, linksPending: this.plugin.adapter.linksPending(), provisional: this.provisional, unresolved: result.unresolved, duplicates: result.quarantined.length, dropped: result.dropped, missed: result.missed, rows: result.rows, ruleNotes: result.ruleNotes, rules: settings.declaration.edges.map(e => e.name), relationshipNodes: settings.declaration.display.reifiedAsNodes, ...this.vaultCount(settings.declaration) };
-      this.statusText = 'Building layout in worker…';
+      const report: InformationReport = this.report = { nodes: result.nodes, edges: result.edges, listed: coverage.listed, linksPending: this.plugin.adapter.linksPending(), pendingProperties: this.plugin.adapter.pendingProperties(), provisional: this.provisional, unresolved: result.unresolved, duplicates: result.quarantined.length, dropped: result.dropped, missed: result.missed, rows: result.rows, ruleNotes: result.ruleNotes, rules: settings.declaration.edges.map(e => e.name), relationshipNodes: settings.declaration.display.reifiedAsNodes, ...this.vaultCount(settings.declaration) };
+      this.statusText = 'Preparing layout…';
       this.contentEl.dataset.nodes = String(result.nodes); this.contentEl.dataset.edges = String(result.edges);
       await yieldTask();
       const detail = await this.plugin.pipeline.request<DetailResult>(revision, { kind: 'detail' });
       if (!current()) return;
       this.projection = detail.projection; this.detailGeneration = revision; this.viewGeneration = detail.view; this.viewSource = configuredSource; this.visible = detail.visible; this.colors = detail.colors; this.explored = detail.explore; this.contentEl.dataset.visibleNodes = String(sum(detail.explore.visible)); this.explorePanel?.render(); this.statusText = this.statusText; settled();
       this.contributionPage.update(this.contributionContext());
-      if (result.quarantined.length) this.showGroups(true);
-      this.plugin.pipeline.onPositions = event => { if (event.revision === revision && current()) { if (this.positions && this.contentEl.dataset.mode === 'groups') this.plugin.pipeline.recycle(this.positions.buffer as ArrayBuffer); this.positions = event.positions; this.contentEl.dataset.streaming = 'true'; } };
+      const recycle = (p: Float32Array) => this.plugin.pipeline.recycle(p.buffer as ArrayBuffer);
+      preview = new LayoutPreview(async (positions, active) => {
+        if (this.gpu.reason === 'Not probed') this.gpu = gpuStatus();
+        const bits = this.detailVisible()!, renderRevision = ++this.renderRevision;
+        if (!this.admitDetail(bits)) throw new Error(this.detailFallback);
+        this.renderer?.dispose(); this.stage.empty(); this.contentEl.dataset.mode = 'nodes-building';
+        const renderer = await DetailRenderer.create(this.stage, this.projection!, positions, bits, settings, () => {}, () => {}, this.colors!, () => active() && renderRevision === this.renderRevision, !this.gpu.available, () => {}, { loading: true, typeHidden: this.renderView().typeHidden });
+        this.renderer = renderer; return renderer;
+      }, recycle, () => current() && this.presentation === 'nodes', error => {
+        this.detailFallback ||= `Layout preview unavailable: ${String(error)}. Showing Group overview.`;
+        this.showGroups(true); this.statusText = this.statusText;
+      });
+      this.plugin.pipeline.onPositions = event => {
+        if (event.revision === revision && current()) {
+          report.progress = { iteration: event.iteration, total: event.total }; this.progressText(layoutProgress(report.progress));
+          // Two progressed batches, never the iteration-zero random square. A fixed-frame preview has no labels or input.
+          if (event.iteration >= 2 * settings.streamEveryIterations) { preview!.push(event.positions); return; }
+        }
+        recycle(event.positions);
+      };
       let layout: LayoutResult;
       try { layout = await this.plugin.pipeline.request<LayoutResult>(revision, { kind: 'layout' }); }
       catch (error) { if (String(error).includes('Saved identities')) { await this.plugin.store.quarantine(result.meta); } throw error; }
       if (!current()) return;
+      await preview.finish();
+      if (!current()) return;
       this.positions = layout.positions;
       this.cacheTrace.push({ expected: result.meta.key, stored: layout.stored, nodes: result.nodes, ...coverage, valid: layout.cached }); if (this.cacheTrace.length > 16) this.cacheTrace.shift();
       report.layout = { cached: layout.cached, reused: layout.reused, ms: layout.milliseconds, totalMs: performance.now() - start };
-      this.contentEl.dataset.state = 'ready'; this.statusText = this.gpu.available || this.gpu.reason === 'Not probed' ? '' : 'GPU unavailable. Group overview and member lists remain available.';
+      this.contentEl.dataset.state = 'ready'; this.statusText = this.provisional ? pendingText(report) : '';
       this.contentEl.dataset.layoutMs = String(layout.milliseconds); this.contentEl.dataset.cached = String(layout.cached);
       if (this.presentation === 'nodes') await this.showDetails();
       if (settings.persistLayout && this.plugin.store.committed !== result.meta.key && complete && !this.provisional && (!settings.declaration.edges.some(e => e.kind === 'producer') || this.plugin.adapter.linksResolved)) {
@@ -509,11 +540,13 @@ export class GraphView extends ItemView {
       this.plugin.adapter.invalidate(); this.plugin.ingestedHash = ''; this.provisional = true; this.contentEl.dataset.verified = 'false';
       if (current()) { this.report = undefined; this.contentEl.dataset.state = 'error'; this.statusText = `Projection refresh failed: ${String(e)}`; this.contributionPage.fail(`Projection refresh failed: ${String(e)}`); }
     } finally {
+      await preview?.finish();
       if (!current()) { this.plugin.adapter.invalidate(); this.plugin.ingestedHash = ''; this.contentEl.dataset.verified = 'false'; }
     }
   }
   /** Group overview from Notes: remember the held focus so its group is ringed and a chip leads back. */
   private toGroups() {
+    this.detailFallback = ''; this.statusText = this.statusText;
     this.rememberPresentation('groups');
     const back = this.contentEl.dataset.mode === 'nodes' ? this.detailRenderer?.returnPoint() : undefined;
     this.returnTo = back && { ...back, projection: this.projection }; this.showGroups();
@@ -536,6 +569,7 @@ export class GraphView extends ItemView {
       this.renderer?.dispose(); this.stage.empty();
       const selected = pages.canvas(canvasPage);
       this.renderer = new GroupRenderer(this.stage, selected, settings, id => this.drill(id), edge => this.edgeList(edge, projection, generation, source), id => this.groupColor(Number(id)), ring);
+      if (this.detailFallback) this.stage.createEl('button', { cls: 'graph-ng-back-chip', text: 'Narrow filters to see notes' }).onclick = () => this.explorePanel?.show('filters');
       if (back) this.stage.createEl('button', { cls: 'graph-ng-back-chip', text: 'Back to ' + back.name }).onclick = () => { this.pendingCamera = back.camera; this.pendingFocus = back; void this.showDetails(); };
       previous.disabled = canvasPage === 0; next.disabled = (canvasPage + 1) * settings.groupCanvasPageSize >= projection.groups.length;
       label.textContent = ` Canvas groups ${canvasPage * settings.groupCanvasPageSize + 1}–${Math.min((canvasPage + 1) * settings.groupCanvasPageSize, projection.groups.length)}, ${projection.groups.length} total `;
@@ -805,8 +839,8 @@ export class GraphView extends ItemView {
         this.contentEl.dataset.exploreMs = String(performance.now() - started); const g = this.view.group; this.contentEl.dataset.groupSource = !g ? 'declared' : g.from === 'folder' ? `folder:${g.depth}` : g.from === 'expr' ? 'expression' : `${g.from}:${g.key}`; this.contentEl.dataset.visibleNodes = String(sum(result.explore.visible));
         this.contributionPage.update(this.contributionContext()); this.statusText = this.statusText;
         if (detail && fits) detail.setView(this.detailVisible()!, this.renderView());
-        else if (detail || this.contentEl.dataset.mode === 'groups') { if (detail) this.rememberPresentation('groups'); this.showGroups(true); }
-        this.explorePanel?.setState(this.view); after?.(); if (owns()) this.viewFeedback(fits ? '' : CANVAS_FALLBACK); finish();
+        else if (detail || this.contentEl.dataset.mode === 'groups') { this.showGroups(true); if (this.presentation === 'nodes' && fits) await this.showDetails(); }
+        this.explorePanel?.setState(this.view); after?.(); if (owns()) this.viewFeedback(); finish();
       } catch (error) {
         finish(error);
         // A saved-view Open reports through its caller; its retry is Open, which re-runs every check.
@@ -886,29 +920,36 @@ export class GraphView extends ItemView {
     if (this.detailRenderer && this.contentEl.dataset.mode === 'nodes') this.detailRenderer.flyTo(camera.x, camera.y, camera.ratio);
     else { this.pendingCamera = camera; this.detailScope = undefined; void this.showDetails(); }
   }
-  private admitDetail(bits: Uint8Array, software = !this.gpu.available, fallback = false) {
+  private admitDetail(bits: Uint8Array, software = !this.gpu.available, fallback = true) {
     try {
       const s = this.plugin.settings;
       if (software) canvasDetailEdges(this.projection!, bits, s.canvasMaxDetailNodes, s.canvasMaxDetailEdges);
       return true;
-    } catch (e) { new Notice(this.statusText = fallback ? `${String(e)}. ${CANVAS_FALLBACK}` : String(e)); return false; }
+    } catch (e) {
+      const s = this.plugin.settings, count = sum(bits);
+      const reason = e instanceof CanvasLimit ? count > s.canvasMaxDetailNodes ? `${num(count)} notes exceed this renderer's ${num(s.canvasMaxDetailNodes)}-note limit` : `More than ${num(s.canvasMaxDetailEdges)} edges exceed this renderer's edge limit` : String(e);
+      if (fallback) { this.detailFallback = `${reason}. ${CANVAS_FALLBACK}`; this.statusText = this.statusText; } else new Notice(this.statusText = reason);
+      return false;
+    }
   }
   private detailVisible() { return this.detailScope ? this.visible?.map((v, i) => v & this.detailScope![i]!) : this.visible; }
   async showDetails(bits = this.detailVisible(), clearPanel = true) {
     const focus = this.pendingFocus; this.pendingFocus = undefined;
+    if (this.contentEl.dataset.state === 'building') { this.rememberPresentation('nodes'); return; }
     if (!this.projection || !this.positions || !bits) { new Notice('Notes are not ready; Group overview remains usable.'); return; }
+    this.rememberPresentation('nodes');
     const renderRevision = ++this.renderRevision; this.contentEl.dataset.mode = 'nodes-building'; this.returnTo = undefined;
     try {
       if (this.gpu.reason === 'Not probed') this.gpu = await this.plugin.pipeline.request<typeof this.gpu | undefined>(this.activeRevision, { kind: 'gpu' }) ?? gpuStatus();
       if (renderRevision !== this.renderRevision || this.closed) return;
-      if (!this.admitDetail(bits)) { this.contentEl.dataset.mode = 'groups'; this.rememberPresentation('groups'); return; }
+      if (!this.admitDetail(bits)) { this.showGroups(true); return; }
       this.renderer?.dispose(); this.stage.empty(); if (clearPanel) { this.contributionPage.clear(); this.panel.empty(); }
       this.detailRenderer = await DetailRenderer.create(this.stage, this.projection, this.positions, bits, this.plugin.settings, i => this.openPath(renderPath(this.projection!, i)), () => this.toGroups(), this.colors!, () => renderRevision === this.renderRevision, !this.gpu.available, () => {
         if (renderRevision !== this.renderRevision || this.closed) return;
         this.gpu = { available: false, reason: 'WebGL context could not be restored' };
         this.showGroups(); void this.showDetails(bits, clearPanel);
       }, this.renderView());
-      this.renderer = this.detailRenderer; this.contentEl.dataset.mode = 'nodes'; this.rememberPresentation('nodes');
+      this.renderer = this.detailRenderer; this.contentEl.dataset.mode = 'nodes'; this.detailFallback = ''; this.statusText = this.statusText;
       const detailGeneration = this.detailGeneration;
       this.detailRenderer.describeEdges = edges => this.plugin.pipeline.request(detailGeneration, { kind: 'relationships', edges });
       this.detailRenderer.openPath = path => this.openPath(path);
@@ -928,10 +969,10 @@ export class GraphView extends ItemView {
       else this.detailRenderer.fitAll(0);
       if (focus?.projection === this.projection) this.detailRenderer.focusNote(focus.node, focus.lens);
       this.explorePanel?.render();
-    } catch (e) { if (renderRevision !== this.renderRevision) return; this.gpu = { available: false, reason: String(e) }; this.rememberPresentation('groups'); this.showGroups(); this.statusText = [this.statusText, 'GPU unavailable; showing Group overview.'].filter(Boolean).join(' '); }
+    } catch (e) { if (renderRevision !== this.renderRevision) return; this.gpu = { available: false, reason: String(e) }; this.detailFallback = `Notes could not be drawn: ${String(e)}. Showing Group overview.`; this.showGroups(); this.statusText = ''; }
   }
 }
-const CANVAS_FALLBACK = 'Too many notes to draw individually on this renderer; showing Group overview. Narrow filters to see notes.';
+const CANVAS_FALLBACK = 'Showing Group overview. Narrow filters to see notes.';
 /** Whether a view hides anything relative to the unfiltered declared grouping. */
 const viewNarrows = (v: ExploreView) => Boolean(v.query.trim() || v.filters.length || v.group || v.hiddenGroups.length || v.hiddenColors.length || v.hiddenTypes.length);
 class GraphSettings extends PluginSettingTab {

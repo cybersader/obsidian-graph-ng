@@ -125,10 +125,10 @@ test('graph information retains full diagnostics while healthy summary stays qui
     app: { workspace: { on() {} } }, registerEvent() {}, async refresh() {} });
   ExplorePanel.prototype.render = function () {};
   try { await view.onOpen(); } finally { ExplorePanel.prototype.render = render; }
-  view.explorePanel.render = () => {};
+  view.explorePanel.render = () => {}; view.contentEl.dataset.state = 'building';
   const text = 'Reading properties: 4 read, 6 left. Filters and member lists are provisional.';
   view.statusText = text; expect(view.status.textContent).toBe(text); expect(view.statusSummary.hidden).toBe(false);
-  expect(view.statusSummary.title).toBe(text); expect(view.status.parent).toBe(view.explorePanel.root);
+  expect(view.statusSummary.title).toBe(''); expect(view.status.parent).toBe(view.explorePanel.root);
   expect(persistedPanelStates).toEqual([]);
   view.statusSummary.click(); expect(view.status.hidden).toBe(false); const status = view.status;
   expect(persistedPanelStates).toEqual([true]);
@@ -229,7 +229,7 @@ test('fact groups paint before layout, pending links prevent exact caching, and 
     showGroups() { painted++; expect(encoded).toBe(0); } });
   try {
     await view.refreshOnce(); expect(painted).toBe(1); expect(complete).toBe(false); expect(caches).toBe(0); expect(encoded).toBe(0);
-    expect(view.contentEl.dataset.verified).toBe('false'); expect(view.status.textContent).toContain('Links pending'); expect(view.status.textContent).toContain('Still loading'); expect(view.statusSummary.textContent).toContain('1 note0 edges'); expect(view.statusSummary.textContent).toContain('Still loading');
+    expect(view.contentEl.dataset.verified).toBe('false'); expect(view.status.textContent).toContain('Waiting for Obsidian links'); expect(view.statusSummary.textContent).not.toContain('1 note0 edges'); expect(view.statusSummary.textContent).toContain('Waiting for Obsidian links');
     links['a.md'] = {}; adapter.invalidate();
     await view.refreshOnce(); expect(complete).toBe(true); expect(encoded).toBe(1); expect(caches).toBe(1); expect(view.contentEl.dataset.verified).toBe('true');
     const request = pipeline.request;
@@ -352,9 +352,103 @@ test('presentation state is per view, validates unknown values and restores only
     await c.view.setState({ presentation: 'nodes' }, {}); expect(c.shown).toEqual([]);
     c.view.contentEl.dataset.mode = 'groups'; await c.view.setState({ presentation: 'groups' }, {}); expect(c.shown).toEqual([]);
     c.view.contentEl.dataset.mode = 'nodes-building'; await c.view.setState({ presentation: 'groups' }, {}); expect(c.shown).toEqual([]);
-    // A refused detail admission is remembered as Group overview, so the next refresh does not re-enter Notes and repeat the Notice.
+    // A refused admission changes what is shown, never the user's requested presentation.
     const d = make(); d.view.positions = new Float32Array(2); d.view.projection = {}; d.view.visible = new Uint32Array(1);
-    d.view.presentation = 'nodes'; d.view.gpu = { available: true, reason: '' }; d.view.admitDetail = () => false; delete d.view.showDetails;
-    await d.view.showDetails(); expect(d.view.getState()).toEqual({ presentation: 'groups' }); expect(d.view.contentEl.dataset.mode).toBe('groups');
+    d.view.presentation = 'nodes'; d.view.gpu = { available: true, reason: '' }; d.view.admitDetail = () => false; d.view.showGroups = () => { d.view.contentEl.dataset.mode = 'groups'; }; delete d.view.showDetails;
+    await d.view.showDetails(); expect(d.view.getState()).toEqual({ presentation: 'nodes' }); expect(d.view.contentEl.dataset.mode).toBe('groups');
   } finally { if (old) base.setState = old; else delete base.setState; }
+});
+
+test('live layout preview coalesces while opening, recycles superseded frames, and owns cleanup', async () => {
+  const { LayoutPreview } = await import('../src/layout-preview');
+  const frames = Array.from({ length: 4 }, (_, i) => new Float32Array([i, i]));
+  const recycled: Float32Array[] = [], updates: Float32Array[] = []; let release!: () => void, disposed = 0, creates = 0;
+  const preview = new LayoutPreview(async positions => {
+    creates++; await new Promise<void>(resolve => { release = resolve; });
+    const renderer = { positions, streamPositions(next: Float32Array) { const old = renderer.positions; renderer.positions = next; updates.push(next); return old; }, dispose() { disposed++; } }; return renderer;
+  }, p => recycled.push(p), () => true, e => { throw e; });
+  preview.push(frames[0]!); preview.push(frames[1]!); preview.push(frames[2]!);
+  expect(creates).toBe(1); expect(recycled).toEqual([frames[1]!]);
+  release(); await new Promise(resolve => setTimeout(resolve, 0));
+  expect(updates).toEqual([frames[2]!]); expect(recycled).toEqual([frames[1]!, frames[0]!]);
+  preview.push(frames[3]!); expect(updates).toEqual([frames[2]!, frames[3]!]);
+  await preview.finish(); await preview.finish();
+  expect(disposed).toBe(1); expect(new Set(recycled).size).toBe(4); expect(recycled.length).toBe(4);
+});
+
+test('returning to Notes replaces a preview disposed by Group overview', async () => {
+  const { LayoutPreview } = await import('../src/layout-preview');
+  const recycled: Float32Array[] = []; let creates = 0;
+  let renderer: any;
+  const preview = new LayoutPreview(async positions => { creates++; renderer = { positions, usable: true, streamPositions() { throw Error('disposed renderer reused'); }, dispose() { this.usable = false; } }; return renderer; }, p => recycled.push(p), () => true, e => { throw e; });
+  const first = new Float32Array(2), next = new Float32Array(2);
+  preview.push(first); await new Promise(resolve => setTimeout(resolve, 0)); renderer.dispose();
+  preview.push(next); await new Promise(resolve => setTimeout(resolve, 0));
+  expect(creates).toBe(2); expect(recycled).toEqual([first]);
+  await preview.finish(); expect(recycled).toEqual([first, next]);
+});
+
+test('only ready local projections wait for host metadata', async () => {
+  const { GraphView } = await import('../src/main'); const view: any = Object.create(GraphView.prototype);
+  Object.assign(view, { contentEl: { dataset: { state: 'ready' } }, provisional: true, plugin: { settings: { projectionFile: '' } }, report: { linksPending: true, pendingProperties: 4 } });
+  expect(view.loading().stage).toContain('4 notes');
+  view.plugin.settings.projectionFile = 'synthetic-projection'; expect(view.loading()).toBeUndefined();
+  view.plugin.settings.projectionFile = ''; view.contentEl.dataset.state = 'error'; expect(view.loading()).toBeUndefined();
+});
+
+test('obsolete or closed live layout cannot adopt an initializing renderer', async () => {
+  const { LayoutPreview } = await import('../src/layout-preview');
+  for (const stop of ['source', 'close']) {
+    let active = true, release!: () => void, disposed = 0; const recycled: Float32Array[] = [], first = new Float32Array(2), next = new Float32Array(2);
+    const preview = new LayoutPreview(async positions => { await new Promise<void>(r => { release = r; }); return { positions, streamPositions() { throw Error('obsolete'); }, dispose() { disposed++; } }; }, p => recycled.push(p), () => active, () => { throw Error('obsolete error surfaced'); });
+    preview.push(first); preview.push(next);
+    if (stop === 'source') active = false;
+    const finish = stop === 'close' ? preview.finish() : undefined;
+    release(); await finish; await preview.finish();
+    expect(disposed).toBe(1); expect(recycled.length).toBe(2); expect(new Set(recycled).size).toBe(2);
+  }
+});
+
+test('a failed preview stops new admissions without stopping the final layout', async () => {
+  const { LayoutPreview } = await import('../src/layout-preview');
+  let creates = 0, errors = 0; const recycled: Float32Array[] = [];
+  const preview = new LayoutPreview(async () => { creates++; throw Error('synthetic unavailable'); }, p => recycled.push(p), () => true, () => { errors++; });
+  preview.push(new Float32Array(2)); await new Promise(resolve => setTimeout(resolve, 0)); preview.push(new Float32Array(2)); await preview.finish();
+  expect(creates).toBe(1); expect(errors).toBe(1); expect(recycled.length).toBe(2);
+});
+
+test('16k-note refresh preserves Notes intent, refuses software overflow visibly, and never opens seed coordinates', async () => {
+  const { GraphView } = await import('../src/main'), { defaults } = await import('../src/settings');
+  const settings = defaults('fixture'); settings.persistLayout = false; settings.canvasMaxDetailNodes = 2000;
+  const count = 16001, visible = new Uint8Array(count).fill(1), projection = { nodeCount: count, source: new Uint32Array(), target: new Uint32Array(), quarantined: [] };
+  const explored = { nodes: count, visible, matched: count, filters: [], filterHidden: [], queryHidden: 0, visibleEdges: 0, ruleVisible: [], edgeHidden: [], groupKeys: [], groupLabels: [], groupCodes: new Uint32Array(count), types: [] };
+  let shown = 0, saves = 0, released!: (v: unknown) => void, started!: () => void;
+  const waiting = new Promise<void>(r => { started = r; }), recycled: ArrayBuffer[] = [];
+  const groups = { groups: [], groupEdges: [] };
+  const pipeline: any = { recycle: (p: ArrayBuffer) => recycled.push(p), async request(revision: number, r: any) {
+    switch (r.kind) {
+      case 'configure': return { declarationHash: 'd', layoutHash: 'l', ingestHash: 'i' };
+      case 'project': pipeline.onGroups({ revision, view: 1, projection: groups }); return { nodes: count, edges: 0, rows: count, unresolved: 0, quarantined: [], meta: { key: 'k' } };
+      case 'detail': return { projection, visible, colors: new Uint32Array(count), explore: explored, view: 1 };
+      case 'layout': started(); return new Promise(resolve => { released = resolve; });
+    }
+  } };
+  const view: any = Object.create(GraphView.prototype), app = { vault: { getMarkdownFiles: () => [] }, workspace: { requestSaveLayout() { saves++; } } };
+  Object.assign(view, { app, plugin: { settings, pipeline, nextRevision: 0, sourceIdentity: 'local', propertyRevision: 0, adapter: { async *columns() {}, coverage: () => ({ listed: count, indexed: count }), factsComplete: () => true, pendingProperties: () => 0, linksPending: () => false, invalidate() {} } },
+    contentEl: { dataset: {} }, status: new ControlElement(), statusSummary: new ControlElement(), stage: new ControlElement(), view: emptyView(), presentation: 'nodes', revision: 0, renderRevision: 0,
+    members: new Map(), contributions: new Map(), startupTrace: [], cacheTrace: [], contributionPage: { clear() {}, suspend() {}, update() {}, fail() {} }, gpu: { available: false, reason: 'Synthetic software renderer' },
+    showGroups() { shown++; view.contentEl.dataset.mode = 'groups'; } });
+  const work = view.refreshOnce(); await waiting;
+  expect(shown).toBe(0); expect(view.positions).toBeUndefined();
+  const revision = view.activeRevision, seed = new Float32Array(count * 2);
+  pipeline.onPositions({ revision, positions: seed, iteration: 0, total: 100 });
+  expect(recycled).toContain(seed.buffer); expect(view.positions).toBeUndefined();
+  await view.showDetails(); expect(view.positions).toBeUndefined(); expect(view.getState()).toEqual({ presentation: 'nodes' });
+  pipeline.onPositions({ revision, positions: new Float32Array(count * 2), iteration: settings.streamEveryIterations * 2, total: 100 });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(view.statusSummary.textContent).toContain("16,001 notes exceed this renderer's 2,000-note limit");
+  expect(view.statusSummary.textContent).toContain('Narrow filters to see notes'); expect(view.getState()).toEqual({ presentation: 'nodes' });
+  released({ positions: new Float32Array(count * 2), milliseconds: 1, cached: false }); await work;
+  expect(view.contentEl.dataset.state).toBe('ready'); expect(view.contentEl.dataset.mode).toBe('groups'); expect(view.getState()).toEqual({ presentation: 'nodes' });
+  expect(saves).toBeGreaterThan(0); expect(shown).toBeGreaterThan(0);
 });
