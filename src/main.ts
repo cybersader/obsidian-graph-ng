@@ -9,7 +9,7 @@ import { LocalAdapter, type PropertySource } from './adapter/local';
 import { canonical, digest, layoutDeclaration, migrateDeclaration, validateDeclaration, type GraphDeclaration, type Predicate } from './core/declaration';
 import { canonicalView, validateSaved, NO_COLOR, type SavedView, type ExploreResult, type ExploreView, type ViewCamera } from './core/explore';
 import { ExplorePanel, setRelationshipDisplay } from './explore-panel';
-import { graphStats, recommend, suggestionSettings, type GraphStats, type Suggestion } from './recommend';
+import { graphStats, layoutAdvice, recommend, suggestionSettings, type GraphStats, type Suggestion } from './recommend';
 import { categorical, NEUTRAL_GROUPS } from './render-effects';
 import { readTheme } from './render-theme';
 import { renderPath, type RenderProjection } from './render-projection';
@@ -366,7 +366,7 @@ export class GraphView extends ItemView {
         const current = () => !this.closed && this.detailRenderer === renderer && this.projection === projection && this.detailScope === scope && this.view === view && this.activeRevision === revision;
         try { await this.plugin.commitSizing(values, current); } finally { renderer?.previewSizing(null, true); }
       },
-      suggestions: () => this.suggestions(),
+      suggestions: () => this.suggestions(), layoutAdvice: () => { const s = this.stats(); return s && layoutAdvice(s, this.plugin.settings); },
       previewSuggestions: list => this.detailRenderer?.previewSettings(list && suggestionSettings(this.plugin.settings, list)),
       applySuggestions: async list => {
         const renderer = this.detailRenderer, projection = this.projection, revision = this.activeRevision;
@@ -834,10 +834,13 @@ export class GraphView extends ItemView {
   }
   private statsCache?: [RenderProjection, GraphStats];
   /** Suggestions for the loaded note graph; null until one is open. Stats cached per projection. */
+  private stats() {
+    const r = this.detailRenderer; if (!r) return;
+    const p = r.projection, c = this.statsCache?.[0] === p ? this.statsCache : this.statsCache = [p, graphStats(p.offsets, p.source.length, r.carrierCount, 0, p.source, p.target)];
+    return { ...c[1], groups: this.explored?.groupKeys.length ?? 0 };
+  }
   private suggestions(): Suggestion[] | null {
-    const r = this.detailRenderer; if (!r) return null;
-    const p = r.projection, c = this.statsCache?.[0] === p ? this.statsCache : this.statsCache = [p, graphStats(p.offsets, p.source.length, r.carrierCount)];
-    return recommend({ ...c[1], groups: this.explored?.groupKeys.length ?? 0 }, this.plugin.settings);
+    const s = this.stats(); return s ? recommend(s, this.plugin.settings) : null;
   }
   private async previewExpression(expr: string, context: 'filter' | 'group') {
     const revision = this.activeRevision;

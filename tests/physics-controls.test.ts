@@ -9,11 +9,11 @@ import { emptyView } from '../src/core/explore';
 import { ControlElement, control } from './support/controls-dom';
 const { default: GraphPlugin, GraphView } = await import('../src/main');
 const values = { scalingRatio: 2, gravity: 1, slowDown: 1 };
-function fixture() {
+function fixture(extra: object = {}) {
   const settings = defaults('links'), root = new ControlElement(); let applied = 0;
   const render = ExplorePanel.prototype.render; ExplorePanel.prototype.render = function () {};
   let panel: any;
-  try { panel = new ExplorePanel(root as any, { settings: () => settings, result: () => ({ nodes: 16000, edges: 50000 }), async applyLayout(v: any) { applied++; settings.layout = physicsSettings(settings, v).layout; } } as any, emptyView()); }
+  try { panel = new ExplorePanel(root as any, { settings: () => settings, result: () => ({ nodes: 16000, edges: 50000 }), async applyLayout(v: any) { applied++; settings.layout = physicsSettings(settings, v).layout; }, ...extra } as any, emptyView()); }
   finally { ExplorePanel.prototype.render = render; }
   panel.render = () => { panel.body.empty(); panel.physics(panel.body); }; panel.render();
   return { panel, settings, applied: () => applied };
@@ -212,4 +212,16 @@ test('undo restores the tuned values before a preset, and re-applies them in one
   expect(f.applied()).toBe(2); expect(f.settings.layout).toEqual(before.layout);
   control(f.panel.body, 'Reset to recommended').click(); undo().click(); expect(byLabel(f, 'Spread notes').value).toBe('1200');
   f.panel.dispose();
+});
+test('Pull in disconnected notes loads only Strong gravity and its pull into the draft; nothing is saved', async () => {
+  const reason = '8,000 notes sit in disconnected parts.', f = fixture({ layoutAdvice: () => ({ gravity: .124, reason }) });
+  Object.assign(f.settings.layout.force, { scalingRatio: 23.64, gravity: .5, strongGravityMode: false }); f.panel.physicsDraft = undefined; f.panel.render();
+  expect(f.panel.body.textContent).toContain(reason);
+  const before = structuredClone(f.settings); control(f.panel.body, 'Pull in disconnected notes').click();
+  expect(f.settings).toEqual(before); expect(f.applied()).toBe(0);
+  expect(f.panel.physicsDraft).toMatchObject({ scalingRatio: '23.64', gravity: '0.124', strongGravityMode: true });
+  expect(f.panel.body.textContent).toContain('Pull to center 0.5 → 0.124; Strong gravity off → on.');
+  await (control(f.panel.body, 'Apply and recompute') as any).onclick();
+  expect(f.settings.layout.force).toMatchObject({ scalingRatio: 23.64, gravity: .124, strongGravityMode: true }); f.panel.dispose();
+  const plain = fixture(); expect(plain.panel.body.textContent).not.toContain('Pull in disconnected notes'); plain.panel.dispose();
 });

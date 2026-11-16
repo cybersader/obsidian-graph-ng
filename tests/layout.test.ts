@@ -1,6 +1,6 @@
 import { test, expect } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { DEFAULT_LAYOUT, LayoutSolver, initialPositions, runLayout, runLayoutStream } from '../src/core/layout';
+import { DEFAULT_LAYOUT, LayoutSolver, initialPositions, random, runLayout, runLayoutStream } from '../src/core/layout';
 import { BarnesHut } from '../src/core/barnes-hut';
 import { buildProjection } from '../src/core/projection';
 import { exampleDeclaration, fixture } from '../scripts/fixture';
@@ -102,4 +102,26 @@ test('0.1 settings gain the new numerical/scheduling knobs without losing prior 
   for (const key of ['batchIterations', 'convergenceThreshold', 'convergenceIterations', 'maxTreeDepth', 'nodeRadius', 'maxForce']) delete legacy.layout[key];
   legacy.layout.iterations = 77;
   const upgraded = upgradeSettings(legacy, 'p@1'); expect(upgraded.layout.iterations).toBe(77); expect(upgraded.layout.batchIterations).toBe(DEFAULT_LAYOUT.batchIterations);
+});
+test('centering: normal gravity rings disconnected parts far out, strong gravity pulls them in; both match graphology', () => {
+  // Synthetic: a 500-note part (tree plus 300 links), 250 notes in pairs, 250 isolated notes. Owner room force values.
+  const n = 1000, src: number[] = [], dst: number[] = [], rng = random(5);
+  for (let i = 1; i < 500; i++) { src.push(i); dst.push(Math.floor(rng() * i)); }
+  for (let k = 0; k < 300; k++) { const a = Math.floor(rng() * 500), b = Math.floor(rng() * 500); if (a !== b) { src.push(a); dst.push(b); } }
+  for (let i = 500; i < 750; i += 2) { src.push(i); dst.push(i + 1); }
+  const g = { count: n, source: Uint32Array.from(src), target: Uint32Array.from(dst), seed: 7 };
+  const room = (strongGravityMode: boolean, gravity: number) => ({ ...DEFAULT_LAYOUT, force: { ...DEFAULT_LAYOUT.force, scalingRatio: 23.64, gravity, strongGravityMode, slowDown: 3.607, barnesHutTheta: .369 } });
+  const median = (a: number[]) => a.sort((x, y) => x - y)[a.length >> 1]!;
+  const ring = (p: Float32Array) => {
+    let cx = 0, cy = 0; for (let i = 0; i < n; i++) { cx += p[2 * i]! / n; cy += p[2 * i + 1]! / n; }
+    const r = (i: number) => Math.hypot(p[2 * i]! - cx, p[2 * i + 1]! - cy), all = Array.from({ length: n }, (_, i) => r(i));
+    return { ratio: median(all.slice(750)) / median(all.slice(0, 500)), offset: Math.hypot(cx, cy) / Math.max(...all) };
+  };
+  const weak = ring(runLayout(g, room(false, .5))), strong = ring(runLayout(g, room(true, .15)));
+  // Gravity is applied about the origin and the cloud stays centered there: no centering bug.
+  expect(weak.offset).toBeLessThan(.05); expect(strong.offset).toBeLessThan(.05);
+  expect(weak.ratio).toBeGreaterThan(3); expect(strong.ratio).toBeLessThan(2.2);
+  // The far ring is the reference ForceAtlas2 behaviour, not a solver error.
+  for (const [mine, strongMode, gravity] of [[weak, false, .5], [strong, true, .15]] as const)
+    expect(Math.abs(ring(oracleLayout(g, room(strongMode, gravity))).ratio / mine.ratio - 1)).toBeLessThan(.1);
 });

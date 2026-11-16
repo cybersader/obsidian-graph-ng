@@ -54,6 +54,8 @@ export interface PanelHost {
   applySizing?(values: NodeSizingValues): Promise<void>;
   sizingReadout?(): string;
   suggestions?(): Suggestion[] | null;
+  /** Named layout fix for the loaded graph; only ever fills the physics draft. */
+  layoutAdvice?(): { gravity: number; reason: string } | undefined;
   previewSuggestions?(list: Suggestion[] | null): void;
   applySuggestions?(list: Suggestion[]): Promise<void>;
 }
@@ -66,6 +68,7 @@ function toolButton(host: HTMLElement, text: string, icon: string) {
   return button;
 }
 const SECTIONS: Record<string, [Section, string][]> = { views: [['views', 'Saved views']], filters: [['filters', 'Filters'], ['groups', 'Grouping'], ['edges', 'Relationships']], appearance: [['display', 'Appearance'], ['colors', 'Color rules']], layout: [['physics', 'Layout']] };
+const PULL_IN = 'Pull in disconnected notes';
 /** Reified rules make relationship notes; only then is Lines/Nodes a choice. */
 export const hasReified = (d: GraphDeclaration) => d.edges.some(e => e.kind === 'reified');
 /** One apply with only `display.reifiedAsNodes` flipped; query, filters and scope stay in settings. */
@@ -526,7 +529,14 @@ export class ExplorePanel {
       const b = presets.createEl('button', { text: name, attr: { title: effect } }); b.disabled = this.physicsBusy;
       b.onclick = () => fill(presetValues(name, recommended), `${name} loaded: ${effect} Apply and recompute to see it.`, name);
     }
-    const undo = this.physicsUndo, back = presets.createEl('button', { text: 'Undo last preset', attr: { title: undo ? `Back to the values before ${undo.name}` : 'No preset to undo' } });
+    const advice = this.host.layoutAdvice?.();
+    if (advice) {
+      // Keeps every other draft value; only turns Strong gravity on with a measured pull.
+      const fix = presets.createEl('button', { text: PULL_IN, attr: { title: advice.reason } }); fix.disabled = this.physicsBusy;
+      fix.onclick = () => fill({ ...draft, strongGravityMode: true, gravity: advice.gravity } as unknown as Required<PhysicsValues>, `${PULL_IN} loaded. Apply and recompute to see it.`, PULL_IN);
+      this.note(host, advice.reason);
+    }
+    const undo = this.physicsUndo, back =presets.createEl('button', { text: 'Undo last preset', attr: { title: undo ? `Back to the values before ${undo.name}` : 'No preset to undo' } });
     back.disabled = this.physicsBusy || !undo;
     back.onclick = () => { if (!undo) return; Object.assign(draft, undo.values); this.physicsUndo = undefined; this.physicsNote = `${undo.name} undone.`; if (undo.applied) void run(); else this.render(); };
     const changes = host.createDiv({ cls: 'graph-ng-explore-note', attr: { 'aria-live': 'polite' } }), show = (v: string | boolean) => typeof v === 'boolean' ? (v ? 'on' : 'off') : v;
@@ -614,6 +624,8 @@ export class ExplorePanel {
     const box = host.createDiv({ cls: 'graph-ng-nodes' }); box.createEl('h4', { text: 'Suggested for this graph' });
     const message = box.createDiv({ cls: 'graph-ng-explore-note', attr: { role: 'status', 'aria-live': 'polite' } }); message.textContent = this.suggestMessage;
     if (!list) return void this.note(box, 'Open Notes first.');
+    const advice = this.host.layoutAdvice?.();
+    if (advice) this.note(box, `Layout: ${advice.reason} Use ${PULL_IN} under Layout, then Apply and recompute.`);
     if (!list.length) return void this.note(box, 'Settings already match.');
     const apply = async (items: Suggestion[]) => {
       if (this.suggestBusy || this.disposed) return;

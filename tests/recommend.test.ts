@@ -1,7 +1,7 @@
 import { test, expect } from 'bun:test';
 import './support/obsidian-fixture';
 import { defaults, settingsForSave, upgradeSettings, validateSettings } from '../src/settings';
-import { graphStats, recommend, suggestionSettings, type GraphStats } from '../src/recommend';
+import { graphStats, layoutAdvice, recommend, recommendedPhysics, suggestionSettings, type GraphStats } from '../src/recommend';
 import { ExplorePanel } from '../src/explore-panel';
 import { DetailRenderer } from '../src/webgl-renderer';
 import { emptyView } from '../src/core/explore';
@@ -93,4 +93,23 @@ test('group halos default off; an explicitly saved choice survives upgrade', () 
   const saved: any = settingsForSave(defaults('links')); saved.visuals.groupHalos = true;
   expect(upgradeSettings(saved, 'links').visuals.groupHalos).toBe(true);
   delete saved.visuals.groupHalos; expect(upgradeSettings(saved, 'links').visuals.groupHalos).toBe(false);
+});
+test('outside counts notes beyond the largest connected part; layout advice names Strong gravity only when it helps', () => {
+  // Chain 0-1-2-3, pair 4-5, isolated 6 and 7.
+  const s = graphStats(offsets([1, 2, 2, 1, 1, 1, 0, 0]), 4, 0, 0, [0, 1, 2, 4], [1, 2, 3, 5]);
+  expect(s.outside).toBe(4); expect(graphStats(offsets([1, 1]), 1).outside).toBeUndefined();
+  const room = defaults('links'); Object.assign(room.layout.force, { scalingRatio: 23.64, gravity: .5, strongGravityMode: false });
+  const many = { ...graphStats(offsets(new Array(16000).fill(2)), 16000), outside: 8000 };
+  const advice = layoutAdvice(many, room)!;
+  expect(advice.gravity).toBe(recommendedPhysics(16000, 16000).gravity);
+  expect(advice.reason).toContain(`${(8000).toLocaleString()} notes sit in disconnected parts`);
+  const strong = structuredClone(room); strong.layout.force.strongGravityMode = true;
+  const none = structuredClone(room); none.layout.force.gravity = 0;
+  expect(layoutAdvice(many, strong)).toBeUndefined(); expect(layoutAdvice(many, none)).toBeUndefined();
+  expect(layoutAdvice({ ...many, outside: 100 }, room)).toBeUndefined(); expect(layoutAdvice({ ...many, outside: undefined }, room)).toBeUndefined();
+});
+test('the Suggested card names the layout fix without offering to save it', () => {
+  const f = fixture(); f.host.layoutAdvice = () => ({ gravity: .124, reason: '8,000 notes sit in disconnected parts.' }); f.panel.render();
+  expect(f.panel.body.textContent).toContain('Layout: 8,000 notes sit in disconnected parts. Use Pull in disconnected notes under Layout, then Apply and recompute.');
+  f.panel.dispose();
 });

@@ -2,6 +2,29 @@
 
 Results belong to an exact invocation, fixture, source revision and hardware class. They do not establish all-scale acceptance. Original slice-1 source is `041e1382` (2026-11-10); release-readiness baseline is `9b8cc07`. Historical tables below remain dated evidence. The slice-2 section records the new worker/browser/native invocations and unmet targets separately. Raw receipts remain ignored and local; publish only scrubbed summaries without hostnames, usernames, real-vault paths or private projections.
 
+## Centering — 2026-11-16
+
+Question: with the room force values (Spread 23.64, Pull to center 0.5, Strong gravity off, Step slowdown 3.607, Approximation 0.369, 100 steps), why do disconnected parts not gather around the middle? Answer: the settings, not the solver.
+
+Command: `N=16000 ./scripts/run.sh bench:centering` (add `ORACLE=owner` for the graphology reference), source 73c03e2 plus this change, Bun 1.3.14, desktop x86-64 class. Synthetic graph: 16,000 notes, 16,380 links; half in one part (random tree plus 0.6 extra links per note), 30% in parts of 2 to 6 notes, 20% isolated. The real `LayoutSolver`, fresh start. Metrics around the node centroid: **isolated / main radius** is the median isolated-note radius over the main part's median radius; **parts spread** is the RMS radius of the other parts' centroids over the same median; **main part share** is the main part's median radius over the layout radius (how much of a fitted view the main part fills); **last step** is the final RMS step over the layout radius.
+
+| Values | Isolated / main radius | Parts spread | Main part share | Last step | Layout radius |
+| --- | --- | --- | --- | --- | --- |
+| Room values, 100 steps | 4.82 | 4.56 | 0.195 | 0.44% | 11,100 |
+| graphology-layout-forceatlas2 0.10.1 reference, room values | 4.84 | 4.58 | 0.194 | n/a | n/a |
+| Engine defaults (2 / 1 / normal, 100 steps) | 8.58 | 8.06 | 0.111 | 0.35% | 6,090 |
+| Room values, 500 steps | 12.0 | 11.3 | 0.080 | 0.07% | 29,900 |
+| Room values, Pull to center 5 | 4.80 | 4.54 | 0.197 | 0.44% | 10,800 |
+| Room values, Approximation 1.2 | 4.82 | 4.56 | 0.195 | 0.45% | 11,100 |
+| Room values, Step slowdown 1 | 8.78 | 8.11 | 0.105 | 0.36% | 22,100 |
+| Room values, Strong gravity, Pull to center 0.15 | 1.95 | 1.93 | 0.480 | 0.27% | 2,780 |
+| Room values, Strong gravity, Pull to center 0.5 | 1.70 | 1.66 | 0.565 | 0.32% | 1,520 |
+| Recommended (10 / 0.124 strong / 1, 150 steps) | 1.95 | 1.94 | 0.480 | 0.11% | 1,990 |
+
+Reading: normal gravity has the same strength at any distance while the whole graph's repulsion pushes out, so every note outside the main part sits on a far ring. More steps widen the ring (the layout radius keeps growing, 11,100 to 29,900) instead of settling; a 10× stronger normal pull, a finer approximation or a faster step do not change it. Strong gravity grows with distance and brings the other parts to about twice the main part's radius. The node centroid stays within 0.3% of the layout radius of the origin, gravity points at the origin, and the engine matches the graphology reference within 0.5% on every metric (also at 4,000 notes, and in the `centering` regression test at 2,000 notes within 10%). There is no centering, gravity or Barnes-Hut defect.
+
+Change: Layout shows **Pull in disconnected notes** when Strong gravity is off, Pull to center is above 0, and at least 20 notes (and 2%) sit outside the largest connected part. It fills the draft with Strong gravity on and the recommended Pull to center for the graph size and keeps every other value; nothing is saved until Apply and recompute. Suggested for this graph names the same fix.
+
 ## Cache, haze and performance review corrections — 2026-11-15
 
 Source: the review-fix commit carrying this section, against `001e8ff..201266f`. Hardware class: Linux x86-64, CPU-only deterministic fixtures; no native application, physical GPU, visual or latency claim.

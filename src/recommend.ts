@@ -1,12 +1,30 @@
 import { validateSettings, type Settings } from './settings';
 import type { PhysicsValues } from './physics-controls';
 /** Shape statistics of the loaded projection. Ontology-neutral: counts only. */
-export interface GraphStats { nodes: number; edges: number; carriers: number; groups: number; averageDegree: number; maxDegree: number; hubRatio: number }
-export function graphStats(offsets: ArrayLike<number>, edges: number, carriers = 0, groups = 0): GraphStats {
-  const nodes = Math.max(0, offsets.length - 1); let max = 0;
+/** `outside`: notes not in the largest connected component (needs the edge columns). */
+export interface GraphStats { nodes: number; edges: number; carriers: number; groups: number; averageDegree: number; maxDegree: number; hubRatio: number; outside?: number }
+export function graphStats(offsets: ArrayLike<number>, edges: number, carriers = 0, groups = 0, source?: ArrayLike<number>, target?: ArrayLike<number>): GraphStats {
+  const nodes = Math.max(0, offsets.length - 1); let max = 0, outside;
   for (let i = 0; i < nodes; i++) max = Math.max(max, offsets[i + 1]! - offsets[i]!);
   const total = nodes ? offsets[nodes]! - offsets[0]! : 0, averageDegree = nodes ? total / nodes : 0;
-  return { nodes, edges, carriers, groups, averageDegree, maxDegree: max, hubRatio: averageDegree ? max / averageDegree : 0 };
+  if (source && target) {
+    // Union-find with path halving; O(edges), no per-node objects.
+    const up = Int32Array.from({ length: nodes }, (_, i) => i), size = new Int32Array(nodes);
+    const root = (i: number) => { while (up[i] !== i) i = up[i] = up[up[i]!]!; return i; };
+    for (let e = 0; e < source.length; e++) up[root(source[e]!)] = root(target[e]!);
+    for (let i = 0; i < nodes; i++) size[root(i)]!++;
+    outside = nodes - size.reduce((a, b) => Math.max(a, b), 0);
+  }
+  return { nodes, edges, carriers, groups, averageDegree, maxDegree: max, hubRatio: averageDegree ? max / averageDegree : 0, outside };
+}
+/** Normal gravity has the same strength at any distance, while the whole graph pushes outward, so
+ * notes not linked to the largest component end up in a far ring and more steps widen it; the
+ * main component shrinks to a small blob after fit. Strong gravity grows with distance and pulls
+ * them in. Measured (docs/benchmarks.md "Centering"): this is the settings, not a solver bug. */
+export function layoutAdvice(t: GraphStats, s: Settings): { gravity: number; reason: string } | undefined {
+  const out = t.outside ?? 0, f = s.layout.force;
+  if (f.strongGravityMode || !f.gravity || out < Math.max(20, t.nodes * .02)) return;
+  return { gravity: recommendedPhysics(t.nodes, t.edges).gravity, reason: `${out.toLocaleString()} notes sit in disconnected parts. Normal gravity leaves them in a far ring that more steps widen; Strong gravity pulls them in.` };
 }
 /** Only presentation keys the renderer reads live; layout keys need a recompute and stay manual. */
 /** Presentation keys the renderer reads live (labels shown in the card). Layout keys need a

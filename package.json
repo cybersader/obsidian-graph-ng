@@ -24,6 +24,7 @@
     "release:local": "node scripts/release.mjs",
     "release:verify": "node scripts/verify-release.mjs",
     "bench:layout": "bun scripts/layout-benchmark.ts",
+    "bench:centering": "bun scripts/centering-benchmark.ts",
     "bench:expressions": "bun scripts/expression-benchmark.ts",
     "docs:expressions": "bun scripts/expression-reference.ts",
     "probe:zoom": "bun scripts/zoom-stability-probe.ts"
