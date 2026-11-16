@@ -181,3 +181,13 @@ zoomProbeTest('actual runner records screenshot DPR drift as infrastructure fail
   zoomProbeExpect(result.saved.captures[4].beforeScreenshot.devicePixelRatio).toBe(2); zoomProbeExpect(result.saved.captures[4].afterScreenshot.devicePixelRatio).toBe(1);
   zoomProbeExpect(result.saved.outcome.status).toBe('infrastructure-failure'); zoomProbeExpect(result.saved.outcome.reasons).toContain('DPR_OR_VIEWPORT_CONTROL_DRIFT'); zoomProbeExpect(result.processStub.exitCode).toBe(1);
 });
+
+
+test('emphasis enum defaults and migrates to adaptive, preserves scale, and rejects unknown values', () => {
+  const s = defaults('links'); expect(s.visuals.emphasis).toBe('adaptive');
+  const old: any = structuredClone(s); delete old.visuals.emphasis;
+  expect(upgradeSettings(old, 'links').visuals.emphasis).toBe('adaptive');
+  old.visuals.emphasis = 'scale'; expect(upgradeSettings(old, 'links').visuals.emphasis).toBe('scale');
+  for (const emphasis of ['adaptive', 'scale']) expect(() => validateSettings({ ...s, visuals: { ...s.visuals, emphasis } })).not.toThrow();
+  expect(() => validateSettings({ ...s, visuals: { ...s.visuals, emphasis: 'giant' } })).toThrow('visuals.emphasis');
+});

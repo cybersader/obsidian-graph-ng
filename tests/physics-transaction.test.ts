@@ -240,7 +240,8 @@ test('production token discard/rollback cannot overwrite a newer winning token',
 
 
 test('production sizing preview/cancel keeps renderer camera selection scope settings and layout unchanged', async () => {
-  const f = await fixture(), original = structuredClone(f.plugin.settings), camera = { ...f.renderer.camera }, positions = f.renderer.positions, canvas = f.renderer.canvas;
+  const f = await fixture(); f.plugin.settings.visuals.emphasis = 'scale';
+  const original = structuredClone(f.plugin.settings), camera = { ...f.renderer.camera }, positions = f.renderer.positions, canvas = f.renderer.canvas;
   const value = { radius: 12, prominence: 5, compensation: 0, floor: .3, curve: 'sqrt' as const };
   f.renderer[compiled('previewSizing')](value);
   expect(f.plugin.settings).toEqual(original); expect(f.writes.length).toBe(0); expect(f.requests()).toBe(0);
@@ -411,7 +412,7 @@ test('graduated production Canvas parity: tier batches, graded nodes and labels,
   const paint = (level: number) => { strokes = []; fills = []; labels = []; r[k('focusLevel')] = level; r[k('drawCanvas')](); return { strokes, fills, labels }; };
   try {
     // The reviewed tier weights, with the optional finding aids (strong focus lines, rings) off.
-    Object.assign(f.settings.visuals, { focusEdges: false, tierRings: false });
+    Object.assign(f.settings.visuals, { emphasis: 'scale', focusEdges: false, tierRings: false });
     f.tap(0); const plain = paint(0); expect(plain.strokes.length).toBe(1); expect(plain.strokes[0]![1]).toBe(3);
     const a = plain.strokes[0]![0], lit = paint(1);
     // Three edge batches, then the focus ring (an arc stroke with no line segments) at full focus.
@@ -768,7 +769,7 @@ test('path finder: Shift-click lights the path as its own tier, lists hops with 
   f.tap(0); shift(3); r.setView(new Uint8Array([1, 1, 1, 0, 1, 1]), {}); expect(r[k('pathView')]).toBeUndefined(); expect(card().textContent).toBe('');
 });
 test('graduated focus pick radius follows the 60% enlarged focus node', async () => {
-  const f = await relationships(), { r, k } = f, s = f.settings;
+  const f = await relationships(), { r, k } = f, s = f.settings; s.visuals.emphasis = 'scale';
   f.tap(2, 'touch'); const p = r.screenPoint(2), at = { x: p.x + s.nodeSize * (1 + s.visuals.degreeSizing) * 1.3 + 4, y: p.y };
   r[k('focusLevel')] = 0; expect(r.pick(at.x, at.y)).toBe(-1);
   r[k('focusLevel')] = 1; expect(r.pick(at.x, at.y)).toBe(2);
@@ -1697,4 +1698,71 @@ test('density requested on Canvas uses identical existing strokes without an off
     settings.visuals.edgeCompositing = 'density'; r[k('drawCanvas')]();
     expect(strokes).toEqual(baseline); expect(r[k('densityBuffer')]).toBeNull();
   } finally { ctx.stroke = previous; }
+});
+
+// The shipped shader scalar expressions are evaluated against the compiled CPU renderer.
+// This is arithmetic/driver parity, not a substitute for GPU raster acceptance.
+const emphasisShader = source.match(/if\(emphasis>0\.\)\{([\s\S]*?)\}else\{/)![1]!;
+const emphasisGL = new Function('e', `with(e) { ${emphasisShader.replace(/\bfloat\b/g, 'let')} return radius; }`) as (e: any) => number;
+test('adaptive compiled Canvas, bundled GLSL and hit radii agree across tiers, zoom, fan-out and hover easing', async () => {
+  const f = await graduated([[0, 1], [1, 2]], 5), { r, k } = f, v = f.settings.visuals;
+  f.tap(0); v.emphasis = 'adaptive'; v.tierRings = false;
+  r[k('focusLevel')] = 1; r[k('focusTarget')] = 1;
+  const saved = { arc: ctx.arc, fill: ctx.fill }, radii: number[] = []; let current = 0;
+  ctx.arc = (_x: number, _y: number, rad: number) => { current = rad; }; ctx.fill = () => radii.push(current);
+  try {
+    for (const count of [2, 240]) for (const ratio of [.05, 1, 8]) for (const pulse of [1, 1.3, 1.6]) for (const level of [0, .4, 1]) {
+      r[k('directs')] = new Array(count).fill(1); r.setCamera(.5, .5, ratio); r[k('focusLevel')] = level;
+      r[k('hoverFx')].n = 1; r.fx[0] = pulse; r.fx[1] = .5; r.hovered = 1;
+      radii.length = 0; r[k('drawCanvas')](); expect(radii.length).toBe(5);
+      for (let n = 0; n < 5; n++) {
+        const hot = n === 0 || n === 1, ego = n === 0, radius = r.nodeRadius(n, hot), g = r[k('stateBytes')][n * 4 + 1] / 255;
+        const expected = emphasisGL({ radius, ego, note: false, st: { g }, emphasis: r.emphasisBudget(), minSize: v.tierMinSize, focus: level, id: n, hovered: 1, pulse: { x: pulse }, max: Math.max });
+        expect(radii[n]).toBeCloseTo(expected, 8); expect(r[k('drawnRadius')](n, hot, level)).toBeCloseTo(expected, 8);
+      }
+    }
+    // All nodes far apart: the drawn disc plus the existing 4 px click tolerance, not a legacy global radius.
+    Object.assign(f.settings, { nodeSize: 1, nodeSizing: { policy: 'predictable', compensation: 0, floor: 1 } });
+    r.setCamera(.5, .5, .5); r[k('focusLevel')] = 1; r.fx[0] = 1; r[k('hoverFx')].n = -1; r.hovered = -1;
+    for (const sizing of ['predictable', 'legacy'] as const) for (const px of [0, 7, 16]) {
+      f.settings.nodeSizing.policy = sizing; v.tierMinSize = px;
+      for (const n of [0, 1, 2, 4]) {
+        const p = r.screenPoint(n), rad = r[k('drawnRadius')](n, n === 0, 1);
+        expect(r.pick(p.x, p.y + rad + 3.99)).toBe(n); expect(r.pick(p.x, p.y + rad + 4.01)).not.toBe(n);
+      }
+    }
+    // A hidden tier stays at its base size; a folded carrier is still unpickable.
+    r.tierMask = 0; expect(r[k('drawnRadius')](1, false, 1)).toBe(r.nodeRadius(1));
+    r.projection.carrierNodes[1] = 1; v.carrierLodNear = .01; v.carrierLodFar = .02;
+    r.setCamera(.5, .5, 8); const p = r.screenPoint(1); expect(r.pick(p.x, p.y)).not.toBe(1);
+  } finally { Object.assign(ctx, saved); }
+});
+
+test('adaptive compiled fan-out shifts disc area into contrast without enlarging legible dots; scale retains exact old radius', async () => {
+  const f = await graduated([[0, 1], [1, 2]], 5), { r, k } = f, v = f.settings.visuals;
+  f.tap(0); r[k('hoverFx')].n = -1;
+  r[k('baseNodeRadius')] = () => 1; r.sizes.fill(1);
+  const sample = (degree: number) => { r[k('directs')] = new Array(degree).fill(1); return [r[k('drawnRadius')](1, false, 1), r.emphasisDim()]; };
+  const sparse = sample(2), dense = sample(240); expect(sparse[0]).toBeGreaterThan(6); expect(dense[0]).toBeLessThan(3.2);
+  expect(dense[1]).toBeLessThan(sparse[1]); expect(r[k('drawnRadius')](0, true, 1)).toBe(7);
+  // Broad 2-hop focus also spends less area, even if the focus itself has few direct connections.
+  r[k('directs')] = [1, 2]; const near = r.near; r.near = new Array(2000).fill(2); expect(r[k('drawnRadius')](1, false, 1)).toBeLessThan(3); r.near = near;
+  r[k('baseNodeRadius')] = () => 20; expect(r[k('drawnRadius')](1, false, 1)).toBe(20);
+  r[k('hoverFx')].n = 1; r.fx[0] = 1.6; expect(r[k('drawnRadius')](1, true, 1)).toBeCloseTo(23, 8);
+  v.emphasis = 'scale'; expect(r[k('drawnRadius')](1, true, 1)).toBeCloseTo(22 * 1.25 * 1.6, 8); expect(r.emphasisDim()).toBe(v.dimOpacity);
+  expect(r[k('drawnRadius')](0, true, 1)).toBeCloseTo(22 * 1.6, 8);
+});
+
+test('compiled WebGL dispatch supplies adaptive budget and contrast, with no coordinate upload', async () => {
+  const f = await graduated([[0, 1]], 3), { r, k } = f; f.tap(0); r[k('directs')] = new Array(240).fill(1);
+  const uniforms: Record<string, number> = {}; let uploads = 0;
+  const gl: any = new Proxy({ uniform1f: (name: string, value: number) => { uniforms[name] = value; }, texSubImage2D: () => { uploads++; } }, { get: (o: any, key: string) => key in o ? o[key] : key.toUpperCase() === key ? 1 : () => {} });
+  r.gl = gl; r[k('programs')] = [0, 1, 2, 3].map(handle => ({ handle, uniforms: new Proxy({}, { get: (_o, key) => key }) })); r.atlas = undefined;
+  r[k('focusLevel')] = 1; r[k('focusTarget')] = 1;
+  for (const mode of ['adaptive', 'scale'] as const) {
+    f.settings.visuals.emphasis = mode; r[k('draw')]();
+    expect(uniforms.emphasis).toBe(mode === 'adaptive' ? 1 / Math.sqrt(21) : 0);
+    expect(uniforms.dim).toBe(mode === 'adaptive' ? .036 : .12);
+  }
+  expect(uploads).toBe(0);
 });

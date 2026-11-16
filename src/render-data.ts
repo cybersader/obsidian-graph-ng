@@ -1,5 +1,14 @@
 import type { Projection } from './core/projection';
 
+/** Adaptive CSS-pixel radius: never magnify an already legible dot. Fan-out spends emphasis
+ * on contrast instead of disc area. Hover keeps its easing, with at most one pixel beyond its target.
+ * Mirrors the node shader; budget is computed once per draw from cached direct connections. */
+export function adaptiveRadius(radius: number, g: number, ego: boolean, focus: number, minSize: number, budget: number, pulse: number): number {
+  const target = ego ? Math.max(7, minSize) : minSize * (.3 + .7 * budget) * (g > .9 ? 1 : g > .7 ? .75 : g > .4 ? .57 : 0);
+  radius += Math.max(0, target - radius) * focus;
+  return Math.max(radius, Math.max(5, minSize) * pulse) + pulse;
+}
+
 /** Packed grid: one link per node, no objects/strings per node or pointer query. */
 export class PickGrid {
   readonly heads: Int32Array;

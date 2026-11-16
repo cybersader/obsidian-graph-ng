@@ -1,6 +1,6 @@
 import { renderPath, type RenderProjection } from './render-projection';
 import type { Settings } from './settings';
-import { PickGrid, positionTexture, incidentEdges, focusTiers, tintedEdge, edgeBucket, tierNode, tierEdge, tierLabel, segmentDistance, shownTier, shownEdgeTier, tierCounts, tierLift, liftRadius, strongEdge, focusAlpha, offscreenPips, TIERS, ALL_TIERS, PIP_DIRECTIONS, canvasDetailEdges, CanvasLimit, resizeDrawingBuffer, LABEL_RATIOS, PATH_EDGE, pathStroke } from './render-data';
+import { adaptiveRadius, PickGrid, positionTexture, incidentEdges, focusTiers, tintedEdge, edgeBucket, tierNode, tierEdge, tierLabel, segmentDistance, shownTier, shownEdgeTier, tierCounts, tierLift, liftRadius, strongEdge, focusAlpha, offscreenPips, TIERS, ALL_TIERS, PIP_DIRECTIONS, canvasDetailEdges, CanvasLimit, resizeDrawingBuffer, LABEL_RATIOS, PATH_EDGE, pathStroke } from './render-data';
 import { readTheme, type GraphTheme } from './render-theme';
 import { baseRadius, sizedRadius, sizingSettings, type NodeSizingValues } from './node-sizing';
 import { buildLabels, rankFocus, type LabelAtlas } from './render-labels';
@@ -60,6 +60,7 @@ uniform float carrierSize;
 uniform int layer;
 uniform int tierMask;
 uniform float minSize;
+uniform float emphasis;
 uniform float rings;
 uniform float strong;
 ivec2 cell(int id) { return ivec2(id % positionWidth, id / positionWidth); }
@@ -100,12 +101,20 @@ void main() {
  spread = glow > 0. ? 2.3 : 1.;
  // Graduated tiers: the focus grows 60% with an outer ring, direct notes grow 25%.
  bool ego = id == focusNode; ring = ego ? focus : 0.; if (ego) spread = max(spread, rings > 0. ? 1.72 : 1.4);
+ if (emphasis > 0.) {
+  float target = ego ? max(7., minSize) : minSize * (.3 + .7 * emphasis) * (st.g > .9 ? 1. : st.g > .7 ? .75 : st.g > .4 ? .57 : 0.);
+  if (!note || ego) radius += max(0., target - radius) * focus;
+  float hover = id == hovered ? (pulse.x - 1.) / .6 : 0.;
+  radius = max(radius, max(5., minSize) * hover) + hover;
+ } else {
  radius *= 1. + focus * (ego ? .6 : st.g > .9 ? .25 : 0.); // ego
  // Screen-space floor per tier: lift (tierLift/liftRadius); contrast ring bands; edge notes are exempt.
  float lift = note ? 0. : minSize * focus * (ego || st.g > .9 ? 1. : st.g > .7 ? .75 : st.g > .4 ? .57 : 0.);
  if (lift > 0. && radius < 2. * lift) radius = lift + radius * radius / (4. * lift);
  // Hover pulse: only the hovered note grows (to at least the tier floor) and rings.
- if (id == hovered) { radius = max(radius * pulse.x, minSize * (pulse.x - 1.) / .6); ring = max(ring, pulse.y); spread = max(spread, 1.4); }
+ if (id == hovered) radius = max(radius * pulse.x, minSize * (pulse.x - 1.) / .6);
+ }
+ if (id == hovered) { ring = max(ring, pulse.y); spread = max(spread, 1.4); }
  bands = note ? vec2(0.) : focus * vec2(rings > .9 && !ego && st.g > .9 ? 1. : 0., rings > 0. && ego ? 1. : 0.); if (bands.x > 0.) spread = max(spread, 1.32);
  ink = color(3).rgb;
  local = corners[gl_VertexID] * spread;
@@ -245,7 +254,7 @@ void main() {
  float core = 1. - smoothstep(.92, 1., d), ring = smoothstep(.74, .8, d);
  float a = core * tint.a * mix(.62, 1., ring); outputColor = vec4(tint.rgb * mix(.7, 1.08, ring) * a, a);
 }`;
-const UNIFORMS = ['lensPositions', 'lensBlend', 'lensAnchor', 'positions', 'palette', 'nodeColors', 'nodeState', 'positionWidth', 'center', 'viewport', 'scale', 'nodeSize', 'hovered', 'pulse', 'selected', 'focusNode', 'focus', 'dim', 'glow', 'edgeSize', 'edgeHovered', 'segments', 'curvature', 'edgeAlpha', 'direction', 'colorMix', 'inkShare', 'fadeLength', 'focusOnly', 'labelAlpha', 'labelCut', 'atlas', 'outline', 'plates', 'discAlpha', 'hub', 'carrierAlpha', 'carrierFold', 'carrierSize', 'layer', 'tierMask', 'minSize', 'rings', 'strong'];
+const UNIFORMS = ['lensPositions', 'lensBlend', 'lensAnchor', 'positions', 'palette', 'nodeColors', 'nodeState', 'positionWidth', 'center', 'viewport', 'scale', 'nodeSize', 'hovered', 'pulse', 'selected', 'focusNode', 'focus', 'dim', 'glow', 'edgeSize', 'edgeHovered', 'segments', 'curvature', 'edgeAlpha', 'direction', 'colorMix', 'inkShare', 'fadeLength', 'focusOnly', 'labelAlpha', 'labelCut', 'atlas', 'outline', 'plates', 'discAlpha', 'hub', 'carrierAlpha', 'carrierFold', 'carrierSize', 'layer', 'tierMask', 'minSize', 'emphasis', 'rings', 'strong'];
 interface Program { handle: WebGLProgram; uniforms: Record<string, WebGLUniformLocation | null> }
 interface Camera { x: number; y: number; ratio: number }
 /** Runtime view masks from the worker's explore result; colors stay worker-computed. */
@@ -1005,27 +1014,32 @@ export class DetailRenderer {
   carrierLevel(zoom = this.camera.ratio / this.homeRatio) { const v = this.settings.visuals; return { visibility: carrierVisibility(zoom, v.carrierLodNear, v.carrierLodFar, v.carrierLod), alpha: carrierAlpha(v, this.visibleCarriers, zoom) }; }
   /** Edge notes folded away by the level of detail are not pickable. */
   pick(x: number, y: number) {
-    const w = this.worldPoint(x, y), s = this.sizingSettings();
+    const w = this.worldPoint(x, y), s = this.sizingSettings(), adaptive = s.visuals.emphasis === 'adaptive';
     // The graduated focus grows 60% (direct notes 25%): hit targets follow the drawn size.
     const f = s.visuals.hoverHighlight ? this.focusLevel : 0, grow = (n: number) => tierNode(this.stateBytes[n * 4 + 1]! / 255, true, n === this.focusNode, f, 0)[1];
     const lifted = this.pickTiered(x, y, w, f); if (lifted >= 0) return lifted;
     if (this.lensPoints?.size) {
-      const legacy = s.nodeSizing.policy === 'legacy', radius = (legacy ? s.nodeSize * (1 + s.visuals.degreeSizing) * (1 + .6 * f) + 4 : this.baseNodeRadius() * (1 + s.visuals.degreeSizing) * Math.max(1, s.visuals.carrierSize) * (1 + .6 * f) + 6) / this.scale;
+      const legacy = s.nodeSizing.policy === 'legacy' && !adaptive, radius = (legacy ? s.nodeSize * (1 + s.visuals.degreeSizing) * (1 + .6 * f) + 4 : this.baseNodeRadius() * (1 + s.visuals.degreeSizing) * Math.max(1, s.visuals.carrierSize) * (1 + .6 * f) + 6 + (adaptive ? Math.max(7, s.visuals.tierMinSize) : 0)) / this.scale;
       const carriers = this.carrierLevel().visibility >= .25;
-      return pickLens(this.picker, this.lensPoints, w.x, w.y, radius, n => ({ x: this.renderCoordinate(n, 0), y: this.renderCoordinate(n, 1) }), n => legacy ? radius : (this.drawnRadius(n, n === this.selected || n === this.hovered, f) + 4) / this.scale, n => !!this.visible[n] && (carriers || !this.projection.carrierNodes[n]));
+      return pickLens(this.picker, this.lensPoints, w.x, w.y, radius, n => ({ x: this.renderCoordinate(n, 0), y: this.renderCoordinate(n, 1) }), n => legacy ? radius : (this.drawnRadius(n, n === this.selected || n === (adaptive ? this.hoverFx.n : this.hovered), f) + 4) / this.scale, n => !!this.visible[n] && (carriers || !this.projection.carrierNodes[n]));
     }
-    if (s.nodeSizing.policy === 'legacy') return this.picker.pick(w.x, w.y, (s.nodeSize * (1 + s.visuals.degreeSizing) * (1 + .6 * f) + 4) / this.scale, this.carrierCount && this.carrierLevel().visibility < .25 ? this.projection.carrierNodes : undefined);
-    const base = this.baseNodeRadius(), max = (base * (1 + s.visuals.degreeSizing) * Math.max(1, s.visuals.carrierSize) * (1 + .6 * f) * 1.6 + 6 + s.visuals.tierMinSize) / this.scale;
+    if (s.nodeSizing.policy === 'legacy' && !adaptive) return this.picker.pick(w.x, w.y, (s.nodeSize * (1 + s.visuals.degreeSizing) * (1 + .6 * f) + 4) / this.scale, this.carrierCount && this.carrierLevel().visibility < .25 ? this.projection.carrierNodes : undefined);
+    const base = this.baseNodeRadius(), max = (base * (1 + s.visuals.degreeSizing) * Math.max(1, s.visuals.carrierSize) * (1 + .6 * f) * 1.6 + 6 + (adaptive ? Math.max(7, s.visuals.tierMinSize) : s.visuals.tierMinSize)) / this.scale;
     let picked = -1, distance = Infinity;
     this.picker.visit(w.x, w.y, max, node => {
       if (!this.visible[node] || (this.projection.carrierNodes[node] && this.carrierLevel().visibility < .25)) return;
       const p = this.screenPoint(node), d = (p.x - x) ** 2 + (p.y - y) ** 2;
-      if (d <= (this.grown(node, this.nodeRadius(node, node === this.selected || node === this.hovered) * grow(node)) + 4) ** 2 && d < distance) { picked = node; distance = d; }
+      if (d <= ((adaptive ? this.drawnRadius(node, node === this.selected || node === this.hoverFx.n, f) : this.grown(node, this.nodeRadius(node, node === this.selected || node === this.hovered) * grow(node))) + 4) ** 2 && d < distance) { picked = node; distance = d; }
     }); return picked;
   }
-  /** Drawn radius including the graduated growth and the screen-space tier floor (pick, overlay and Canvas share it). */
-  private drawnRadius(n: number, hot: boolean, focus: number) {
-    const ego = n === this.focusNode, g = shownTier(this.stateBytes[n * 4 + 1]!, this.tierMask, ego) / 255, r = this.nodeRadius(n, hot) * tierNode(g, true, ego, focus, 0)[1];
+  /** Cached tier lengths only: no new traversal, texture or projection-wide CPU work on WebGL frames. */
+  private emphasisBudget() { return this.settings.visuals.emphasis === 'adaptive' ? 1 / Math.sqrt(1 + Math.max(this.directs.length, this.near.length / 4) / 12) : 0; }
+  private emphasisDim() { return this.isolation ? 1 : this.settings.visuals.dimOpacity * Math.max(.3, this.emphasisBudget() || 1); }
+  /** One CPU radius authority for drawing, picking and overlays; mirrors the node shader. */
+  private drawnRadius(n: number, hot: boolean, focus: number, base = this.baseNodeRadius(), budget = this.emphasisBudget()) {
+    const ego = n === this.focusNode, g = shownTier(this.stateBytes[n * 4 + 1]!, this.tierMask, ego) / 255, radius = this.nodeRadius(n, hot, base);
+    if (budget) return adaptiveRadius(radius, g, ego, this.projection.carrierNodes[n] && !ego ? 0 : focus, this.settings.visuals.tierMinSize, budget, n === this.hoverFx.n ? (this.fx[0]! - 1) / .6 : 0);
+    const r = radius * tierNode(g, true, ego, focus, 0)[1];
     return this.grown(n, this.projection.carrierNodes[n] ? r : liftRadius(r, tierLift(g, ego, focus, this.settings.visuals.tierMinSize)));
   }
   /** The hover preview's size (the node shader's pulse term). */
@@ -1038,7 +1052,7 @@ export class DetailRenderer {
       if (!this.visible[node] || this.projection.carrierNodes[node]) return;
       const ego = node === this.focusNode; if (!tierLift(shownTier(this.stateBytes[node * 4 + 1]!, this.tierMask, ego) / 255, ego, focus, px)) return;
       const p = this.screenPoint(node), d = (p.x - x) ** 2 + (p.y - y) ** 2;
-      if (d <= (this.drawnRadius(node, node === this.selected || node === this.hovered, focus) + 4) ** 2 && d < distance) { picked = node; distance = d; }
+      if (d <= (this.drawnRadius(node, node === this.selected || node === (this.settings.visuals.emphasis === 'adaptive' ? this.hoverFx.n : this.hovered), focus) + 4) ** 2 && d < distance) { picked = node; distance = d; }
     };
     // Lens-displaced notes leave their grid cells: skip them there and test their drawn positions (O(direct connections)).
     const moved = this.lensAnchor >= 0 ? this.lensPoints : undefined;
@@ -1375,7 +1389,7 @@ export class DetailRenderer {
       const program = this.programs[i]!, u = program.uniforms;
       gl.useProgram(program.handle); gl.uniform1i(u.lensPositions!, 5); gl.uniform1f(u.lensBlend!, this.lensBlend); gl.uniform1i(u.lensAnchor!, this.lensAnchor); gl.uniform1i(u.positions!, 0); gl.uniform1i(u.palette!, 1); gl.uniform1i(u.atlas!, 2); gl.uniform1i(u.nodeColors!, 3); gl.uniform1i(u.nodeState!, 4); gl.uniform1i(u.positionWidth!, this.positionWidth);
       gl.uniform2f(u.center!, this.centerX, this.centerY); gl.uniform2f(u.viewport!, this.width, this.height); gl.uniform1f(u.scale!, this.scale); gl.uniform1f(u.nodeSize!, nodeSize); gl.uniform1f(u.edgeSize!, edgeWidth); gl.uniform1i(u.hovered!, this.hoverFx.n); gl.uniform2f(u.pulse!, this.fx[0]!, this.fx[1]!); gl.uniform1i(u.selected!, this.selected); gl.uniform1i(u.focusNode!, this.focusNode); gl.uniform1i(u.edgeHovered!, this.hoveredEdge);
-      gl.uniform1f(u.focus!, focus); gl.uniform1f(u.dim!, this.isolation ? 1 : v.dimOpacity); gl.uniform1f(u.glow!, layer ? policy.glow : 0);
+      gl.uniform1f(u.focus!, focus); gl.uniform1f(u.dim!, this.emphasisDim()); gl.uniform1f(u.emphasis!, this.emphasisBudget()); gl.uniform1f(u.glow!, layer ? policy.glow : 0);
       gl.uniform1f(u.carrierAlpha!, notes.alpha); gl.uniform1f(u.carrierFold!, notes.visibility); gl.uniform1f(u.carrierSize!, v.carrierSize); gl.uniform1i(u.layer!, layer);
       gl.uniform1i(u.tierMask!, this.tierMask); gl.uniform1f(u.minSize!, v.tierMinSize); gl.uniform1f(u.rings!, v.tierRings ? (this.directs.length > 50 ? .5 : 1) : 0); gl.uniform1f(u.strong!, v.focusEdges ? focusAlpha(this.directs.length) : 0);
       gl.uniform1i(u.segments!, policy.segments); gl.uniform1f(u.curvature!, policy.curves ? v.curvature : 0); gl.uniform1f(u.edgeAlpha!, alpha); gl.uniform1f(u.direction!, v.edgeDirection ? 1 : 0); gl.uniform1f(u.colorMix!, v.edgeColorMix); gl.uniform1f(u.inkShare!, ink); gl.uniform1f(u.fadeLength!, Math.min(reach, 1e9)); gl.uniform1f(u.focusOnly!, v.edgeMode === 'focus' ? 1 : 0);
@@ -1560,7 +1574,7 @@ export class DetailRenderer {
     line.hidden = length < 4; line.style.width = `${Math.round(length)}px`; line.style.transform = `translate(${Math.round(ax)}px, ${Math.round(ay)}px) rotate(${Math.atan2(y - ay, x - ax)}rad)`;
   }
   private drawCanvas() {
-    const ctx = this.ctx!, s = this.settings, c = this.colorBytes, focus = s.visuals.hoverHighlight ? this.focusLevel : 0, dim = this.isolation ? 1 : s.visuals.dimOpacity, g = this.stateBytes;
+    const ctx = this.ctx!, s = this.settings, c = this.colorBytes, focus = s.visuals.hoverHighlight ? this.focusLevel : 0, dim = this.emphasisDim(), budget = this.emphasisBudget(), g = this.stateBytes;
     // Frame invariants, not per endpoint/node work (including an unsaved sizing preview).
     const cx = this.centerX, cy = this.centerY, scale = this.scale, hw = this.width / 2, hh = this.height / 2, radius = this.baseNodeRadius();
     const x = (n: number) => (this.renderCoordinate(n, 0) - cx) * scale + hw, y = (n: number) => (this.renderCoordinate(n, 1) - cy) * scale + hh;
@@ -1589,9 +1603,8 @@ export class DetailRenderer {
       const hot = n === this.selected || n === this.hoverFx.n, k = n * 4, p = this.theme.palette, coverage = layer ? (hot ? level.visibility : level.alpha) : 1;
       const a = coverage * (hot ? p[19]! : c[k + 3]!) / 255;
       if (coverage < .004 || a <= 0) continue;
-      const ego = n === this.focusNode, shown = shownTier(g[k + 1]!, this.tierMask, ego) / 255, [fade, grow, tr] = tierNode(shown, hot, ego, focus, dim); let r = this.nodeRadius(n, hot, radius) * grow;
-      if (!layer) r = liftRadius(r, tierLift(shown, ego, focus, s.visuals.tierMinSize));
-      r = this.grown(n, r); const ring = Math.max(tr, n === this.hoverFx.n ? this.fx[1]! : 0);
+      const ego = n === this.focusNode, shown = shownTier(g[k + 1]!, this.tierMask, ego) / 255, [fade, , tr] = tierNode(shown, hot, ego, focus, dim), r = this.drawnRadius(n, hot, focus, radius, budget);
+      const ring = Math.max(tr, n === this.hoverFx.n ? this.fx[1]! : 0);
       ctx.globalAlpha = a * fade; ctx.fillStyle = ctx.strokeStyle = hot ? `rgb(${p[16]},${p[17]},${p[18]})` : `rgb(${c[k]},${c[k + 1]},${c[k + 2]})`; ctx.beginPath(); ctx.arc(x(n), y(n), r, 0, Math.PI * 2); ctx.fill();
       // The shader's outer ring band (1.1–1.34 radii) as one stroke.
       if (ring) { ctx.globalAlpha = a * ring; ctx.lineWidth = r * .2; ctx.beginPath(); ctx.arc(x(n), y(n), r * 1.22, 0, Math.PI * 2); ctx.stroke(); }

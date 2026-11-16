@@ -143,6 +143,7 @@
     "zoomAdapt": true,
     "labelTierScale": 1.2,
     "labelPlates": true,
+    "emphasis": "adaptive",
     "tierMinSize": 7,
     "tierRings": true,
     "focusEdges": true,

@@ -367,7 +367,7 @@ test('settings rows: Edges and layout Presets use the name, description and cont
   expect(modes.children.map((b: any) => b.textContent)).toEqual(['All', 'Focus only', 'Off']);
   control(modes, 'Focus only').click(); expect(f.settings.visuals.edgeMode).toBe('focus'); expect(modes.children.map((b: any) => b.getAttribute('aria-pressed'))).toEqual(['false', 'true', 'false']);
   // Sliders share the row: name first, a description line where given, then the track line.
-  const slider = row('Minimum highlighted size'); expect(parts(slider).filter(Boolean)).toEqual(['graph-ng-setting-name', 'graph-ng-setting-desc']);
+  const slider = row('Highlighted size target'); expect(parts(slider).filter(Boolean)).toEqual(['graph-ng-setting-name', 'graph-ng-setting-desc']);
   expect(f.panel.root.textContent).not.toContain('Hover delay');
   f.panel.show('layout');
   expect(headings().filter(t => t === 'Layout')).toHaveLength(1);
@@ -391,4 +391,15 @@ test('count lists: group legend rows keep the name and the count in separate ele
   expect(rule).toContain('font-variant-numeric:tabular-nums'); expect(rule).toContain('text-align:right'); expect(rule).toContain('white-space:nowrap');
   expect(css).toMatch(/\.graph-ng-count-row \{[^}]*grid-template-columns:minmax\(0,1fr\) auto/);
   expect(css).not.toContain('graph-ng-legend-count'); f.panel.dispose();
+});
+
+
+test('adaptive emphasis control switches live without moving the camera or rebuilding the view', () => {
+  const f = fixture(); f.panel.show('appearance');
+  const field: any = f.panel.root.querySelectorAll('select').find((e: any) => e.getAttribute('aria-label') === 'Highlight emphasis');
+  expect(field.tagName).toBe('SELECT'); expect(field.children.map((e: any) => e.textContent)).toEqual(['Adaptive', 'Scale']);
+  expect(field.children[0].selected).toBe(true);
+  for (const mode of ['scale', 'adaptive'] as const) { field.value = mode; field.onchange(); expect(f.settings.visuals.emphasis).toBe(mode); }
+  expect(f.state.visual).toBe(2); expect(f.state.fit + f.state.layout + f.state.viewCalls).toBe(0);
+  expect(f.camera).toEqual({ x: .3, y: .4, ratio: .2 }); f.panel.dispose();
 });
