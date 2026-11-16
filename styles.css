@@ -435,6 +435,7 @@ button.graph-ng-stat > .graph-ng-stat-label { text-align:start; }
 .graph-ng-setting.setting-item > * { margin-inline-end:0; }
 .graph-ng-setting > .checkbox-container, .graph-ng-setting > select { grid-column:2 / -1; grid-row:1; justify-self:end; margin:0; }
 .graph-ng-setting > select { grid-column:2 / -1; width:100%; max-width:100%; text-overflow:ellipsis; }
+.graph-ng-setting > select:is([aria-label="Click a note"], [aria-label="Name which notes"]) { grid-column:1 / -1; grid-row:2; }
 .graph-ng-setting > .checkbox-container:has(input:checked) { background-color:var(--interactive-accent); }
 .graph-ng-setting > .checkbox-container:has(input:checked)::after { transform:translate3d(calc(var(--toggle-s-width) - var(--toggle-s-thumb-width) - var(--toggle-s-border-width)),0,0); }
 .graph-ng-setting > .checkbox-container:focus-within { outline:2px solid var(--interactive-accent); outline-offset:2px; }

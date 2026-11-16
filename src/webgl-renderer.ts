@@ -93,18 +93,18 @@ out float ring;
 out vec2 bands;
 out vec3 ink;
 void main() {
- int id = gl_InstanceID; vec4 st = state(id);
+ int id = layer == 2 ? selected : gl_InstanceID; vec4 st = state(id);
  st.g = shownTier(st.g, id == focusNode);
  bool hot = id == hovered || id == selected, note = st.a > .5;
  // Edge notes (state alpha) draw in their own pass beneath the other nodes.
  // A highlighted edge note keeps its highlight but folds with the level of detail.
- float k = note ? (hot ? carrierFold : carrierAlpha) : 1.;
+ float k = hot ? 1. : note ? carrierAlpha : 1.;
  float radius = nodeSize * size * (note ? carrierSize : 1.) + (hot ? 2. : 0.);
  spread = glow > 0. ? 2.3 : 1.;
  // Graduated tiers: the focus grows 60% with an outer ring, direct notes grow 25%.
- bool ego = id == focusNode; ring = ego ? focus : 0.; if (ego) spread = max(spread, rings > 0. ? 1.72 : 1.4);
+ bool ego = id == focusNode; ring = id == selected ? 1. : ego ? focus : 0.; if (ego) spread = max(spread, rings > 0. ? 1.72 : 1.4);
  if (emphasis > 0.) {
-  float target = ego ? max(7., minSize) : minSize * (.3 + .7 * emphasis) * (st.g > .9 ? 1. : st.g > .7 ? .75 : st.g > .4 ? .57 : 0.);
+  float target = ego ? max(7., minSize) : minSize * (.55 + .45 * emphasis) * (st.g > .9 ? 1. : st.g > .7 ? .75 : st.g > .4 ? .57 : 0.);
   if (!note || ego) radius += max(0., target - radius) * focus;
   float hover = id == hovered ? (pulse.x - 1.) / .6 : 0.;
   radius = max(radius, max(5., minSize) * hover) + hover;
@@ -116,13 +116,14 @@ void main() {
  // Hover pulse: only the hovered note grows (to at least the tier floor) and rings.
  if (id == hovered) radius = max(radius * pulse.x, minSize * (pulse.x - 1.) / .6);
  }
+ if (id == selected) { radius = max(radius, 5.); spread = max(spread, 1.4); }
  if (id == hovered) { ring = max(ring, pulse.y); spread = max(spread, 1.4); }
  bands = note ? vec2(0.) : focus * vec2(rings > .9 && !ego && st.g > .9 ? 1. : 0., rings > 0. && ego ? 1. : 0.); if (bands.x > 0.) spread = max(spread, 1.32);
  // A physical-pixel radius keeps a core sample at every subpixel pan phase (no MSAA).
  radius = max(radius, 1. / pixelRatio);
  ink = color(3).rgb;
  local = corners[gl_VertexID] * spread;
- gl_Position = st.r < .5 || st.b > .5 || note != (layer == 0) || k < .004 ? offscreen : clip(point(id) + local * radius);
+ gl_Position = st.r < .5 || st.b > .5 || (layer != 2 && id == selected) || (layer != 2 && note != (layer == 0)) || k < .004 ? offscreen : clip(point(id) + local * radius);
  vec4 c = hot ? color(4) : nodeColor(id);
  tint = vec4(c.rgb, c.a * k * (hot ? 1. : mix(1., dim, focus * (1. - st.g))));
 }`;
@@ -356,6 +357,7 @@ export class DetailRenderer {
   private stateBytes = new Uint8Array();
   private sizes: Float32Array<ArrayBuffer>;
   private edgeOn: Uint8Array;
+  private isolationEdges?: Set<number>;
   private lineRanks: Uint32Array = new Uint32Array(0);
   /** Per-edge focus tier bytes (255 direct, 128 context, 0 rest), uploaded as edge attribute 3. */
   private edgeTier: Uint8Array;
@@ -555,7 +557,7 @@ export class DetailRenderer {
     Object.assign(this, this.coordinateState(this.positions, filterVisible, view));
     const render = this.visible;
     const hiddenTypes = view.typeHidden; this.visibleEdges = 0;
-    for (let e = 0; e < p.source.length; e++) { const on = hiddenTypes?.[p.type[e]!] ? 0 : 1; this.edgeOn[e] = on; if (on && filterVisible[p.source[e]!] && filterVisible[p.target[e]!]) this.visibleEdges++; }
+    for (let e = 0; e < p.source.length; e++) { const on = hiddenTypes?.[p.type[e]!] || this.isolationEdges && !this.isolationEdges.has(e) ? 0 : 1; this.edgeOn[e] = on; if (on && filterVisible[p.source[e]!] && filterVisible[p.target[e]!]) this.visibleEdges++; }
     this.visibleNodes = this.visibleCarriers = 0; const notes = p.carrierNodes;
     for (let i = 0; i < n; i++) { const o = i * 4; this.stateBytes[o] = filterVisible[i] ? 255 : 0; this.stateBytes[o + 2] = filterVisible[i] && !render[i] ? 255 : 0; this.stateBytes[o + 3] = notes[i] ? 255 : 0; if (render[i]) { this.visibleNodes++; if (notes[i]) this.visibleCarriers++; } }
     if (canvasEdges) this.canvasEdges = canvasEdges;
@@ -869,7 +871,7 @@ export class DetailRenderer {
     const [max, hi] = this.sizingRange, b = this.baseNodeRadius(), v = this.sizingSettings().visuals;
     const one = max ? degreeSizes(new Uint32Array([0, 1, max + 1]), v.degreeSizing * this.keep, v.degreeCurve)[0]! : 1;
     const px = (m: number) => Math.max(1 / this.dpr, b * m).toFixed(2);
-    return hi ? `Radius at this zoom: 1 edge ${px(one)} px; largest visible hub ${px(hi)} px` : 'No ordinary nodes shown';
+    return hi ? `Radius at this zoom: leaf ${px(one)} px; largest visible hub ${px(hi)} px` : 'No ordinary nodes shown';
   }
   private savedSettings?: Settings;
   /** Unsaved whole-settings candidate (suggestions); null restores the live settings object and
@@ -1115,7 +1117,7 @@ export class DetailRenderer {
   private drawnRadius(n: number, hot: boolean, focus: number, base = this.baseNodeRadius(), budget = this.emphasisBudget()) {
     const ego = n === this.focusNode, g = shownTier(this.stateBytes[n * 4 + 1]!, this.tierMask, ego) / 255, radius = this.nodeRadius(n, hot, base);
     const r = radius * tierNode(g, true, ego, focus, 0)[1];
-    return Math.max(1 / this.dpr, budget ? adaptiveRadius(radius, g, ego, this.projection.carrierNodes[n] && !ego ? 0 : focus, this.settings.visuals.tierMinSize, budget, n === this.hoverFx.n ? (this.fx[0]! - 1) / .6 : 0) : this.grown(n, this.projection.carrierNodes[n] ? r : liftRadius(r, tierLift(g, ego, focus, this.settings.visuals.tierMinSize))));
+    return Math.max(n === this.selected ? 5 : 1 / this.dpr, budget ? adaptiveRadius(radius, g, ego, this.projection.carrierNodes[n] && !ego ? 0 : focus, this.settings.visuals.tierMinSize, budget, n === this.hoverFx.n ? (this.fx[0]! - 1) / .6 : 0) : this.grown(n, this.projection.carrierNodes[n] ? r : liftRadius(r, tierLift(g, ego, focus, this.settings.visuals.tierMinSize))));
   }
   /** The hover preview's size (the node shader's pulse term). */
   private grown(n: number, r: number) { const s = this.fx[0]!; return n === this.hoverFx.n ? Math.max(r * s, this.settings.visuals.tierMinSize * (s - 1) / .6) : r; }
@@ -1220,7 +1222,7 @@ export class DetailRenderer {
   /** The navigator's view of the graph: every lookup is O(degree) over the incident-edge CSR. Rows
    * list connections under the host filter, so a neighbourhood mask never hides them. */
   private cardHost(): CardHost {
-    const p = this.projection, on = (e: number) => !!this.edgeOn[e];
+    const p = this.projection, on = (e: number) => !this.view.typeHidden?.[p.type[e]!];
     return {
       name: n => this.name(n),
       title: n => this.noteTitle?.(this.path(n)) ?? '',
@@ -1328,17 +1330,17 @@ export class DetailRenderer {
   }
   /** Temporary neighbourhood, intersected with the host filter. Reach changes reset expansion. */
   isolate(node: number, hops = 1, fit = true, expanded = new Set<number>(), shown: number[] = []) {
-    const previous = this.isolation, frontier = this.frontier, partial = this.neighbourhoodPartial;
+    const previous = this.isolation, frontier = this.frontier, partial = this.neighbourhoodPartial, edges = this.isolationEdges;
     this.isolation = node >= 0 && this.baseVisible[node] ? { node, hops: Math.max(0, Math.min(3, hops)), expanded, shown } : undefined;
     try { this.applyView(this.isolationMask(this.baseVisible, this.view), this.view); }
     catch (error) {
       if (!(error instanceof CanvasLimit)) throw error;
-      this.isolation = previous; this.frontier = frontier; this.neighbourhoodPartial = partial; this.showIsolation(); this.isolationBar.append(el('small', 'Too many notes to draw')); return;
+      this.isolation = previous; this.isolationEdges = edges; this.frontier = frontier; this.neighbourhoodPartial = partial; this.showIsolation(); this.isolationBar.append(el('small', 'Too many notes to draw')); return;
     }
     if (this.isolation && !this.filterVisible[this.selected]) this.selectNote(node, true);
     this.showIsolation();
-    this.frameSelection();
-    if (this.isolation && fit) this.frameNodes(Array.from(this.filterVisible.keys()).filter(n => !!this.filterVisible[n]));
+    if (this.isolation && (!previous || fit)) this.frameNodes(Array.from(this.filterVisible.keys()).filter(n => !!this.filterVisible[n]));
+    else this.frameSelection();
   }
   private expandNeighbourhood(n: number) {
     const s = this.isolation; if (!s || !this.frontier.has(n)) return;
@@ -1346,24 +1348,24 @@ export class DetailRenderer {
     this.canvas.focus();
   }
   private isolationMask(base: Uint8Array, view: RenderView) {
-    const s = this.isolation, p = this.projection; this.frontier = new Map(); this.neighbourhoodPartial = false;
+    const s = this.isolation, p = this.projection; this.isolationEdges = undefined; this.frontier = new Map(); this.neighbourhoodPartial = false;
     if (!s || !base[s.node]) { this.isolation = undefined; return base; }
     const result = neighbourhood(s.node, s.hops, s.expanded, this.edges, p, e => !view.typeHidden?.[p.type[e]!], base, s.shown);
-    this.frontier = result.frontier; this.neighbourhoodPartial = result.partial; return result.mask;
+    this.isolationEdges = result.edges; this.frontier = result.frontier; this.neighbourhoodPartial = result.partial; return result.mask;
   }
   private showIsolation() {
     if (!this.isolationBar) return;
     const s = this.isolation; this.isolationBar.dataset.motion = this.still() ? 'off' : 'full';
     isolationBar(this.isolationBar, s ? this.name(s.node) : '', s?.hops ?? 1, this.filterVisible.reduce((a, b) => a + b, 0), s ? s.expanded.size + s.shown.length : 0, this.neighbourhoodPartial, this.frontier.size, h => { this.isolate(s!.node, h); this.isolationBar.querySelectorAll('button')[h + 2]?.focus(); }, () => { this.isolate(-1); this.canvas.focus(); });
     for (const b of this.frontierBadges) b.el.remove(); this.frontierBadges = [];
-    // Highest interest first (ties to the lower id); badges precede the minimap and card in Tab order.
-    for (const node of s ? [...this.frontier.keys()].sort(byInterest(this.interestOf(s.node))).slice(0, 24) : []) {
+    // Most hidden neighbours first (ties to the lower id); badges precede the minimap and card in Tab order.
+    for (const node of s ? [...this.frontier.keys()].sort((a, b) => this.frontier.get(b)! - this.frontier.get(a)! || a - b).slice(0, 6) : []) {
       const count = this.frontier.get(node)!, b = button(`+${count}`, `Expand ${this.name(node)}: ${count} hidden neighbours`, () => this.expandNeighbourhood(node), 'graph-ng-frontier graph-ng-count');
       b.title = b.getAttribute('aria-label')!;
       const width = Math.max(32, 16 + String(count).length * 7); b.style.width = `${width}px`;
       this.miniMap.root.before(b); this.frontierBadges.push({ node, el: b, width });
     }
-    if (this.frontier.size > 24) this.isolationBar.append(el('small', 'Up to 24 badges. Select any note to expand.'));
+    if (this.frontier.size > 6) this.isolationBar.append(el('small', `${this.frontier.size - 6} more expandable notes. Select a note to expand.`));
   }
   /** The lens, else the selection, is the focus: hover never moves it (hover is only a ring and a name).
    * The graduated-highlight switch turns it off. */
@@ -1477,7 +1479,7 @@ export class DetailRenderer {
     this.adaptSizes(zoom); this.layoutLens();
     if (!gl) { this.drawCanvas(); this.placeOverlay(); if (more) this.refresh(); return; }
     gl.viewport(0, 0, this.canvas.width, this.canvas.height); gl.clearColor(p[8]! / 255, p[9]! / 255, p[10]! / 255, 1); gl.clear(gl.COLOR_BUFFER_BIT);
-    const lod = this.lodLevel(), policy = this.policy, fade = labelFade(this.settings.nodeSize, this.settings.labelRenderedSizeThreshold, this.camera.ratio, LABEL_RATIOS, v.labelFade, lod);
+    const lod = this.lodLevel(), policy = this.policy, fade = labelFade(this.settings.nodeSize, this.settings.labelRenderedSizeThreshold, this.camera.ratio, LABEL_RATIOS, v.labelFade && v.namePriority !== 'all', lod);
     const notes = this.carrierLevel(zoom), edgeWidth = this.edgeWidth(zoom), alpha = edgeAlpha(v, v.zoomAdapt ? 0 : this.visibleEdges, v.zoomAdapt ? 1 : zoom, policy.dark);
     const nodeSize = this.baseNodeRadius();
     const focus = v.hoverHighlight ? this.focusLevel : 0, haloAlpha = v.haloOpacity * Math.min(1, Math.max(0, (this.camera.ratio - .06) / .25));
@@ -1491,8 +1493,9 @@ export class DetailRenderer {
     if (this.visibleCarriers) passes.push([1, 1, 0, 0]);
     passes.push([1, 1, 0, 1]);
     if (edgePass && edgesOnTop) passes.push([0, 0, 0]);
+    if (this.selected >= 0) passes.push([1, 1, 0, 2]);
     if (this.discData[1]!.length) passes.push([3, 3, 1]);
-    if (!this.view.loading && !this.layoutActive && v.labelStyle === 'ranked' && this.atlas && fade.alpha > .004) passes.push([2, -1, 0]);
+    if (!this.view.loading && !this.layoutActive && v.labelStyle === 'ranked' && v.namePriority !== 'selection' && this.atlas && fade.alpha > .004) passes.push([2, -1, 0]);
     const f = (location: WebGLUniformLocation | null, value: number) => gl.uniform1f(location, value), integer = (location: WebGLUniformLocation | null, value: number) => gl.uniform1i(location, value);
     for (const [i, vaoIndex, hub, layer = 1] of passes) {
       const program = this.programs[i]!, u = program.uniforms;
@@ -1516,7 +1519,11 @@ export class DetailRenderer {
         }
         gl.drawArraysInstanced(gl.TRIANGLES, 0, 6 * policy.segments, this.projection.source.length);
       }
-      else if (i === 1) gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, this.visible.length);
+      else if (i === 1) {
+        if (layer === 2) { gl.disableVertexAttribArray(0); gl.vertexAttrib1f(0, this.sizes[this.selected]!); }
+        gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, layer === 2 ? 1 : this.visible.length);
+        if (layer === 2) gl.enableVertexAttribArray(0);
+      }
       else if (i === 2) gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, this.atlas!.levels[lod]!.length / 13);
       else gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, this.discData[hub]!.length / 8);
     }
@@ -1628,11 +1635,13 @@ export class DetailRenderer {
    * screen positions (including animated lens/radii), not a conservative atlas LOD approximation. */
   private placeAnchored(node: number, focus: number, radius: (n: number) => number, under: (x: number, y: number, w: number, h: number) => boolean) {
     const s = this.settings, ego = focus > .5 ? this.focusNode : -1, size = s.labelSize, h = Math.ceil(size * 1.5) + 4, lod = this.lodLevel();
-    const key = [this.atlas, ego, node, size, this.theme, this.tierMask, this.visible, lod];
+    const key = [this.atlas, ego, node, size, this.theme, this.tierMask, this.visible, lod, s.visuals.namePriority];
     if (key.some((v, i) => v !== this.anchorKey[i])) {
       const m = this.measure ??= document.createElement('canvas').getContext('2d')!;
       m.font = `${size}px ${this.theme.font}`;
-      const ranked = ego < 0 ? { list: Array.from(this.atlas?.nodes[lod] ?? [], n => [n, 5] as const), direct: 0 } : rankFocus(ego, this.near, this.stateBytes, this.visible, this.projection.offsets, ANCHORED_CANDIDATES, this.projection.carrierNodes, this.interestOf(ego), DIRECT_LABELS);
+      const overview = s.visuals.namePriority === 'all' ? [...this.atlas?.widths.keys() ?? []] : Array.from(this.atlas?.nodes[lod] ?? []);
+      const ranked = ego < 0 ? { list: [] as (readonly [number, number])[], direct: 0 } : rankFocus(ego, this.near, this.stateBytes, this.visible, this.projection.offsets, ANCHORED_CANDIDATES, this.projection.carrierNodes, this.interestOf(ego), DIRECT_LABELS);
+      if (s.visuals.namePriority !== 'selection') { const seen = new Set(ranked.list.map(([n]) => n)); for (const n of overview) if (!seen.has(n) && (ego < 0 || ranked.list.length < ANCHORED_CANDIDATES)) ranked.list.push([n, 5]); }
       this.moreTotal = ranked.direct; this.moreSize = [m.measureText(`${ranked.direct} more connections`).width + 32, Math.max(32, h + 4)];
       const list = node >= 0 ? [[node, 0] as const, ...ranked.list.filter(([n]) => n !== node)] : ranked.list;
       this.anchorNames = list.map(([n, rank]) => { const text = middleTruncate(n === node ? this.noteCaption(n) : this.name(n), n === node ? 48 : 32); return { node: n, rank, text, w: Math.ceil(m.measureText(text).width) + 12 }; });
@@ -1643,7 +1652,7 @@ export class DetailRenderer {
     // Reuse the ranked grid's bounded LOD placements. Cull offscreen notes BEFORE the collision cap.
     const names: (LabelItem & { text: string })[] = [];
     for (const it of this.anchorNames) {
-      if (!this.visible[it.node] || ego >= 0 && it.node !== ego && it.node !== node && !shownTier(this.stateBytes[it.node * 4 + 1]!, this.tierMask)) continue;
+      if (!this.visible[it.node] || it.rank < 5 && ego >= 0 && it.node !== ego && it.node !== node && !shownTier(this.stateBytes[it.node * 4 + 1]!, this.tierMask)) continue;
       const p = this.screenPoint(it.node); if (under(p.x, p.y, 0, 0)) continue;
       names.push({ ...it, ...p, r: radius(it.node), h }); if (names.length >= ANCHORED_CANDIDATES) break;
     }
@@ -1769,26 +1778,28 @@ export class DetailRenderer {
     const edgesOnTop = !!this.isolation && focus > 0; if (!edgesOnTop) drawEdges();
     const notes = this.projection.carrierNodes, level = this.carrierLevel();
     // Edge notes first (beneath), then the other nodes.
-    for (const layer of [1, 0]) for (let n = 0; n < this.visible.length; n++) if (this.visible[n] && +!!notes[n] === layer) {
-      const hot = n === this.selected || n === this.hoverFx.n, k = n * 4, p = this.theme.palette, coverage = layer ? (hot ? level.visibility : level.alpha) : 1;
+    for (const layer of [1, 0, 2]) {
+    if (layer === 2 && edgesOnTop) drawEdges();
+    for (let n = layer === 2 ? this.selected : 0; n >= 0 && n < (layer === 2 ? this.selected + 1 : this.visible.length); n++) if (this.visible[n] && (layer === 2 || n !== this.selected && +!!notes[n] === layer)) {
+      const hot = n === this.selected || n === this.hoverFx.n, k = n * 4, p = this.theme.palette, coverage = hot ? 1 : layer ? level.alpha : 1;
       const a = coverage * (hot ? p[19]! : c[k + 3]!) / 255;
       if (coverage < .004 || a <= 0) continue;
       const ego = n === this.focusNode, shown = shownTier(g[k + 1]!, this.tierMask, ego) / 255, [fade, , tr] = tierNode(shown, hot, ego, focus, dim), r = this.drawnRadius(n, hot, focus, radius, budget);
-      const ring = Math.max(tr, n === this.hoverFx.n ? this.fx[1]! : 0);
+      const ring = Math.max(n === this.selected ? 1 : tr, n === this.hoverFx.n ? this.fx[1]! : 0);
       ctx.globalAlpha = a * fade; ctx.fillStyle = ctx.strokeStyle = hot ? `rgb(${p[16]},${p[17]},${p[18]})` : `rgb(${c[k]},${c[k + 1]},${c[k + 2]})`; ctx.beginPath(); ctx.arc(x(n), y(n), r, 0, Math.PI * 2); ctx.fill();
       // The shader's outer ring band (1.1–1.34 radii) as one stroke.
       if (ring) { ctx.globalAlpha = a * ring; ctx.lineWidth = r * .2; ctx.beginPath(); ctx.arc(x(n), y(n), r * 1.22, 0, Math.PI * 2); ctx.stroke(); }
       // Contrast rings in the text colour: direct band 1.07–1.25, focus outer band 1.49–1.65 radii.
-      const band = !layer && s.visuals.tierRings && focus ? (ego ? 1.57 : shown > .9 && this.directs.length <= DIRECT_LABELS ? 1.16 : 0) : 0;
+      const band = !notes[n] && s.visuals.tierRings && focus ? (ego ? 1.57 : shown > .9 && this.directs.length <= DIRECT_LABELS ? 1.16 : 0) : 0;
       if (band) { ctx.globalAlpha = a * fade * focus; ctx.strokeStyle = this.theme.text; ctx.lineWidth = r * (ego ? .16 : .18); ctx.beginPath(); ctx.arc(x(n), y(n), r * band, 0, Math.PI * 2); ctx.stroke(); }
     }
-    if (edgesOnTop) drawEdges();
+    }
     ctx.globalAlpha = 1;
     for (const h of this.hubs) { ctx.fillStyle = this.groupColor(h.group); ctx.beginPath(); ctx.arc((h.x - this.centerX) * this.scale + this.width / 2, (h.y - this.centerY) * this.scale + this.height / 2, h.radius, 0, Math.PI * 2); ctx.fill(); }
     // The label shader's terms: zoom alpha, importance cut (degree rank), degree-weighted size, background outline.
-    const lod = this.lodLevel(), fade = labelFade(s.nodeSize, s.labelRenderedSizeThreshold, this.camera.ratio, LABEL_RATIOS, s.visuals.labelFade, lod), nodes = this.atlas?.nodes[lod], scales = this.atlas?.scales[lod];
+    const lod = this.lodLevel(), fade = labelFade(s.nodeSize, s.labelRenderedSizeThreshold, this.camera.ratio, LABEL_RATIOS, s.visuals.labelFade && s.visuals.namePriority !== 'all', lod), nodes = this.atlas?.nodes[lod], scales = this.atlas?.scales[lod];
     ctx.textBaseline = 'top';
-    if (!this.view.loading && !this.layoutActive && s.visuals.labelStyle === 'ranked' && nodes && scales && fade.alpha > .004) nodes.forEach((n, i) => {
+    if (!this.view.loading && !this.layoutActive && s.visuals.labelStyle === 'ranked' && s.visuals.namePriority !== 'selection' && nodes && scales && fade.alpha > .004) nodes.forEach((n, i) => {
       const cut = Math.min(1, Math.max(0, (1 - i / nodes.length - fade.cut) / .15)); ctx.globalAlpha = tierLabel(g[n * 4 + 1]! / 255, fade.alpha * cut * cut * (3 - 2 * cut), focus, dim);
       if (ctx.globalAlpha <= .004) return; ctx.font = `${s.labelSize * scales[i]!}px ${this.theme.font}`;
       const name = this.name(n), lx = x(n) + this.nodeRadius(n, false, radius) + 4, ly = y(n) - s.labelSize * scales[i]! / 2;

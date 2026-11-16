@@ -1,4 +1,4 @@
-import { legacySizing, validateNodeSizing, validateNodeRadius, type NodeSizingPolicy } from './node-sizing';
+import { MAX_NODE_RADIUS, legacySizing, validateNodeSizing, validateNodeRadius, type NodeSizingPolicy } from './node-sizing';
 import { DEFAULT_LAYOUT, validateLayout, type LayoutOptions } from './core/layout-options';
 import { defaultDeclaration, migrateDeclaration, validateDeclaration, type GraphDeclaration } from './core/declaration';
 import { canonicalView, emptyView, validateSaved, validateView, type ExploreView, type SavedView } from './core/explore';
@@ -30,6 +30,7 @@ export interface Visuals {
   labelFade: boolean;
   /** Anchored names stay uniform and opaque; ranked preserves the graduated atlas. */
   labelStyle: 'anchored' | 'ranked';
+  namePriority: 'connected' | 'selection' | 'all';
   /** Full animates briefly; reduced/off and the OS preference apply instant states. */
   motion: 'full' | 'reduced' | 'off';
   cameraAnimationMs: number;
@@ -91,7 +92,7 @@ export interface ExploreSettings { panelOpen: boolean; facetValues: number; lege
 export const defaultVisuals = (): Visuals => ({
   degreeSizing: 4, degreeCurve: 'sqrt', edgeOpacity: .4, edgeDensityReference: 3000, edgeColorMix: .65, edgeMode: 'all', edgeCompositing: 'blend', edgeDirection: false, glow: .3,
   curvedEdges: true, curvature: .12, curveSegments: 8, hoverHighlight: true, dimOpacity: .12, groupHalos: false, haloOpacity: .05,
-  autoPalette: true, labelFade: true, labelStyle: 'anchored', motion: 'full', clickFraming: 'off', cardPlacement: 'auto', cameraAnimationMs: 450, glowMaxNodes: 250000, curvesMaxEdges: 60000, halosMaxGroups: 48, hubsMaxGroups: 256, softwareEffects: false,
+  autoPalette: true, labelFade: true, labelStyle: 'anchored', namePriority: 'connected', motion: 'full', clickFraming: 'off', cardPlacement: 'auto', cameraAnimationMs: 450, glowMaxNodes: 250000, curvesMaxEdges: 60000, halosMaxGroups: 48, hubsMaxGroups: 256, softwareEffects: false,
   carrierTint: true, carrierBridge: 'blend', carrierBridgeAccent: .35, carrierOpacity: .7, carrierSize: .6, carrierDensityReference: 8000, carrierLod: true, carrierLodNear: .3, carrierLodFar: .6, zoomAdapt: true, labelTierScale: 1.2, labelPlates: true,
   emphasis: 'adaptive', tierMinSize: 7, tierRings: true, focusEdges: true, offscreenPips: true, focusRipple: true, tierLegend: true, clickOpens: false, bridgesFirst: true, minimap: true, breadcrumb: true,
 });
@@ -106,7 +107,7 @@ export function validateVisuals(v: unknown): asserts v is Visuals {
   for (const k of flags) if (typeof o[k] !== 'boolean') throw new Error(`visuals.${k} must be boolean`);
   for (const k of unit) if (typeof o[k] !== 'number' || !(o[k] as number >= 0 && o[k] as number <= 1)) throw new Error(`visuals.${k} must be between 0 and 1`);
   for (const k of counts) if (!Number.isSafeInteger(o[k]) || (o[k] as number) < 0) throw new Error(`visuals.${k} must be a nonnegative integer (0 disables)`);
-  if (typeof o.degreeSizing !== 'number' || !(o.degreeSizing >= 0 && o.degreeSizing <= 8)) throw new Error('visuals.degreeSizing must be between 0 and 8');
+  if (typeof o.degreeSizing !== 'number' || !(o.degreeSizing >= 0 && o.degreeSizing <= 24)) throw new Error('visuals.degreeSizing must be between 0 and 24');
   if (!DEGREE_CURVES.includes(o.degreeCurve as DegreeCurve)) throw new Error('visuals.degreeCurve must be sqrt, log, linear or legacy');
   if (typeof o.curvature !== 'number' || !(o.curvature >= 0 && o.curvature <= .5)) throw new Error('visuals.curvature must be between 0 and 0.5');
   if ((o.curveSegments as number) < 2 || (o.curveSegments as number) > 32) throw new Error('visuals.curveSegments must be 2–32');
@@ -114,7 +115,7 @@ export function validateVisuals(v: unknown): asserts v is Visuals {
   if (o.edgeCompositing !== 'blend' && o.edgeCompositing !== 'density') throw new Error('visuals.edgeCompositing must be blend or density');
   if (o.labelStyle !== 'anchored' && o.labelStyle !== 'ranked') throw new Error('visuals.labelStyle must be anchored or ranked');
   if (!['full', 'reduced', 'off'].includes(o.motion as string)) throw new Error('visuals.motion must be full, reduced or off');
-  for (const [key, values] of [['clickFraming', ['off', 'center', 'fit-neighbours']], ['cardPlacement', ['auto', 'side', 'sheet']]] as const) if (!(values as readonly unknown[]).includes(o[key])) throw new Error(`visuals.${key} must be ${values.join(', ')}`);
+  for (const [key, values] of [['namePriority', ['connected', 'selection', 'all']], ['clickFraming', ['off', 'center', 'fit-neighbours']], ['cardPlacement', ['auto', 'side', 'sheet']]] as const) if (!(values as readonly unknown[]).includes(o[key])) throw new Error(`visuals.${key} must be ${values.join(', ')}`);
   if (o.emphasis !== 'adaptive' && o.emphasis !== 'scale') throw new Error('visuals.emphasis must be adaptive or scale');
   if (o.carrierBridge !== 'blend' && o.carrierBridge !== 'source') throw new Error('visuals.carrierBridge must be blend or source');
   const { carrierSize: z, carrierLodNear: a, carrierLodFar: b } = o as Record<string, number>;
@@ -274,6 +275,7 @@ export function validateSettings(v: unknown): asserts v is Settings {
   if (!s.layout || typeof s.layout !== 'object') throw new Error('layout is required');
   validateLayout(s.layout);
   validateVisuals(s.visuals); validateExplore(s.explore);
+  if (s.nodeSize * (1 + s.visuals.degreeSizing) > MAX_NODE_RADIUS * 9) throw new Error('Hub radius exceeds geometry precision limit');
 }
 /** The recorded version makes the finite-limit upgrade one-time; later explicit zero remains opt-in. */
 const regexDerive = (g: unknown): g is { key?: unknown; transform: { pattern?: unknown } } => Boolean(g) && typeof g === 'object' && (g as { from?: unknown }).from === 'derived' && (g as { transform?: { kind?: unknown } }).transform?.kind === 'pattern';

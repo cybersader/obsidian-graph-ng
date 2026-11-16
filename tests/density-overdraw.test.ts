@@ -98,7 +98,13 @@ test('density correction leaves node radius and edge geometry/direction/focus eq
     // Ignore only the two new density branches, not the existing node-layer geometry.
     .replace(/\n if \(layer (?:>|==)[^\n]*/g, '')
     // Tiny nodes now have a device-pixel floor; the pan-phase regression covers it separately.
-    .replace('\n radius = max(radius, 1. / pixelRatio);', '');
+    .replace('\n radius = max(radius, 1. / pixelRatio);', '')
+    // Selection is an opaque final one-instance pass; ordinary-node geometry is unchanged.
+    .replace('layer == 2 ? selected : gl_InstanceID', 'gl_InstanceID')
+    .replace('hot ? 1. : note ? carrierAlpha : 1.', 'note ? (hot ? carrierFold : carrierAlpha) : 1.')
+    .replace(' || (layer != 2 && id == selected)', '')
+    .replace('(layer != 2 && note != (layer == 0))', 'note != (layer == 0)')
+    .replace(/\n if \(id == selected\).*?\n/, '\n');
   expect(focusFree(shader('nodeVertex'))).toBe(focusFree(before.nodeVertex)); expect(shader('nodeVertex')).not.toBe(before.nodeVertex);
   const geometry = (code: string) => focusFree(code.slice(0, code.lastIndexOf('tint = vec4(rgb * alpha,'))).replace(/vec4 sa = state\(s\), sb = state\(t\);/g, '').split('\n').map(s => s.trim()).filter(Boolean).join('\n'); expect(geometry(shader('edgeVertex'))).toBe(geometry(before.edge));
   const s = defaults('links'); s.nodeSizing = { policy: 'predictable', compensation: 1, floor: .3 };

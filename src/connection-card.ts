@@ -11,16 +11,17 @@ type On = (edge: number) => boolean;
 export interface ConnectionGroup { type: string; out: boolean; nodes: number[] }
 /** Visit each drawn neighbour of `u` in O(degree). A relationship-note dot owned by the edge is
  * transparent: it is reported once as a dot, then its far endpoints as direct neighbours. */
-function neighbours(u: number, inc: Incidence, p: Columns, on: On, vis: ArrayLike<number>, visit: (edge: number, node: number, dot: boolean) => void, scan = () => true) {
+function neighbours(u: number, inc: Incidence, p: Columns, on: On, vis: ArrayLike<number>, visit: (edge: number, node: number, dot: boolean) => void, scan = () => true, trace?: (edge: number) => void) {
   const own = (e: number, c: number) => !!p.carrierNodes[c] && p.carrier[e]! + 1 === p.carrierNodes[c];
   const other = (e: number, a: number) => p.source[e] === a ? p.target[e]! : p.source[e]!;
   for (let j = inc.offsets[u]!; j < inc.offsets[u + 1]!; j++) {
     if (!scan()) return;
     const e = inc.edges[j]!, v = other(e, u);
     if (!on(e) || !vis[v] || v === u) continue;
+    trace?.(e);
     if (!own(e, v)) { visit(e, v, false); continue; }
     visit(e, v, true);
-    for (let k = inc.offsets[v]!; k < inc.offsets[v + 1]!; k++) { if (!scan()) return; const f = inc.edges[k]!, w = other(f, v); if (f !== e && on(f) && own(f, v) && w !== u && vis[w]) visit(e, w, false); }
+    for (let k = inc.offsets[v]!; k < inc.offsets[v + 1]!; k++) { if (!scan()) return; const f = inc.edges[k]!, w = other(f, v); if (f !== e && on(f) && own(f, v) && w !== u && vis[w]) { trace?.(f); visit(e, w, false); } }
   }
 }
 /** Direct connections of `focus`, grouped by relationship type and direction. Groups run largest
@@ -38,7 +39,7 @@ export function connectionGroups(focus: number, inc: Incidence, p: Columns, on: 
 }
 /** Undirected semantic hops: owned relationship-note dots are transparent but retained.
  * Work is bounded by incident rows, including carrier fan-out. `truncated` is never silent. */
-export function reach(focus: number, inc: Incidence, p: Columns, on: On, vis: ArrayLike<number>, hops: number, budget = 200000, consume = () => budget-- > 0) {
+export function reach(focus: number, inc: Incidence, p: Columns, on: On, vis: ArrayLike<number>, hops: number, budget = 200000, consume = () => budget-- > 0, trace?: (edge: number) => void) {
   const nodes = new Set<number>(); let direct = 0, second = 0, truncated = false;
   if (focus < 0 || !vis[focus]) return { nodes, direct, second, truncated };
   nodes.add(focus); let wave = [focus];
@@ -49,7 +50,7 @@ export function reach(focus: number, inc: Incidence, p: Columns, on: On, vis: Ar
       neighbours(u, inc, p, on, vis, (_, w, dot) => {
         if (nodes.has(w)) return;
         nodes.add(w); if (!dot) { next.push(w); if (h === 0) direct++; else second++; }
-      }, scan);
+      }, scan, trace);
       if (truncated) break;
     }
     wave = next;
@@ -62,19 +63,19 @@ export function reach(focus: number, inc: Incidence, p: Columns, on: On, vis: Ar
  * (a travel target) joins alone, with the relationship-note dot that links it, only while it is
  * adjacent to the region: travel reveals its target, never the traveller's other neighbours. */
 export function neighbourhood(focus: number, hops: number, expanded: Set<number>, inc: Incidence, p: Columns, on: On, base: Uint8Array, shown: Iterable<number> = []) {
-  let budget = 200000; const scan = () => budget-- > 0;
-  const result = reach(focus, inc, p, on, base, hops, 0, scan), mask = new Uint8Array(base.length), frontier = new Map<number, number>();
+  let budget = 200000; const scan = () => budget-- > 0, edges = new Set<number>(), trace = (e: number) => { edges.add(e); };
+  const result = reach(focus, inc, p, on, base, hops, 0, scan, trace), mask = new Uint8Array(base.length), frontier = new Map<number, number>();
   // Fixpoint: an expansion may hang off a travel target and a target off an expansion.
   const todo = new Set(expanded); let size = 0;
   while (size < result.nodes.size) {
     size = result.nodes.size;
     for (const n of todo) if (result.nodes.has(n)) {
-      todo.delete(n); const more = reach(n, inc, p, on, base, 1, 0, scan); for (const v of more.nodes) result.nodes.add(v);
+      todo.delete(n); const more = reach(n, inc, p, on, base, 1, 0, scan, trace); for (const v of more.nodes) result.nodes.add(v);
       result.truncated ||= more.truncated;
     }
     for (const t of shown) if (base[t] && !result.nodes.has(t)) {
       const dots = new Map<number, number>();
-      neighbours(t, inc, p, on, base, (e, w, dot) => { if (dot) dots.set(e, w); else if (result.nodes.has(w)) { result.nodes.add(t); if (dots.has(e)) result.nodes.add(dots.get(e)!); } }, scan);
+      neighbours(t, inc, p, on, base, (e, w, dot) => { if (dot) dots.set(e, w); else if (result.nodes.has(w)) { result.nodes.add(t); if (dots.has(e)) result.nodes.add(dots.get(e)!); } }, scan, trace);
     }
   }
   for (const n of result.nodes) mask[n] = 1;
@@ -84,7 +85,8 @@ export function neighbourhood(focus: number, hops: number, expanded: Set<number>
     if (budget < 0) { result.truncated = true; break; }
     if (hidden.size) frontier.set(n, hidden.size);
   }
-  return { mask, frontier, partial: result.truncated };
+  // Edges are traversed connection legs, not the induced subgraph between all kept notes.
+  return { mask, edges, frontier, partial: result.truncated };
 }
 /** Back/forward history of visited notes; a new visit drops the forward branch. */
 export class NavHistory {

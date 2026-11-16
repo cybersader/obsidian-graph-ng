@@ -36,7 +36,7 @@ test('compensation off, full retention, isolates, degree ordering and carrier/hi
 });
 test('invalid input is atomic, finite bounds and persisted schema roundtrip', () => {
   const s = defaults('links'), before = structuredClone(s);
-  for (const [key, bad] of [['radius', 0], ['radius', NaN], ['radius', Infinity], ['prominence', 0], ['prominence', 10], ['floor', 0], ['floor', 1.01], ['compensation', -1], ['compensation', Infinity]] as const) expect(() => sizingSettings(s, { ...values, [key]: bad })).toThrow();
+  for (const [key, bad] of [['radius', 0], ['radius', NaN], ['radius', Infinity], ['prominence', 0], ['prominence', 26], ['floor', 0], ['floor', 1.01], ['compensation', -1], ['compensation', Infinity]] as const) expect(() => sizingSettings(s, { ...values, [key]: bad })).toThrow();
   const next = sizingSettings(s, values); expect(s).toEqual(before); expect(upgradeSettings(settingsForSave(next), 'links').nodeSizing).toEqual(next.nodeSizing);
   expect(() => validateSettings({ ...next, nodeSizing: { ...next.nodeSizing, extra: 1 } })).toThrow();
 });
@@ -85,7 +85,7 @@ test('numeric drafts preview/apply/cancel, invalid blank never reaches renderer 
   f.input('Node size', ''); control(f.panel.body, 'Preview sizing').click(); expect(f.preview()).toBeNull(); expect(f.writes.length).toBe(0);
   f.input('Node size', '12'); control(f.panel.body, 'Preview sizing').click(); expect(f.preview().radius).toBe(12); expect(f.plugin.settings).toEqual(before);
   control(f.panel.body, 'Restore sizing').click(); expect(f.preview()).toBeNull(); expect(f.writes.length).toBe(0);
-  f.input('Hub size limit', '9'); await (control(f.panel.body, 'Apply sizing') as any).onclick(); expect(f.plugin.settings.visuals.degreeSizing).toBe(8); expect(f.panel.sizingMessage).toBe('Saved'); f.panel.dispose();
+  f.input('Hub size', '9'); await (control(f.panel.body, 'Apply sizing') as any).onclick(); expect(f.plugin.settings.visuals.degreeSizing).toBe(8); expect(f.panel.sizingMessage).toBe('Saved'); f.panel.dispose();
 });
 test('large-graph radius diagnosis at overview, mid and close zoom includes the pixel minimum', () => {
   const owner = sizingSettings(defaults('links'), { radius: .16, prominence: 9, compensation: .92, floor: .885, curve: 'legacy' });
@@ -114,11 +114,9 @@ test('hub presets visibly separate leaf and hub radii without saving until Apply
   Object.assign(f.plugin.settings.visuals, { degreeSizing: 8, degreeCurve: 'legacy' });
   f.panel.sizingDraft = undefined; f.panel.render();
   const saved = structuredClone(f.plugin.settings);
-  const hub = () => f.panel.body.querySelectorAll('select').find((e: any) => e.getAttribute('aria-label') === 'Hub size');
-  const choose = (value: string) => { const select = hub(); select.value = value; select.onchange(); };
-  expect(hub().value).toBe('custom');
+  const choose = (value: string) => control(f.panel.body, value).click();
   expect(f.panel.body.querySelectorAll('details').some((e: any) => e.textContent.includes('Advanced sizing'))).toBe(true);
-  control(f.panel.body, 'Try Strong').click();
+  control(f.panel.body, 'Strong').click();
   expect(f.preview()).toEqual({ radius: 1, prominence: 9, curve: 'linear', compensation: 0, floor: 1 });
   expect(f.plugin.settings).toEqual(saved); expect(f.writes).toHaveLength(0);
   const s = sizingSettings(saved, f.preview()), multipliers = degreeSizes(new Uint32Array([0, 1, 601]), 8, 'linear');
@@ -128,11 +126,11 @@ test('hub presets visibly separate leaf and hub radii without saving until Apply
   }
   f.host.sizingReadout = () => '1 edge 1.06 px; largest visible hub 9.00 px'; f.panel.updateSizingReadout();
   expect(f.panel.body.querySelector('.graph-ng-sizing-readout').textContent).toContain('9.00');
-  f.input('Node size', '2'); expect(hub().value).toBe('custom');
-  choose('none'); expect(f.preview().prominence).toBe(1);
-  choose('balanced'); expect(f.preview().prominence).toBe(5);
+  f.input('Node size', '2'); expect(f.preview()).toBeNull();
+  choose('None'); expect(f.preview().prominence).toBe(1);
+  choose('Balanced'); expect(f.preview().prominence).toBe(5);
   control(f.panel.body, 'Restore sizing').click(); expect(f.plugin.settings).toEqual(saved); expect(f.preview()).toBeNull();
-  choose('strong'); await (control(f.panel.body, 'Apply sizing') as any).onclick();
+  choose('Strong'); await (control(f.panel.body, 'Apply sizing') as any).onclick();
   expect(f.plugin.settings).toEqual(s); f.panel.dispose();
 });
 test('shared rendering source contract keeps appearance out of layout and uses dynamic label offsets', () => {
@@ -243,4 +241,33 @@ test('curve selector drafts, previews and applies the curve explicitly', async (
   expect(select.value).toBe('sqrt'); select.value = 'log'; select.onchange(); expect(f.preview()).toBeNull(); expect(f.writes.length).toBe(0);
   control(f.panel.body, 'Preview sizing').click(); expect(f.preview().curve).toBe('log'); expect(f.plugin.settings.visuals.degreeCurve).toBe('sqrt');
   await (control(f.panel.body, 'Apply sizing') as any).onclick(); expect(f.plugin.settings.visuals.degreeCurve).toBe('log'); f.panel.dispose();
+});
+
+test('continuous prominence preserves legacy keys and increases hub radius through 25x', () => {
+  let previous = 0;
+  for (const prominence of [1, 5, 9, 9.5, 12.25, 18, 25]) {
+    const s = sizingSettings(defaults('links'), { ...values, radius: 1, prominence, compensation: 0, floor: 1, curve: 'linear' });
+    expect(s.visuals.degreeSizing).toBe(prominence - 1);
+    const radius = sizedRadius(baseRadius(s, 800, 600, 100, 1), prominence);
+    expect(radius).toBeGreaterThan(previous); previous = radius;
+    expect(sizingValues(s).prominence).toBe(prominence);
+  }
+  expect(() => sizingSettings(defaults('links'), { ...values, prominence: 25.01 })).toThrow();
+  expect(() => sizingSettings(defaults('links'), { ...values, radius: MAX_NODE_RADIUS, prominence: 9 })).not.toThrow();
+  expect(() => sizingSettings(defaults('links'), { ...values, radius: MAX_NODE_RADIUS, prominence: 25 })).toThrow('geometry precision');
+});
+
+test('name-priority migration preserves every saved click behavior without mutating input', () => {
+  for (const clickOpens of [false, true]) for (const hoverHighlight of [false, true]) {
+    const old: any = defaults('links'); delete old.visuals.namePriority;
+    Object.assign(old.visuals, { clickOpens, hoverHighlight }); const before = JSON.stringify(old);
+    const next = upgradeSettings(old, 'links');
+    expect(next.visuals.namePriority).toBe('connected');
+    expect([next.visuals.clickOpens, next.visuals.hoverHighlight]).toEqual([clickOpens, hoverHighlight]);
+    expect(JSON.stringify(old)).toBe(before);
+  }
+  for (const namePriority of ['connected', 'selection', 'all'] as const) {
+    const s = defaults('links'); s.visuals.namePriority = namePriority; expect(() => validateSettings(s)).not.toThrow();
+  }
+  const invalid: any = defaults('links'); invalid.visuals.namePriority = 'arbitrary'; expect(() => validateSettings(invalid)).toThrow();
 });

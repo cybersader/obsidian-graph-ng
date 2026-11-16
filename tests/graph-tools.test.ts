@@ -306,7 +306,7 @@ test('UX graph status uses structured phase, coverage and failures rather than E
   const view: any = Object.create(GraphView.prototype);
   Object.assign(view, { contentEl: { dataset: { state: 'building' } }, status: new ControlElement(), statusSummary: new ControlElement(), plugin: { settings: {} }, provisional: true, gpu: { available: true } });
   view.statusText = 'partial, provisional, pending'; expect(view.statusSummary.textContent).toBe('partial, provisional, pending');
-  view.contentEl.dataset.state = 'ready'; view.statusText = '0 unresolved'; expect(view.statusSummary.textContent).toBe('Graph ready. Waiting for Obsidian to finish reading properties. Updates automatically; you can keep exploring.');
+  view.contentEl.dataset.state = 'ready'; view.statusText = '0 unresolved'; expect(view.statusSummary.textContent).toBe('Ready, still reading properties');
   view.provisional = false; view.statusText = 'error is a note name, not a health signal'; expect(view.statusSummary.hidden).toBe(true);
   view.report = { nodes: 4, edges: 2, indexed: 4, listed: 4, linksPending: false, provisional: false, unresolved: 3, duplicates: 0 }; view.statusText = 'details'; expect(view.statusSummary.textContent).toBe('4 notes2 edges'); expect(view.statusSummary.hidden).toBe(false); view.report = undefined;
   view.contentEl.dataset.state = 'error'; view.statusText = 'Projection refresh failed: synthetic missing file'; expect(view.statusSummary.textContent).toContain('synthetic missing file'); expect(view.statusSummary.textContent).not.toContain('Retry');
@@ -671,4 +671,17 @@ test('ranked bubbles use global member-area scale, shared colours and middle-tru
   expect(labels[0]).toContain('…'); expect(long.startsWith(labels[0]!.split('…')[0]!)).toBe(true); expect(long.endsWith(labels[0]!.split('…')[1]!)).toBe(true);
   const centre = renderer.nodes.get('a'); expect(renderer.nodeAt({ x: centre.x, y: centre.y + 50 })?.label).toBe(long);
   graph.groups = [graph.groups[1]!]; renderer.draw(); expect(renderer.radii.get('b')).toBeCloseTo(19.5, 6); // no page-local rescaling
+});
+
+test('UX click intent and note-name priority are explicit Appearance choices', () => {
+  const f = fixture(); f.panel.show('appearance');
+  const choice = (name: string) => f.panel.root.querySelectorAll('select').find((e: any) => e.getAttribute('aria-label') === name);
+  const click = choice('Click a note'); expect(click.value).toBe('highlight');
+  click.value = 'card'; click.onchange(); expect([f.settings.visuals.clickOpens, f.settings.visuals.hoverHighlight]).toEqual([false, false]);
+  click.value = 'open'; click.onchange(); expect([f.settings.visuals.clickOpens, f.settings.visuals.hoverHighlight]).toEqual([true, false]);
+  click.value = 'highlight'; click.onchange(); expect([f.settings.visuals.clickOpens, f.settings.visuals.hoverHighlight]).toEqual([false, true]);
+  const names = choice('Name which notes'); expect(names.value).toBe('connected');
+  names.value = 'selection'; names.onchange(); expect(f.settings.visuals.namePriority).toBe('selection');
+  names.value = 'all'; names.onchange(); expect(f.settings.visuals.namePriority).toBe('all');
+  expect(f.state.fit + f.state.layout + f.state.viewCalls).toBe(0); f.panel.dispose();
 });

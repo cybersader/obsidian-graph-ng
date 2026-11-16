@@ -14,6 +14,14 @@ Program linking uses nonblocking `KHR_parallel_shader_compile` completion querie
 
 Paged Canvas2D groups remain the primary overview. Software-only detail is allowed within both validated `canvasMaxDetailNodes` / `canvasMaxDetailEdges` budgets, default 2,000 visible nodes / 10,000 visible edges. Eligible edge indices are prepared once; frame drawing does not scan every hidden edge or truncate excess relationships. Larger views retain groups and member lists with a visible fallback notice. The plan's proposed 20,000-node default is deferred: the native software proof reaches 600/1,400, not 20,000 nodes, and even the conservative refusal boundary is not a measured FPS guarantee.
 
+## Traversed isolation and explicit visual intent (2026-11-16)
+
+Only connections now retains a bounded set of traversed edge indices alongside its node mask, not the full induced subgraph among retained nodes. This removes unrelated neighbour-hub fans. Explicit typed carrier ownership already provides semantic one-hop traversal through relationship notes; no parser, ontology shortcut or second projection authority is added. Type filters, traversal budgets, additive expansion and host-filtered navigator contents remain independent. Entry frames the retained region; exit does not refit or change zoom, although normal card-safe panning can still apply.
+
+The selected node has a final single-instance WebGL pass after isolated edges (with the selected size attribute explicitly supplied and restored), and an equivalent final Canvas pass. It stays filled, ringed and at least five CSS px in radius even when highlighting is disabled or ordinary relationship dots fold away. Adaptive dense direct dots retain a larger fraction of the minimum radius. Frontier badges show at most six ranked hidden-neighbour counts with an aggregate for the rest.
+
+The Click a note selector interprets the existing clickOpens/hoverHighlight pair without migration changes. Hub size retains degreeSizing as prominence minus one, now allowing 1x through 25x; the historical radius ceiling is preserved, with a combined radius-times-prominence precision bound. Name priority adds connected (default), selection and all choices while reusing bounded atlas and focus candidates. All that fit is not an unbounded promise to label every note. Renderer/native acceptance limits remain as recorded in benchmarks.
+
 ## Card-safe selection and reversible isolation (2026-11-16)
 
 Card geometry is measured before framing and reuses the existing right/bottom unobscured-stage insets. `visuals.cardPlacement` is `auto` by default, with `side` and `sheet` alternatives. Auto uses a sheet below 720 px of available width; an open tools panel forces a sheet whenever a side card would leave less than 420 px or 45% of the stage. Only note sheets beside tools fold initially; their header and Open note remain available, with a caret exposing the existing single scroll region. Edge/path cards are not folded.

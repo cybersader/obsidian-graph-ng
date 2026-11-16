@@ -161,8 +161,8 @@ test('anchored renderer parity uses one overlay and preserves accessible help wi
   const { readFileSync } = await import('node:fs');
   const source = readFileSync(new URL('../src/webgl-renderer.ts', import.meta.url), 'utf8');
   expect(source).toContain('this.drawCanvas(); this.placeOverlay()');
-  expect(source).toContain("v.labelStyle === 'ranked' && this.atlas");
-  expect(source).toContain("s.visuals.labelStyle === 'ranked' && nodes");
+  expect(source).toContain("v.labelStyle === 'ranked' && v.namePriority !== 'selection' && this.atlas");
+  expect(source).toContain("s.visuals.labelStyle === 'ranked' && s.visuals.namePriority !== 'selection' && nodes");
   expect(source).toContain("this.canvas.setAttribute('aria-describedby', help.id)");
   expect(source).toContain('Graph notes. Arrows select, Enter opens');
   expect(source).not.toContain("this.canvas.setAttribute('aria-label'");
@@ -178,7 +178,7 @@ test('pooled anchored labels update descriptions when different nodes have the s
   Object.assign(r, { settings: defaults('fixture'), theme: { font: 'sans-serif' }, width: 800, height: 600, focusNode: -1,
     visible: new Uint8Array([1, 1]), anchorPrevious: new Map(), anchorPool: [label], stateBytes: new Uint8Array(8),
     lodLevel: () => 0, screenPoint: () => ({ x: 200, y: 200 }), name: (n: number) => n ? 'Synthetic/B/Same.md' : 'Synthetic/A/Same.md' });
-  r.anchorKey = [r.atlas, -1, -1, r.settings.labelSize, r.theme, r.tierMask, r.visible, 0];
+  r.anchorKey = [r.atlas, -1, -1, r.settings.labelSize, r.theme, r.tierMask, r.visible, 0, 'connected'];
   for (const node of [0, 1]) {
     r.anchorNames = [{ node, rank: 5, text: 'Same', w: 60 }];
     r.placeAnchored(-1, 0, () => 2, () => false);

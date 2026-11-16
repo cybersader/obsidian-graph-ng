@@ -121,7 +121,7 @@ test('graduated emphasis ordering from actual node, edge and label shader expres
     // Canvas uses the shared helpers; they equal the shader expressions term for term.
     for (const g of [0, C / 255, 1]) for (const ego of [false, true]) {
       const [a, z, r] = tierNode(g, ego, ego, focus, dim);
-      expect(a).toBeCloseTo(node(g, ego), 12); expect(z).toBeCloseTo(size(g, ego), 12); expect(r).toBe(ring({ ego, focus }));
+      expect(a).toBeCloseTo(node(g, ego), 12); expect(z).toBeCloseTo(size(g, ego), 12); expect(r).toBe(ring({ ego, focus, id: 0, selected: -1 }));
       expect(tierLabel(g, alpha, focus, dim)).toBeCloseTo(label(g), 12);
     }
     for (const tier of [0, C, D]) { const [a, w] = tierEdge(tier, alpha, focus, dim); expect(a).toBeCloseTo(edge(tier), 12); expect(w).toBeCloseTo(width(tier), 12); }

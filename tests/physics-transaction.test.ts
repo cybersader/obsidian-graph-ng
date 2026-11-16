@@ -124,7 +124,7 @@ test('Apply rejects seed frames, streams on the same renderer and keeps pan/zoom
   expect(input.pick(0, 0)).toBe(-1); expect(f.view.statusMessage).toContain('Laying out notes');
   release.resolve(); await work;
   expect(f.renderer.positions).toBe(f.next); expect(f.renderer.camera).toEqual(camera); expect(f.renderer.overlay.hidden).toBe(false);
-  expect(f.view.layoutWorking).toBe(false); expect(f.view.statusMessage).toContain('691 notes left'); expect(f.view.statusMessage).toContain('Graph ready');
+  expect(f.view.layoutWorking).toBe(false); expect(f.view.statusMessage).toContain('691 notes'); expect(f.view.statusMessage).toContain('Ready');
 });
 test('failed streamed Apply restores last-good geometry without undoing pan/zoom', async () => {
   const f = await fixture(), display = f.renderer.display;
@@ -321,9 +321,9 @@ test('production token discard/rollback cannot overwrite a newer winning token',
 test('production sizing readout includes the device-pixel minimum', async () => {
   const f = await fixture();
   f.renderer[compiled('previewSizing')]({ radius: .16, prominence: 9, compensation: .92, floor: .885, curve: 'legacy' });
-  expect(f.renderer[compiled('sizingReadout')]()).toContain('1 edge 1.00 px; largest visible hub 1.00 px');
+  expect(f.renderer[compiled('sizingReadout')]()).toContain('leaf 1.00 px; largest visible hub 1.00 px');
   f.renderer.dpr = 2;
-  expect(f.renderer[compiled('sizingReadout')]()).toContain('1 edge 0.50 px; largest visible hub 0.50 px');
+  expect(f.renderer[compiled('sizingReadout')]()).toContain('leaf 0.50 px; largest visible hub 0.50 px');
   f.renderer.dispose();
 });
 test('production sizing preview/cancel keeps renderer camera selection scope settings and layout unchanged', async () => {
@@ -333,7 +333,7 @@ test('production sizing preview/cancel keeps renderer camera selection scope set
   f.renderer[compiled('previewSizing')](value);
   expect(f.plugin.settings).toEqual(original); expect(f.writes.length).toBe(0); expect(f.requests()).toBe(0);
   expect(f.renderer.camera).toEqual(camera); expect(f.renderer.selected).toBe(2); expect(f.renderer.positions).toBe(positions); expect(f.renderer.canvas).toBe(canvas);
-  expect(f.renderer[compiled('sizingReadout')]()).toContain('1 edge 12.00 px; largest visible hub 12.00 px');
+  expect(f.renderer[compiled('sizingReadout')]()).toContain('leaf 12.00 px; largest visible hub 12.00 px');
   const point = f.renderer.screenPoint(2); expect(f.renderer.pick(point.x + 16, point.y)).toBe(2);
   const radii: number[] = []; ctx.arc = (_x: number, _y: number, radius: number) => radii.push(radius);
   f.renderer[compiled('drawCanvas')](); expect(radii.slice(0, 2)).toEqual([12, 12]);
@@ -392,14 +392,14 @@ test('Repair R2 legacy carrier edit retains existing atlas and creates no sizing
 test('UX production Canvas detail honors zero and fractional opacity without changing graph rows', async () => {
   const f = await fixture(), r = f.renderer, key = (name: string) => typeof mangle[name] === 'string' ? mangle[name] : name;
   r.projection.source = new Uint32Array([0]); r.projection.target = new Uint32Array([1]);
-  r[key('edgeOn')] = new Uint8Array([1]); r[key('filterVisible')] = new Uint8Array([1, 1, 1]); r[key('canvasEdges')] = new Uint32Array([0]); r[key('visibleEdges')] = 1;
+  r[key('edgeOn')] = new Uint8Array([1]); r[key('filterVisible')] = new Uint8Array([1, 1, 1]); r[key('canvasEdges')] = new Uint32Array([0]); r[key('visibleEdges')] = 1; r.selected = -1;
   const stroke = ctx.stroke; let calls: number[] = []; ctx.stroke = () => calls.push(ctx.globalAlpha);
   try { for (const opacity of [0, .00001, .2]) { calls = []; f.plugin.settings.visuals.edgeOpacity = opacity; r[key('drawCanvas')](); expect(calls.length).toBe(opacity ? 1 : 0); if (opacity) { expect(calls[0]).toBeGreaterThan(0); expect(calls[0]).toBeLessThanOrEqual(opacity * 3.75); } expect(r.projection.source.length).toBe(1); } } finally { ctx.stroke = stroke; }
 });
 test('Edges mode in production Canvas: Off draws no lines, Focus only draws none until a note is focused', async () => {
   const f = await fixture(), r = f.renderer, key = (name: string) => typeof mangle[name] === 'string' ? mangle[name] : name, v = f.plugin.settings.visuals;
   r.projection.source = new Uint32Array([0]); r.projection.target = new Uint32Array([1]);
-  r[key('edgeOn')] = new Uint8Array([1]); r[key('filterVisible')] = new Uint8Array([1, 1, 1]); r[key('canvasEdges')] = new Uint32Array([0]); r[key('visibleEdges')] = 1;
+  r[key('edgeOn')] = new Uint8Array([1]); r[key('filterVisible')] = new Uint8Array([1, 1, 1]); r[key('canvasEdges')] = new Uint32Array([0]); r[key('visibleEdges')] = 1; r.selected = -1;
   const stroke = ctx.stroke; let calls: number[] = []; ctx.stroke = () => calls.push(ctx.globalAlpha);
   try {
     v.edgeOpacity = .2;
@@ -430,7 +430,7 @@ test('density production Canvas conserves ordinary alpha at dense and sparse ove
       let pixel = [.08, .08, .08]; for (const mark of records) { expect(mark.alpha).toBe(alpha / 255); expect(mark.radius).toBe(f.plugin.settings.nodeSize); pixel = pixel.map((v, i) => [220, 140, 70][i]! / 255 * mark.alpha + v * (1 - mark.alpha)); }
       expect(pixel.every(v => v < .9)).toBe(true); expect(r.camera).toEqual(camera); expect(r.positions).toBe(positions); expect(r.projection.source).toBe(sourceRows); expect(JSON.stringify(f.plugin.settings)).toBe(saved); expect(f.requests()).toBe(0); expect(f.writes.length).toBe(0);
     }
-    r.selected = 0; r[key('theme')].palette[19] = 128; records.length = 0; r[key('drawCanvas')](); expect(records[0]!.alpha).toBe(128 / 255); expect(records[0]!.radius).toBe(f.plugin.settings.nodeSize + 2);
+    r.selected = 0; r[key('theme')].palette[19] = 128; records.length = 0; r[key('drawCanvas')](); expect(records.at(-1)!.alpha).toBe(128 / 255); expect(records.at(-1)!.radius).toBe(f.plugin.settings.nodeSize + 2);
   } finally { ctx.fill = oldFill; ctx.fillRect = oldRect; ctx.arc = oldArc; }
 });
 
@@ -501,13 +501,13 @@ test('graduated production Canvas parity: tier batches, graded nodes and labels,
   try {
     // The reviewed tier weights, with the optional finding aids (strong focus lines, rings) off.
     Object.assign(f.settings.visuals, { emphasis: 'scale', focusEdges: false, tierRings: false });
-    f.tap(0); const plain = paint(0); expect(plain.strokes.length).toBe(1); expect(plain.strokes[0]![1]).toBe(3);
+    f.tap(0); const plain = paint(0); expect(plain.strokes.length).toBe(2); expect(plain.strokes[0]![1]).toBe(3);
     const a = plain.strokes[0]![0], lit = paint(1);
     // Three edge batches, then the focus ring (an arc stroke with no line segments) at full focus.
     expect(lit.strokes.map(s => s[1])).toEqual([1, 1, 1, 0]); expect(lit.strokes[3]![0]).toBeCloseTo(plain.fills[0]!, 12);
     [a * (1 - (1 - dim * .6)), a, Math.min(1, a * 3)].forEach((v, i) => expect(lit.strokes[i]![0]).toBeCloseTo(v, 12));
     const ratio = lit.fills.map((v, i) => v / plain.fills[i]!);
-    [1, 1, 1 - (1 - dim) * (1 - 128 / 255), dim, dim].forEach((v, i) => expect(ratio[i]!).toBeCloseTo(v, 12));
+    [1, 1 - (1 - dim) * (1 - 128 / 255), dim, dim, 1].forEach((v, i) => expect(ratio[i]!).toBeCloseTo(v, 12));
     // Tiered atlas labels hand over to the graduated DOM labels; context labels go very faint.
     for (const [text, alpha] of lit.labels) { expect(+text).toBeGreaterThanOrEqual(3); expect(alpha).toBeCloseTo(dim * .5, 12); }
     expect(plain.labels.every(([, alpha]) => alpha === 1)).toBe(true);
@@ -707,8 +707,8 @@ test('neighbourhood frontier badges are bounded, clickable, text-only and indepe
   for (let n = 1; n <= 30; n++) pairs.push([0, n], [n, n + 30]);
   const f = await graduated(pairs, 61), { r, k } = f;
   f.tap(0); r.isolate(0, 1, false);
-  expect(r[k('frontier')].size).toBe(30); expect(r[k('frontierBadges')]).toHaveLength(24);
-  expect(r[k('isolationBar')].textContent).toContain('Up to 24 badges');
+  expect(r[k('frontier')].size).toBe(30); expect(r[k('frontierBadges')]).toHaveLength(6);
+  expect(r[k('isolationBar')].textContent).toContain('24 more expandable notes');
   const mask = r[k('filterVisible')]; f.hover(1); expect(r[k('filterVisible')]).toBe(mask); expect(r[k('isolation')].node).toBe(0);
   const badge = r[k('frontierBadges')][0]; expect(badge.el.textContent).toBe('+1'); expect(badge.el.className).toContain('graph-ng-count');
   badge.el.click(); expect(r[k('filterVisible')][badge.node + 30]).toBe(1); expect(r[k('frontier')].has(badge.node)).toBe(false);
@@ -717,14 +717,14 @@ test('neighbourhood frontier badges are bounded, clickable, text-only and indepe
   const base = new Uint8Array(61).fill(1); base[0] = 0; r.setView(base, {});
   expect(r[k('isolation')]).toBeUndefined(); expect(r[k('filterVisible')]).toBe(base);
 });
-test('frontier badges rank by interest (rarer first, ties to the lower id) and precede the minimap and card in Tab order', async () => {
+test('frontier badges rank by hidden neighbours (largest first, ties to the lower id) and precede the minimap and card in Tab order', async () => {
   // Degrees: 1 → 4, 2 → 3, 3 → 2 and 10 → 2 (a tie with 3).
   const pairs: [number, number][] = [[0, 1], [1, 4], [1, 5], [1, 6], [0, 2], [2, 7], [2, 8], [0, 10], [10, 11], [0, 3], [3, 9]];
   const f = await graduated(pairs, 12), { r, k } = f, degree = new Array(12).fill(0);
   for (const [a, b] of pairs) { degree[a]++; degree[b]++; }
   r.projection.offsets = Uint32Array.from({ length: 13 }, (_, i) => degree.slice(0, i).reduce((a, b) => a + b, 0));
   r.isolate(0, 1, false);
-  const badges = r[k('frontierBadges')]; expect(badges.map((b: any) => b.node)).toEqual([3, 10, 2, 1]);
+  const badges = r[k('frontierBadges')]; expect(badges.map((b: any) => b.node)).toEqual([1, 2, 3, 10]);
   const kids = r[k('overlay')].children, at = (e: any) => kids.indexOf(e);
   expect(badges.map((b: any) => at(b.el))).toEqual([...badges.map((b: any) => at(b.el))].sort((a: number, b: number) => a - b));
   expect(at(badges[3].el)).toBeLessThan(at(r[k('miniMap')].root)); expect(at(r[k('miniMap')].root)).toBeLessThan(at(r[k('noteCard')]));
@@ -1682,7 +1682,8 @@ test('Only connections draws the selected fan after opaque dots, without adding 
     expect(order.indexOf('edge:2')).toBeLessThan(order.indexOf('node'));
     r.isolate(0, 2, false); order.length = 0; r[k('drawCanvas')]();
     expect(order.filter(x => x.startsWith('edge'))).toHaveLength(count);
-    expect(order.indexOf('edge:2')).toBeGreaterThan(order.lastIndexOf('node'));
+    expect(order.indexOf('edge:2')).toBeGreaterThan(order.indexOf('node'));
+    expect(order.at(-1)).toBe('node'); // Selected dot is protected above the fan.
     f.settings.visuals.edgeOpacity = 0; order.length = 0; r[k('drawCanvas')]();
     expect(order.filter(x => x.startsWith('edge'))).toEqual([]);
   } finally { Object.assign(ctx, old); }
@@ -1818,8 +1819,8 @@ test('adaptive compiled Canvas, bundled GLSL and hit radii agree across tiers, z
       radii.length = 0; r[k('drawCanvas')](); expect(radii.length).toBe(5);
       for (let n = 0; n < 5; n++) {
         const hot = n === 0 || n === 1, ego = n === 0, radius = r.nodeRadius(n, hot), g = r[k('stateBytes')][n * 4 + 1] / 255;
-        const expected = emphasisGL({ radius, ego, note: false, st: { g }, emphasis: r[compiled('emphasisBudget')](), minSize: v.tierMinSize, focus: level, id: n, hovered: 1, pulse: { x: pulse }, max: Math.max });
-        expect(radii[n]).toBeCloseTo(expected, 8); expect(r[k('drawnRadius')](n, hot, level)).toBeCloseTo(expected, 8);
+        const expected = Math.max(n === 0 ? 5 : 1 / r.dpr, emphasisGL({ radius, ego, note: false, st: { g }, emphasis: r[compiled('emphasisBudget')](), minSize: v.tierMinSize, focus: level, id: n, hovered: 1, pulse: { x: pulse }, max: Math.max }));
+        expect(radii[n === 0 ? 4 : n - 1]).toBeCloseTo(expected, 8); expect(r[k('drawnRadius')](n, hot, level)).toBeCloseTo(expected, 8);
       }
     }
     // All nodes far apart: the drawn disc plus the existing 4 px click tolerance, not a legacy global radius.
@@ -1844,10 +1845,10 @@ test('adaptive compiled fan-out shifts disc area into contrast without enlarging
   f.tap(0); r[k('hoverFx')].n = -1;
   r[k('baseNodeRadius')] = () => 1; r.sizes.fill(1);
   const sample = (degree: number) => { r[k('directs')] = new Array(degree).fill(1); return [r[k('drawnRadius')](1, false, 1), r[compiled('emphasisDim')]()]; };
-  const sparse = sample(2), dense = sample(240); expect(sparse[0]).toBeGreaterThan(6); expect(dense[0]).toBeLessThan(3.2);
+  const sparse = sample(2), dense = sample(240); expect(sparse[0]).toBeGreaterThan(6); expect(dense[0]).toBeGreaterThan(4); expect(dense[0]).toBeLessThan(5);
   expect(dense[1]).toBeLessThan(sparse[1]); expect(r[k('drawnRadius')](0, true, 1)).toBe(7);
   // Broad 2-hop focus also spends less area, even if the focus itself has few direct connections.
-  r[k('directs')] = [1, 2]; const near = r.near; r.near = new Array(2000).fill(2); expect(r[k('drawnRadius')](1, false, 1)).toBeLessThan(3); r.near = near;
+  r[k('directs')] = [1, 2]; const near = r.near; r.near = new Array(2000).fill(2); expect(r[k('drawnRadius')](1, false, 1)).toBeGreaterThan(3.8); expect(r[k('drawnRadius')](1, false, 1)).toBeLessThan(4.5); r.near = near;
   r[k('baseNodeRadius')] = () => 20; expect(r[k('drawnRadius')](1, false, 1)).toBe(20);
   r[k('hoverFx')].n = 1; r.fx[0] = 1.6; expect(r[k('drawnRadius')](1, true, 1)).toBeCloseTo(23, 8);
   v.emphasis = 'scale'; expect(r[k('drawnRadius')](1, true, 1)).toBeCloseTo(22 * 1.25 * 1.6, 8); expect(r[compiled('emphasisDim')]()).toBe(v.dimOpacity);
@@ -1994,11 +1995,11 @@ test('retained Apply suppresses selection framing, then frames expanded coordina
   }
 });
 
-test('Only connections reverses in the card without auto-fit and stays synchronized with chip exit', async () => {
+test('Only connections frames its whole region on entry and reverses without another zoom', async () => {
   const f = await graduated([[0, 1], [1, 2]], 4), { r, k } = f, card = () => r[k('noteCard')]; f.settings.visuals.motion = 'off';
   f.tap(0); const camera = { ...r.camera }, history = [...r.card.history.items];
-  control(card(), 'Show only connections').click(); expect(r[k('isolation')].node).toBe(0); expect(r.camera).toEqual(camera);
-  control(card(), 'Show all notes').click(); expect(r[k('isolation')]).toBeUndefined(); expect(r.camera).toEqual(camera); expect(r.card.history.items).toEqual(history);
+  control(card(), 'Show only connections').click(); expect(r[k('isolation')].node).toBe(0); expect(r.camera).not.toEqual(camera); const isolatedCamera = { ...r.camera };
+  control(card(), 'Show all notes').click(); expect(r[k('isolation')]).toBeUndefined(); expect(r.camera.ratio).toBe(isolatedCamera.ratio); expect(r.card.history.items).toEqual(history);
   control(card(), 'Show only connections').click(); control(r[k('isolationBar')], 'Close').click();
   expect(r[k('isolation')]).toBeUndefined(); expect(control(card(), 'Show only connections')).toBeDefined();
 });
@@ -2076,4 +2077,40 @@ test('review regression: rejected Apply preserves the previous refresh error and
   expect(await outcome(f.view[compiled('applyLayout')](values))).toContain('Layout unavailable or generation changed');
   expect(f.view.statusText).toBe(status); expect(f.view.layoutWorking).toBe(working);
   expect(f.plugin.pipeline.onPositions).toBe(previousStream); expect(f.requests()).toBe(0); expect(f.writes).toEqual([]);
+});
+
+
+test('selected WebGL dot is one final instance with its own size and restored vertex attribute', async () => {
+  const f = await graduated([[0, 2], [1, 2], [2, 3]], 4), { r, k } = f;
+  r[k('selectNote')](2, true); r[k('focusLevel')] = 1; r[k('focusTarget')] = 1;
+  r.isolation = { node: 2, hops: 1, expanded: new Set(), shown: [] };
+  r[k('adaptSizes')] = () => {}; r[k('sizes')][2] = 7;
+  const d = driver(r), events: any[] = []; let program = -1, layer = 1;
+  r[k('programs')] = [0, 1, 2, 3].map(handle => ({ handle, uniforms: { layer: 'layer' } }));
+  d.gl.useProgram = (p: number) => { program = p; };
+  d.gl.uniform1i = (u: string, value: number) => { if (u === 'layer') layer = value; };
+  d.gl.disableVertexAttribArray = (index: number) => events.push(['disable', index]);
+  d.gl.vertexAttrib1f = (index: number, value: number) => events.push(['size', index, value]);
+  d.gl.enableVertexAttribArray = (index: number) => events.push(['enable', index]);
+  d.gl.drawArraysInstanced = (_: number, __: number, ___: number, count: number) => events.push(['draw', program, layer, count]);
+  r[k('draw')]();
+  const last = events.findIndex(e => e[0] === 'disable');
+  expect(events.slice(last, last + 4)).toEqual([['disable', 0], ['size', 0, r[k('sizes')][2]], ['draw', 1, 2, 1], ['enable', 0]]);
+  expect(r[k('sizes')][2]).not.toBe(r[k('sizes')][0]);
+  expect(events.findIndex(e => e[0] === 'draw' && e[1] === 0)).toBeLessThan(last);
+  f.settings.visuals.hoverHighlight = false; f.settings.nodeSize = .16;
+  expect(r[k('drawnRadius')](2, false, 0)).toBeGreaterThanOrEqual(5);
+});
+
+test('anchored name priorities reuse bounded atlas candidates and put direct notes before unrelated hubs', async () => {
+  const { r, k, settings } = await graduated([[0, 1], [1, 2], [3, 4]], 6);
+  settings.visuals.labelStyle = 'anchored'; r[k('selectNote')](0, true); r[k('focusLevel')] = 1;
+  const paint = () => { r[k('anchorKey')] = []; r[k('placeOverlay')](); return r[k('anchorNames')].map((x: any) => [x.node, x.rank]); };
+  settings.visuals.namePriority = 'selection'; const focused = paint();
+  expect(focused.map((x: number[]) => x[0])).toContain(1); expect(focused.every((x: number[]) => x[1]! < 5)).toBe(true);
+  settings.visuals.namePriority = 'all'; const all = paint();
+  expect(all.findIndex((x: number[]) => x[0] === 1)).toBeLessThan(all.findIndex((x: number[]) => x[0] === 3));
+  expect(all.length).toBeLessThanOrEqual(64); expect(r[k('anchorPool')].length).toBeLessThanOrEqual(64);
+  r[k('selectNote')](-1, false); r[k('focusLevel')] = 0; settings.visuals.namePriority = 'selection'; expect(paint()).toEqual([]);
+  settings.visuals.namePriority = 'connected'; expect(paint().length).toBeGreaterThan(0);
 });

@@ -184,4 +184,4 @@ export function layoutText(l: NonNullable<InformationReport['layout']>) {
 /** Stage-local progress only: no elapsed-time estimate and no invented resolver percentage. */
 export const readingProgress = (c: { indexed: number; listed: number }) => `Reading notes ${Math.floor(100 * c.indexed / Math.max(1, c.listed))}%`;
 export const layoutProgress = (p: { iteration: number; total: number }) => `Laying out ${Math.floor(100 * p.iteration / Math.max(1, p.total))}% (step ${num(p.iteration)}, ${num(p.total)} steps)`;
-export const pendingText = (r?: { pendingProperties?: number; linksPending: boolean }) => `Graph ready. Waiting for Obsidian to finish reading ${r?.pendingProperties ? `properties (${plural(r.pendingProperties, 'note')} left)` : r?.linksPending ? 'links' : 'properties'}. Updates automatically; you can keep exploring.`;
+export const pendingText = (r?: { pendingProperties?: number; linksPending: boolean }) => `Ready, still reading ${r?.pendingProperties ? plural(r.pendingProperties, 'note') : r?.linksPending ? 'links' : 'properties'}`;

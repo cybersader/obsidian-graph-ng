@@ -4,8 +4,9 @@ import { densityScale } from './render-effects';
 export interface NodeSizingPolicy { policy: 'legacy' | 'predictable'; compensation: number; floor: number }
 export interface NodeSizingValues { radius: number; prominence: number; compensation: number; floor: number; curve: DegreeCurve }
 /** Binary32 preserves integer CSS-pixel increments only through 2^24 - 1.
- * Reserve the maximum validated 9x prominence, 4x carrier size, +2px highlight
- * and 2.3x glow extent. This arithmetic limit is not a slider convenience cap. */
+ * Reserve the historical 9x prominence, 4x carrier size, +2px highlight
+ * and 2.3x glow extent. Settings also cap radius × prominence at this product
+ * when prominence exceeds 9x. This is not a slider convenience cap. */
 export const MAX_NODE_RADIUS = Math.floor(((2 ** 24 - 1) / 2.3 - 2) / (9 * 4));
 export function validateNodeRadius(radius: number) {
   if (!Number.isFinite(radius) || radius <= 0 || radius > MAX_NODE_RADIUS) throw new Error(`Node radius must be greater than 0 and at most ${MAX_NODE_RADIUS} CSS px (binary32 geometry precision limit)`);

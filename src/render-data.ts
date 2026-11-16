@@ -4,7 +4,7 @@ import type { Projection } from './core/projection';
  * on contrast instead of disc area. Hover keeps its easing, with at most one pixel beyond its target.
  * Mirrors the node shader; budget is computed once per draw from cached direct connections. */
 export function adaptiveRadius(radius: number, g: number, ego: boolean, focus: number, minSize: number, budget: number, pulse: number): number {
-  const target = ego ? Math.max(7, minSize) : minSize * (.3 + .7 * budget) * (g > .9 ? 1 : g > .7 ? .75 : g > .4 ? .57 : 0);
+  const target = ego ? Math.max(7, minSize) : minSize * (.55 + .45 * budget) * (g > .9 ? 1 : g > .7 ? .75 : g > .4 ? .57 : 0);
   radius += Math.max(0, target - radius) * focus;
   return Math.max(radius, Math.max(5, minSize) * pulse) + pulse;
 }

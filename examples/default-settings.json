@@ -127,6 +127,7 @@
     "autoPalette": true,
     "labelFade": true,
     "labelStyle": "anchored",
+    "namePriority": "connected",
     "motion": "full",
     "clickFraming": "off",
     "cardPlacement": "auto",

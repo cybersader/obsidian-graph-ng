@@ -228,7 +228,7 @@ test('fact groups paint before layout, pending links prevent exact caching, and 
     showGroups() { painted++; expect(encoded).toBe(0); } });
   try {
     await view.refreshOnce(); expect(painted).toBe(1); expect(complete).toBe(false); expect(caches).toBe(0); expect(encoded).toBe(0);
-    expect(view.contentEl.dataset.verified).toBe('false'); expect(view.status.textContent).toContain('Waiting for Obsidian to finish reading links'); expect(view.statusSummary.textContent).not.toContain('1 note0 edges'); expect(view.statusSummary.textContent).toContain('Waiting for Obsidian to finish reading links');
+    expect(view.contentEl.dataset.verified).toBe('false'); expect(view.status.textContent).toContain('Ready, still reading links'); expect(view.statusSummary.textContent).not.toContain('1 note0 edges'); expect(view.statusSummary.textContent).toContain('Ready, still reading links');
     links['a.md'] = {}; adapter.invalidate();
     await view.refreshOnce(); expect(complete).toBe(true); expect(encoded).toBe(1); expect(caches).toBe(1); expect(view.contentEl.dataset.verified).toBe('true');
     const request = pipeline.request;

@@ -625,30 +625,27 @@ export class ExplorePanel {
     const group = host.createDiv({ cls: 'graph-ng-nodes' }); group.createEl('h4', { text: 'Nodes' });
     const current = sizingValues(this.settings);
     const draft = this.sizingDraft ??= { radius: String(current.radius), prominence: String(current.prominence), compensation: String(current.compensation * 100), floor: String(current.floor * 100), curve: current.curve };
-    const presets: Record<string, [number, number]> = { none: [1, 1], balanced: [1, 5], strong: [1, 9] };
-    const preset = Object.keys(presets).find(key => draft.radius === String(presets[key]![0]) && draft.prominence === String(presets[key]![1]) && draft.curve === 'linear' && draft.compensation === '0' && draft.floor === '100') ?? 'custom';
-    const hub = settingSelect(group, 'Hub size', 'Live preview. Apply sizing saves; Restore returns to saved sizes. Presets use a 1 px base, area proportional to connections, and no crowding shrink. Zoom adaptation still applies.', [['custom', 'Custom'], ['none', 'None'], ['balanced', 'Balanced'], ['strong', 'Strong']], preset, key => {
-      const p = presets[key]; if (!p) return;
-      Object.assign(draft, { radius: String(p[0]), prominence: String(p[1]), curve: 'linear', compensation: '0', floor: '100' });
-      preview(); this.render(); this.body.querySelector<HTMLSelectElement>('[aria-label="Hub size"]')?.focus();
-    }, 'graph-ng-select', this.sizingBusy || !this.host.previewSizing);
-    if (Number(draft.radius) < 1) {
-      const advice = settingRow(group, 'Tiny base size limits hubs', 'graph-ng-suggestion-row', 'Suggested for this graph: Strong. Below 1 px, notes can hit the minimum dot radius. Strong raises Node size to 1 px as well as increasing hub contrast.');
-      panelButton(advice, 'Try Strong', () => { hub.value = 'strong'; hub.dispatchEvent(new Event('change')); }, hub.disabled);
-    }
+    const tune = (value: string) => {
+      Object.assign(draft, { radius: String(Math.max(1, Number(draft.radius) || 1)), prominence: value, curve: 'linear', compensation: '0', floor: '100' });
+      for (const [label, value] of [['Node size', draft.radius], ['Shrink crowded dots', draft.compensation], ['Retain base size', draft.floor], ['Size by connections', draft.curve]]) { const field = group.querySelector<HTMLInputElement>(`[aria-label="${label}"]`); if (field) field.value = value!; }
+      preview(); this.updateSizingReadout();
+    };
+    progressiveSlider(group, { label: 'Hub size', unit: '×', desc: 'Live preview from None (1×) through Balanced (5×), Strong (9×), up to 25×. Keeps a base of at least 1 px. Apply sizing saves; Restore cancels.', curve: { min: 1, max: 25 }, value: draft.prominence, def: 5, attr: { min: '1', max: '25' }, disabled: this.sizingBusy || !this.host.previewSizing, changed: tune });
+    const presets = group.createDiv({ cls: 'graph-ng-form' });
+    for (const [label, value] of [['None', 1], ['Balanced', 5], ['Strong', 9]] as const) panelButton(presets, label, () => { tune(String(value)); this.render(); }, this.sizingBusy || !this.host.previewSizing);
     group.createDiv({ cls: 'graph-ng-explore-note graph-ng-sizing-readout', text: this.host.sizingReadout?.() ?? '' });
     const advanced = group.createEl('details'); disclosure(advanced, 'Advanced sizing');
     const fields: [Exclude<keyof NodeSizingValues, 'curve'>, string, string, Curve][] = [
-      ['radius', 'Node size', 'px', { min: .01, max: 20, k: 3 }], ['prominence', 'Hub size limit', '×', { min: 1, max: 9, k: 2 }],
+      ['radius', 'Node size', 'px', { min: .01, max: 20, k: 3 }],
       ['compensation', 'Shrink crowded dots', '%', { min: 0, max: 100 }], ['floor', 'Retain base size', '%', { min: .1, max: 100, k: 2 }],
     ];
     const help = { radius: 'Dot radius before zoom and crowding adjustments. Type a larger value for larger dots.', prominence: 'Largest hub radius compared with an unconnected note. 1 keeps dots the same size.', compensation: 'How much crowding shrinks dots, not the space between them. 0 turns shrinking off.', floor: 'Minimum base radius kept after crowding shrink, not a percentage of hub size. Applies equally to every note. Tiny dots also have a one-device-pixel radius minimum.' };
     const message = group.createDiv({ cls: 'graph-ng-explore-note', attr: { role: 'status', 'aria-live': 'polite' } }); message.textContent = this.sizingMessage;
-    const changed = (key: keyof NodeSizingValues, value: string) => { draft[key] = value; hub.value = 'custom'; this.sizingPreview = false; this.host.previewSizing?.(null); this.sizingMessage = message.textContent = 'Draft not previewed or saved.'; };
+    const changed = (key: keyof NodeSizingValues, value: string) => { draft[key] = value; this.sizingPreview = false; this.host.previewSizing?.(null); this.sizingMessage = message.textContent = 'Draft not previewed or saved.'; };
     settingSelect(advanced, 'Size by connections', 'Chooses how connection counts change dot sizes. Previous keeps the earlier sizing curve.', [['sqrt', 'Square root'], ['log', 'Logarithmic'], ['linear', 'Linear'], ['legacy', 'Previous']], draft.curve, value => changed('curve', value), 'graph-ng-select', this.sizingBusy);
     const base = sizingValues(defaults('links')), initial = { ...base, compensation: base.compensation * 100, floor: base.floor * 100 };
     for (const [key, title, unit, range] of fields) {
-      progressiveSlider(advanced, { label: title, unit, desc: help[key], curve: range, value: draft[key], def: initial[key], disabled: this.sizingBusy, cls: 'graph-ng-sizing-row', attr: { min: key === 'prominence' ? '1' : '0', max: String(key === 'radius' ? MAX_NODE_RADIUS : key === 'prominence' ? 9 : 100) }, changed: value => changed(key, value) });
+      progressiveSlider(advanced, { label: title, unit, desc: help[key], curve: range, value: draft[key], def: initial[key], disabled: this.sizingBusy, cls: 'graph-ng-sizing-row', attr: { min: key === 'prominence' ? '1' : '0', max: String(key === 'radius' ? MAX_NODE_RADIUS : key === 'prominence' ? 25 : 100) }, changed: value => changed(key, value) });
     }
     const values = () => {
       const parsed = Object.fromEntries(Object.entries(draft).map(([key, value]) => [key, key === 'curve' ? value : value.trim() ? Number(value) : NaN])) as unknown as NodeSizingValues;
@@ -696,7 +693,7 @@ export class ExplorePanel {
     type NumericVisual = { [K in keyof Visuals]: Visuals[K] extends number ? K : never }[keyof Visuals];
     const initial = defaultVisuals(), slider = (key: NumericVisual, label: string, curve: Curve, desc?: string, labels = false, parent = host) =>
       this.slider(parent, label, curve, () => v[key], value => { v[key] = value; }, labels, { def: initial[key], desc });
-    const choice = <K extends 'edgeCompositing' | 'emphasis' | 'labelStyle' | 'motion' | 'clickFraming' | 'cardPlacement'>(parent: HTMLElement, key: K, label: string, desc: string, options: [Visuals[K], string][], labels = false) =>
+    const choice = <K extends 'edgeCompositing' | 'emphasis' | 'labelStyle' | 'namePriority' | 'motion' | 'clickFraming' | 'cardPlacement'>(parent: HTMLElement, key: K, label: string, desc: string, options: [Visuals[K], string][], labels = false) =>
       settingSelect(parent, label, desc, options, v[key] ?? 'anchored', value => { v[key] = value as Visuals[K]; this.host.visualsChanged(labels); if (labels) this.render(); });
     this.suggested(host);
     this.nodes(host);
@@ -714,7 +711,6 @@ export class ExplorePanel {
     this.flag(host, 'groupHalos', 'Group halos (faint tint behind groups at mid zoom)');
     this.guard(host, 'halos');
     this.flag(host, 'autoPalette', 'Group colors (when no rule matches)');
-    this.flag(host, 'hoverHighlight', 'Highlight connections: Direct connections are brightest, then neighbours of neighbours; the rest fades. Groups and ancestors must be declared.');
     if (this.host.toggleLens) {
       this.lensButton = host.createEl('button', { cls: 'graph-ng-lens-toggle', attr: { 'aria-label': 'Connection lens', 'aria-pressed': 'false' } });
       this.lensButton.onclick = () => { this.host.toggleLens?.(); this.updateLensControl(); };
@@ -722,7 +718,7 @@ export class ExplorePanel {
     }
     choice(host, 'cardPlacement', 'Card placement', 'Side uses a sheet when space is tight. Auto switches earlier.', [['auto', 'Auto (default)'], ['side', 'Side'], ['sheet', 'Bottom sheet']]);
     choice(host, 'clickFraming', 'Click framing (experimental)', 'Move only when needed. Off only uncovers the selected note. Respects Motion.', [['off', 'Off (default)'], ['center', 'Center when hidden'], ['fit-neighbours', 'Fit connections']]);
-    this.flag(host, 'clickOpens', 'Click to open (skip the connection card)');
+    settingSelect(host, 'Click a note', 'Highlight shows direct connections, neighbours of neighbours and dimmed context. Relationship notes count with their endpoints. Ctrl/Cmd-click opens a note; touch shows its card.', [['highlight', 'Highlight connections (default)'], ['card', 'Open the card only'], ['open', 'Open the note']], v.clickOpens ? 'open' : v.hoverHighlight ? 'highlight' : 'card', value => { v.clickOpens = value === 'open'; if (value !== 'open') v.hoverHighlight = value === 'highlight'; this.host.visualsChanged(false); });
     const find = host.createEl('details', { cls: 'graph-ng-highlight-options' }); disclosure(find, 'Finding connections');
     choice(find, 'emphasis', 'Highlight emphasis', 'Adaptive limits growth in large neighbourhoods. Scale keeps the original magnification.', [['adaptive', 'Adaptive (default)'], ['scale', 'Scale']]);
     slider('tierMinSize', 'Highlighted size target (px)', { min: 0, max: 16, k: 1.5 }, 'Adaptive reduces this target for large neighbourhoods; Scale uses it as a minimum. 0 disables neighbour size targets.', false, find);
@@ -736,7 +732,8 @@ export class ExplorePanel {
       ['breadcrumb', 'Visited notes (show a trail along the top)'],
       ['minimap', 'Minimap (hidden under 500 px wide)'],
     ] as const) this.flag(find, key, label);
-    choice(host, 'labelStyle', 'Label style', 'Anchored names stay one size and point to their dots. Ranked names grow by connection count and fade with zoom.', [['anchored', 'Anchored'], ['ranked', 'Ranked']], true);
+    choice(host, 'labelStyle', 'Label style', 'Names show the most connected notes that fit without overlapping. Zoom in for more. Anchored names stay one size; Ranked names grow with connection count.', [['anchored', 'Anchored'], ['ranked', 'Ranked']], true);
+    choice(host, 'namePriority', 'Name which notes', 'Selection always names direct connections before unrelated hubs. All that fit uses the existing bounded candidate pool, not every note at once.', [['connected', 'Most connected (default)'], ['selection', 'Selection and its connections'], ['all', 'All that fit']], true);
     if ((v.labelStyle ?? 'anchored') === 'ranked') {
       this.flag(host, 'labelFade', 'Fade labels (by zoom and importance)', true);
       slider('labelTierScale', 'Label size range', { min: 1, max: 1.6, k: 1.5 }, 'Focus and well-connected notes get larger names. 1 keeps names one size.', true);

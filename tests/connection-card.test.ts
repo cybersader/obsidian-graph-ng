@@ -306,3 +306,14 @@ test('card rows use concise referenced names, readable relationship endpoints an
   card.size = [320, 200]; row.focus(); expect(label.textContent).toBe(label.title); expect(card.size).toBeUndefined();
   card.size = [320, 240]; (row as any).onblur(); expect(label.textContent).toContain('…'); expect(card.size).toBeUndefined();
 });
+
+test('isolation retains traversed legs, not unrelated links between retained neighbours', () => {
+  const g = graph(), run = (h = 1, expanded = new Set<number>(), on: (e: number) => boolean = g.on, shown: number[] = []) => neighbourhood(0, h, expanded, g.inc, g.p, on, g.all, shown);
+  const first = run();
+  expect([...first.edges].sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4, 8, 9]);
+  expect(first.mask[1]).toBe(1); expect(first.mask[2]).toBe(1); expect(first.edges.has(7)).toBe(false);
+  expect(first.mask[9]).toBe(1); expect(first.mask[10]).toBe(1);
+  expect(run(2).edges.has(7)).toBe(true); expect(run(1, new Set([1])).edges.has(5)).toBe(true);
+  expect(run(1, new Set(), e => g.p.type[e] === 1).edges).toEqual(new Set([2, 3, 4]));
+  const travel = run(1, new Set(), g.on, [5]); expect(travel.edges.has(5)).toBe(true); expect(travel.mask[5]).toBe(1);
+});
