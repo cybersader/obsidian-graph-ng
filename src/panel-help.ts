@@ -1,5 +1,29 @@
 import { setIcon } from 'obsidian';
 let helpId = 0;
+/** Shared native setting row; checkbox labels keep their activation semantics. */
+export function settingRow(host: HTMLElement, label: string, cls = '', desc?: string) {
+  const toggle = cls.includes('graph-ng-toggle'), row = host.createEl(toggle ? 'label' : 'div', { cls: `setting-item graph-ng-setting ${cls}` }), [, name = label, a, b] = (toggle && !desc && /^(.+?)(?: \((.+)\)|: (.+))$/.exec(label)) || [];
+  if (row.tagName === 'LABEL') row.createSpan({ cls: 'checkbox-container' }).createEl('input', { attr: { type: 'checkbox', 'aria-label': name } });
+  panelHelp(row, name, desc ?? a ?? b, 'setting-item-name graph-ng-setting-name');
+  return row;
+}
+/** A named choice with the same help, options and change path in every panel. */
+export function settingSelect(host: HTMLElement, label: string, desc: string, options: readonly (readonly [string, string])[], value: string, changed: (value: string) => void, cls = '', disabled = false) {
+  const select = settingRow(host, label, cls, desc).createEl('select', { attr: { 'aria-label': label } });
+  for (const [key, text] of options) select.createEl('option', { value: key, text }).selected = key === value;
+  select.value = value; select.disabled = disabled; select.onchange = () => changed(select.value);
+  return select;
+}
+/** Text-only actions share disabled, class and accessible-name plumbing. */
+export function panelButton(host: HTMLElement, text: string, click: () => unknown, disabled = false, cls = '', attr: Record<string, string> = {}) {
+  const button = host.createEl('button', { text, cls, attr });
+  button.disabled = disabled; button.onclick = click; return button;
+}
+/** Icon actions always retain a text-only accessible name. */
+export function iconButton(host: HTMLElement, label: string, icon: string, cls = 'clickable-icon', attr: Record<string, string> = {}) {
+  const button = host.createEl('button', { cls, attr: { 'aria-label': label, ...attr } });
+  setIcon(button, icon); return button;
+}
 /** Dotted labels reveal text on hover, focus or tap. Native popovers escape panel clipping,
  * dismiss on outside tap, and need no document listeners to clean up on panel rebuild. */
 export function panelHelp(host: HTMLElement, label: string, text?: string, cls = '') {

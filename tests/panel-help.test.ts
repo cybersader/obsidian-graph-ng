@@ -1,7 +1,7 @@
 import { test, expect, beforeEach, afterEach } from 'bun:test';
 import './support/obsidian-fixture';
 import { ControlElement } from './support/controls-dom';
-import { panelHelp, disclosure } from '../src/panel-help';
+import { panelHelp, disclosure, settingSelect, panelButton } from '../src/panel-help';
 import { ExplorePanel } from '../src/explore-panel';
 import { defaults } from '../src/settings';
 import { emptyView, explore } from '../src/core/explore';
@@ -17,7 +17,7 @@ function fixture() {
   const settings = defaults('links'), root = new ControlElement(), view = emptyView();
   const p = buildProjection([{ path: 'Synthetic/A.md', properties: {} }], settings.declaration);
   const result = explore(p, settings.declaration, view, colorGroups(p, settings.declaration), 0, { facetValues: 10 });
-  const host: any = { settings: () => settings, result: () => result, mode: () => 'nodes', policy: () => [], carriers: () => 0, setView() {}, persist() {}, visualsChanged() {}, applyLayout() {} };
+  const host: any = { information: root.createDiv({ cls: 'graph-ng-status' }), members: root.createDiv({ cls: 'graph-ng-panel' }), settings: () => settings, result: () => result, mode: () => 'nodes', groupColor: () => '#4477aa', policy: () => [], carriers: () => 0, setView() {}, persist() {}, visualsChanged() {}, applyLayout() {} };
   const panel: any = new ExplorePanel(root as any, host, view);
   return { root, panel, host, settings };
 }
@@ -175,4 +175,54 @@ test('saved view definitions stay collapsed by default and preserve expansion on
   expect(details().open).toBe(false); details().open = true; details().ontoggle();
   f.panel.render(); expect(details().open).toBe(true);
   expect(details().querySelector('summary').getAttribute('aria-label')).toBe('View definition: Synthetic view'); f.panel.dispose();
+});
+
+
+test('every tool keeps opaque summary chrome outside its divided scroll surface', () => {
+  const f = fixture(), head = f.panel.root.querySelector('.graph-ng-explore-head');
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+  const chrome = css.match(/\.graph-ng-explore > :is\(\.graph-ng-explore-head, \.graph-ng-explore-counts, \.graph-ng-explore-error\) \{([^}]+)\}/)![1]!;
+  expect(chrome).toContain('flex:none'); expect(chrome).toContain('background:var(--background-primary)');
+  const scroll = css.match(/\.graph-ng-explore-body, \.graph-ng-explore > \.graph-ng-status, \.graph-ng-explore > \.graph-ng-panel \{([^}]+)\}/)![1]!;
+  expect(scroll).toContain('border-top:1px solid var(--background-modifier-border)');
+  expect(scroll).toContain('padding-top:var(--gng-space-2)'); expect(scroll).toContain('scrollbar-gutter:stable');
+  for (const tool of ['views', 'filters', 'appearance', 'layout', 'information', 'members']) {
+    f.panel.show(tool);
+    const surface = tool === 'information' ? f.host.information : tool === 'members' ? f.host.members : f.panel.body;
+    expect(surface.hidden).toBe(false); expect(surface.parentElement).toBe(f.panel.root);
+    expect(f.panel.counts.parentElement).toBe(f.panel.root); expect(head.parentElement).toBe(f.panel.root);
+    expect(surface.contains(head)).toBe(false); expect(surface.contains(f.panel.counts)).toBe(false);
+    surface.scrollTop = 96; f.panel.updateSummary(); expect(surface.scrollTop).toBe(96);
+  }
+  f.panel.dispose();
+});
+
+test('shared setting choices and actions retain text, accessible names and disabled behavior', async () => {
+  const root = new ControlElement(), changes: string[] = [];
+  const select: any = settingSelect(root as any, 'Synthetic choice', 'Synthetic help', [['a', 'First'], ['b', 'Second']], 'b', value => changes.push(value), 'graph-ng-select', true);
+  expect(select.value).toBe('b'); expect(select.disabled).toBe(true); expect(select.getAttribute('aria-label')).toBe('Synthetic choice');
+  expect(select.children.map((e: any) => [e.value, e.textContent])).toEqual([['a', 'First'], ['b', 'Second']]);
+  expect(select.parentElement.querySelector('.graph-ng-help-popover').hidden).toBe(true);
+  select.disabled = false; select.value = 'a'; select.onchange(); expect(changes).toEqual(['a']);
+  let calls = 0;
+  const button: any = panelButton(root as any, '<b>Action</b>', async () => ++calls, true, 'mod-cta', { 'aria-label': 'Synthetic action' });
+  expect(button.children).toHaveLength(0); expect(button.textContent).toBe('<b>Action</b>'); expect(button.getAttribute('aria-label')).toBe('Synthetic action'); expect(button.classes.has('mod-cta')).toBe(true);
+  button.click(); expect(calls).toBe(0); button.disabled = false; expect(await button.onclick()).toBe(1);
+});
+
+test('appearance choices keep their original save and label-refresh paths', () => {
+  const f = fixture(), updates: boolean[] = []; f.host.visualsChanged = (labels: boolean) => updates.push(labels);
+  for (const [key, name, choices, labels] of [
+    ['edgeCompositing', 'Edge compositing', ['density', 'blend'], false],
+    ['emphasis', 'Highlight emphasis', ['scale', 'adaptive'], false],
+    ['labelStyle', 'Label style', ['ranked', 'anchored'], true],
+    ['motion', 'Motion', ['off', 'reduced', 'full'], false],
+  ] as const) {
+    for (const value of choices) {
+      f.panel.show('appearance');
+      const select: any = f.root.querySelectorAll('select').find(e => e.getAttribute('aria-label') === name);
+      select.value = value; select.onchange(); expect(f.settings.visuals[key]).toBe(value); expect(updates.at(-1)).toBe(labels);
+    }
+  }
+  expect(updates).toHaveLength(9); f.panel.dispose();
 });

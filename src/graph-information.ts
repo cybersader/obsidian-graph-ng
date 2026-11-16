@@ -1,6 +1,6 @@
 import { workingText } from './working';
 import { setIcon } from 'obsidian';
-import { disclosure, panelHelp } from './panel-help';
+import { disclosure, panelHelp, iconButton } from './panel-help';
 import type { EdgeRuleCounts } from './pipeline';
 import type { ExploreResult } from './core/explore';
 import { filterSummary, hiddenClause } from './filter-summary';
@@ -32,12 +32,10 @@ export interface InformationActions { relationships?(): void; display?(nodes: bo
 /** Every markdown note in the vault, in exactly one part; the parts sum to `total`. `hidden` are notes the view hides. */
 export interface Accounting { total: number; dots: number; lines: number; hidden: number; parts: Part[]; complete: boolean }
 /** Shared count text: locale digits, a counted noun, a total, and one tabular count element. */
-export const num = (v: number) => v.toLocaleString(), n = num;
-export const plural = (v: number, one: string, many = `${one}s`) => `${n(v)} ${v === 1 ? one : many}`;
-/** A count, or the shown part and the hidden rest when they differ. */
-export const shownHidden = (v: number, total: number) => v === total ? n(v) : `${n(v)} shown, ${n(total - v)} hidden`;
+export const num = (v: number) => v.toLocaleString();
+export const plural = (v: number, one: string, many = `${one}s`) => `${num(v)} ${v === 1 ? one : many}`;
 export const sum = (a: ArrayLike<number>) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i]!; return s; };
-export const countSpan = (host: HTMLElement, v: number | string, title?: string) => host.createSpan({ cls: 'graph-ng-count', text: typeof v === 'number' ? n(v) : v, attr: title ? { title } : {} });
+export const countSpan = (host: HTMLElement, v: number | string, title?: string) => host.createSpan({ cls: 'graph-ng-count', text: typeof v === 'number' ? num(v) : v, attr: title ? { title } : {} });
 /** A view result for another projection is ignored. */
 const current = (r: InformationReport, e?: Explored) => e?.nodes === r.nodes ? e : undefined;
 const parted = (parts: Part[]) => (icon: string, label: string, count = 0, go?: number, lines?: boolean) => { if (count) parts.push({ icon, label, count, go, lines }); };
@@ -80,7 +78,7 @@ export function statRow(host: HTMLElement, icon: string, label: string, value: s
 }
 /** The always-visible canvas readout: notes shown, then the notes the view hides, else the edges drawn. */
 export function renderReadout(host: HTMLElement, a: Accounting) {
-  for (const [icon, text] of [['circle-dot', plural(a.dots, 'note')], a.hidden ? ['eye-off', `${n(a.hidden)} hidden`] : ['spline', plural(a.lines, 'edge')]]) { const chip = host.createSpan({ cls: 'graph-ng-readout' }); setIcon(chip.createSpan({ cls: 'graph-ng-stat-icon' }), icon!); countSpan(chip, text!); }
+  for (const [icon, text] of [['circle-dot', plural(a.dots, 'note')], a.hidden ? ['eye-off', `${num(a.hidden)} hidden`] : ['spline', plural(a.lines, 'edge')]]) { const chip = host.createSpan({ cls: 'graph-ng-readout' }); setIcon(chip.createSpan({ cls: 'graph-ng-stat-icon' }), icon!); countSpan(chip, text!); }
 }
 /** All reason rows navigate; only explicitly named action buttons change settings. */
 function partRows(host: HTMLElement, parts: Part[], r: InformationReport, act: InformationActions) {
@@ -88,7 +86,7 @@ function partRows(host: HTMLElement, parts: Part[], r: InformationReport, act: I
     const go = p.go, list = p.icon === 'unlink' && r.missed?.length ? host.createEl('details', { cls: 'graph-ng-stat-list' }) : undefined;
     if (list) list.dataset.info = 'missing';
     const click = go === undefined ? p.lines ? act.relationships : p.icon === 'copy' ? act.duplicates : p.icon === 'folder-x' ? act.exclusions : undefined : go < -1 ? act.relationships : act.filter && (() => act.filter!(go));
-    statRow(list ? disclosure(list) : host, p.icon, p.icon === 'unlink' && r.linksPending ? 'Target checks pending' : p.label, (p.count < 0 ? '−' : '') + n(Math.abs(p.count)), '', click);
+    statRow(list ? disclosure(list) : host, p.icon, p.icon === 'unlink' && r.linksPending ? 'Target checks pending' : p.label, (p.count < 0 ? '−' : '') + num(Math.abs(p.count)), '', click);
     for (const [rule, from, to] of list ? r.missed! : []) list!.createDiv({ cls: 'graph-ng-stat-sub', text: `${from} → ${to} (${rule})` });
     if (list && p.count > r.missed!.length) list.createDiv({ cls: 'graph-ng-stat-sub', text: `First ${r.missed!.length} listed` });
   }
@@ -115,7 +113,7 @@ function renderBody(host: HTMLElement, message: string, state: string | undefine
   if (state === 'building' || r?.provisional) {
     workingText(host.createDiv({ cls: 'graph-ng-coverage-state', attr: { role: 'status' } }), r?.provisional ? pendingText(r) : 'Counts available when the graph is ready', true);
     if (loading?.indexed !== undefined && loading.listed !== undefined) {
-      statRow(host, 'files', 'Notes read', n(loading.indexed)); statRow(host, 'loader', 'Notes pending', n(Math.max(0, loading.listed - loading.indexed)));
+      statRow(host, 'files', 'Notes read', num(loading.indexed)); statRow(host, 'loader', 'Notes pending', num(Math.max(0, loading.listed - loading.indexed)));
     }
     statRow(host, 'timer', 'Layout', r?.layout ? layoutText(r.layout) : r?.progress ? layoutProgress(r.progress) : 'Waiting for graph');
     if (r) statRow(host, 'spline', 'Relationship notes', r.relationshipNodes ? 'Notes' : 'Lines');
@@ -126,7 +124,7 @@ function renderBody(host: HTMLElement, message: string, state: string | undefine
   const e = current(r, view), a = accounting(r, e), edges = edgeAccounting(r, e), unread = a.parts.find(p => p.icon === 'loader');
   host.createDiv({ cls: 'graph-ng-coverage-state', attr: { role: 'status' }, text: a.complete ? e?.carrierHidden?.some(Boolean) ? 'Relationship notes are filtered' : r.linksPending ? 'Source checks pending' : r.duplicates || r.unresolved ? 'Source issues need attention' : a.hidden || edges.total !== edges.drawn ? 'Ready with hidden items' : 'All notes accounted for' : unread ? `Still loading: ${plural(unread.count, 'note')} left to read` : 'Vault changed since the last refresh' });
   const headline = host.createDiv({ cls: 'graph-ng-stats graph-ng-answer' });
-  statRow(headline, 'circle-dot', 'Notes shown', n(a.dots)); statRow(headline, 'spline', 'Edges drawn', n(edges.drawn));
+  statRow(headline, 'circle-dot', 'Notes shown', num(a.dots)); statRow(headline, 'spline', 'Edges drawn', num(edges.drawn));
   const section = (id: string, icon: string, label: string, value: string, cls = '') => {
     const details = host.createEl('details', { cls: `graph-ng-info-section ${cls}` }); details.dataset.info = id;
     statRow(disclosure(details), icon, label, value); return details;
@@ -144,21 +142,21 @@ function renderBody(host: HTMLElement, message: string, state: string | undefine
     const help = tip.parentElement!.querySelector('button')!; help.setAttribute('aria-label', `About ${name}`); setIcon(help, 'filter');
     const edit = row.createEl(act.filter ? 'button' : 'span', { cls: 'graph-ng-stat-label', text: 'Filtered relationship notes', attr: { 'aria-label': `Edit ${name}` } });
     edit.onclick = () => act.filter?.(i); countSpan(row, hidden);
-    if (act.remove) { const remove = row.createEl('button', { cls: 'clickable-icon graph-ng-stat-remove', attr: { 'aria-label': `Remove ${name}` } }); setIcon(remove, 'x'); remove.onclick = () => act.remove!(i); }
+    if (act.remove) { const remove = iconButton(row, `Remove ${name}`, 'x', 'clickable-icon graph-ng-stat-remove'); remove.onclick = () => act.remove!(i); }
   });
-  if (r.duplicates) statRow(host, 'copy', 'Inspect duplicate IDs', n(r.duplicates), '', act.duplicates);
-  if (r.unresolved) statRow(host, 'unlink', r.linksPending ? 'Inspect pending targets' : 'Inspect missing targets', n(r.unresolved), '', () => reveal('missing'));
+  if (r.duplicates) statRow(host, 'copy', 'Inspect duplicate IDs', num(r.duplicates), '', act.duplicates);
+  if (r.unresolved) statRow(host, 'unlink', r.linksPending ? 'Inspect pending targets' : 'Inspect missing targets', num(r.unresolved), '', () => reveal('missing'));
   if (r.linksPending) pendingHelp(host);
   else if (!r.duplicates && !r.unresolved) statRow(host, 'check', 'Source checks', 'No issues found');
-  const notes = section('notes', 'files', 'Note accounting', n(a.total), 'graph-ng-coverage');
-  partRows(notes, a.parts, r, act); statRow(notes, 'files', 'Markdown notes in vault', n(a.total), 'graph-ng-stat-total');
-  const lines = section('edges', 'spline', 'Edge accounting', n(edges.total));
-  statRow(lines, 'spline', 'Edges drawn', n(edges.drawn));
-  (r.rules ?? []).forEach((rule, i) => { if (e?.ruleVisible[i]) statRow(lines, 'spline', `${rule} edges`, n(e.ruleVisible[i]!), 'graph-ng-stat-sub'); });
-  partRows(lines, edges.parts, r, act); statRow(lines, 'sigma', 'Edges found', n(edges.total), 'graph-ng-stat-total');
+  const notes = section('notes', 'files', 'Note accounting', num(a.total), 'graph-ng-coverage');
+  partRows(notes, a.parts, r, act); statRow(notes, 'files', 'Markdown notes in vault', num(a.total), 'graph-ng-stat-total');
+  const lines = section('edges', 'spline', 'Edge accounting', num(edges.total));
+  statRow(lines, 'spline', 'Edges drawn', num(edges.drawn));
+  (r.rules ?? []).forEach((rule, i) => { if (e?.ruleVisible[i]) statRow(lines, 'spline', `${rule} edges`, num(e.ruleVisible[i]!), 'graph-ng-stat-sub'); });
+  partRows(lines, edges.parts, r, act); statRow(lines, 'sigma', 'Edges found', num(edges.total), 'graph-ng-stat-total');
   if (Object.keys(r.ruleNotes ?? {}).length) {
     const nodes = !!r.relationshipNodes, display = section('display', 'spline', 'Relationship display', nodes ? 'Notes' : 'Lines');
-    for (const [rule, count] of Object.entries(r.ruleNotes!)) statRow(display, nodes ? 'circle-dot' : 'spline', `${rule} relationship notes`, n(count));
+    for (const [rule, count] of Object.entries(r.ruleNotes!)) statRow(display, nodes ? 'circle-dot' : 'spline', `${rule} relationship notes`, num(count));
     if (act.display) display.createEl('button', { text: `Show relationships as ${nodes ? 'lines' : 'notes'} (save and rebuild)` }).onclick = () => act.display!(!nodes);
     panelHelp(display, 'Lines / Notes', 'Lines join endpoints; Notes draw dots. Changing display saves and rebuilds; filters stay active.');
   }
@@ -173,5 +171,5 @@ export function layoutText(l: NonNullable<InformationReport['layout']>) {
 
 /** Stage-local progress only: no elapsed-time estimate and no invented resolver percentage. */
 export const readingProgress = (c: { indexed: number; listed: number }) => `Reading notes ${Math.floor(100 * c.indexed / Math.max(1, c.listed))}%`;
-export const layoutProgress = (p: { iteration: number; total: number }) => `Laying out ${Math.floor(100 * p.iteration / Math.max(1, p.total))}% (step ${n(p.iteration)}, ${n(p.total)} steps)`;
+export const layoutProgress = (p: { iteration: number; total: number }) => `Laying out ${Math.floor(100 * p.iteration / Math.max(1, p.total))}% (step ${num(p.iteration)}, ${num(p.total)} steps)`;
 export const pendingText = (r?: { pendingProperties?: number; linksPending: boolean }) => `Waiting for ${[r?.pendingProperties ? `properties: ${plural(r.pendingProperties, 'note')}` : '', r?.linksPending ? 'Obsidian links' : ''].filter(Boolean).join(' and ') || 'property verification'}`;

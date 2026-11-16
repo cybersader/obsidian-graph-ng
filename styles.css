@@ -467,8 +467,10 @@ button.graph-ng-stat > .graph-ng-stat-label { text-align:start; }
 
 .graph-ng-isolation > .graph-ng-count { text-align:left; white-space:normal; overflow-wrap:anywhere; font-size:var(--gng-text-sm); color:var(--text-normal); line-height:var(--gng-leading); }
 
-/* One scrolling surface, with a gutter between counts/actions and the scrollbar. */
-.graph-ng-explore-body, .graph-ng-explore > .graph-ng-status, .graph-ng-explore > .graph-ng-panel { padding-right:var(--gng-space-2); scrollbar-gutter:stable; }
+/* Fixed, opaque chrome stays outside every panel's scrollport. The hairline marks
+   the clipping edge, so a partly scrolled control cannot read as a broken header row. */
+.graph-ng-explore > :is(.graph-ng-explore-head, .graph-ng-explore-counts, .graph-ng-explore-error) { flex:none; background:var(--background-primary); }
+.graph-ng-explore-body, .graph-ng-explore > .graph-ng-status, .graph-ng-explore > .graph-ng-panel { border-top:1px solid var(--background-modifier-border); padding-top:var(--gng-space-2); padding-right:var(--gng-space-2); scrollbar-gutter:stable; }
 .graph-ng-explore-section:first-child { border-top:0; padding-top:0; }
 .graph-ng-explore-display > div > .graph-ng-nodes:first-child > h4 { border-top:0; padding-top:0; margin-top:0; }
 /* Native disclosure semantics, consistent Obsidian chevrons. */

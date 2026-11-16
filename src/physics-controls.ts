@@ -30,16 +30,16 @@ export const PRESET_BOUNDS: Record<Scaled, [number, number]> = { scalingRatio: [
  * fill drafts; Apply and recompute remains the single commit. Measured on synthetic graphs:
  * see README "Layout presets". LinLog and hub dissuasion stay manual: in 100 to 500 steps they
  * left the groups mixed on every tested size. */
-export const PHYSICS_PRESETS: readonly [string, string, Partial<Record<Scaled, number>>][] = [
-  ['Groups apart', 'Weaker pull to the middle, so groups sit further apart and unconnected notes ring the outside.', { gravity: .5 }],
-  ['Fill the screen', 'Stronger pull, so the graph fills the view as one round shape with groups touching.', { gravity: 3 }],
-  ['Faster', 'Half the steps and a rougher approximation, for very large vaults.', { iterations: .5, barnesHutTheta: 1.3 }],
+export const PHYSICS_PRESETS: readonly [string, Partial<Record<Scaled, number>>][] = [
+  ['Groups apart', { gravity: .5 }],
+  ['Fill the screen', { gravity: 3 }],
+  ['Faster', { iterations: .5, barnesHutTheta: 1.3 }],
 ];
 export function presetValues(name: string, base: Required<PhysicsValues> = physicsDefaults()): Required<PhysicsValues> {
   const preset = PHYSICS_PRESETS.find(([label]) => label === name);
   if (!preset) throw new Error(`Unknown layout preset: ${name}`);
   const out = { ...base };
-  for (const [key, factor] of Object.entries(preset[2]) as [Scaled, number][]) {
+  for (const [key, factor] of Object.entries(preset[1]) as [Scaled, number][]) {
     const [min, max] = PRESET_BOUNDS[key], value = Math.min(max, Math.max(min, base[key] * factor));
     out[key] = key === 'iterations' ? Math.round(value) : +value.toPrecision(3);
   }

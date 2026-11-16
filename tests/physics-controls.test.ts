@@ -172,7 +172,7 @@ test('recompute callers settle by exact RPC ownership; late responses cannot com
 test('preset transforms are relative to the base, bounded, and never compound', () => {
   for (const [nodes, edges] of [[500, 1500], [16000, 50000]] as const) {
     const base = recommendedPhysics(nodes, edges);
-    for (const [name, , scale] of PHYSICS_PRESETS) {
+    for (const [name, scale] of PHYSICS_PRESETS) {
       const out = presetValues(name, base);
       expect(presetValues(name, base)).toEqual(out); expect(base).toEqual(recommendedPhysics(nodes, edges));
       for (const [key] of PHYSICS_FIELDS) {
@@ -187,7 +187,6 @@ test('preset transforms are relative to the base, bounded, and never compound', 
   expect(presetValues('Fill the screen', extreme).gravity).toBe(PRESET_BOUNDS.gravity[1]);
   expect(presetValues('Faster', extreme)).toMatchObject({ iterations: PRESET_BOUNDS.iterations[0], barnesHutTheta: PRESET_BOUNDS.barnesHutTheta[1] });
   expect(PHYSICS_PRESETS.length).toBeGreaterThanOrEqual(3); expect(PHYSICS_PRESETS.length).toBeLessThanOrEqual(5);
-  for (const [, effect] of PHYSICS_PRESETS) expect(effect).not.toContain('\u00b7');
 });
 test('recommended values scale with graph size and stay valid', () => {
   const sizes = [[50, 60], [500, 1500], [2000, 6000], [16000, 50000], [200000, 900000]].map(([n, e]) => recommendedPhysics(n!, e!));

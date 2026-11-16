@@ -26,22 +26,21 @@ export function layoutAdvice(t: GraphStats, s: Settings): { gravity: number; rea
   if (f.strongGravityMode || !f.gravity || out < Math.max(20, t.nodes * .02)) return;
   return { gravity: recommendedPhysics(t.nodes, t.edges).gravity, reason: `${out.toLocaleString()} notes sit in disconnected parts. Normal gravity leaves them in a far ring that more steps widen; Strong gravity pulls them in.` };
 }
-/** Only presentation keys the renderer reads live; layout keys need a recompute and stay manual. */
 /** Presentation keys the renderer reads live (labels shown in the card). Layout keys need a
  * recompute and stay manual. */
 const LABELS = { edgeOpacity: 'Edges', degreeSizing: 'Hubs', labelDensity: 'Labels', glow: 'Glow', curvedEdges: 'Line shape', groupHalos: 'Group halos', carrierOpacity: 'Relationship notes' };
 export type SuggestionKey = keyof typeof LABELS;
 export interface Suggestion { key: SuggestionKey; label: string; current: number | boolean; value: number | boolean; reason: string }
 /** Presentation copy is separate from persisted keys and values. */
-export function suggestionCopy(s: Suggestion): { change: string; why: string } {
+export function suggestionCopy(s: Suggestion): string {
   const less = Number(s.value) < Number(s.current);
   switch (s.key) {
-    case 'degreeSizing': return { change: less ? 'Smaller hubs' : 'Larger hubs', why: 'Balance dot sizes' };
-    case 'labelDensity': return { change: less ? 'Fewer names' : 'More names', why: less ? 'Reduce crowding' : 'Room for more names' };
-    case 'curvedEdges': return { change: s.value ? 'Curved lines' : 'Straight lines', why: 'Easier to follow' };
-    case 'glow': return { change: s.value ? 'More glow' : 'No glow', why: 'Clearer dense areas' };
-    case 'groupHalos': return { change: s.value ? 'Show halos' : 'Hide halos', why: 'Reduce overlapping color' };
-    default: return { change: `${less ? 'Fainter' : 'Stronger'} ${s.key === 'edgeOpacity' ? 'lines' : 'dots'}`, why: less ? 'Reduce visual clutter' : 'Easier to see' };
+    case 'degreeSizing': return less ? 'Smaller hubs' : 'Larger hubs';
+    case 'labelDensity': return less ? 'Fewer names' : 'More names';
+    case 'curvedEdges': return s.value ? 'Curved lines' : 'Straight lines';
+    case 'glow': return s.value ? 'More glow' : 'No glow';
+    case 'groupHalos': return s.value ? 'Show halos' : 'Hide halos';
+    default: return `${less ? 'Fainter' : 'Stronger'} ${s.key === 'edgeOpacity' ? 'lines' : 'dots'}`;
   }
 }
 /** "Probably the settings you want for data shaped like this." Deterministic, never applied

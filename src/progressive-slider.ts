@@ -1,5 +1,5 @@
 import { setIcon } from 'obsidian';
-import { panelHelp } from './panel-help';
+import { settingRow } from './panel-help';
 /** Shared progressive range slider: curve-mapped position, exact numeric chip, fine scrubbing. Stored values keep their own units. */
 export interface Curve { min: number; max: number; /** power curve exponent; >1 adds resolution near min */ k?: number; /** logarithmic (min > 0) */ log?: boolean; /** whole numbers only */ int?: boolean }
 export const STEPS = 1000;
@@ -57,8 +57,7 @@ export interface SliderOptions {
 /** Name with on-demand help, then track, exact value and a fixed reset slot. */
 export function progressiveSlider(parent: HTMLElement, o: SliderOptions) {
   const { curve: c, unit = '', def } = o, name = o.name ?? o.label;
-  const row = parent.createDiv({ cls: `setting-item graph-ng-setting graph-ng-slider${o.cls ? ` ${o.cls}` : ''}` });
-  panelHelp(row, name, o.desc, 'setting-item-name graph-ng-setting-name');
+  const row = settingRow(parent, name, `graph-ng-slider${o.cls ? ` ${o.cls}` : ''}`, o.desc);
   const reset = row.createEl('button', { cls: 'clickable-icon graph-ng-slider-reset', attr: { 'aria-label': `Reset ${name} to ${def}${unit ? ` ${unit}` : ''}` } });
   setIcon(reset, 'rotate-ccw');
   const line = row.createDiv({ cls: 'graph-ng-slider-line' }), track = line.createDiv({ cls: 'graph-ng-slider-track' });

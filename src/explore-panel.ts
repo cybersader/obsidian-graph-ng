@@ -1,13 +1,12 @@
 import { workingText } from './working';
-import { panelHelp, disclosure } from './panel-help';
+import { panelHelp, disclosure, settingRow, settingSelect, panelButton, iconButton } from './panel-help';
 import { folderPredicate, folderView } from './saved-views';
-import { setIcon } from 'obsidian';
 import { sizingValues, sizingSettings, MAX_NODE_RADIUS, type NodeSizingValues } from './node-sizing';
 import { physicsSettings, presetValues, PHYSICS_FIELDS, PHYSICS_PRESETS, type PhysicsKey, type PhysicsValues } from './physics-controls';
 import { editAsExpression, builderPredicate, checked } from './core/expr/engine';
 import { validate } from './core/expr/syntax';
 import { filterSummary, setToggles, toggleable, toggledValues } from './filter-summary';
-import { countSpan, num, plural, shownHidden, statRow, sum } from './graph-information';
+import { countSpan, num, plural, statRow, sum } from './graph-information';
 import { suggestions } from './core/expr/autocomplete';
 import { declaredKeys } from './core/columns';
 import { describePredicate, groupLabel, NO_COLOR, VIEW_LIMITS, validateSaved, validateView, type ExploreResult, type ExploreView, type SavedView, type ViewCamera } from './core/explore';
@@ -66,8 +65,8 @@ type Section = 'filters' | 'groups' | 'colors' | 'edges' | 'display' | 'views' |
 type Tool = 'views' | 'filters' | 'appearance' | 'layout' | 'information' | 'members';
 const TOOLS: [Tool, string, string][] = [['views', 'Saved views', 'bookmark'], ['filters', 'Filters', 'list-filter'], ['appearance', 'Appearance', 'palette'], ['layout', 'Layout', 'move'], ['information', 'Graph information', 'info'], ['members', 'Members', 'list']];
 function toolButton(host: HTMLElement, text: string, icon: string) {
-  const button = host.createEl('button', { cls: 'graph-ng-tool', attr: { 'aria-label': text, title: text } });
-  setIcon(button, icon); button.createSpan({ cls: 'graph-ng-tool-label', text });
+  const button = iconButton(host, text, icon, 'graph-ng-tool', { title: text });
+  button.createSpan({ cls: 'graph-ng-tool-label', text });
   return button;
 }
 const SECTIONS: Record<string, [Section, string][]> = { views: [['views', 'Saved views']], filters: [['filters', 'Filters'], ['groups', 'Grouping'], ['edges', 'Relationships']], appearance: [['display', 'Appearance'], ['colors', 'Color rules']], layout: [['physics', 'Layout']] };
@@ -78,13 +77,6 @@ export const hasReified = (d: GraphDeclaration) => d.edges.some(e => e.kind === 
 export async function setRelationshipDisplay(plugin: { settings: Settings; apply(s: Settings): Promise<void> }, nodes: boolean) {
   const s = plugin.settings; if (s.declaration.display.reifiedAsNodes === nodes) return;
   await plugin.apply({ ...s, declaration: { ...s.declaration, display: { ...s.declaration.display, reifiedAsNodes: nodes } } });
-}
-/** Short setting name; explanations share the same on-demand help as sliders. */
-function settingRow(host: HTMLElement, label: string, cls: string, desc?: string) {
-  const row = host.createEl(cls.includes('graph-ng-toggle') ? 'label' : 'div', { cls: `setting-item graph-ng-setting ${cls}` }), [, name = label, a, b] = (!desc && /^(.+?)(?: \((.+)\)|: (.+))$/.exec(label)) || [];
-  if (row.tagName === 'LABEL') row.createSpan({ cls: 'checkbox-container' }).createEl('input', { attr: { type: 'checkbox', 'aria-label': name } });
-  panelHelp(row, name, desc ?? a ?? b, 'setting-item-name graph-ng-setting-name');
-  return row;
 }
 let expressionPanelId = 0;
 const parseRaw = (raw: string): Scalar => { try { const v: unknown = JSON.parse(raw); return v === null || ['string', 'number', 'boolean'].includes(typeof v) ? v as Scalar : raw; } catch { return raw; } };
@@ -143,8 +135,7 @@ export class ExplorePanel {
     this.root = parent.createDiv({ cls: 'graph-ng-explore', attr: { role: 'region', 'aria-label': 'Graph tools', id: `graph-ng-controls-${this.expressionPanelId}` } });
     const head = this.root.createDiv({ cls: 'graph-ng-explore-head' });
     this.title = head.createEl('h3', { text: 'Views' });
-    this.closeButton = head.createEl('button', { cls: 'clickable-icon graph-ng-explore-close', attr: { 'aria-label': 'Close graph tools' } });
-    setIcon(this.closeButton, 'x');
+    this.closeButton = iconButton(head, 'Close graph tools', 'x', 'clickable-icon graph-ng-explore-close');
     this.closeButton.onclick = () => this.close();
     this.closeButton.onblur = () => { this.saveFocus = false; };
     this.root.onkeydown = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); this.close(); } };
@@ -213,7 +204,7 @@ export class ExplorePanel {
       this.host.members.hidden = this.root.hidden || this.tool !== 'members';
       if (this.tool === 'members' && !this.host.members.children.length) {
         this.note(this.host.members, 'Select a group to browse its available members.');
-        this.host.members.createEl('button', { text: 'Group overview' }).onclick = () => this.host.presentation?.('groups');
+        panelButton(this.host.members, 'Group overview', () => this.host.presentation?.('groups'));
       }
     }
     this.body.hidden = this.root.hidden || this.tool === 'information' || this.tool === 'members'; this.render();
@@ -310,7 +301,7 @@ export class ExplorePanel {
     const hidden = r.filters && canonical(r.filters.slice(0, filters.length)) === canonical(filters) ? r.filterHidden : undefined;
     // Chips: summary opens help, never edits the filter; actions stay separate.
     const chips = host.createDiv({ cls: 'graph-ng-chips', attr: { role: 'list', 'aria-label': 'Active filters' } });
-    const icon = (parent: HTMLElement, label: string, name: string, cls = '') => { const b = parent.createEl('button', { cls: `clickable-icon graph-ng-chip-action ${cls}`, attr: { 'aria-label': label } }); setIcon(b, name); return b; };
+    const icon = (parent: HTMLElement, label: string, name: string, cls = '') => iconButton(parent, label, name, `clickable-icon graph-ng-chip-action ${cls}`);
     this.view.filters.forEach((f, i) => {
       const chip = chips.createDiv({ cls: 'graph-ng-chip', attr: { role: 'listitem' } }), summary = filterSummary(f);
       panelHelp(chip, summary.text, describePredicate(f), summary.code ? 'graph-ng-chip-text graph-ng-chip-code' : 'graph-ng-chip-text');
@@ -323,7 +314,7 @@ export class ExplorePanel {
         disclosure(builder, 'JSON', { 'aria-label': `Edit builder filter ${i + 1} as JSON` });
         const input = builder.createEl('textarea', { attr: { 'aria-label': `Builder filter ${i + 1}` } }); input.value = JSON.stringify(f, null, 2);
         const error = builder.createDiv({ cls: 'graph-ng-explore-error', attr: { role: 'alert' } });
-        builder.createEl('button', { text: 'Save builder entry' }).onclick = () => { try { const value: unknown = JSON.parse(input.value); validatePredicate(value); this.update({ filters: this.view.filters.map((p, j) => j === i ? value : p) }); } catch (e) { error.textContent = String(e); } };
+        panelButton(builder, 'Save builder entry', () => { try { const value: unknown = JSON.parse(input.value); validatePredicate(value); this.update({ filters: this.view.filters.map((p, j) => j === i ? value : p) }); } catch (e) { error.textContent = String(e); } });
       }
       const remove = icon(chip, `Remove filter: ${summary.text}`, 'x', 'graph-ng-remove');
       remove.onclick = () => { this.update({ filters: this.view.filters.filter((_, j) => j !== i) }); (this.body.querySelectorAll<HTMLButtonElement>('.graph-ng-remove')[i] ?? this.search).focus(); };
@@ -333,7 +324,7 @@ export class ExplorePanel {
     const add = host.createEl('details', { cls: 'graph-ng-add-filter' }); add.open = this.adding || this.drafts.has('Filter expression');
     add.ontoggle = () => { this.adding = add.open; };
     disclosure(add, 'Add filter');
-    this.predicateForm(add, r, 'Add filter', p => { this.adding = false; this.update({ filters: [...this.view.filters, p] }); }, true);
+    this.predicateForm(add, r, 'Add filter', p => { this.adding = false; this.update({ filters: [...this.view.filters, p] }); });
   }
   /** One checkbox per value of a small, complete facet; unticking hides the value through an ordinary filter. */
   private filterToggles(host: HTMLElement, r: ExploreResult) {
@@ -355,13 +346,13 @@ export class ExplorePanel {
     }
   }
   /** Property choices are exactly the materialized declared columns, plus folder prefixes. */
-  private predicateForm(host: HTMLElement, r: ExploreResult, action: string, submit: (p: Predicate) => void, operators: boolean, extra?: (row: HTMLElement) => void) {
+  private predicateForm(host: HTMLElement, r: ExploreResult, action: string, submit: (p: Predicate) => void, extra?: (row: HTMLElement) => void) {
     const filter = action === 'Add filter', form = host.createDiv({ cls: filter ? 'graph-ng-form graph-ng-builder' : 'graph-ng-form', attr: filter ? { role: 'group', 'aria-label': 'Add filter' } : {} }); extra?.(form);
     const property = form.createEl('select', { attr: { 'aria-label': 'Property' } });
     for (const f of r.facets) property.createEl('option', { value: `k:${f.key}`, text: f.key });
     property.createEl('option', { value: 'folder', text: 'Folder' });
     const op = form.createEl('select', { attr: { 'aria-label': 'Operator' } });
-    for (const [v, t] of operators ? [['eq', 'is'], ['in', 'is any of'], ['exists', 'exists']] : [['eq', 'is'], ['exists', 'exists']]) op.createEl('option', { value: v, text: t });
+    for (const [v, t] of [['eq', 'is'], ['in', 'is any of'], ['exists', 'exists']]) op.createEl('option', { value: v, text: t });
     const values = form.createEl('select', { attr: { 'aria-label': 'Value' } }), folder = form.createEl('input', { attr: { type: 'text', placeholder: 'Folder/Subfolder', 'aria-label': 'Folder prefix' } });
     // Native options cannot align a count column; the selection's note count sits beside the picker.
     const matched = countSpan(form, ''); matched.setAttribute('aria-live', 'polite');
@@ -407,7 +398,7 @@ export class ExplorePanel {
     if (disabled.length) {
       const note = host.createDiv({ cls: 'graph-ng-explore-note graph-ng-disabled-derive', attr: { role: 'status' } });
       note.createSpan({ text: `Disabled: regex-derived groups are no longer supported. Recreate with segment or prefix. ${disabled.map(d => `${d.location}: ${d.key} /${d.pattern}/`).join('; ')}. ` });
-      note.createEl('button', { text: 'Dismiss' }).onclick = () => { this.settings.explore.disabledDerived = []; this.host.persist(); this.render(); };
+      panelButton(note, 'Dismiss', () => { this.settings.explore.disabledDerived = []; this.host.persist(); this.render(); });
     }
     const nodes = this.host.mode() === 'nodes', actions = host.createDiv({ cls: 'graph-ng-row graph-ng-group-actions' });
     const order = Array.from(r.groupKeys.keys()).filter(i => r.groupTotals[i]).sort((a, b) => r.groupTotals[b]! - r.groupTotals[a]! || a - b);
@@ -415,9 +406,9 @@ export class ExplorePanel {
       const all = order.map(i => r.groupKeys[i]!).filter(k => k.length <= VIEW_LIMITS.keyLength), collapse = actions.createEl('button', { text: 'Collapse all' });
       collapse.disabled = all.length > VIEW_LIMITS.keys; if (collapse.disabled) panelHelp(actions, 'Group limit', `Collapse up to ${num(VIEW_LIMITS.keys)} groups at once.`);
       collapse.onclick = () => this.update({ collapsedGroups: all });
-      actions.createEl('button', { text: 'Expand all' }).onclick = () => this.update({ collapsedGroups: [] });
+      panelButton(actions, 'Expand all', () => this.update({ collapsedGroups: [] }));
     }
-    if (this.view.hiddenGroups.length) actions.createEl('button', { text: 'Show all' }).onclick = () => this.update({ hiddenGroups: [] });
+    if (this.view.hiddenGroups.length) panelButton(actions, 'Show all', () => this.update({ hiddenGroups: [] }));
     const list = host.createDiv({ cls: 'graph-ng-legend graph-ng-group-legend', attr: { role: 'list', 'aria-label': 'Groups and notes shown' } }), hidden = new Set(this.view.hiddenGroups), collapsed = new Set(this.view.collapsedGroups);
     for (const i of order.slice(0, this.groupLimit)) {
       const key = r.groupKeys[i]!, label = r.groupLabels[i]!, item = list.createDiv({ cls: 'graph-ng-legend-row', attr: { role: 'listitem' } });
@@ -430,13 +421,13 @@ export class ExplorePanel {
       name.onclick = () => this.host.focusGroup(i);
       this.legendCount(item, r.groupVisible[i]!, r.groupTotals[i]!, 'note');
       if (nodes) {
-        const fold = item.createEl('button', { cls: 'graph-ng-fold clickable-icon', attr: { 'data-focus-key': `group-fold:${key}`, 'aria-label': `${collapsed.has(key) ? 'Expand' : 'Collapse'} ${label}`, 'aria-pressed': String(collapsed.has(key)) } }); setIcon(fold, collapsed.has(key) ? 'plus' : 'minus'); fold.disabled = !storable && !collapsed.has(key);
+        const fold = iconButton(item, `${collapsed.has(key) ? 'Expand' : 'Collapse'} ${label}`, collapsed.has(key) ? 'plus' : 'minus', 'graph-ng-fold clickable-icon', { 'data-focus-key': `group-fold:${key}`, 'aria-pressed': String(collapsed.has(key)) }); fold.disabled = !storable && !collapsed.has(key);
         fold.onclick = () => this.update({ collapsedGroups: collapsed.has(key) ? this.view.collapsedGroups.filter(k => k !== key) : [...this.view.collapsedGroups, key] }, collapsed.has(key) ? () => this.host.focusGroup(i) : undefined);
       }
     }
     const notes = nodes ? this.host.carriers() : 0;
     if (notes) panelHelp(host, plural(notes, 'relationship note'), 'Drawn smaller and beneath other notes. Appearance controls their color and visibility when zoomed out.');
-    if (order.length > this.groupLimit) host.createEl('button', { text: `Show ${Math.min(this.settings.explore.legendPageSize, order.length - this.groupLimit)} more, ${num(order.length - this.groupLimit)} groups left` }).onclick = () => { this.groupLimit += this.settings.explore.legendPageSize; this.render(); };
+    if (order.length > this.groupLimit) panelButton(host, `Show ${Math.min(this.settings.explore.legendPageSize, order.length - this.groupLimit)} more, ${num(order.length - this.groupLimit)} groups left`, () => { this.groupLimit += this.settings.explore.legendPageSize; this.render(); });
   }
   /** Group by a bounded transform of an existing value; no note needs a new property. */
   private derivedForm(host: HTMLElement, r: ExploreResult) {
@@ -453,11 +444,11 @@ export class ExplorePanel {
     const [n, caption] = field('Part (0 = first, -1 = last)', 'input', { type: 'number', value: '0', min: '-64', max: '63' });
     kind.onchange = () => { const prefix = kind.value === 'prefix', label = prefix ? 'Number of parts' : 'Part (0 = first, -1 = last)'; caption.textContent = label; n.setAttribute('aria-label', label); if (prefix && Number(n.value) < 1) n.value = '1'; };
     const error = details.createDiv({ cls: 'graph-ng-explore-error', attr: { role: 'alert' } });
-    form.createEl('button', { text: 'Group', cls: 'graph-ng-add' }).onclick = () => {
+    panelButton(form, 'Group', () => {
       const transform = kind.value === 'prefix' ? { kind: 'prefix' as const, delimiter: delimiter.value, segments: Number(n.value) } : { kind: 'segment' as const, delimiter: delimiter.value, index: Number(n.value) };
       const group: GroupSource = { from: 'derived', key: source.value, transform };
       try { validateDerivedGroup(group); error.textContent = ''; this.update({ group, hiddenGroups: [], collapsedGroups: [] }); } catch (e) { error.textContent = e instanceof Error ? e.message : String(e); }
-    };
+    }, false, 'graph-ng-add');
   }
   private colors(host: HTMLElement, r: ExploreResult) {
     const d = this.settings.declaration, hidden = new Set(this.view.hiddenColors), list = host.createDiv({ cls: 'graph-ng-legend' });
@@ -473,7 +464,7 @@ export class ExplorePanel {
       countSpan(item, r.colorCounts[i]!);
       const up = item.createEl('button', { cls: 'clickable-icon', text: '↑', attr: { 'aria-label': `Move ${rule.name} earlier (first match wins)` } }); up.disabled = i === 0;
       up.onclick = () => { const next = d.colors.slice(); [next[i - 1], next[i]] = [next[i]!, next[i - 1]!]; void this.host.setColors(next); };
-      item.createEl('button', { cls: 'clickable-icon', text: '×', attr: { 'aria-label': `Delete rule ${rule.name}` } }).onclick = () => void this.host.setColors(d.colors.filter((_, j) => j !== i));
+      panelButton(item, '×', () => void this.host.setColors(d.colors.filter((_, j) => j !== i)), false, 'clickable-icon', { 'aria-label': `Delete rule ${rule.name}` });
     });
     const rest = list.createDiv({ cls: 'graph-ng-legend-row' }), eye = rest.createEl('input', { attr: { type: 'checkbox', 'aria-label': 'Show notes matching no rule' } });
     eye.checked = !hidden.has(NO_COLOR); eye.onchange = () => toggle(NO_COLOR, eye.checked);
@@ -484,7 +475,7 @@ export class ExplorePanel {
     this.predicateForm(host, r, 'Add rule', p => {
       const label = name.value.trim(); if (!label) throw new Error('Name the rule'); if (d.colors.some(c => c.name === label)) throw new Error('Rule names must be unique');
       void this.host.setColors([...d.colors, { name: label, color: color.value, predicate: p }]);
-    }, true, form => {
+    }, form => {
       name = form.createEl('input', { attr: { type: 'text', placeholder: 'Rule name', 'aria-label': 'Rule name' } });
       color = form.createEl('input', { cls: 'graph-ng-color', attr: { type: 'color', 'aria-label': 'Rule color' } }); color.value = '#e6a23c';
     });
@@ -530,23 +521,18 @@ export class ExplorePanel {
     const size = this.host.result(), recommended = recommendedPhysics(size?.nodes ?? 1000, size?.edges ?? 3000);
     panelHelp(host, 'How changes apply', 'Apply layout saves these changes and recomputes note positions. Fit graph is separate.');
     const presets = settingRow(host, 'Presets', 'graph-ng-presets', 'Groups apart loosens the layout; Fill the screen tightens it. Faster uses fewer steps; presets stay drafts until Apply.').createDiv({ cls: 'graph-ng-setting-line', attr: { role: 'group', 'aria-label': 'Layout presets' } });
-    const reset = presets.createEl('button', { text: 'Recommended' });
-    reset.disabled = this.physicsBusy;
-    reset.onclick = () => fill(recommended, 'Recommended values for this graph loaded.', 'Recommended');
+    panelButton(presets, 'Recommended', () => fill(recommended, 'Recommended values for this graph loaded.', 'Recommended'), this.physicsBusy);
     for (const [name] of PHYSICS_PRESETS) {
-      const b = presets.createEl('button', { text: name }); b.disabled = this.physicsBusy;
-      b.onclick = () => fill(presetValues(name, recommended), `${name} loaded.`, name);
+      panelButton(presets, name, () => fill(presetValues(name, recommended), `${name} loaded.`, name), this.physicsBusy);
     }
     const advice = this.host.layoutAdvice?.();
     if (advice) {
       // Keeps every other draft value; only turns Strong gravity on with a measured pull.
-      const fix = presets.createEl('button', { text: PULL_IN }); fix.disabled = this.physicsBusy;
-      fix.onclick = () => fill({ ...draft, strongGravityMode: true, gravity: advice.gravity } as unknown as Required<PhysicsValues>, `${PULL_IN} loaded. Apply layout to see it.`, PULL_IN);
+      panelButton(presets, PULL_IN, () => fill({ ...draft, strongGravityMode: true, gravity: advice.gravity } as unknown as Required<PhysicsValues>, `${PULL_IN} loaded. Apply layout to see it.`, PULL_IN), this.physicsBusy);
       panelHelp(host, 'Why pull them in?', advice.reason);
     }
-    const undo = this.physicsUndo, back =presets.createEl('button', { text: 'Undo preset' });
-    back.disabled = this.physicsBusy || !undo;
-    back.onclick = () => { if (!undo) return; Object.assign(draft, undo.values); this.physicsUndo = undefined; this.physicsNote = `${undo.name} undone.`; if (undo.applied) void run(); else this.render(); };
+    const undo = this.physicsUndo;
+    panelButton(presets, 'Undo preset', () => { if (!undo) return; Object.assign(draft, undo.values); this.physicsUndo = undefined; this.physicsNote = `${undo.name} undone.`; if (undo.applied) void run(); else this.render(); }, this.physicsBusy || !undo);
     const changes = host.createDiv({ cls: 'graph-ng-layout-changes', attr: { 'aria-live': 'polite' } }), show = (v: string | boolean) => typeof v === 'boolean' ? (v ? 'on' : 'off') : v;
     const summarize = () => {
       const now = applied(), diff = PHYSICS_FIELDS.filter(([key]) => draft[key] !== now[key]); changes.empty();
@@ -602,11 +588,8 @@ export class ExplorePanel {
     ];
     const help = { radius: 'Dot radius before zoom and crowding adjustments. Type a larger value for larger dots.', prominence: 'Largest hub radius compared with an unconnected note. 1 keeps dots the same size.', compensation: 'How much crowding shrinks dots, not the space between them. 0 turns shrinking off.', floor: 'Minimum size kept after shrinking, as a percentage of the requested size. Must be greater than 0.' };
     const message = group.createDiv({ cls: 'graph-ng-explore-note', attr: { role: 'status', 'aria-live': 'polite' } }); message.textContent = this.sizingMessage;
-    const changed = (key: keyof NodeSizingValues, value: string) => { draft[key] = value; this.sizingPreview = false; this.host.previewSizing?.(null); this.sizingMessage = message.textContent = 'Draft not previewed or saved.'; this.updateSizingReadout(); };
-    const curveRow = settingRow(group, 'Size by connections', 'graph-ng-select', 'Chooses how connection counts change dot sizes. Previous keeps the earlier sizing curve.');
-    const curve = curveRow.createEl('select', { attr: { 'aria-label': 'Size by connections' } }); curve.disabled = this.sizingBusy;
-    for (const [v, t] of [['sqrt', 'Square root'], ['log', 'Logarithmic'], ['linear', 'Linear'], ['legacy', 'Previous']]) curve.createEl('option', { value: v, text: t });
-    curve.value = draft.curve; curve.onchange = () => changed('curve', curve.value);
+    const changed = (key: keyof NodeSizingValues, value: string) => { draft[key] = value; this.sizingPreview = false; this.host.previewSizing?.(null); this.sizingMessage = message.textContent = 'Draft not previewed or saved.'; };
+    settingSelect(group, 'Size by connections', 'Chooses how connection counts change dot sizes. Previous keeps the earlier sizing curve.', [['sqrt', 'Square root'], ['log', 'Logarithmic'], ['linear', 'Linear'], ['legacy', 'Previous']], draft.curve, value => changed('curve', value), 'graph-ng-select', this.sizingBusy);
     const base = sizingValues(defaults('links')), initial = { ...base, compensation: base.compensation * 100, floor: base.floor * 100 };
     for (const [key, title, unit, range] of fields) {
       progressiveSlider(group, { label: title, unit, desc: help[key], curve: range, value: draft[key], def: initial[key], disabled: this.sizingBusy, cls: 'graph-ng-sizing-row', attr: { min: key === 'prominence' ? '1' : '0', max: String(key === 'radius' ? MAX_NODE_RADIUS : key === 'prominence' ? 9 : 100) }, changed: value => changed(key, value) });
@@ -616,8 +599,7 @@ export class ExplorePanel {
       parsed.compensation /= 100; parsed.floor /= 100; sizingSettings(this.settings, parsed); return parsed;
     };
     const actions = group.createDiv({ cls: 'graph-ng-form' });
-    const preview = actions.createEl('button', { text: 'Preview sizing' }); preview.disabled = this.sizingBusy || !this.host.previewSizing;
-    preview.onclick = () => { try { this.host.previewSizing?.(values()); this.sizingPreview = true; this.sizingMessage = 'Previewing. Not saved.'; } catch (e) { this.host.previewSizing?.(null); this.sizingMessage = `Not previewed: ${String(e)}`; } message.textContent = this.sizingMessage; this.updateSizingReadout(); };
+    panelButton(actions, 'Preview sizing', () => { try { this.host.previewSizing?.(values()); this.sizingPreview = true; this.sizingMessage = 'Previewing. Not saved.'; } catch (e) { this.host.previewSizing?.(null); this.sizingMessage = `Not previewed: ${String(e)}`; } message.textContent = this.sizingMessage; }, this.sizingBusy || !this.host.previewSizing);
     const apply = actions.createEl('button'); workingText(apply, this.sizingBusy ? 'Saving…' : 'Apply sizing', this.sizingBusy); apply.disabled = this.sizingBusy || !this.host.applySizing;
     apply.onclick = async () => {
       if (this.sizingBusy || this.disposed) return;
@@ -625,8 +607,7 @@ export class ExplorePanel {
       catch (e) { this.host.previewSizing?.(null); this.sizingMessage = `Not saved: ${String(e)}. Preview cleared.`; }
       finally { this.sizingBusy = false; if (!this.disposed) this.render(); }
     };
-    const cancel = actions.createEl('button', { text: 'Restore sizing' }); cancel.disabled = this.sizingBusy;
-    cancel.onclick = () => { this.host.previewSizing?.(null); this.sizingDraft = undefined; this.sizingPreview = false; this.sizingMessage = 'Saved sizing restored'; this.render(); };
+    panelButton(actions, 'Restore sizing', () => { this.host.previewSizing?.(null); this.sizingDraft = undefined; this.sizingPreview = false; this.sizingMessage = 'Saved sizing restored'; this.render(); }, this.sizingBusy);
   }
   /** Opinionated defaults for the loaded graph's shape. Preview is unsaved; only Apply writes. */
   private suggested(host: HTMLElement) {
@@ -642,32 +623,30 @@ export class ExplorePanel {
       finally { this.suggestPreview = false; this.suggestBusy = false; if (!this.disposed) this.render(); }
     };
     for (const item of list) {
-      const row = box.createDiv({ cls: 'graph-ng-suggestion-row' }), copy = suggestionCopy(item);
-      panelHelp(row.createDiv({ cls: 'graph-ng-suggestion' }), copy.change, item.reason);
-      const one = row.createEl('button', { text: 'Apply', attr: { 'aria-label': `Apply ${item.label}` } }); one.disabled = this.suggestBusy || !this.host.applySuggestions; one.onclick = () => apply([item]);
+      const row = box.createDiv({ cls: 'graph-ng-suggestion-row' });
+      panelHelp(row.createDiv({ cls: 'graph-ng-suggestion' }), suggestionCopy(item), item.reason);
+      panelButton(row, 'Apply', () => apply([item]), this.suggestBusy || !this.host.applySuggestions, '', { 'aria-label': `Apply ${item.label}` });
     }
     const actions = box.createDiv({ cls: 'graph-ng-actions' });
-    const preview = actions.createEl('button', { text: this.suggestPreview ? 'End preview' : 'Preview' }); preview.disabled = this.suggestBusy || !this.host.previewSuggestions;
-    preview.onclick = () => {
+    panelButton(actions, this.suggestPreview ? 'End preview' : 'Preview', () => {
       this.suggestPreview = !this.suggestPreview; this.host.previewSuggestions!(this.suggestPreview ? list : null);
       this.suggestMessage = this.suggestPreview ? 'Previewing. Not saved.' : ''; this.render();
-    };
+    }, this.suggestBusy || !this.host.previewSuggestions);
     const all = actions.createEl('button', { cls: 'mod-cta' }); workingText(all, this.suggestBusy ? 'Saving…' : 'Apply all', this.suggestBusy); all.disabled = this.suggestBusy || !this.host.applySuggestions; all.onclick = () => apply(list);
   }
   private display(host: HTMLElement) {
     const s = this.settings, v = s.visuals;
     type NumericVisual = { [K in keyof Visuals]: Visuals[K] extends number ? K : never }[keyof Visuals];
-    const initial = defaultVisuals(), slider = (key: NumericVisual, label: string, curve: Curve, desc?: string) =>
-      this.slider(host, label, curve, () => v[key], value => { v[key] = value; }, false, { def: initial[key], desc });
+    const initial = defaultVisuals(), slider = (key: NumericVisual, label: string, curve: Curve, desc?: string, labels = false, parent = host) =>
+      this.slider(parent, label, curve, () => v[key], value => { v[key] = value; }, labels, { def: initial[key], desc });
+    const choice = <K extends 'edgeCompositing' | 'emphasis' | 'labelStyle' | 'motion'>(parent: HTMLElement, key: K, label: string, desc: string, options: [Visuals[K], string][], labels = false) =>
+      settingSelect(parent, label, desc, options, v[key] ?? 'anchored', value => { v[key] = value as Visuals[K]; this.host.visualsChanged(labels); if (labels) this.render(); });
     this.suggested(host);
     this.nodes(host);
     panelHelp(host.createEl('h4'), 'Live appearance', 'These controls save immediately in plugin settings, not saved views. Closing the panel ends any preview.');
     this.slider(host, 'Label density', { min: .25, max: 3, log: true }, () => s.labelDensity, x => { s.labelDensity = x; }, true, { def: 1 });
     this.edgeMode(host);
-    const composite = settingRow(host, 'Edge compositing', '', 'Density reduces faint overlap; Blend keeps the original strokes. Canvas uses Blend.').createEl('select', { attr: { 'aria-label': 'Edge compositing' } });
-    for (const value of ['blend', 'density'] as const) composite.createEl('option', { text: value === 'blend' ? 'Blend (default)' : 'Density', value });
-    composite.value = v.edgeCompositing;
-    composite.onchange = () => { v.edgeCompositing = composite.value as Visuals['edgeCompositing']; this.host.visualsChanged(false); };
+    choice(host, 'edgeCompositing', 'Edge compositing', 'Density reduces faint overlap; Blend keeps the original strokes. Canvas uses Blend.', [['blend', 'Blend (default)'], ['density', 'Density']]);
     slider('edgeOpacity', 'Edge opacity', { min: 0, max: 1, k: 2.5 }, '0 hides every edge, including highlights; 1 is fully opaque. Relationships remain available in Filters.');
     slider('edgeColorMix', 'Edge color blend', { min: 0, max: 1 });
     slider('glow', 'Glow', { min: 0, max: 1, k: 2 });
@@ -686,30 +665,24 @@ export class ExplorePanel {
     }
     this.flag(host, 'clickOpens', 'Click to open (skip the connection card)');
     const find = host.createEl('details', { cls: 'graph-ng-highlight-options' }); disclosure(find, 'Finding connections');
-    const emphasis = settingRow(find, 'Highlight emphasis', '', 'Adaptive limits growth in large neighbourhoods. Scale keeps the original magnification.').createEl('select', { attr: { 'aria-label': 'Highlight emphasis' } });
-    for (const mode of ['adaptive', 'scale'] as const) emphasis.createEl('option', { value: mode, text: mode === 'adaptive' ? 'Adaptive (default)' : 'Scale' }).selected = v.emphasis === mode;
-    emphasis.onchange = () => { v.emphasis = emphasis.value as typeof v.emphasis; this.host.visualsChanged(false); };
-    this.slider(find, 'Highlighted size target (px)', { min: 0, max: 16, k: 1.5 }, () => v.tierMinSize, x => { v.tierMinSize = x; }, false, { def: initial.tierMinSize, desc: 'Adaptive reduces this target for large neighbourhoods; Scale uses it as a minimum. 0 disables neighbour size targets.' });
-    this.flag(find, 'tierRings', 'Connection rings (around the focus and direct connections)');
-    this.flag(find, 'focusEdges', 'Strong focus edges (fade the rest)');
-    this.flag(find, 'offscreenPips', 'Off-screen arrows (point to direct connections)');
-    this.flag(find, 'tierLegend', 'Connection counts (show a legend for each tier)');
-    this.flag(find, 'focusRipple', 'Selection ripple');
-    this.flag(find, 'bridgesFirst', 'Bridges first: rank connections to other groups higher');
-    this.flag(find, 'breadcrumb', 'Visited notes (show a trail along the top)');
-    this.flag(find, 'minimap', 'Minimap (hidden under 500 px wide)');
-    const labels = settingRow(host, 'Label style', '', 'Anchored names stay one size and point to their dots. Ranked names grow by connection count and fade with zoom.').createEl('select', { attr: { 'aria-label': 'Label style' } });
-    for (const [value, text] of [['anchored', 'Anchored'], ['ranked', 'Ranked']]) labels.createEl('option', { value, text });
-    labels.value = v.labelStyle ?? 'anchored';
-    labels.onchange = () => { v.labelStyle = labels.value as Visuals['labelStyle']; this.host.visualsChanged(true); this.render(); };
+    choice(find, 'emphasis', 'Highlight emphasis', 'Adaptive limits growth in large neighbourhoods. Scale keeps the original magnification.', [['adaptive', 'Adaptive (default)'], ['scale', 'Scale']]);
+    slider('tierMinSize', 'Highlighted size target (px)', { min: 0, max: 16, k: 1.5 }, 'Adaptive reduces this target for large neighbourhoods; Scale uses it as a minimum. 0 disables neighbour size targets.', false, find);
+    for (const [key, label] of [
+      ['tierRings', 'Connection rings (around the focus and direct connections)'],
+      ['focusEdges', 'Strong focus edges (fade the rest)'],
+      ['offscreenPips', 'Off-screen arrows (point to direct connections)'],
+      ['tierLegend', 'Connection counts (show a legend for each tier)'],
+      ['focusRipple', 'Selection ripple'],
+      ['bridgesFirst', 'Bridges first: rank connections to other groups higher'],
+      ['breadcrumb', 'Visited notes (show a trail along the top)'],
+      ['minimap', 'Minimap (hidden under 500 px wide)'],
+    ] as const) this.flag(find, key, label);
+    choice(host, 'labelStyle', 'Label style', 'Anchored names stay one size and point to their dots. Ranked names grow by connection count and fade with zoom.', [['anchored', 'Anchored'], ['ranked', 'Ranked']], true);
     if ((v.labelStyle ?? 'anchored') === 'ranked') {
       this.flag(host, 'labelFade', 'Fade labels (by zoom and importance)', true);
-      this.slider(host, 'Label size range', { min: 1, max: 1.6, k: 1.5 }, () => v.labelTierScale, x => { v.labelTierScale = x; }, true, { def: initial.labelTierScale, desc: 'Focus and well-connected notes get larger names. 1 keeps names one size.' });
+      slider('labelTierScale', 'Label size range', { min: 1, max: 1.6, k: 1.5 }, 'Focus and well-connected notes get larger names. 1 keeps names one size.', true);
     }
-    const motion = settingRow(host, 'Motion', '', 'All modes respect your system’s reduced-motion setting. Reduced and Off settle immediately.').createEl('select', { attr: { 'aria-label': 'Motion' } });
-    for (const [value, text] of [['full', 'Full (default)'], ['reduced', 'Reduced'], ['off', 'Off']]) motion.createEl('option', { value, text });
-    motion.value = v.motion;
-    motion.onchange = () => { v.motion = motion.value as Visuals['motion']; this.host.visualsChanged(false); };
+    choice(host, 'motion', 'Motion', 'All modes respect your system’s reduced-motion setting. Reduced and Off settle immediately.', [['full', 'Full (default)'], ['reduced', 'Reduced'], ['off', 'Off']]);
     this.flag(host, 'labelPlates', 'Label backgrounds');
     this.flag(host, 'zoomAdapt', 'Adapt to zoom: fade crowded edges and shrink hubs when zoomed out');
     if (this.host.setRelationshipDisplay && hasReified(s.declaration)) this.relationshipDisplay(host);
@@ -719,7 +692,7 @@ export class ExplorePanel {
       this.flag(host, 'carrierTint', 'Endpoint colors (for relationship notes)');
       this.flag(host, 'carrierLod', 'Fold into edges (relationship notes when zoomed out)');
     }
-    host.createEl('button', { text: 'Fit graph' }).onclick = () => this.host.fit();
+    panelButton(host, 'Fit graph', () => this.host.fit());
   }
   /** Edges: All / Focus only / Off. Live, saved with plugin settings. */
   private edgeMode(host: HTMLElement) {
@@ -784,14 +757,13 @@ export class ExplorePanel {
   private viewOpen(host: HTMLElement, saved: SavedView) {
     const issue = this.host.savedViewIssue?.(saved) ?? '';
     if (issue) this.note(host, issue);
-    const open = host.createEl('button', { text: 'Open', attr: { 'aria-label': `Open view ${saved.name}` } }); open.disabled = Boolean(issue);
-    open.onclick = async () => {
+    panelButton(host, 'Open', async () => {
       const request = ++this.openRequest;
       this.viewMessage = `Opening ‘${saved.name}’… Requested view; displayed graph may still show the previous result.`; this.render();
       try { await this.host.openSavedView!(saved); if (request === this.openRequest) this.viewMessage = `Opened ‘${saved.name}’.${saved.camera && this.host.mode() !== 'nodes' ? ' Saved camera applies in Notes.' : ''}`; }
       catch (error) { if (request === this.openRequest) this.viewMessage = `Could not finish opening ‘${saved.name}’: ${String(error)}. Displayed graph may still show the previous result.`; }
       if (!this.disposed) this.render();
-    };
+    }, Boolean(issue), '', { 'aria-label': `Open view ${saved.name}` });
   }
   private views(host: HTMLElement) {
     workingText(host.createDiv({ attr: { role: 'status', 'aria-live': 'polite' } }), this.viewMessage, this.viewBusy || this.viewMessage.startsWith('Opening '));
@@ -815,21 +787,20 @@ export class ExplorePanel {
       try { this.viewDefinition(host, draft.folder === undefined ? draft.saved : folderView(draft.folder, draft.saved.name)); }
       catch (error) { this.note(host, String(error)); }
       panelHelp(host, 'What opening changes', 'Opening replaces search, filters and hidden-item choices; matches are checked then. Current appearance, layout and relationship declarations stay unchanged.');
-      const save = host.createEl('button', { text: 'Save view', cls: 'mod-cta' }); save.disabled = this.viewBusy;
-      save.onclick = () => {
+      panelButton(host, 'Save view', () => {
         const target = this.settings.explore.savedViews.find(v => v.name === draft.saved.name.trim());
         if (target) { this.viewCollision = structuredClone(target); this.render(); } else void this.saveViewDraft(null);
-      };
+      }, this.viewBusy, 'mod-cta');
       if (this.viewCollision) {
         this.note(host, `A view named ‘${this.viewCollision.name}’ already exists.`);
         const expected = this.viewCollision;
-        const replace = host.createEl('button', { text: 'Replace existing view' }); replace.disabled = this.viewBusy; replace.onclick = () => { void this.saveViewDraft(expected); };
-        const keep = host.createEl('button', { text: 'Keep editing' }); keep.disabled = this.viewBusy; keep.onclick = () => { this.viewCollision = undefined; this.render(); };
+        panelButton(host, 'Replace existing view', () => { void this.saveViewDraft(expected); }, this.viewBusy);
+        panelButton(host, 'Keep editing', () => { this.viewCollision = undefined; this.render(); }, this.viewBusy);
       }
-      const cancel = host.createEl('button', { text: 'Cancel' }); cancel.disabled = this.viewBusy; cancel.onclick = back;
+      panelButton(host, 'Cancel', back, this.viewBusy);
       return;
     }
-    if (this.viewSaved) { this.viewOpen(host, this.viewSaved); host.createEl('button', { text: 'Back to views' }).onclick = back; return; }
+    if (this.viewSaved) { this.viewOpen(host, this.viewSaved); panelButton(host, 'Back to views', back); return; }
     const s = this.settings;
     if (!s.explore.savedViews.length) this.note(host, 'No saved views yet.');
     for (const saved of s.explore.savedViews) {
@@ -840,22 +811,21 @@ export class ExplorePanel {
       disclosure(definition, 'View definition', { 'aria-label': `View definition: ${saved.name}` }); this.viewDefinition(definition, saved);
       const actions = item.createDiv({ cls: 'graph-ng-row' });
       this.viewOpen(actions, saved);
-      const remove = actions.createEl('button', { text: 'Delete', attr: { 'aria-label': `Delete view ${saved.name}` } }); remove.disabled = this.viewBusy;
-      remove.onclick = async () => {
+      panelButton(actions, 'Delete', async () => {
         this.viewBusy = true; this.viewMessage = 'Saving…'; this.render();
         try { await this.host.commitSavedView!(null, saved); this.viewMessage = `Deleted ‘${saved.name}’. Current graph unchanged.`; }
         catch (error) { this.viewMessage = `View was not deleted: ${String(error)}`; }
         finally { this.viewBusy = false; if (!this.disposed) this.render(); }
-      };
+      }, this.viewBusy, '', { 'aria-label': `Delete view ${saved.name}` });
     }
     const prepare = (folder?: string) => {
       this.viewSaved = undefined; this.viewMessage = ''; this.viewCollision = undefined;
       this.viewDraft = { saved: { name: '', view: structuredClone(this.view), camera: this.host.camera() }, folder, configuration: this.viewConfiguration() }; this.render();
       this.body.querySelector<HTMLInputElement>('input')?.focus();
     };
-    const current = host.createEl('button', { text: 'Save current view…' }); current.disabled = this.viewBusy; current.onclick = () => prepare();
+    panelButton(host, 'Save current view…', () => prepare(), this.viewBusy);
     host.createEl('h4', { text: 'Starting points' });
     panelHelp(host, 'Focus on a folder', 'Explore one folder using the current graph’s relationships. Prepare a view without changing the graph.');
-    const start = host.createEl('button', { text: 'Set up folder view…' }); start.disabled = this.viewBusy; start.onclick = () => prepare('');
+    panelButton(host, 'Set up folder view…', () => prepare(''), this.viewBusy);
   }
 }
