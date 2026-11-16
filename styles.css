@@ -556,3 +556,4 @@ button.graph-ng-help-trigger:hover { color:var(--text-accent); }
 .graph-ng-explore-views > div > h4 { padding-top:var(--gng-space-3); margin-top:var(--gng-space-2); border-top:1px solid var(--background-modifier-border); }
 .graph-ng-explore-views [role=status]:empty { display:none; }
 @media (prefers-reduced-motion: reduce) { .graph-ng-setting > .checkbox-container, .graph-ng-setting > .checkbox-container::after { transition:none; } }
+.graph-ng-explore-counts[hidden] ~ .graph-ng-status { border-top:0; }
