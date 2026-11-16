@@ -1,3 +1,4 @@
+import { obsidianMenu } from '../src/context-menu';
 import { test, expect } from 'bun:test';
 import { actions, Interaction, type RendererControls } from '../src/interaction';
 
@@ -108,4 +109,21 @@ test('hub hover updates hints from empty canvas and between hubs, then resets on
   expect(hints).toEqual([0, 1]); input.pointerLeave();
   input.pointerMove(at(9, 250, 300, 'mouse')); expect(hints).toEqual([0, 1, -1, 1]);
   input.detach({ removeEventListener() {} } as any);
+});
+
+
+test('public menu separates opening, navigation, copying and host file actions without extra heading rows', () => {
+  const rows: string[] = [], clicked: string[] = [];
+  class Menu {
+    addSeparator() { rows.push('|'); }
+    addItem(make: (item: any) => void) { const item = { setTitle(t: string) { rows.push(t); return item; }, onClick(run: () => void) { run(); return item; }, setChecked() {} }; make(item); }
+    showAtPosition() {}
+  }
+  const present = obsidianMenu({ workspace: { trigger() { rows.push('Host action'); } } } as any, Menu as any, () => ({} as any));
+  const entries = ['menu-open', 'menu-tab', 'menu-focus', 'menu-only', 'find-path', 'menu-copy'].map(id => ({ id, title: id, run: () => { clicked.push(id); } }));
+  present(entries, 0, 0, 'Synthetic/Note.md');
+  expect(rows).toEqual(['menu-open', 'menu-tab', '|', 'menu-focus', 'menu-only', 'find-path', '|', 'menu-copy', '|', 'Host action']);
+  expect(clicked).toEqual(entries.map(e => e.id)); rows.length = 0;
+  present(entries.slice(2, 5), 0, 0);
+  expect(rows).toEqual(['menu-focus', 'menu-only', 'find-path']);
 });

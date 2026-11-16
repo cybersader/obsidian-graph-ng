@@ -27,7 +27,7 @@ export class ControlElement {
   setSelectionRange(start: number | null, end: number | null) { this.selectionStart = start; this.selectionEnd = end; }
   id = '';
   dataset: Record<string, string> = {};
-  onclick?: () => void;
+  onclick?: (event?: any) => void;
   static active?: ControlElement;
   constructor(readonly tagName = 'DIV') {}
   createEl(tag: string, options: any = {}) {
@@ -48,15 +48,15 @@ export class ControlElement {
   remove() { if (this.parent) this.parent.children = this.parent.children.filter(child => child !== this); }
   onblur?: () => void;
   focus() { if (this.disabled) return; if (ControlElement.active !== this) ControlElement.active?.onblur?.(); ControlElement.active = this; }
-  click() { if (!this.disabled) this.onclick?.(); }
+  click() { if (!this.disabled) this.onclick?.({ preventDefault() {} }); }
   querySelectorAll(selector: string): ControlElement[] {
     const all = this.children.flatMap(child => [child, ...child.querySelectorAll('*')]);
     return selector === '*' ? all : all.filter(child => selector.split(',').map(s => s.trim()).some(s => s.startsWith('.') ? child.classes.has(s.slice(1)) : child.tagName.toLowerCase() === s));
   }
   querySelector(selector: string) { return this.querySelectorAll(selector)[0]; }
 }
-/** A button by its visible text, else (icon buttons) by its accessible name. */
+/** A button or disclosure by its visible text, else (icon buttons) by its accessible name. */
 export function control(root: ControlElement, text: string) {
-  const buttons = root.querySelectorAll('button'), found = buttons.find(child => child.textContent === text) ?? buttons.find(child => child.attributes['aria-label'] === text);
+  const buttons = root.querySelectorAll('button,summary'), found = buttons.find(child => child.textContent === text) ?? buttons.find(child => child.attributes['aria-label'] === text);
   expect(found).toBeDefined(); return found!;
 }

@@ -1,3 +1,4 @@
+import { panelHelp } from './panel-help';
 import { registerAction, type RendererControls } from './interaction';
 import { VIEW_LIMITS } from './core/explore';
 import { renderPath, type RenderProjection } from './render-projection';
@@ -30,7 +31,6 @@ export class Omnibox {
   readonly findList: HTMLElement;
   readonly findStatus: HTMLElement;
   readonly findRing: HTMLElement;
-  private findKeys: HTMLElement;
   /** Ranked note indices. */
   findHits: number[] = [];
   /** Previewed row, or -1 (Enter then takes the first). */
@@ -48,17 +48,15 @@ export class Omnibox {
     for (const [k, v] of [['role', 'combobox'], ['aria-label', 'Find a note by name or ID'], ['aria-autocomplete', 'list'], ['aria-expanded', 'false'], ['aria-controls', this.findId]]) input.setAttribute(k!, v!);
     this.findList = make('div', 'graph-ng-find-list', root); this.findList.id = this.findId; this.findList.setAttribute('role', 'listbox');
     this.findStatus = make('div', 'graph-ng-find-status', root); this.findStatus.setAttribute('aria-live', 'polite');
-    this.findKeys = make('div', 'graph-ng-find-keys', root);
+    panelHelp(make('div', 'graph-ng-find-keys', root), 'Keys', '↑ ↓ preview. Enter goes to a note. Shift+Enter filters. Alt+Enter finds a path from the selected note. Escape closes search.');
     this.findRing = make('div', 'graph-ng-find-ring', parent); this.findRing.hidden = true; this.findRing.setAttribute('aria-hidden', 'true');
     input.oninput = () => { this.findReset(); this.findTimer = setTimeout(() => void this.findSearch(), SEARCH_DEBOUNCE_MS); };
     input.onkeydown = this.findKey;
-    input.onblur = (e: FocusEvent) => { if (!root.contains(e.relatedTarget as Node | null)) this.findClose(false); };
+    root.addEventListener('focusout', this.findBlur);
   }
+  private findBlur = (e: FocusEvent) => { if (!this.findBox.contains(e.relatedTarget as Node | null)) this.findClose(false); };
   get findOpen() { return !this.findBox.hidden; }
   findShow() {
-    // With a note selected, Alt+Enter (or Alt-click) on a result is a keyboard-only path start.
-    const from = this.host.selected, p = from >= 0 ? this.findSource.projection() : undefined, name = p && from < p.nodeCount ? renderPath(p, from).replace(/^.*\//, '').replace(/\.md$/i, '') : '';
-    this.findKeys.textContent = 'Enter: go there. Shift+Enter: filter.' + (name ? ` Alt+Enter: find path from ${name}.` : '');
     this.findBox.hidden = false; this.findInput.focus(); this.findInput.select?.(); if (this.findInput.value) void this.findSearch(); }
   private findReset() {
     this.findToken++; clearTimeout(this.findTimer); this.findHits = []; this.findActive = -1; this.ranked = '';
@@ -70,7 +68,8 @@ export class Omnibox {
   }
   dispose() {
     this.findClose(false);
-    this.findInput.oninput = this.findInput.onkeydown = this.findInput.onblur = null;
+    this.findInput.oninput = this.findInput.onkeydown = null;
+    this.findBox.removeEventListener('focusout', this.findBlur);
     this.findBox.remove(); this.findRing.remove();
   }
   /** Rank the notes the view can open for the box's query; a newer search or close wins. */
@@ -91,12 +90,11 @@ export class Omnibox {
     const list = this.findList; list.textContent = ''; this.findInput.setAttribute('aria-expanded', String(this.findHits.length > 0)); this.findInput.removeAttribute('aria-activedescendant');
     this.findStatus.textContent = this.ranked && !this.findHits.length ? 'No matching notes' : '';
     if (!p) return;
-    const o = p.offsets;
     this.findHits.forEach((node, i) => {
-      const row = list.appendChild(Object.assign(document.createElement('div'), { className: 'graph-ng-find-row', id: `${this.findId}-${i}` })), path = renderPath(p, node), count = o[node + 1]! - o[node]!;
+      const row = list.appendChild(Object.assign(document.createElement('div'), { className: 'graph-ng-find-row', id: `${this.findId}-${i}` })), path = renderPath(p, node);
       row.setAttribute('role', 'option'); row.setAttribute('aria-selected', 'false');
       const span = (cls: string, text: string) => { row.appendChild(Object.assign(document.createElement('span'), { className: cls, textContent: text })); };
-      span('graph-ng-find-name', path.slice(path.lastIndexOf('/') + 1).replace(/\.md$/i, '')); span('graph-ng-find-count', `${count.toLocaleString()} connection${count === 1 ? '' : 's'}`); span('graph-ng-find-path', path);
+      span('graph-ng-find-name', path.slice(path.lastIndexOf('/') + 1).replace(/\.md$/i, '')); span('graph-ng-find-group', this.host.groupLabel?.(node) ?? 'Ungrouped'); span('graph-ng-find-path', path);
       // Keep focus in the input so a row click is not a blur.
       row.onpointerdown = (e: PointerEvent) => e.preventDefault(); row.onclick = (e: MouseEvent) => void this.findGo(i, e.altKey);
     });

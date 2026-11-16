@@ -44,6 +44,8 @@ export interface RendererControls {
   hint(hub: number, node: number, edge: number, cursor: boolean): void;
   /** Note is filter-visible and can be opened. */
   openable(node: number): boolean;
+  /** Current declared group label, for presentation only. */
+  groupLabel?(node: number): string;
   open(node: number): void;
   openHub(group: number): void;
   stopFlight(): void;

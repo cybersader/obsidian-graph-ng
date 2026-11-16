@@ -16,6 +16,10 @@ class El {
   get textContent(): string { return this.text + this.children.map(c => c.textContent).join(''); }
   set textContent(v: string) { this.children = []; this.text = v; }
   appendChild(c: El) { c.parentElement = this; this.children.push(c); return c; }
+  createEl(tag: string, options: any = {}) { const c = this.appendChild(new El(tag)); c.className = options.cls ?? ''; c.textContent = options.text ?? ''; for (const [k, v] of Object.entries(options.attr ?? {})) c.setAttribute(k, String(v)); return c; }
+  createSpan(options?: any) { return this.createEl('span', options); }
+  addEventListener(type: string, fn: (e: any) => void) { this[`on${type}`] = fn; }
+  removeEventListener(type: string) { this[`on${type}`] = null; }
   contains(n: unknown): boolean { return n === this || this.children.some(c => c.contains(n)); }
   setAttribute(k: string, v: string) { this.attrs[k] = v; }
   getAttribute(k: string) { return this.attrs[k] ?? null; }
@@ -47,6 +51,7 @@ function rig(p = render(), w = worker(), visible = Uint8Array.from({ length: p.n
   const host = {
     canvas, live: true, width: 200, height: 300, visible, selected: -1, hovered: -1, focusNode: -1, lensNode: -1, edgeCard: false, isolated: false,
     get cardNode() { return cardNode; },
+    groupLabel: () => '<Declared group>',
     openable: (n: number) => !!visible[n],
     screenPoint: (n: number) => ({ x: n * 100 - 50, y: 40 }),
     focusCanvas: () => { calls.push('focus'); canvas.focus(); },
@@ -116,9 +121,9 @@ test('find-and-fly key flow: / opens, typing ranks after a pause, arrows ring wi
   expect(r.masks.length).toBe(1); expect([...r.masks[0]!]).toEqual([1, 1, 1, 1, 1, 0]);
   const rows = (box().findList as unknown as El).find('graph-ng-find-row');
   expect(rows.map(row => row.children[0]!.textContent)).toEqual(['alpha', 'Alphabet soup', 'Zeta Alpha', 'Beta']);
-  // Each row: name, connection count, path.
-  expect(rows[0]!.children.map(c => c.textContent)).toEqual(['alpha', '3 connections', 'Folder/alpha.md']);
-  expect(rows[2]!.children[1]!.textContent).toBe('1 connection');
+  // Each row: name, current declared group, path.
+  expect(rows[0]!.children.map(c => c.textContent)).toEqual(['alpha', '<Declared group>', 'Folder/alpha.md']);
+  expect(rows[2]!.children[1]!.textContent).toBe('<Declared group>');
   expect(box().findInput.getAttribute('aria-expanded')).toBe('true');
   // Arrows preview with the ring only.
   r.type('ArrowDown'); r.type('ArrowDown'); r.type('ArrowUp');
@@ -178,12 +183,12 @@ test('a newer query wins over a slower older one; a failed ranking shows no rows
 test('with a note selected, Alt+Enter (or Alt-click) on a result finds the path from it; the box says so', async () => {
   const r = rig(), box = r.box, paths: number[][] = [], host = r.host as unknown as { selected: number; findPath: (a: number, b: number) => void };
   host.findPath = (a, b) => { paths.push([a, b]); };
-  // Nothing selected: no path hint, Alt+Enter just flies.
-  r.key('/'); expect((box() as unknown as { findBox: El }).findBox.textContent).not.toContain('Alt+Enter');
+  // Nothing selected: on-demand help describes the shortcut, but Alt+Enter just flies.
+  r.key('/'); expect((box() as unknown as { findBox: El }).findBox.find('graph-ng-help-popover')[0]!.hidden).toBe(true);
   box().findInput.value = 'gam'; r.type('Enter', { altKey: true }); await Bun.sleep(0);
   expect(r.calls).toEqual(['focus', 'fly 4']); expect(paths).toEqual([]);
   host.selected = 1; r.calls.length = 0;
-  r.key('/'); expect((box() as unknown as { findBox: El }).findBox.textContent).toContain('Alt+Enter: find path from alpha.');
+  r.key('/'); expect((box() as unknown as { findBox: El }).findBox.textContent).toContain('Alt+Enter finds a path from the selected note.');
   box().findInput.value = 'beta'; r.type('Enter', { altKey: true }); await Bun.sleep(0);
   expect(paths).toEqual([[1, 3]]); expect(r.calls).toEqual(['focus']); expect(box().findOpen).toBe(false);
   // Alt-click on a row does the same; a plain Enter still flies.
@@ -247,4 +252,14 @@ test('cold worker search builds its text cache in cancellable chunks, never on a
   const next = drain(searchSteps(w, 'note', visible, 20, 256));
   expect(next.value.length).toBe(20); expect(reads).toBe(n + 256);
   drain(searchSteps(w, 'note 1', visible)); expect(reads).toBe(n + 256);
+});
+
+
+test('search help is on demand and keeps focus inside the box until Tab leaves it', () => {
+  const r = rig(), box = r.box(), root = box.findBox as unknown as El;
+  box.findShow();
+  const tip = root.find('graph-ng-help-popover')[0]!, help = root.find('graph-ng-help-trigger')[0]!;
+  expect(help.textContent).toBe('Keys'); expect(tip.hidden).toBe(true); expect(tip.textContent).toContain('Alt+Enter');
+  root.onfocusout!({ relatedTarget: help }); expect(box.findOpen).toBe(true);
+  root.onfocusout!({ relatedTarget: new El('button') }); expect(box.findOpen).toBe(false);
 });

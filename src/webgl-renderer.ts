@@ -1304,13 +1304,14 @@ export class DetailRenderer {
     const t = this.pathView!, c = this.noteCard, p = this.projection;
     const open = (n: number) => button(this.name(n), 'Open ' + this.name(n), () => this.cardAction('open', n));
     this.card.hide(); c.setAttribute('role', 'region'); c.setAttribute('aria-label', 'Path');
-    const box = c.appendChild(el('div', '', 'graph-ng-relationships')), head = box.appendChild(el('div', '', 'graph-ng-card-head'));
+    const box = c.appendChild(el('div', '', 'graph-ng-path-card')), head = box.appendChild(el('div', '', 'graph-ng-card-head'));
     head.append(el('strong', `Path: ${this.name(t.from)} → ${this.name(t.to)}`, 'graph-ng-card-title'), closeButton(() => { this.selectNote(-1); this.canvas.focus(); }));
     if (t.hops.length) box.append(el('small', `${t.hops.length} step${t.hops.length === 1 ? '' : 's'}${t.found.length > 1 ? ` (path ${t.found.length})` : ''}`));
+    if (t.hops.length) box.append(open(t.from));
     const list = box.appendChild(el('ol', '', 'graph-ng-path')); list.setAttribute('aria-label', 'Path');
     for (const h of hopRows(t.hops, p)) {
       const row = list.appendChild(el('li', '', 'graph-ng-relationship')), type = h.type + (h.reverse ? ' (reverse)' : '');
-      row.append(open(h.from), h.carrier >= 0 ? button(type, 'Open relationship note ' + this.name(h.carrier), () => this.cardAction('open', h.carrier)) : el('span', type), open(h.to));
+      row.append(h.carrier >= 0 ? button(type, 'Open relationship note ' + this.name(h.carrier), () => this.cardAction('open', h.carrier)) : el('span', type), open(h.to));
     }
     const note = box.appendChild(el('div', t.note, 'graph-ng-explore-note')); note.setAttribute('aria-live', 'polite');
     if (t.hops.length && !t.note && t.found.length <= MAX_ALTERNATES) box.append(button('Another path', 'Find another path that shares no notes', () => this.nextPath()));
@@ -1739,6 +1740,7 @@ export class DetailRenderer {
         this.container.removeAttribute('title');
         if (cursor) this.canvas.style.cursor = node >= 0 || hub >= 0 || edge >= 0 ? 'pointer' : 'grab';
       },
+      groupLabel: n => this.view.groupLabels?.[this.view.groupCodes?.[n] ?? -1] ?? 'Ungrouped',
       openable: n => !!this.filterVisible[n],
       open: n => this.onNode(n),
       openHub: g => this.onHub?.(g),

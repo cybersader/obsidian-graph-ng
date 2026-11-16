@@ -1,4 +1,5 @@
 import { setIcon } from 'obsidian';
+import { disclosure, panelHelp } from './panel-help';
 import type { RenderProjection } from './render-projection';
 /** Incident-edge CSR (`incidentEdges`): per node, every edge row touching it. */
 export interface Incidence { offsets: Uint32Array; edges: Uint32Array }
@@ -201,13 +202,14 @@ export class ConnectionCard {
   private navId = `graph-ng-connections-${++navigatorId}`;
   private moving = false;
   private lensToggle?: HTMLElement;
+  private more?: HTMLDetailsElement;
   constructor(readonly root: HTMLElement, private host: CardHost) {}
   show(n: number) {
     if (n !== this.node) { this.setQuery(''); this.navOpen.clear(); this.navPages.clear(); this.navSecond.clear(); this.navGroupLimit = 100; this.navSections = []; }
     this.node = n; if (!this.moving) this.history.visit(n); this.render();
   }
   /** Closing keeps the visit history (the breadcrumb outlives the card); the renderer clears it on a view change. */
-  hide() { this.setQuery(this.navQuery); if (this.node >= 0) this.host.disclose?.(this.node, undefined, []); this.node = -1; this.rows = []; this.size = undefined; this.lensToggle = undefined; this.navList = this.navInput = this.navStatus = undefined; this.navSections = []; this.root.textContent = ''; this.root.removeAttribute?.('aria-label'); }
+  hide() { this.setQuery(this.navQuery); if (this.node >= 0) this.host.disclose?.(this.node, undefined, []); this.node = -1; this.rows = []; this.size = undefined; this.lensToggle = this.more = undefined; this.navList = this.navInput = this.navStatus = undefined; this.navSections = []; this.root.textContent = ''; this.root.removeAttribute?.('aria-label'); }
   /** Back (-1) or forward (1) through visited notes, also from a closed card (the breadcrumb). */
   step(step: number) {
     const n = this.history.go(step); if (n === undefined) return false;
@@ -234,24 +236,20 @@ export class ConnectionCard {
     const back = head.appendChild(iconButton('chevron-left', 'Back', () => this.step(-1))), forward = head.appendChild(iconButton('chevron-right', 'Forward', () => this.step(1)));
     back.disabled = at <= 0; forward.disabled = at >= items.length - 1;
     head.append(closeButton(() => h.close()));
-    if (at > 0) {
-      const trail = c.appendChild(el('nav', '', 'graph-ng-card-trail')); trail.setAttribute('aria-label', 'Visited notes');
-      for (let i = Math.max(0, at - 3); i < at; i++) trail.append(button(h.name(items[i]!), 'Back to ' + h.name(items[i]!), () => this.step(i - this.history.at)));
-    }
     const caption = h.title?.(n)?.trim().slice(0, 256);
     if (caption && caption !== name) c.append(el('div', caption, 'graph-ng-card-caption'));
-    // One segmented "Open" control, then an icon+label grid that wraps instead of clipping.
-    const act = (a: CardAction) => () => h.act(a, n), open = c.appendChild(el('div', '', 'graph-ng-card-open'));
-    open.setAttribute('role', 'group'); open.setAttribute('aria-label', 'Open ' + name);
-    open.append(button('Open', 'Open ' + name, act('open')), button('New tab', `Open ${name} in a new tab`, act('tab')), button('Right', `Open ${name} to the right`, act('split')));
-    const actions = c.appendChild(el('div', '', 'graph-ng-card-actions')), tool = (icon: string, text: string, label: string, a: CardAction) => actions.appendChild(iconButton(icon, label, act(a), text, ''));
-    tool('crosshair', 'Focus', `Focus here: fit ${name} and its direct connections`, 'focus');
-    // Expand shows only when something is hidden: never a disabled "+0".
+    const act = (a: CardAction) => () => h.act(a, n), primary = c.appendChild(el('div', '', 'graph-ng-card-primary'));
+    primary.append(button('Open note', 'Open ' + name, act('open'), 'mod-cta'));
     const hidden = h.frontier?.(n) ?? 0;
-    if (!h.isolated()) tool('network', 'Only connections', 'Show only connections of ' + name, 'isolate');
-    else if (hidden) tool('plus', 'Expand', `Add ${hidden} hidden neighbours of ${name}`, 'expand').append(el('span', '+' + hidden, 'graph-ng-count'));
-    this.lensToggle = h.lensed ? tool('search', 'Lens', 'Connection lens for ' + name, 'lens') : undefined; this.syncLens();
-    tool('link', 'Copy link', 'Copy link to ' + name, 'copy');
+    if (!h.isolated()) primary.append(button('Show only connections', 'Show only connections of ' + name, act('isolate')));
+    else if (hidden) primary.append(button(`Expand ${hidden} hidden neighbours`, `Add ${hidden} hidden neighbours of ${name}`, act('expand')));
+    const more = this.more = c.appendChild(el('details', '', 'graph-ng-card-more')) as HTMLDetailsElement;
+    disclosure(more, 'More actions');
+    more.ontoggle = () => { this.size = undefined; h.cue(-1); };
+    const actions = more.appendChild(el('div', '', 'graph-ng-card-actions')), tool = (text: string, a: CardAction) => actions.appendChild(button(text, text + ': ' + name, act(a)));
+    tool('New tab', 'tab'); tool('Open to the right', 'split'); tool('Focus here', 'focus');
+    this.lensToggle = h.lensed ? tool('Connection lens', 'lens') : undefined; this.syncLens();
+    tool('Copy link', 'copy');
     const nav = c.appendChild(el('div', '', 'graph-ng-navigator'));
     this.navStatus = nav.appendChild(el('div', '', 'graph-ng-nav-status')); this.navStatus.setAttribute('role', 'status');
     const field = nav.appendChild(el('label', '', 'graph-ng-connection-filter'));
@@ -260,7 +258,7 @@ export class ConnectionCard {
     input.type = 'search'; input.placeholder = 'Name, ID or group'; input.maxLength = 160; input.value = this.navQuery;
     input.setAttribute('aria-label', 'Filter connections by name, ID, group or relationship'); input.setAttribute('aria-controls', this.navId);
     input.oninput = () => { clearTimeout(this.navTimer); this.navTimer = setTimeout(() => { this.setQuery(input.value); this.paintConnections(); }, NAV_DEBOUNCE_MS); };
-    this.navList = nav.appendChild(el('div', '', 'graph-ng-connections')); this.navList.id = this.navId; this.navList.setAttribute('aria-label', 'Direct connections by declared group');
+    this.navList = nav.appendChild(el('div', '', 'graph-ng-connections')); this.navList.id = this.navId;
     if (initial && (direct <= ROWS || this.navSections.length === 1)) for (const section of this.navSections) this.navOpen.add(section.key);
     this.paintConnections();
   }
@@ -280,7 +278,7 @@ export class ConnectionCard {
     const meta = text.appendChild(el('span', '', 'graph-ng-connection-meta'));
     if (flat) meta.append(el('span', entry.label, 'graph-ng-connection-label'));
     if (id) meta.append(el('span', entry.name, 'graph-ng-connection-id'));
-    meta.append(el('span', entry.relations.join(', '), 'graph-ng-connection-relation')); row.title = [title, entry.name, ...(flat ? [entry.label] : []), ...entry.relations].join('\n');
+    meta.append(el('span', entry.relations.join(', '), 'graph-ng-connection-relation'));
     row.onmouseenter = row.onfocus = () => this.host.cue(entry.node); row.onmouseleave = row.onblur = () => this.host.cue(-1); this.rows.push(row);
     return row;
   }
@@ -291,46 +289,49 @@ export class ConnectionCard {
     const total = sections.reduce((sum, s) => sum + s.entries.length, 0);
     // A hub with some (not all) sections open lights only those sections on the graph.
     const open = sections.filter(s => this.navOpen.has(s.key)), scoped = total > ROWS && open.length > 0 && open.length < sections.length;
-    list.textContent = ''; list.scrollTop = 0; this.rows = []; this.size = undefined;
+    list.textContent = ''; this.root.scrollTop = 0; this.rows = []; this.size = undefined;
     if (searching) {
       const found = filterConnections(sections, this.navQuery, this.title), shown = this.navShown;
       this.navStatus!.textContent = `${found.length.toLocaleString()} matching connection${found.length === 1 ? '' : 's'}`;
-      if (!found.length) list.append(el('div', 'No matching connections. Try another name, ID or group.', 'graph-ng-explore-note'));
+      if (!found.length) list.append(el('div', 'No matching connections', 'graph-ng-explore-note'));
       for (const entry of found.slice(0, shown)) list.append(this.row(entry, true));
       if (found.length > shown) list.append(button(`Show ${Math.min(ROWS, found.length - shown)} more`, 'Show more matching connections', () => {
-        const scroll = list.scrollTop; this.navShown += ROWS; this.paintConnections(); list.scrollTop = scroll; this.rows[shown]?.focus();
+        const scroll = this.root.scrollTop; this.navShown += ROWS; this.paintConnections(); this.root.scrollTop = scroll; this.rows[shown]?.focus();
       }, 'graph-ng-connection-more'));
     } else {
       this.navStatus!.textContent = `${total.toLocaleString()} direct connection${total === 1 ? '' : 's'} in ${sections.length.toLocaleString()} group${sections.length === 1 ? '' : 's'}`;
       if (!total) list.append(el('div', 'No direct connections', 'graph-ng-explore-note'));
       for (const section of sections.slice(0, this.navGroupLimit)) {
         const { key, label, entries } = section, expanded = this.navOpen.has(key);
-        const block = list.appendChild(el('section', '', 'graph-ng-connection-section'));
-        const toggle = block.appendChild(button('', `${label}, ${entries.length} connections`, () => {
-          const scroll = list.scrollTop;
+        const block = list.appendChild(el('details', '', 'graph-ng-connection-section')) as HTMLDetailsElement; block.open = expanded;
+        const toggle = disclosure(block, label, { 'aria-label': `${label}, ${entries.length} connections` });
+        toggle.className = 'graph-ng-connection-group';
+        toggle.onclick = e => {
+          e.preventDefault();
+          const scroll = this.root.scrollTop;
           if (expanded) this.navOpen.delete(key); else this.navOpen.add(key);
-          this.paintConnections(); list.scrollTop = scroll;
+          this.paintConnections(); this.root.scrollTop = scroll;
           (list.querySelector(`[data-group="${key}"]`) as HTMLElement | null)?.focus();
-        }, 'graph-ng-connection-group'));
+        };
         toggle.dataset.group = String(key); toggle.setAttribute('aria-expanded', String(expanded)); toggle.setAttribute('aria-controls', `${this.navId}-${key}`);
-        toggle.append(el('span', expanded ? '⌄' : '›', 'graph-ng-section-arrow'), el('span', label), el('span', entries.length.toLocaleString(), 'graph-ng-count'));
+        toggle.append(el('span', entries.length.toLocaleString(), 'graph-ng-count'));
         const body = block.appendChild(el('div')); body.id = `${this.navId}-${key}`; body.hidden = !expanded;
         if (!expanded) continue;
         if (scoped) {
           const on = this.navSecond.has(key), two = body.appendChild(button('Neighbours of neighbours', `Show neighbours of neighbours for ${label} on the graph`, () => {
-            const scroll = list.scrollTop; if (on) this.navSecond.delete(key); else this.navSecond.add(key);
-            this.paintConnections(); list.scrollTop = scroll; (list.querySelector(`[data-second="${key}"]`) as HTMLElement | null)?.focus();
+            const scroll = this.root.scrollTop; if (on) this.navSecond.delete(key); else this.navSecond.add(key);
+            this.paintConnections(); this.root.scrollTop = scroll; (list.querySelector(`[data-second="${key}"]`) as HTMLElement | null)?.focus();
           }, 'graph-ng-section-second'));
           two.dataset.second = String(key); two.setAttribute('aria-pressed', String(on));
         }
         const limit = this.navPages.get(key) ?? ROWS;
         for (const entry of entries.slice(0, limit)) body.append(this.row(entry, false));
         if (entries.length > limit) body.append(button(`Show ${Math.min(ROWS, entries.length - limit)} more`, `Show more connections in ${label}`, () => {
-          const scroll = list.scrollTop, at = this.rows.findIndex(r => body.contains(r)); this.navPages.set(key, limit + ROWS); this.paintConnections(); list.scrollTop = scroll; this.rows[at + limit]?.focus();
+          const scroll = this.root.scrollTop, at = this.rows.findIndex(r => body.contains(r)); this.navPages.set(key, limit + ROWS); this.paintConnections(); this.root.scrollTop = scroll; this.rows[at + limit]?.focus();
         }, 'graph-ng-connection-more'));
       }
       if (sections.length > this.navGroupLimit) list.append(button('Show more groups', `Show ${Math.min(100, sections.length - this.navGroupLimit)} more groups`, () => {
-        const scroll = list.scrollTop, next = sections[this.navGroupLimit]!; this.navGroupLimit += 100; this.paintConnections(); list.scrollTop = scroll;
+        const scroll = this.root.scrollTop, next = sections[this.navGroupLimit]!; this.navGroupLimit += 100; this.paintConnections(); this.root.scrollTop = scroll;
         (list.querySelector(`[data-group="${next.key}"]`) as HTMLElement | null)?.focus();
       }));
     }
@@ -345,7 +346,7 @@ export class ConnectionCard {
     if (this.node < 0) return;
     this.setQuery(''); this.navPages.clear(); this.navOpen.clear();
     const first = this.navSections[0]; if (first) this.navOpen.add(first.key);
-    this.paintConnections(); this.navInput!.focus({ preventScroll: true }); this.navList!.scrollTop = 0;
+    this.paintConnections(); this.navInput!.focus({ preventScroll: true }); this.root.scrollTop = 0;
   }
   /** Card keys: Escape clears the find box, then closes; Alt+Left/Right go back/forward; Down from the
    * box enters the rows, arrows/Home/End move through them, Up from the first returns; Enter travels. */
@@ -355,6 +356,7 @@ export class ConnectionCard {
     // The card's input owns text-editing keys (especially L/R); never forward them to graph actions.
     else if (inBox && e.key !== 'Escape' && !alt) { e.stopPropagation?.(); return true; }
     else if (e.key === 'Escape' && (this.navQuery || this.navInput?.value)) { this.setQuery(''); this.paintConnections(); this.navInput!.focus({ preventScroll: true }); }
+    else if (e.key === 'Escape' && this.more?.open) { this.more.open = false; this.more.querySelector('summary')?.focus(); }
     else if (e.key === 'Escape') this.host.close();
     else if (alt) this.step(e.key === 'ArrowLeft' ? -1 : 1);
     else if (i === 0 && e.key === 'ArrowUp' && this.navInput) this.navInput.focus({ preventScroll: true });
@@ -373,9 +375,9 @@ export function isolationBar(bar: HTMLElement, name: string, hops: number, count
   const title = bar.appendChild(el('span', `Only connections of ${name}, reach ${hops}, ${count.toLocaleString()} ${count === 1 ? 'note' : 'notes'}`, 'graph-ng-count'));
   title.setAttribute('role', 'status');
   const controls = bar.appendChild(el('div', '', 'graph-ng-reach')); controls.setAttribute('role', 'group'); controls.setAttribute('aria-label', 'Reach');
-  controls.append(el('span', 'Reach'));
+  panelHelp(controls, 'Reach', 'Steps from the starting note. Changing reach resets expanded branches.' + (badges ? ' Expand a + badge to reveal hidden neighbours.' : ''));
   for (let h = 0; h <= 3; h++) { const b = controls.appendChild(button(String(h), `Reach ${h} hops`, () => setHops(h), 'graph-ng-count')); b.setAttribute('aria-pressed', String(h === hops)); }
   controls.append(closeButton(clear));
-  const hint = partial ? 'Partial: scan limit reached' : expanded ? 'Expanded beyond reach. Change reach to reset.' : badges ? 'Expand a + badge to reveal hidden neighbours.' : '';
+  const hint = partial ? 'Partial: scan limit reached' : expanded ? 'Expanded beyond reach' : '';
   if (hint) bar.append(el('small', hint));
 }

@@ -116,23 +116,24 @@ test('navigator fallback, bounded title and hub filtering fetch each title once,
 /** Just enough DOM for the card: no layout, no native events beyond the handler properties it sets. */
 class El {
   children: El[] = []; parent: El | null = null; attrs: Record<string, string> = {}; style: Record<string, string> = {}; dataset: Record<string, string> = {};
-  hidden = false; disabled = false; className = ''; id = ''; title = ''; value = ''; type = ''; placeholder = ''; maxLength = 0; scrollTop = 0; text = '';
-  onclick?: () => void; oninput?: () => void; onfocus?: () => void; onblur?: () => void;
+  open = false; hidden = false; disabled = false; className = ''; id = ''; title = ''; value = ''; type = ''; placeholder = ''; maxLength = 0; scrollTop = 0; text = '';
+  onclick?: (e: any) => void; oninput?: () => void; onfocus?: () => void; onblur?: () => void;
   static active: El | null = null;
   constructor(readonly tagName: string) {}
   get textContent(): string { return this.text + this.children.map(c => c.textContent).join(''); }
   set textContent(v: string) { this.children = []; this.text = v; }
   appendChild(c: El) { c.parent = this; this.children.push(c); return c; }
   append(...cs: El[]) { cs.forEach(c => this.appendChild(c)); }
-  createEl(tag: string) { return this.appendChild(new El(tag)); }
+  createEl(tag: string, options: any = {}) { const c = this.appendChild(new El(tag)); c.className = options.cls ?? ''; c.textContent = options.text ?? ''; for (const [k, v] of Object.entries(options.attr ?? {})) c.setAttribute(k, String(v)); return c; }
+  createSpan(options?: any) { return this.createEl('span', options); }
   empty() { this.children = []; this.text = ''; }
   contains(n: unknown): boolean { return n === this || this.children.some(c => c.contains(n)); }
   setAttribute(k: string, v: string) { this.attrs[k] = v; }
   getAttribute(k: string) { return this.attrs[k] ?? null; }
   removeAttribute(k: string) { delete this.attrs[k]; }
-  querySelector() { return null; }
+  querySelector(selector: string) { return this.all().find(c => selector.startsWith('[data-group=') ? c.dataset.group === selector.split('"')[1] : c.tagName === selector) ?? null; }
   focus() { El.active = this; this.onfocus?.(); }
-  click() { this.onclick?.(); }
+  click() { this.onclick?.({ preventDefault() {} }); }
   all(): El[] { return this.children.flatMap(c => [c, ...c.all()]); }
   find(cls: string) { return this.all().filter(c => c.className === cls); }
   tag(tag: string) { return this.all().filter(c => c.tagName === tag); }
@@ -270,4 +271,24 @@ test('neighbourhood travel reveals: a shown target joins alone, with its linking
   // Expanding a travel-revealed note works whatever the order: 5 is shown, then expanded to reach 6.
   expect(neighbourhood(0, 1, new Set([5]), g.inc, g.p, g.on, g.all, [5]).mask[6]).toBe(1);
   expect(run(1, [6, 5]).mask[6]).toBe(1);
+});
+
+
+test('card exposes two primary actions, keeps secondary actions in a closed disclosure, and removes duplicate visit chips', () => {
+  const r = rig(3), primary = r.root.find('graph-ng-card-primary')[0]!, more = r.root.find('graph-ng-card-more')[0]!;
+  expect(primary.tag('button').map(b => b.textContent)).toEqual(['Open note', 'Show only connections']);
+  expect(more.open).toBe(false);
+  expect(more.tag('summary')[0]!.textContent).toBe('More actions');
+  expect(more.tag('button').map(b => b.textContent)).toEqual(['New tab', 'Open to the right', 'Focus here', 'Copy link']);
+  more.open = true; more.tag('button')[0]!.focus(); r.key('Escape');
+  expect(more.open).toBe(false); expect(El.active).toBe(more.tag('summary')[0]!); expect(r.calls).toEqual([]);
+  r.card.show(1); expect(r.root.find('graph-ng-card-trail')).toEqual([]); expect(r.card.history.items).toEqual([0, 1]);
+  r.key('Escape', r.root); expect(r.calls).toEqual(['close']);
+});
+test('group disclosures retain counts, declared names and focus after toggling', () => {
+  const r = rig(), group = r.list.find('graph-ng-connection-group')[0]!;
+  expect(group.tagName).toBe('summary'); expect(group.attrs['aria-expanded']).toBe('false');
+  expect(group.children.at(-1)!.textContent).toBe('40'); expect(group.tag('svg')[0]!.attrs['data-icon']).toBe('chevron-right');
+  group.click(); const next = r.list.find('graph-ng-connection-group')[0]!;
+  expect(next.attrs['aria-expanded']).toBe('true'); expect(El.active).toBe(next); expect(r.rows()).toHaveLength(40);
 });

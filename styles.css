@@ -148,55 +148,46 @@ button.graph-ng-stat > .graph-ng-stat-label { text-decoration:underline dotted v
 .graph-ng-hover-label, .graph-ng-hub-label { position:absolute; left:0; top:0; white-space:nowrap; font-size:var(--gng-text-sm); color:var(--text-normal); background:color-mix(in srgb, var(--background-primary) 82%, transparent); padding:1px 6px; border-radius:var(--radius-s); }
 .graph-ng-hover-label:empty { display:none; }
 /* The card docks to the right edge as a fixed side panel (placed by the renderer) and stacks above every overlay label. */
-.graph-ng-card { line-height:var(--gng-leading); position:absolute; left:0; top:0; z-index:2; box-sizing:border-box; width:min(320px, calc(100% - 16px)); max-height:calc(100% - 16px); display:flex; flex-direction:column; gap:var(--gng-space-2); pointer-events:auto; overflow-wrap:anywhere; font-size:var(--gng-text-sm); color:var(--text-normal); background:var(--background-primary); border:1px solid var(--background-modifier-border); padding:var(--gng-space-3); border-radius:var(--radius-m); box-shadow:var(--shadow-s); }
+.graph-ng-card { line-height:var(--gng-leading); position:absolute; left:0; top:0; z-index:2; box-sizing:border-box; width:min(320px, calc(100% - 16px)); max-height:calc(100% - 16px); display:flex; flex-direction:column; gap:var(--gng-space-2); overflow-y:auto; scrollbar-gutter:stable; pointer-events:auto; overflow-wrap:anywhere; font-size:var(--gng-text-sm); color:var(--text-normal); background:var(--background-primary); border:1px solid var(--background-modifier-border); padding:var(--gng-space-3); border-radius:var(--radius-m); box-shadow:var(--shadow-s); }
 .graph-ng-card:empty { display:none; }
-.graph-ng-sheet .graph-ng-card-trail { display:none; }
-.graph-ng-sheet .graph-ng-card-actions { grid-template-columns:repeat(4, minmax(0, 1fr)); }
-.graph-ng-sheet .graph-ng-card-actions > button { font-size:var(--gng-text-xs); padding:var(--gng-space-1); gap:var(--gng-space-1); }
-.graph-ng-card.graph-ng-sheet { z-index:3; top:auto; bottom:0; width:100%; max-height:55%; overflow-y:auto; border-radius:var(--radius-m) var(--radius-m) 0 0; }
-.graph-ng-sheet > * { flex-shrink:0; }
-.graph-ng-sheet .graph-ng-connections { max-height:200px; }
-.graph-ng-card button { min-height:var(--gng-row-h); }
+.graph-ng-card > * { flex-shrink:0; }
+.graph-ng-card.graph-ng-sheet { z-index:3; top:auto; bottom:0; width:100%; max-height:55%; border-radius:var(--radius-m) var(--radius-m) 0 0; }
+.graph-ng-card button, .graph-ng-card summary { min-height:var(--gng-row-h); }
 .graph-ng-card-head { display:flex; align-items:center; gap:var(--gng-space-1); }
 .graph-ng-card-title { font-weight:var(--gng-weight-strong); flex:1 1 auto; min-width:0; font-size:var(--gng-text-md); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.graph-ng-card .graph-ng-card-nav { min-width:var(--gng-row-h); padding:0 var(--gng-space-2); background:none; box-shadow:none; color:var(--icon-color, var(--gng-text-muted)); }
+.graph-ng-card .graph-ng-card-nav { min-width:var(--gng-row-h); padding:0 var(--gng-space-1); background:none; box-shadow:none; color:var(--gng-text-muted); }
 .graph-ng-card .graph-ng-card-nav:hover:not(:disabled) { background:var(--background-modifier-hover); color:var(--text-normal); }
 .graph-ng-card-icon { display:inline-flex; flex:none; }
-.graph-ng-card-icon svg { width:16px; height:16px; }
-.graph-ng-card-trail { display:flex; flex-wrap:wrap; gap:var(--gng-space-1); }
-.graph-ng-card-trail button { font-size:var(--gng-text-xs); max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.graph-ng-card-caption { color:var(--gng-text-muted); line-height:var(--gng-leading); }
-.graph-ng-navigator { display:flex; flex-direction:column; min-height:0; gap:var(--gng-space-2); }
+.graph-ng-card-icon svg { width:var(--size-4-4); height:var(--size-4-4); }
+.graph-ng-card-caption { color:var(--gng-text-muted); line-height:var(--gng-leading-tight); }
+.graph-ng-card-primary, .graph-ng-card-actions { display:grid; gap:var(--gng-space-2); grid-auto-rows:1fr; }
+.graph-ng-card-actions { grid-template-columns:repeat(2,minmax(0,1fr)); padding-block:var(--gng-space-2); }
+.graph-ng-card-actions > button:last-child:nth-child(odd) { grid-column:1 / -1; }
+.graph-ng-card-primary > button, .graph-ng-card-actions > button { height:auto; white-space:normal; line-height:var(--gng-leading-tight); padding:var(--gng-space-2); }
+.graph-ng-card summary { display:flex; align-items:center; gap:var(--gng-space-2); list-style:none; cursor:pointer; }
+.graph-ng-card summary::-webkit-details-marker { display:none; }
+.graph-ng-card details[open] > summary > .graph-ng-chevron { transform:rotate(90deg); }
+.graph-ng-card summary:focus-visible { outline:2px solid var(--interactive-accent); outline-offset:-2px; }
+.graph-ng-card-more > summary { color:var(--gng-text-muted); }
+.graph-ng-navigator { display:flex; flex-direction:column; gap:var(--gng-space-2); }
 .graph-ng-nav-status { font-weight:var(--gng-weight-strong); font-variant-numeric:tabular-nums; padding-top:var(--gng-space-2); }
 .graph-ng-connection-filter { display:flex; flex-direction:column; gap:var(--gng-space-1); color:var(--gng-text-muted); font-size:var(--gng-text-xs); }
 .graph-ng-connection-filter input { width:100%; min-height:var(--gng-row-h); box-sizing:border-box; }
 .graph-ng-connection-section { flex:none; }
-.graph-ng-card .graph-ng-connection-group { display:flex; align-items:center; gap:var(--gng-space-2); width:100%; min-height:var(--gng-row-h); padding:var(--gng-space-2) var(--gng-space-1); background:var(--background-primary); box-shadow:none; border:0; border-radius:0; text-align:left; }
-.graph-ng-connection-group > span:nth-child(2) { flex:1; min-width:0; overflow-wrap:anywhere; }
-.graph-ng-section-arrow { width:12px; flex:none; color:var(--gng-text-muted); }
+.graph-ng-connections { display:flex; flex-direction:column; border-top:1px solid var(--background-modifier-border); }
+.graph-ng-card .graph-ng-connection-group { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:var(--gng-space-2); padding:var(--gng-space-2) var(--gng-space-1); color:var(--text-normal); font-size:var(--gng-text-sm); }
+.graph-ng-connection-group .graph-ng-count { color:var(--gng-text-muted); }
 .graph-ng-connection-text { display:flex; flex-direction:column; gap:var(--gng-space-1); min-width:0; }
-.graph-ng-connection-meta { display:flex; flex-wrap:wrap; gap:var(--gng-space-1) var(--gng-space-3); }
+.graph-ng-connection-meta { display:flex; flex-wrap:wrap; gap:var(--gng-space-1) var(--gng-space-2); }
 .graph-ng-connection-title { white-space:normal; line-height:var(--gng-leading-tight); }
 .graph-ng-connection-id, .graph-ng-connection-label, .graph-ng-connection-relation { color:var(--gng-text-muted); font-size:var(--gng-text-xs); white-space:normal; line-height:var(--gng-leading-tight); }
 .graph-ng-connection-id { font-variant-numeric:tabular-nums; }
-.graph-ng-card .graph-ng-connection-more { font-variant-numeric:tabular-nums; width:100%; margin:var(--gng-space-1) 0; }
-.graph-ng-card .graph-ng-section-second { margin:var(--gng-space-1) 0 var(--gng-space-1) var(--gng-space-4); min-height:var(--gng-row-h); }
-.graph-ng-card .graph-ng-connection { padding:var(--gng-space-2) var(--gng-space-2); border:0; border-radius:var(--radius-s); }
+.graph-ng-card .graph-ng-connection-more { font-variant-numeric:tabular-nums; width:100%; margin-block:var(--gng-space-1); }
+.graph-ng-card .graph-ng-section-second { width:100%; margin-bottom:var(--gng-space-1); font-size:var(--gng-text-xs); }
 .graph-ng-connection-section + .graph-ng-connection-section { border-top:1px solid var(--background-modifier-border); }
-/* Segmented Open control: three equal segments sharing one outline. */
-.graph-ng-card-open { display:flex; }
-.graph-ng-card-open > button { flex:1 1 0; min-width:0; padding:0 var(--gng-space-2); border-radius:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.graph-ng-card-open > button + button { margin-left:1px; }
-.graph-ng-card-open > button:first-child { border-radius:var(--radius-s) 0 0 var(--radius-s); }
-.graph-ng-card-open > button:last-child { border-radius:0 var(--radius-s) var(--radius-s) 0; }
-/* Icon+label grid: labels wrap rather than clip. */
-.graph-ng-card-actions { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:var(--gng-space-1); }
-.graph-ng-card-actions > button { display:flex; align-items:center; justify-content:flex-start; gap:var(--gng-space-2); min-width:0; height:auto; padding:var(--gng-space-1) var(--gng-space-2); white-space:normal; text-align:left; line-height:var(--gng-leading-tight); }
 .graph-ng-card-actions button[aria-pressed=true], .graph-ng-section-second[aria-pressed=true] { background:var(--interactive-accent); color:var(--text-on-accent); }
-.graph-ng-connections { display:flex; flex-direction:column; min-height:0; overflow:auto; border-top:1px solid var(--background-modifier-border); padding-top:var(--gng-space-1); }
-.graph-ng-connection-group { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:var(--gng-space-2); padding:var(--gng-space-2) var(--gng-space-1) var(--gng-space-1); color:var(--gng-text-muted); font-size:var(--gng-text-xs); }
-.graph-ng-card .graph-ng-connection { display:flex; align-items:center; gap:var(--gng-space-2); justify-content:flex-start; width:100%; background:transparent; box-shadow:none; text-align:left; }
-.graph-ng-connection:hover, .graph-ng-connection:focus-visible { background:var(--background-modifier-hover); }
+.graph-ng-card .graph-ng-connection { display:flex; align-items:center; gap:var(--gng-space-2); justify-content:flex-start; width:100%; padding:var(--gng-space-2) var(--gng-space-1); border:0; border-radius:var(--radius-s); background:transparent; box-shadow:none; text-align:left; }
+.graph-ng-connection:hover, .graph-ng-connection:focus-visible, .graph-ng-card summary:hover { background:var(--background-modifier-hover); }
 .graph-ng-swatch { flex:none; width:10px; height:10px; border-radius:50%; border:1px solid var(--background-modifier-border); }
 .graph-ng-cue { position:absolute; left:0; top:0; width:28px; height:28px; border:2px solid var(--interactive-accent); border-radius:50%; }
 .graph-ng-cue-line { position:absolute; left:0; top:0; height:2px; transform-origin:0 50%; background:var(--interactive-accent); opacity:.8; pointer-events:none; }
@@ -208,7 +199,13 @@ button.graph-ng-stat > .graph-ng-stat-label { text-decoration:underline dotted v
 @keyframes graph-ng-cue { 50% { box-shadow:0 0 0 6px color-mix(in srgb, var(--interactive-accent) 30%, transparent); } }
 .graph-ng-relationships { display:flex; flex-direction:column; gap:var(--gng-space-1); max-height:40vh; overflow:auto; }
 .graph-ng-relationship { display:flex; flex-wrap:wrap; gap:var(--gng-space-2); align-items:center; }
-.graph-ng-path { margin:0; padding-left:var(--gng-space-5); display:flex; flex-direction:column; gap:var(--gng-space-1); }
+.graph-ng-path-card { display:flex; flex-direction:column; gap:var(--gng-space-2); }
+.graph-ng-path { margin:0; padding-left:var(--gng-space-5); }
+.graph-ng-path > li { display:list-item; padding-block:var(--gng-space-2); }
+.graph-ng-path > li + li { border-top:1px solid var(--background-modifier-border); }
+.graph-ng-path > li::marker { color:var(--gng-text-muted); font-variant-numeric:tabular-nums; }
+.graph-ng-path > li > * { display:block; max-width:100%; height:auto; white-space:normal; text-align:left; }
+.graph-ng-path > li > :first-child { margin-bottom:var(--gng-space-1); color:var(--gng-text-muted); font-size:var(--gng-text-xs); }
 .graph-ng-path-end, .graph-ng-path-badge { position:absolute; left:0; top:0; pointer-events:none; }
 .graph-ng-path-end { border:3px solid var(--interactive-accent); border-radius:50%; box-shadow:0 0 0 2px var(--background-primary); }
 .graph-ng-path-badge { min-width:18px; height:18px; padding:0 var(--gng-space-1); border-radius:9px; background:var(--interactive-accent); color:var(--text-on-accent); font-size:var(--gng-text-xs); font-weight:var(--gng-weight-strong); line-height:18px; text-align:center; }
@@ -334,16 +331,16 @@ button.graph-ng-stat > .graph-ng-stat-label { text-decoration:underline dotted v
 .graph-ng-lens-toggle { min-height:var(--gng-row-h); min-width:var(--gng-row-h); }
 .graph-ng-lens-toggle[aria-pressed="true"] { background: var(--interactive-accent); color: var(--text-on-accent); }
 /* Find a note (/ or Ctrl/Cmd+K): ranked matches over the graph; the ring previews without moving the camera. */
-.graph-ng-find { position:absolute; top:8px; left:50%; transform:translateX(-50%); z-index:3; width:min(420px, calc(100% - 16px)); display:flex; flex-direction:column; gap:var(--gng-space-1); padding:var(--gng-space-2); font-size:var(--gng-text-sm); color:var(--text-normal); background:var(--background-primary); border:1px solid var(--background-modifier-border); border-radius:var(--radius-m); box-shadow:var(--shadow-s); }
+.graph-ng-find { position:absolute; top:8px; left:50%; transform:translateX(-50%); z-index:3; width:min(420px, calc(100% - 16px)); display:flex; flex-direction:column; gap:var(--gng-space-2); padding:var(--gng-space-3); box-sizing:border-box; font-size:var(--gng-text-sm); color:var(--text-normal); background:var(--background-primary); border:1px solid var(--background-modifier-border); border-radius:var(--radius-m); box-shadow:var(--shadow-s); }
 .graph-ng-find[hidden], .graph-ng-find-ring[hidden] { display:none; }
 .graph-ng-find-input { width:100%; min-height:var(--gng-row-h); }
-.graph-ng-find-list { max-height:min(360px, 50vh); overflow-y:auto; }
-.graph-ng-find-row { display:grid; grid-template-columns:minmax(0,1fr) auto; column-gap:var(--gng-space-2); min-height:var(--gng-row-h); padding:var(--gng-space-1) var(--gng-space-2); border-radius:var(--radius-s); cursor:pointer; }
+.graph-ng-find-list { max-height:min(360px, 50vh); overflow-y:auto; scrollbar-gutter:stable; }
+.graph-ng-find-row { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,auto); gap:var(--gng-space-1) var(--gng-space-3); min-height:var(--gng-row-h); padding:var(--gng-space-2); border-radius:var(--radius-s); cursor:pointer; }
 .graph-ng-find-row:hover, .graph-ng-find-row[aria-selected="true"] { background:var(--background-modifier-hover); }
 .graph-ng-find-row[aria-selected="true"] { outline:2px solid var(--interactive-accent); outline-offset:-2px; }
 .graph-ng-find-name { font-weight:var(--gng-weight-strong); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.graph-ng-find-count { grid-row:span 2; align-self:center; color:var(--gng-text-muted); white-space:nowrap; }
-.graph-ng-find-path { font-size:var(--gng-text-xs); color:var(--gng-text-muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.graph-ng-find-group { color:var(--gng-text-muted); text-align:right; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.graph-ng-find-path { grid-column:1 / -1; font-size:var(--gng-text-xs); color:var(--gng-text-muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .graph-ng-find-status:empty { display:none; }
 .graph-ng-find-status, .graph-ng-find-keys { font-size:var(--gng-text-xs); color:var(--gng-text-muted); padding:0 var(--gng-space-2); }
 .graph-ng-find-ring { position:absolute; left:0; top:0; z-index:2; width:32px; height:32px; border:3px solid var(--interactive-accent); border-radius:50%; pointer-events:none; }

@@ -44,11 +44,11 @@ type Row = [id: string, label: string, when: (c: ActionContext) => boolean, run:
 const go = (a: CardAction): Row[3] => c => c.host.act(a, c.node);
 /** Menu entries (in menu order, from 200) and the menu key, registered by src/interaction.ts after the built-in keys. */
 export const MENU_ACTIONS: Action[] = ([
-  ['menu-open', 'Open', openable, go('open')],
+  ['menu-open', 'Open note', openable, go('open')],
   ['menu-tab', 'Open in new tab', openable, go('tab')],
   ['menu-right', 'Open to the right', openable, go('split')],
   ['menu-focus', 'Focus here', note, c => { c.host.selectNote(c.node, true); c.host.act('focus', c.node); }],
-  ['menu-lens', 'Lens', note, c => c.host.setLens(c.host.lensNode === c.node ? -1 : c.node)],
+  ['menu-lens', 'Connection lens', note, c => c.host.setLens(c.host.lensNode === c.node ? -1 : c.node)],
   ['menu-only', 'Show only connections', note, c => c.host.isolate(c.node)],
   ['menu-copy', 'Copy link', note, go('copy')],
   ['menu-note', 'Open relationship note', c => !!relation(c)?.note, c => relation(c)!.note!()],
@@ -68,8 +68,14 @@ export const MENU_ACTIONS: Action[] = ([
 /** Obsidian's public `Menu`, plus the workspace `file-menu` event so other plugins' file actions appear (as in the core graph). */
 export const obsidianMenu = (app: App, MenuClass: new () => Menu, file: (path: string) => TFile | null, leaf?: WorkspaceLeaf): MenuPresenter => (entries, x, y, path) => {
   const menu = new MenuClass();
-  for (const e of entries) menu.addItem(item => { item.setTitle(e.title).onClick(e.run); if (e.checked) item.setChecked(true); });
+  let section = -1;
+  for (const e of entries) {
+    const next = /menu-(open|tab|right|note)$/.test(e.id) ? 0 : e.id === 'menu-copy' ? 2 : 1;
+    if (section >= 0 && section !== next) menu.addSeparator();
+    section = next;
+    menu.addItem(item => { item.setTitle(e.title).onClick(e.run); if (e.checked) item.setChecked(true); });
+  }
   const f = path ? file(path) : null;
-  if (f) app.workspace.trigger('file-menu', menu, f, 'graph-context-menu', leaf);
+  if (f) { menu.addSeparator(); app.workspace.trigger('file-menu', menu, f, 'graph-context-menu', leaf); }
   menu.showAtPosition({ x, y });
 };

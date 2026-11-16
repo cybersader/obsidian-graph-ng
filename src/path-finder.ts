@@ -68,4 +68,4 @@ export interface HopRow { step: number; from: number; to: number; type: string; 
 /** The card's hop list: note, relationship type (reverse when walked against its direction), next note. */
 export const hopRows = (hops: readonly Hop[], p: Pick<Columns, 'source' | 'type' | 'types'>): HopRow[] => hops.map((h, i) => ({ step: i + 1, from: h.from, to: h.to, type: p.types[p.type[h.edges[0]!]!] || 'relationship', reverse: p.source[h.edges[0]!] !== h.from, carrier: h.carrier }));
 
-registerAction({ id: 'find-path', label: 'Find path to…', menu: true, when: ({ host, node }) => host.selected >= 0 && node >= 0 && node !== host.selected, run: ({ host, node }) => host.findPath(host.selected, node) });
+registerAction({ id: 'find-path', order: 205.5, label: 'Find path to…', menu: true, when: ({ host, node }) => host.selected >= 0 && node >= 0 && node !== host.selected, run: ({ host, node }) => host.findPath(host.selected, node) });
