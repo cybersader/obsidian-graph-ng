@@ -916,6 +916,7 @@ export class DetailRenderer {
     if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(ratio)) throw new Error('CAMERA_NONFINITE');
     this.flight = undefined; this.camera.x = x; this.camera.y = y; this.camera.ratio = this.clampRatio(ratio); this.refresh();
   }
+  private panBy(dx: number, dy: number) { this.setCamera(this.camera.x - dx / this.scale / this.cameraFrame.width, this.camera.y - dy / this.scale / this.cameraFrame.height, this.camera.ratio); }
   /** Eased camera transition; honors reduced motion and the configured duration. */
   flyTo(x: number, y: number, ratio: number, ms = this.settings.visuals.cameraAnimationMs) {
     if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(ratio)) throw new Error('CAMERA_NONFINITE');
@@ -1181,11 +1182,11 @@ export class DetailRenderer {
   private noteCaption(n: number) { return this.path(n).split('/').pop()!.replace(/\.md$/, '') + (n === this.focusNode ? (this.tierPartial & 1 ? ' (neighbours of neighbours truncated)' : '') + (this.tierPartial & 2 ? ' (same group truncated)' : '') : ''); }
   /** Selection drives the persistent focus. Touch and keyboard selections show the card; only its
    * explicit Open button (or Enter on the canvas) opens the note. */
-  private selectNote(node: number, card?: boolean, keepLens = false) {
+  private selectNote(node: number, card?: boolean, keepLens = false, framing = true) {
     if (node < 0 && this.lensAnchor >= 0 && !keepLens) this.setLens(-1);
     if (node < 0) { this.input?.clearHover(); this.hoverFx.n = -1; this.fx = [1, 0]; }
     this.selected = node; this.selectedEdges = []; this.pathView = undefined; this.edgeAnchor = -1; this.edgeToken++; this.cue = -1; if (card || node < 0) this.hovered = -1; this.emphasize(); this.startRipple(node); this.refresh();
-    if (card && node >= 0) this.card.show(node); else this.card.hide();
+    if (card && node >= 0) { this.card.show(node); this.placeCard(); if (framing) this.frameSelection(this.settings.visuals.clickFraming); } else this.card.hide();
   }
   /** The navigator's view of the graph: every lookup is O(degree) over the incident-edge CSR. Rows
    * list connections under the host filter, so a neighbourhood mask never hides them. */
@@ -1194,6 +1195,16 @@ export class DetailRenderer {
     return {
       name: n => this.name(n),
       title: n => this.noteTitle?.(this.path(n)) ?? '',
+      relationship: n => {
+        const owner = p.carrierNodes[n]; if (!owner) return;
+        const source = new Set<string>(), target = new Set<string>(), types = new Set<string>();
+        for (let j = this.edges.offsets[n]!; j < this.edges.offsets[n + 1]!; j++) {
+          const e = this.edges.edges[j]!; if (p.carrier[e]! + 1 !== owner) continue;
+          const out = p.source[e] === n, other = out ? p.target[e]! : p.source[e]!;
+          (out ? target : source).add(this.noteTitle?.(this.path(other)) || this.name(other)); types.add(p.types[p.type[e]!]!);
+        }
+        if (source.size && target.size) return { name: [...source].join(', ') + ' → ' + [...target].join(', '), type: [...types].join(', ') };
+      },
       group: n => { const key = this.view.groupCodes?.[n] ?? -1; return { key, label: this.view.groupLabels?.[key] ?? 'Ungrouped' }; },
       color: n => { const c = this.colorBytes, k = n * 4; return `rgb(${c[k]},${c[k + 1]},${c[k + 2]})`; },
       groups: n => { const names = new Map<number, string>(), name = (m: number) => names.get(m) ?? names.set(m, this.name(m)).get(m)!; return connectionGroups(n, this.edges, p, on, this.baseVisible, byInterest(this.interestOf(n), (a, b) => name(a).localeCompare(name(b)))); },
@@ -1223,7 +1234,7 @@ export class DetailRenderer {
     const path = this.path(n);
     if (action === 'lens') this.setLens(this.lensWanted === n ? -1 : n);
     else if (action === 'focus') this.frameNodes(reach(n, this.edges, this.projection, e => !!this.edgeOn[e], this.filterVisible, 1).nodes);
-    else if (action === 'isolate') this.isolate(n);
+    else if (action === 'isolate') this.isolate(this.isolation ? -1 : n, 1, false);
     else if (action === 'expand') this.expandNeighbourhood(n);
     else if (action === 'copy') { if (this.copyLink) this.copyLink(path); else void navigator.clipboard?.writeText(`[[${this.name(n)}]]`).catch(() => {}); }
     else if (this.openNote) this.openNote(path, action === 'open' ? 'reuse' : action);
@@ -1235,13 +1246,29 @@ export class DetailRenderer {
     for (const n of nodes) { const a = this.renderCoordinate(n, 0), b = this.renderCoordinate(n, 1); x = Math.min(x, a); y = Math.min(y, b); xx = Math.max(xx, a); yy = Math.max(yy, b); }
     if (x !== Infinity) { const [right, bottom] = this.cardInset(); this.frame(x, y, xx, yy, undefined, right, bottom); }
   }
-  /** Space the open card takes from the view: [right, bottom]. The docked side panel's width (its
-   * CSS width before it is first measured) or the bottom sheet's height; none without a card. */
+  /** Keep the selection clear of measured chrome. Off only makes the smallest safety pan;
+   * experimental modes move only when their note set is not comfortably visible. No idle work. */
+  private frameSelection(mode: Settings['visuals']['clickFraming'] = 'off') {
+    const n = this.card.node; if (n < 0) return;
+    const [right, bottom] = this.cardInset(), w = this.width - right, h = this.height - bottom;
+    const x = Math.min(48, w / 4), y = Math.min(96, h / 4);
+    const comfortable = (node: number) => { const q = this.screenPoint(node); return q.x >= x && q.x <= w - x && q.y >= y && q.y <= h - x; };
+    if (mode === 'fit-neighbours') {
+      const nodes = reach(n, this.edges, this.projection, e => !!this.edgeOn[e], this.filterVisible, 1).nodes;
+      if (![...nodes].every(comfortable)) this.frameNodes(nodes);
+    } else if (!comfortable(n)) {
+      const q = this.screenPoint(n);
+      if (mode === 'center') this.panTo(n);
+      else this.panBy(Math.max(x, Math.min(w - x, q.x)) - q.x, Math.max(y, Math.min(h - x, q.y)) - q.y);
+    }
+  }
+  /** Measure before framing, including a just-opened sheet, instead of guessing its height. */
   private cardInset(): [number, number] {
     const t = this.toolsInset;
     if (this.card.node < 0 && !this.selectedEdges.length && !this.pathView) return [t, 0];
-    const [w, h] = this.card.size ?? [Math.min(320, this.width - t - 16), Math.min(this.height * .55, 240)];
-    return sheetCard(this.width, t) ? [t, h] : [t + w + 16, 0];
+    if (!this.card.size) this.placeCard();
+    const [w, h] = this.card.size!;
+    return sheetCard(this.width, t, this.settings.visuals.cardPlacement) ? [t, h + 8] : [t + w + 16, 0];
   }
   /** Re-measure the graph tools panel over the view's right edge (via `measureTools`); the card docks
    * left of it and framing and off-screen arrows keep clear of it. Ignored when it leaves no room
@@ -1261,10 +1288,10 @@ export class DetailRenderer {
     if (!this.filterVisible[n]) this.isolate(-1, 1, false); // A history jump outside this region exits it.
     if (!this.filterVisible[n]) return;
     const lensed = this.lensWanted >= 0;
-    this.selectNote(n, true);
+    this.selectNote(n, true, false, false);
     // Isolation may close the old lens while changing masks; preserve the travel intent.
     if (lensed && this.lensWanted !== n) this.setLens(n);
-    this.centreOn(this.display[n * 2]!, this.display[n * 2 + 1]!, Math.min(this.camera.ratio, this.homeRatio * .5), undefined, ...this.cardInset());
+    this.panTo(n, Math.min(this.camera.ratio, this.homeRatio * .5));
   }
   /** Temporary neighbourhood, intersected with the host filter. Reach changes reset expansion. */
   isolate(node: number, hops = 1, fit = true, expanded = new Set<number>(), shown: number[] = []) {
@@ -1277,6 +1304,7 @@ export class DetailRenderer {
     }
     if (this.isolation && !this.filterVisible[this.selected]) this.selectNote(node, true);
     this.showIsolation();
+    this.frameSelection();
     if (this.isolation && fit) this.frameNodes(Array.from(this.filterVisible.keys()).filter(n => !!this.filterVisible[n]));
   }
   private expandNeighbourhood(n: number) {
@@ -1292,8 +1320,8 @@ export class DetailRenderer {
   }
   private showIsolation() {
     if (!this.isolationBar) return;
-    const s = this.isolation;
-    isolationBar(this.isolationBar, s ? this.name(s.node) : '', s?.hops ?? 1, this.filterVisible.reduce((a, b) => a + b, 0), s ? s.expanded.size + s.shown.length : 0, this.neighbourhoodPartial, this.frontier.size, h => { this.isolate(s!.node, h); this.isolationBar.querySelectorAll('button')[h]?.focus(); }, () => { this.isolate(-1); this.canvas.focus(); });
+    const s = this.isolation; this.isolationBar.dataset.motion = this.still() ? 'off' : 'full';
+    isolationBar(this.isolationBar, s ? this.name(s.node) : '', s?.hops ?? 1, this.filterVisible.reduce((a, b) => a + b, 0), s ? s.expanded.size + s.shown.length : 0, this.neighbourhoodPartial, this.frontier.size, h => { this.isolate(s!.node, h); this.isolationBar.querySelectorAll('button')[h + 2]?.focus(); }, () => { this.isolate(-1); this.canvas.focus(); });
     for (const b of this.frontierBadges) b.el.remove(); this.frontierBadges = [];
     // Highest interest first (ties to the lower id); badges precede the minimap and card in Tab order.
     for (const node of s ? [...this.frontier.keys()].sort(byInterest(this.interestOf(s.node))).slice(0, 24) : []) {
@@ -1470,7 +1498,7 @@ export class DetailRenderer {
     this.onSizingChange?.();
     const v = this.settings.visuals, focus = v.hoverHighlight ? this.focusLevel : 0, ego = this.focusNode, node = this.hovered < 0 && focus ? ego : this.hovered;
     const radius = (n: number) => this.drawnRadius(n, true, focus);
-    this.placeCard();
+    if (this.placeCard()) { if (this.flight) this.panTo(this.card.node, this.flight.to.ratio); else this.frameSelection(); }
     this.placeHighlights(focus);
     // Overlay text never runs under the card or an overlay panel: each label's whole rectangle is
     // tested against their cached rects (the opaque stack and card also sit above as a backstop).
@@ -1621,10 +1649,10 @@ export class DetailRenderer {
   }
   private moreControl() { return this.moreButton ??= this.overlay.appendChild(Object.assign(document.createElement('button'), { className: 'graph-ng-more', onclick: () => { if (this.focusNode >= 0) this.onMoreConnections(this.focusNode); } })); }
   private updateLegend() { paintLegend(this.legendRows, this.legendCounts, this.tierMask, this.tierTotals); }
-  /** Keep the zoom; centre the note. */
-  private panTo(n: number) {
+  /** Centre the note in measured free space, keeping zoom unless travel supplies a target. */
+  private panTo(n: number, ratio = this.camera.ratio) {
     if (n < 0 || !this.visible[n]) return;
-    this.centreOn(this.renderCoordinate(n, 0), this.renderCoordinate(n, 1), this.camera.ratio, undefined, ...this.cardInset());
+    this.centreOn(this.renderCoordinate(n, 0), this.renderCoordinate(n, 1), ratio, undefined, ...this.cardInset());
   }
   /** One expanding ring from the focus to its farthest direct connection (world reach, O(degree)). */
   private startRipple(n: number) {
@@ -1666,17 +1694,21 @@ export class DetailRenderer {
     const c = this.noteCard, w = this.width, h = this.height;
     if (this.card.node < 0 && !this.selectedEdges.length && !this.pathView) { this.cardRect = [0, 0, 0, 0]; this.cueRing.hidden = this.cueLine.hidden = true; return; }
     // The card stops above the minimap unless the tools panel already covers the minimap's column.
-    const t = this.toolsInset, sheet = sheetCard(w, t), cls = 'graph-ng-card' + (sheet ? ' graph-ng-sheet' : ''), mini = this.settings.visuals.minimap && w >= MINIMAP_MIN_CANVAS && t < MINIMAP_W + 8;
-    const room = `${Math.max(120, h - 16 - (mini ? (this.miniMap.folded ? 32 : MINIMAP_H) + 8 : 0))}px`, across = sheet && t ? `${w - t}px` : '';
+    const t = this.toolsInset, sheet = sheetCard(w, t, this.settings.visuals.cardPlacement), cls = 'graph-ng-card' + (sheet ? ' graph-ng-sheet' : ''), mini = this.settings.visuals.minimap && w >= MINIMAP_MIN_CANVAS && t < MINIMAP_W + 8;
+    const compact = String(sheet && t > 0 && this.card.node >= 0);
+    if (c.dataset.compact !== compact) { c.dataset.compact = compact; c.dataset.folded = compact; c.querySelector('.graph-ng-card-fold')?.setAttribute('aria-expanded', String(compact !== 'true')); this.card.size = undefined; }
+    const room = `${Math.max(120, h - 16 - (mini ? (this.miniMap.folded ? 32 : MINIMAP_H) + 8 : 0))}px`, across = `${sheet ? w - t : Math.min(320, Math.max(264, (w - t) * .34))}px`;
     if (c.className !== cls || !sheet && c.style.maxHeight !== room || c.style.width !== across) { c.className = cls; c.style.maxHeight = sheet ? '' : room; c.style.width = across; this.card.size = undefined; }
-    const [cw, ch] = this.card.size ??= [c.offsetWidth || 320, c.offsetHeight || 240], rect = this.cardRect = dockCard(w, h, cw, ch, 8, t);
+    const changed = !this.card.size;
+    const [cw, ch] = this.card.size ??= [c.offsetWidth || 320, c.offsetHeight || 240], rect = this.cardRect = dockCard(w, h, cw, ch, 8, t, this.settings.visuals.cardPlacement);
     c.style.transform = sheet ? '' : `translate(${rect[0]}px, ${rect[1]}px)`;
     const n = this.cue, ring = this.cueRing, line = this.cueLine;
-    if (n < 0 || !this.filterVisible[n]) { ring.hidden = line.hidden = true; return; }
+    if (n < 0 || !this.filterVisible[n]) { ring.hidden = line.hidden = true; return changed; }
     const q = this.screenPoint(n), x = Math.max(8, Math.min(w - 8, q.x)), y = Math.max(8, Math.min(h - 8, q.y)), [rx, ry, rw, rh] = this.cardRect;
     const ax = Math.max(rx!, Math.min(rx! + rw!, x)), ay = Math.max(ry!, Math.min(ry! + rh!, y)), length = Math.hypot(x - ax, y - ay);
     ring.hidden = false; ring.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px) translate(-50%, -50%)`;
     line.hidden = length < 4; line.style.width = `${Math.round(length)}px`; line.style.transform = `translate(${Math.round(ax)}px, ${Math.round(ay)}px) rotate(${Math.atan2(y - ay, x - ax)}rad)`;
+    return changed;
   }
   private drawCanvas() {
     const ctx = this.ctx!, s = this.settings, c = this.colorBytes, focus = s.visuals.hoverHighlight ? this.focusLevel : 0, dim = this.emphasisDim(), budget = this.emphasisBudget(), g = this.stateBytes;
@@ -1770,7 +1802,7 @@ export class DetailRenderer {
       stopFlight: () => { this.flight = undefined; },
       setCamera: (x, y, ratio) => this.setCamera(x, y, ratio),
       flyTo: (x, y, ratio, ms) => this.flyTo(x, y, ratio, ms),
-      panBy: (dx, dy) => this.setCamera(this.camera.x - dx / this.scale / this.cameraFrame.width, this.camera.y - dy / this.scale / this.cameraFrame.height, this.camera.ratio),
+      panBy: (dx, dy) => this.panBy(dx, dy),
       zoomAt: (factor, x, y) => {
         // Zooming out clamps a little past the whole graph (and Fit all); it never switches views.
         this.flight = undefined; const before = this.scale, step = zoomStep(this.camera.ratio, factor, this.settings.cameraMinRatio, this.clampRatio(Math.max(1, this.homeRatio) * ZOOM_OUT_LIMIT));

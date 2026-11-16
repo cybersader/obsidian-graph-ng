@@ -1,3 +1,5 @@
+import { middleTruncate } from './label-layout';
+import type { Visuals } from './settings';
 import { setIcon } from 'obsidian';
 import { disclosure, panelHelp } from './panel-help';
 import type { RenderProjection } from './render-projection';
@@ -105,24 +107,25 @@ export class NavHistory {
   clear() { this.items = []; this.at = -1; }
 }
 /** Views narrower than this show the card as a bottom sheet instead of a docked side panel. */
-export const SHEET_WIDTH = 520;
+export const SHEET_WIDTH = 720;
 /** The card's rectangle [x, y, w, h] in a width×height view whose right `right` px are covered (the
  * graph tools panel): docked to the top-right edge of the remaining room (a fixed side panel that
  * never follows the camera), or a bottom sheet across that room (`sheetCard`). */
-export function dockCard(width: number, height: number, w: number, h: number, m = 8, right = 0): [number, number, number, number] {
+export function dockCard(width: number, height: number, w: number, h: number, m = 8, right = 0, placement: Visuals['cardPlacement'] = 'auto'): [number, number, number, number] {
   const room = width - right;
-  return sheetCard(width, right) ? [0, height - h, room, h] : [Math.max(m, room - m - w), m, w, h];
+  return sheetCard(width, right, placement) ? [0, height - h, room, h] : [Math.max(m, room - m - w), m, w, h];
 }
 /** Room beside the tools panel for the docked card: its 320 px CSS width plus both 8 px margins. */
 export const DOCK_ROOM = 336;
 /** Bottom sheet when the view is narrow, or when the tools panel leaves no room for the docked card. */
-export const sheetCard = (width: number, right = 0) => width < SHEET_WIDTH || width - right < DOCK_ROOM;
+export const sheetCard = (width: number, right = 0, placement: Visuals['cardPlacement'] = 'auto') => placement === 'sheet' || right > 0 && width - right - 320 < Math.max(420, width * .45) || width - right < (placement === 'side' ? DOCK_ROOM : SHEET_WIDTH);
 export type CardAction = 'open' | 'tab' | 'split' | 'focus' | 'isolate' | 'lens' | 'copy' | 'expand';
 export interface CardHost {
   name(n: number): string;
   color(n: number): string;
   /** Optional presentation metadata, never an identity or topology authority. */
   title?(n: number): string;
+  relationship?(n: number): { name: string; type: string } | undefined;
   group?(n: number): { key: number; label: string };
   groups(n: number): { groups: ConnectionGroup[]; direct: number };
   isolated(): boolean;
@@ -232,17 +235,19 @@ export class ConnectionCard {
     c.textContent = ''; this.rows = []; this.size = undefined; c.setAttribute('role', 'region'); c.setAttribute('aria-label', 'Connections of ' + name);
     // Header: the note name, then back, forward and close as icon buttons.
     const head = c.appendChild(el('div', '', 'graph-ng-card-head')), { items, at } = this.history;
-    const title = head.appendChild(el('strong', name, 'graph-ng-card-title')); title.setAttribute('aria-live', 'polite'); title.title = name;
+    const title = head.appendChild(el('strong', middleTruncate(name, 30), 'graph-ng-card-title')); title.setAttribute('aria-live', 'polite'); title.title = name;
     const back = head.appendChild(iconButton('chevron-left', 'Back', () => this.step(-1))), forward = head.appendChild(iconButton('chevron-right', 'Forward', () => this.step(1)));
     back.disabled = at <= 0; forward.disabled = at >= items.length - 1;
+    const fold = head.appendChild(iconButton('chevron-down', 'Expand connections', () => { c.dataset.folded = String(c.dataset.folded !== 'true'); fold.setAttribute('aria-expanded', String(c.dataset.folded !== 'true')); this.size = undefined; h.cue(-1); }, '', 'graph-ng-card-nav graph-ng-card-fold'));
+    fold.setAttribute('aria-expanded', String(c.dataset.folded !== 'true'));
     head.append(closeButton(() => h.close()));
     const caption = h.title?.(n)?.trim().slice(0, 256);
     if (caption && caption !== name) c.append(el('div', caption, 'graph-ng-card-caption'));
-    const act = (a: CardAction) => () => h.act(a, n), primary = c.appendChild(el('div', '', 'graph-ng-card-primary'));
+    const act = (a: CardAction) => () => { h.act(a, n); if (a === 'isolate') c.querySelector<HTMLElement>('.graph-ng-isolate-toggle')?.focus(); }, primary = c.appendChild(el('div', '', 'graph-ng-card-primary'));
     primary.append(button('Open note', 'Open ' + name, act('open'), 'mod-cta'));
     const hidden = h.frontier?.(n) ?? 0;
-    if (!h.isolated()) primary.append(button('Show only connections', 'Show only connections of ' + name, act('isolate')));
-    else if (hidden) primary.append(button(`Expand ${hidden} hidden neighbours`, `Add ${hidden} hidden neighbours of ${name}`, act('expand')));
+    primary.append(button(h.isolated() ? 'Show all notes' : 'Show only connections', h.isolated() ? 'Show all notes' : 'Show only connections of ' + name, act('isolate'), 'graph-ng-isolate-toggle'));
+    if (h.isolated() && hidden) primary.append(button(`Expand ${hidden} hidden neighbours`, `Add ${hidden} hidden neighbours of ${name}`, act('expand')));
     const more = this.more = c.appendChild(el('details', '', 'graph-ng-card-more')) as HTMLDetailsElement;
     disclosure(more, 'More actions');
     more.ontoggle = () => { this.size = undefined; h.cue(-1); };
@@ -271,15 +276,21 @@ export class ConnectionCard {
   private title = (e: ConnectionEntry) => entryTitle(e, this.host);
   /** One connection button; search results also name the group. */
   private row(entry: ConnectionEntry, flat: boolean) {
-    const title = this.title(entry), id = title !== entry.name ? ' (' + entry.name + ')' : '', group = flat ? ' in ' + entry.label : '';
-    const row = button('', `Go to ${title}${id}${group}: ${entry.relations.join(', ')}`, () => this.go(entry.node), 'graph-ng-connection');
+    const relation = this.host.relationship?.(entry.node), title = relation?.name ?? this.title(entry);
+    const row = button('', '', () => this.go(entry.node), 'graph-ng-connection');
+    // A referenced text label avoids Obsidian's aria-label tooltip on the row.
+    row.removeAttribute('aria-label'); row.setAttribute('aria-labelledby', `${this.navId}-note-${entry.node}`);
     const swatch = row.appendChild(el('span', '', 'graph-ng-swatch')); swatch.style.background = this.host.color(entry.node);
-    const text = row.appendChild(el('span', '', 'graph-ng-connection-text')); text.append(el('span', title, 'graph-ng-connection-title'));
+    const text = row.appendChild(el('span', '', 'graph-ng-connection-text'));
+    const label = text.appendChild(el('span', middleTruncate(title, 72), 'graph-ng-connection-title')); label.title = title;
+    label.id = `${this.navId}-note-${entry.node}`;
     const meta = text.appendChild(el('span', '', 'graph-ng-connection-meta'));
     if (flat) meta.append(el('span', entry.label, 'graph-ng-connection-label'));
-    if (id) meta.append(el('span', entry.name, 'graph-ng-connection-id'));
-    meta.append(el('span', entry.relations.join(', '), 'graph-ng-connection-relation'));
-    row.onmouseenter = row.onfocus = () => this.host.cue(entry.node); row.onmouseleave = row.onblur = () => this.host.cue(-1); this.rows.push(row);
+    if (!relation && title !== entry.name) { const id = meta.appendChild(el('span', middleTruncate(entry.name, 40), 'graph-ng-connection-id')); id.title = entry.name; }
+    meta.append(el('span', relation?.type ?? entry.relations.join(', '), 'graph-ng-connection-relation'));
+    row.onmouseenter = () => this.host.cue(entry.node); row.onmouseleave = () => this.host.cue(-1);
+    row.onfocus = () => { label.textContent = title; this.size = undefined; this.host.cue(entry.node); };
+    row.onblur = () => { label.textContent = middleTruncate(title, 72); this.size = undefined; this.host.cue(-1); }; this.rows.push(row);
     return row;
   }
   /** Repaint only results: typing never replaces the input, moves the camera or changes selection.
@@ -372,12 +383,13 @@ export class ConnectionCard {
 /** Persistent anchor, exact mask count, explicit reach and a single exit. */
 export function isolationBar(bar: HTMLElement, name: string, hops: number, count: number, expanded: number, partial: boolean, badges: number, setHops: (hops: number) => void, clear: () => void) {
   bar.textContent = ''; if (!name) return;
-  const title = bar.appendChild(el('span', `Only connections of ${name}, reach ${hops}, ${count.toLocaleString()} ${count === 1 ? 'note' : 'notes'}`, 'graph-ng-count'));
+  const head = bar.appendChild(el('div', '', 'graph-ng-card-head'));
+  const title = head.appendChild(el('span', `Only connections of ${middleTruncate(name, 36)}`, 'graph-ng-count')); title.title = name; head.append(closeButton(clear));
   title.setAttribute('role', 'status');
   const controls = bar.appendChild(el('div', '', 'graph-ng-reach')); controls.setAttribute('role', 'group'); controls.setAttribute('aria-label', 'Reach');
   panelHelp(controls, 'Reach', 'Steps from the starting note. Changing reach resets expanded branches.' + (badges ? ' Expand a + badge to reveal hidden neighbours.' : ''));
   for (let h = 0; h <= 3; h++) { const b = controls.appendChild(button(String(h), `Reach ${h} hops`, () => setHops(h), 'graph-ng-count')); b.setAttribute('aria-pressed', String(h === hops)); }
-  controls.append(closeButton(clear));
+  controls.append(el('span', `${count.toLocaleString()} ${count === 1 ? 'note' : 'notes'}`, 'graph-ng-count'));
   const hint = partial ? 'Partial: scan limit reached' : expanded ? 'Expanded beyond reach' : '';
   if (hint) bar.append(el('small', hint));
 }

@@ -70,9 +70,11 @@ test('navigation history: back, forward, a new visit drops the forward branch, r
 test('the card docks to the top-right edge (no note position involved); narrow views get a bottom sheet', () => {
   expect(dockCard(800, 600, 320, 200)).toEqual([472, 8, 320, 200]);
   // Wider than the view: pinned to the left margin, never off screen.
-  expect(dockCard(600, 400, 700, 200)).toEqual([8, 8, 700, 200]);
+  expect(dockCard(600, 400, 700, 200, 8, 0, 'side')).toEqual([8, 8, 700, 200]);
   expect(dockCard(SHEET_WIDTH - 1, 600, 300, 240)).toEqual([0, 360, SHEET_WIDTH - 1, 240]);  // An open tools panel over the right 368 px: the card docks left of it, or becomes a sheet across what is left.
-  expect(dockCard(800, 600, 320, 200, 8, 368)).toEqual([104, 8, 320, 200]); expect(sheetCard(800, 368)).toBe(false);
+  expect(dockCard(800, 600, 320, 200, 8, 368)).toEqual([0, 400, 432, 200]); expect(sheetCard(800, 368)).toBe(true);
+  expect(sheetCard(950, 368, 'side')).toBe(true); expect(sheetCard(1600, 368, 'side')).toBe(false);
+  expect(sheetCard(950, 0, 'sheet')).toBe(true); expect(sheetCard(700, 0, 'side')).toBe(false);
   expect(sheetCard(800, 800 - DOCK_ROOM + 1)).toBe(true); expect(dockCard(800, 600, 320, 200, 8, 500)).toEqual([0, 400, 300, 200]);
 });
 
@@ -291,4 +293,16 @@ test('group disclosures retain counts, declared names and focus after toggling',
   expect(group.children.at(-1)!.textContent).toBe('40'); expect(group.tag('svg')[0]!.attrs['data-icon']).toBe('chevron-right');
   group.click(); const next = r.list.find('graph-ng-connection-group')[0]!;
   expect(next.attrs['aria-expanded']).toBe('true'); expect(El.active).toBe(next); expect(r.rows()).toHaveLength(40);
+});
+
+test('card rows use concise referenced names, readable relationship endpoints and middle truncation', () => {
+  const root = new El('div'), long = 'Source '.repeat(20) + 'ending';
+  const host: CardHost = { name: n => n ? 'opaque-record' : 'Anchor', color: () => 'red', relationship: n => n ? { name: long + ' → Target', type: 'supports' } : undefined, groups: () => ({ groups: [{ type: 'link', out: true, nodes: [1] }], direct: 1 }), isolated: () => false, act() {}, travel() {}, cue() {}, close() {} };
+  const card = new ConnectionCard(root as unknown as HTMLElement, host); card.show(0);
+  const row = card.rows[0] as unknown as El, label = row.find('graph-ng-connection-title')[0]!;
+  expect(row.attrs['aria-label']).toBeUndefined(); expect(row.attrs['aria-labelledby']).toBe(label.id);
+  expect(label.textContent).toContain('…'); expect(label.textContent.endsWith('→ Target')).toBe(true); expect(label.title).toBe(long + ' → Target');
+  expect(row.textContent).toContain('supports'); expect(row.textContent).not.toContain('opaque-record');
+  card.size = [320, 200]; row.focus(); expect(label.textContent).toBe(label.title); expect(card.size).toBeUndefined();
+  card.size = [320, 240]; (row as any).onblur(); expect(label.textContent).toContain('…'); expect(card.size).toBeUndefined();
 });

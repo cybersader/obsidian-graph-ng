@@ -156,9 +156,13 @@ button.graph-ng-stat > .graph-ng-stat-label { text-align:start; }
 .graph-ng-hover-label:empty { display:none; }
 /* The card docks to the right edge as a fixed side panel (placed by the renderer) and stacks above every overlay label. */
 .graph-ng-card { line-height:var(--gng-leading); position:absolute; left:0; top:0; z-index:2; box-sizing:border-box; width:min(320px, calc(100% - 16px)); max-height:calc(100% - 16px); display:flex; flex-direction:column; gap:var(--gng-space-2); overflow-y:auto; scrollbar-gutter:auto; pointer-events:auto; overflow-wrap:anywhere; font-size:var(--gng-text-sm); color:var(--text-normal); background:var(--background-primary); border:1px solid var(--background-modifier-border); padding:var(--gng-space-3); border-radius:var(--gng-chrome-radius); box-shadow:var(--shadow-s); }
+.graph-ng-card .graph-ng-card-fold { display:none; }
+.graph-ng-card[data-compact=true] .graph-ng-card-fold { display:inline-flex; }
+.graph-ng-card[data-folded=true] > :not(.graph-ng-card-head):not(.graph-ng-card-primary), .graph-ng-card[data-folded=true] .graph-ng-card-primary > :not(:first-child) { display:none; }
+.graph-ng-card-fold[aria-expanded=true] svg { transform:rotate(180deg); }
 .graph-ng-card:empty { display:none; }
 .graph-ng-card > * { flex-shrink:0; }
-.graph-ng-card.graph-ng-sheet { z-index:3; top:auto; bottom:0; width:100%; max-height:55%; border-radius:var(--radius-m) var(--radius-m) 0 0; }
+.graph-ng-card.graph-ng-sheet { z-index:3; top:auto; bottom:0; width:100%; max-height:42%; border-radius:var(--radius-m) var(--radius-m) 0 0; }
 .graph-ng-card button, .graph-ng-card summary { min-height:var(--gng-row-h); }
 .graph-ng-card-head { display:flex; align-items:center; gap:var(--gng-space-2); }
 .graph-ng-card-title { font-weight:var(--gng-weight-strong); flex:1 1 auto; min-width:0; font-size:var(--gng-text-sm); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -188,6 +192,7 @@ button.graph-ng-stat > .graph-ng-stat-label { text-align:start; }
 .graph-ng-connection-meta { display:flex; flex-wrap:wrap; gap:var(--gng-space-1) var(--gng-space-2); }
 .graph-ng-connection-title { white-space:normal; line-height:var(--gng-leading-tight); }
 .graph-ng-connection-id, .graph-ng-connection-label, .graph-ng-connection-relation { color:var(--gng-text-muted); font-size:var(--gng-text-xs); white-space:normal; line-height:var(--gng-leading-tight); }
+.graph-ng-connection-relation { background:var(--background-secondary); border-radius:var(--radius-s); padding:0 var(--gng-space-1); }
 .graph-ng-connection-id { font-variant-numeric:tabular-nums; }
 .graph-ng-card .graph-ng-connection-more { font-variant-numeric:tabular-nums; width:100%; margin-block:var(--gng-space-1); }
 .graph-ng-card .graph-ng-section-second { width:100%; margin-bottom:var(--gng-space-1); font-size:var(--gng-text-xs); }
@@ -199,6 +204,10 @@ button.graph-ng-stat > .graph-ng-stat-label { text-align:start; }
 .graph-ng-cue { position:absolute; left:0; top:0; width:28px; height:28px; border:2px solid var(--interactive-accent); border-radius:50%; }
 .graph-ng-cue-line { position:absolute; left:0; top:0; height:2px; transform-origin:0 50%; background:var(--interactive-accent); opacity:.8; pointer-events:none; }
 .graph-ng-isolation { order:-2; display:flex; flex-direction:column; align-items:stretch; gap:var(--gng-space-2); max-width:280px; pointer-events:auto; font-size:var(--gng-text-sm); background:var(--background-primary); border:1px solid var(--background-modifier-border); border-radius:var(--radius-m); padding:var(--gng-space-1) var(--gng-space-2); }
+.graph-ng-isolation > .graph-ng-card-head > .graph-ng-count { flex:1; text-align:left; white-space:normal; }
+.graph-ng-isolation[data-motion=full]:not(:empty) { animation:gng-isolation-notice .8s ease-out; }
+@keyframes gng-isolation-notice { from { border-color:var(--interactive-accent); } }
+@media (prefers-reduced-motion:reduce) { .graph-ng-isolation[data-motion=full]:not(:empty) { animation:none; } }
 .graph-ng-isolation:empty { display:none; }
 .graph-ng-isolation button { min-height:var(--gng-row-h); }
 .graph-ng-isolation button[aria-pressed=true] { background:var(--interactive-accent); color:var(--text-on-accent); }

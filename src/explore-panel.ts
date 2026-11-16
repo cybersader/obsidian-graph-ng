@@ -687,7 +687,7 @@ export class ExplorePanel {
     type NumericVisual = { [K in keyof Visuals]: Visuals[K] extends number ? K : never }[keyof Visuals];
     const initial = defaultVisuals(), slider = (key: NumericVisual, label: string, curve: Curve, desc?: string, labels = false, parent = host) =>
       this.slider(parent, label, curve, () => v[key], value => { v[key] = value; }, labels, { def: initial[key], desc });
-    const choice = <K extends 'edgeCompositing' | 'emphasis' | 'labelStyle' | 'motion'>(parent: HTMLElement, key: K, label: string, desc: string, options: [Visuals[K], string][], labels = false) =>
+    const choice = <K extends 'edgeCompositing' | 'emphasis' | 'labelStyle' | 'motion' | 'clickFraming' | 'cardPlacement'>(parent: HTMLElement, key: K, label: string, desc: string, options: [Visuals[K], string][], labels = false) =>
       settingSelect(parent, label, desc, options, v[key] ?? 'anchored', value => { v[key] = value as Visuals[K]; this.host.visualsChanged(labels); if (labels) this.render(); });
     this.suggested(host);
     this.nodes(host);
@@ -711,6 +711,8 @@ export class ExplorePanel {
       this.lensButton.onclick = () => { this.host.toggleLens?.(); this.updateLensControl(); };
       this.updateLensControl(); panelHelp(host, 'About the lens', 'Brings the selected note’s direct connections into rings temporarily. L toggles it; Escape closes it.');
     }
+    choice(host, 'cardPlacement', 'Card placement', 'Side uses a sheet when space is tight. Auto switches earlier.', [['auto', 'Auto (default)'], ['side', 'Side'], ['sheet', 'Bottom sheet']]);
+    choice(host, 'clickFraming', 'Click framing (experimental)', 'Move only when needed. Off only uncovers the selected note. Respects Motion.', [['off', 'Off (default)'], ['center', 'Center when hidden'], ['fit-neighbours', 'Fit connections']]);
     this.flag(host, 'clickOpens', 'Click to open (skip the connection card)');
     const find = host.createEl('details', { cls: 'graph-ng-highlight-options' }); disclosure(find, 'Finding connections');
     choice(find, 'emphasis', 'Highlight emphasis', 'Adaptive limits growth in large neighbourhoods. Scale keeps the original magnification.', [['adaptive', 'Adaptive (default)'], ['scale', 'Scale']]);

@@ -33,6 +33,8 @@ export interface Visuals {
   /** Full animates briefly; reduced/off and the OS preference apply instant states. */
   motion: 'full' | 'reduced' | 'off';
   cameraAnimationMs: number;
+  clickFraming: 'off' | 'center' | 'fit-neighbours';
+  cardPlacement: 'auto' | 'side' | 'sheet';
   glowMaxNodes: number;
   curvesMaxEdges: number;
   halosMaxGroups: number;
@@ -89,7 +91,7 @@ export interface ExploreSettings { panelOpen: boolean; facetValues: number; lege
 export const defaultVisuals = (): Visuals => ({
   degreeSizing: 4, degreeCurve: 'sqrt', edgeOpacity: .4, edgeDensityReference: 3000, edgeColorMix: .65, edgeMode: 'all', edgeCompositing: 'blend', edgeDirection: false, glow: .3,
   curvedEdges: true, curvature: .12, curveSegments: 8, hoverHighlight: true, dimOpacity: .12, groupHalos: false, haloOpacity: .05,
-  autoPalette: true, labelFade: true, labelStyle: 'anchored', motion: 'full', cameraAnimationMs: 450, glowMaxNodes: 250000, curvesMaxEdges: 60000, halosMaxGroups: 48, hubsMaxGroups: 256, softwareEffects: false,
+  autoPalette: true, labelFade: true, labelStyle: 'anchored', motion: 'full', clickFraming: 'off', cardPlacement: 'auto', cameraAnimationMs: 450, glowMaxNodes: 250000, curvesMaxEdges: 60000, halosMaxGroups: 48, hubsMaxGroups: 256, softwareEffects: false,
   carrierTint: true, carrierBridge: 'blend', carrierBridgeAccent: .35, carrierOpacity: .7, carrierSize: .6, carrierDensityReference: 8000, carrierLod: true, carrierLodNear: .3, carrierLodFar: .6, zoomAdapt: true, labelTierScale: 1.2, labelPlates: true,
   emphasis: 'adaptive', tierMinSize: 7, tierRings: true, focusEdges: true, offscreenPips: true, focusRipple: true, tierLegend: true, clickOpens: false, bridgesFirst: true, minimap: true, breadcrumb: true,
 });
@@ -112,6 +114,7 @@ export function validateVisuals(v: unknown): asserts v is Visuals {
   if (o.edgeCompositing !== 'blend' && o.edgeCompositing !== 'density') throw new Error('visuals.edgeCompositing must be blend or density');
   if (o.labelStyle !== 'anchored' && o.labelStyle !== 'ranked') throw new Error('visuals.labelStyle must be anchored or ranked');
   if (!['full', 'reduced', 'off'].includes(o.motion as string)) throw new Error('visuals.motion must be full, reduced or off');
+  for (const [key, values] of [['clickFraming', ['off', 'center', 'fit-neighbours']], ['cardPlacement', ['auto', 'side', 'sheet']]] as const) if (!(values as readonly unknown[]).includes(o[key])) throw new Error(`visuals.${key} must be ${values.join(', ')}`);
   if (o.emphasis !== 'adaptive' && o.emphasis !== 'scale') throw new Error('visuals.emphasis must be adaptive or scale');
   if (o.carrierBridge !== 'blend' && o.carrierBridge !== 'source') throw new Error('visuals.carrierBridge must be blend or source');
   const { carrierSize: z, carrierLodNear: a, carrierLodFar: b } = o as Record<string, number>;

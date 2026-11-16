@@ -128,6 +128,8 @@
     "labelFade": true,
     "labelStyle": "anchored",
     "motion": "full",
+    "clickFraming": "off",
+    "cardPlacement": "auto",
     "cameraAnimationMs": 450,
     "glowMaxNodes": 250000,
     "curvesMaxEdges": 60000,
