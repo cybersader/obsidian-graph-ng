@@ -17,7 +17,7 @@ import { categorical, NEUTRAL_GROUPS } from './render-effects';
 import { readTheme } from './render-theme';
 import { renderPath, type RenderProjection } from './render-projection';
 import { CanvasLimit, canvasDetailEdges } from './render-data';
-import { pairKey, carrierIndexer, indexCarriers, type GroupProjection, type GroupContribution } from './core/group-projection';
+import { carrierIndexer, indexCarriers, type GroupProjection } from './core/group-projection';
 import { BinaryLayoutStore, type BinaryGeneration } from './core/binary-layout';
 import { yieldTask, sliced } from './core/scheduler';
 import { WorkerPipeline, LAYOUT_PRODUCER, currentDetailGeneration, type ProjectResult, type DetailResult, type LayoutResult, type ViewResult } from './pipeline';
@@ -28,8 +28,6 @@ import { canonicalExplore, loadSettings, settingsForSave, validateSettings, type
 import { searchable } from './search';
 import { DetailRenderer, GroupRenderer, gpuStatus, type Renderer, type RenderView } from './renderer';
 declare const __LAYOUT_WORKER_SOURCE__: string;
-/** Notes read and still to read, for a loading message. */
-const left = (c: { indexed: number; listed: number }) => readingProgress(c);
 /** One message/check serves each boundary without dropping phase information. */
 function requireLayout(current: () => boolean, phase = '') { if (!current()) throw new Error(`Layout generation changed${phase}`); }
 function cleanupFailure(error: unknown, phase: string, cleanup: unknown) { return new Error(`${error}; ${phase} failed: ${cleanup}. Saved-state recovery uncertain; retry saving before closing.`); }
@@ -299,8 +297,6 @@ export class GraphView extends ItemView {
   private toolbar!: HTMLElement;
   private groupGraph?: GroupProjection;
   private carrierLookup?: ReturnType<typeof indexCarriers>;
-  private contributions = new Map<string, GroupContribution[]>();
-  private members = new Map<string, number[]>();
   private projection?: RenderProjection;
   private colors?: Uint32Array;
   private provisional = true;
@@ -458,7 +454,7 @@ export class GraphView extends ItemView {
         if (bytes.byteLength > settings.maxProjectionBytes) throw new Error('Projection byte limit exceeded');
         const p = await this.plugin.pipeline.request<GroupProjection>(revision, { kind: 'external', bytes, maxBytes: settings.maxProjectionBytes, limits: { groups: settings.maxProjectionGroups, pairs: settings.maxProjectionPairs, carriers: settings.maxProjectionCarriers } });
         if (!current()) return;
-        this.projection = undefined; this.positions = undefined; this.explored = undefined; this.groupGraph = p; this.groupGeneration = revision; this.viewGeneration = -1; this.viewSource = 'external'; this.members.clear(); this.contributions.clear();
+        this.projection = undefined; this.positions = undefined; this.explored = undefined; this.groupGraph = p; this.groupGeneration = revision; this.viewGeneration = -1; this.viewSource = 'external';
         this.contentEl.dataset.state = 'ready'; this.statusText = `External aggregate: ${num(p.groups.length)} groups and ${num(p.groupEdges.length)} counted group pairs. Not verified and not merged with live notes.`;
         this.showGroups(); return;
       }
@@ -475,8 +471,8 @@ export class GraphView extends ItemView {
           try {
             const cache = await this.plugin.pipeline.request<{ groups?: GroupProjection } | undefined>(revision, { kind: 'load', generation: saved });
             if (cache?.groups && this.presentation !== 'nodes' && current() && !this.predicate && !(this.view && viewNarrows(this.view))) {
-              this.projection = undefined; this.positions = undefined; this.groupGraph = cache.groups; this.groupGeneration = -revision; this.viewGeneration = -1; this.viewSource = this.sourceKey(null); this.members.clear(); this.contributions.clear(); this.showGroups(true);
-              this.statusText = left(this.plugin.adapter.coverage());
+              this.projection = undefined; this.positions = undefined; this.groupGraph = cache.groups; this.groupGeneration = -revision; this.viewGeneration = -1; this.viewSource = this.sourceKey(null); this.showGroups(true);
+              this.statusText = readingProgress(this.plugin.adapter.coverage());
               this.contentEl.dataset.cachedPaintMs = String(performance.now() - start); await yieldTask();
             }
           } catch { await this.plugin.store.quarantine(saved.meta); }
@@ -487,13 +483,13 @@ export class GraphView extends ItemView {
         if (!current()) return;
         await this.plugin.pipeline.request(revision, { kind: 'rows', ...batch });
         const c = this.plugin.adapter.coverage(); this.readProgress = { indexed: c.indexed, listed: c.listed };
-        this.progressText(left(c));
+        this.progressText(readingProgress(c));
       }
       this.plugin.ingestedHash = hashes.ingestHash;
       this.plugin.pipeline.onGroups = event => {
         if (event.revision !== revision || !current()) return;
         const groupsAt = performance.now();
-        this.groupGraph = event.projection; this.groupGeneration = revision; this.viewGeneration = event.view; this.viewSource = configuredSource; this.members.clear(); this.contributions.clear(); if (this.presentation !== 'nodes') this.showGroups(true); settled();
+        this.groupGraph = event.projection; this.groupGeneration = revision; this.viewGeneration = event.view; this.viewSource = configuredSource; if (this.presentation !== 'nodes') this.showGroups(true); settled();
         const painted = performance.now(), firstGroupMs = painted - start;
         this.startupTrace.push({ revision, start, groupsAt, drawMs: painted - groupsAt, firstGroupMs }); if (this.startupTrace.length > 16) this.startupTrace.shift();
         // A queued metadata refresh must not relabel its later paint as cold startup.
@@ -711,29 +707,25 @@ export class GraphView extends ItemView {
     this.panel.empty();
     this.panel.createEl('strong', { text: Object.entries(edge.typeCounts).map(([t, n]) => `${t}: ${num(n)}`).join(', ') });
     if (edge.directional) { this.panel.createDiv({ text: `A → B: ${JSON.stringify(edge.directional.aToB)}` }); this.panel.createDiv({ text: `B → A: ${JSON.stringify(edge.directional.bToA)}` }); }
-    const rows = this.contributions.get(pairKey(edge.a, edge.b));
-    if (rows) this.paginate(rows, (r, host) => { const item = host.createDiv({ cls: 'graph-ng-contribution' }); item.createSpan({ text: `${r.source} → ${r.target} [${r.type}] ` }); if (r.carrier) item.createEl('button', { text: r.carrier }).onclick = () => this.openPath(r.carrier!); });
-    else {
-      const renderRevision = ++this.renderRevision;
-      if (!this.carrierLookup) {
-        const status = this.panel.createDiv({ text: 'Resolving relationship notes…', attr: { role: 'status' } });
-        const index = carrierIndexer(this.plugin.settings.declaration);
-        try {
-          await sliced(this.plugin.adapter.values(), this.plugin.settings.ingest, row => {
-            if (renderRevision !== this.renderRevision || this.closed) throw new Error('Carrier lookup superseded');
-            index.add(row);
-          });
-        } catch (error) { if (renderRevision === this.renderRevision && !this.closed) status.textContent = `Carrier lookup failed: ${String(error)}`; return; }
-        if (renderRevision !== this.renderRevision || this.closed || clickedGraph !== this.groupGraph) return;
-        this.carrierLookup = index.lookup; status.remove();
-      }
-      const lookup = this.carrierLookup;
-      this.paginate(edge.carriers.ids, (id, host) => {
-        const path = lookup.get(edge.carriers.kind)?.get(id) ?? null;
-        const button = host.createEl('button', { text: path ?? `${id} (not resolved locally)`, cls: 'graph-ng-carrier' });
-        button.disabled = !path; if (path) button.onclick = () => this.openPath(path);
-      });
+    const renderRevision = ++this.renderRevision;
+    if (!this.carrierLookup) {
+      const status = this.panel.createDiv({ text: 'Resolving relationship notes…', attr: { role: 'status' } });
+      const index = carrierIndexer(this.plugin.settings.declaration);
+      try {
+        await sliced(this.plugin.adapter.values(), this.plugin.settings.ingest, row => {
+          if (renderRevision !== this.renderRevision || this.closed) throw new Error('Carrier lookup superseded');
+          index.add(row);
+        });
+      } catch (error) { if (renderRevision === this.renderRevision && !this.closed) status.textContent = `Carrier lookup failed: ${String(error)}`; return; }
+      if (renderRevision !== this.renderRevision || this.closed || clickedGraph !== this.groupGraph) return;
+      this.carrierLookup = index.lookup; status.remove();
     }
+    const lookup = this.carrierLookup;
+    this.paginate(edge.carriers.ids, (id, host) => {
+      const path = lookup.get(edge.carriers.kind)?.get(id) ?? null;
+      const button = host.createEl('button', { text: path ?? `${id} (not resolved locally)`, cls: 'graph-ng-carrier' });
+      button.disabled = !path; if (path) button.onclick = () => this.openPath(path);
+    });
   }
   private contributionContext(): ContributionContext {
     return { active: this.activeRevision, groups: this.groupGeneration, detail: this.detailGeneration, level: this.plugin.settings.groupLevel, projection: this.projection, graph: this.groupGraph, values: this.explored?.groupKeys, view: this.viewGeneration, source: this.viewSource };
@@ -856,7 +848,7 @@ export class GraphView extends ItemView {
         const fits = !detail || this.admitDetail(scope ? result.explore.visible.map((v, i) => v & scope[i]!) : result.explore.visible, !detail.gpu, !completion);
         if (!fits && completion) throw new Error('Detail limit exceeded; displayed graph is unchanged');
         this.explored = result.explore; this.colors = result.colors; this.visible = result.explore.visible; this.groupGraph = result.groups; this.groupGeneration = revision;
-        this.viewGeneration = result.view; this.viewSource = this.sourceKey(sent); this.members.clear(); this.contributions.clear();
+        this.viewGeneration = result.view; this.viewSource = this.sourceKey(sent);
         this.contentEl.dataset.exploreMs = String(performance.now() - started); const g = this.view.group; this.contentEl.dataset.groupSource = !g ? 'declared' : g.from === 'folder' ? `folder:${g.depth}` : g.from === 'expr' ? 'expression' : `${g.from}:${g.key}`; this.contentEl.dataset.visibleNodes = String(sum(result.explore.visible));
         this.contributionPage.update(this.contributionContext()); this.statusText = this.statusText;
         if (detail && fits) detail.setView(this.detailVisible()!, this.renderView());

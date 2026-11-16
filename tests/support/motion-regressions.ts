@@ -36,12 +36,12 @@ test('compiled WebGL and Canvas motion settles to zero queued frames, interrupts
       r.selected = -1; r[k('hovered')] = -1; r[k('emphasize')](); r.refresh(); settle(); expect(r[k('focusLevel')]).toBe(0);
       r.flyTo(.2, .3, .5, 400); now += 100; h.frame(); r.setCamera(.7, .6, .8); settle();
       expect(r.camera).toEqual({ x: .7, y: .6, ratio: .8 });
-      r.flyTo(.1, .2, .4, 400); r.selected = 0; r[k('hovered')] = 0; r[k('emphasize')](); r.setLens(0); r[k('startRipple')](0);
+      r.flyTo(.1, .2, .4, 400); r.selected = 0; r[k('hovered')] = 0; r[k('emphasize')](); r[k('setLens')](0); r[k('startRipple')](0);
       h.reduce(true); h.frame(); expect(h.pendingFrames()).toBe(0); expect(r.camera).toEqual({ x: .1, y: .2, ratio: .4 });
       expect(r[k('focusLevel')]).toBe(1); expect(r[k('lensBlend')]).toBe(1); expect(r[k('ripple')]).toBeUndefined();
       expect(r[k('fx')]).toEqual([1.6, .5]); h.reduce(false); settle();
       for (const mode of ['reduced', 'off'] as const) {
-        settings.visuals.motion = mode; r.flyTo(.4, .5, .6); r.setLens(-1); r.refresh(); h.frame();
+        settings.visuals.motion = mode; r.flyTo(.4, .5, .6); r[k('setLens')](-1); r.refresh(); h.frame();
         expect(r.camera).toEqual({ x: .4, y: .5, ratio: .6 }); expect(h.pendingFrames()).toBe(0);
       }
     } finally { h.dispose(r); }

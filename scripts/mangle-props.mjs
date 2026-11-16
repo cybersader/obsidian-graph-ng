@@ -19,5 +19,19 @@ export const MANGLED_PROPS = ['baseNodeRadius', 'queueSizingLabels', 'labelCarri
   // Main-realm panel/renderer callbacks, never host API methods or persisted data.
   'previewSizing', 'updateSizingReadout', 'updateLensControl', 'previewSuggestions', 'visualsChanged', 'applySuggestions',
   'toggleLens', 'setRelationshipDisplay', 'commitSavedView', 'savedViewIssue', 'onSizingChange', 'sizingReadout',
-  'openSavedView', 'onLensChange', 'toolsChanged', 'relationshipNodes'];
+  'openSavedView', 'onLensChange', 'toolsChanged', 'relationshipNodes',
+  // Internal lifecycle, presentation and interaction state. Keep dataset/timing names,
+  // optional host property-facts fields and legacy settings migration keys readable.
+  'detailFallback', 'linksResolved', 'ingestedHash', 'pendingProperties', 'showDetails',
+  'invalidate', 'hoveredEdge', 'rememberPresentation', 'emphasisBudget', 'setLens',
+  'onMoreConnections', 'invalidateSource', 'viewDefinitions', 'openNote', 'relations',
+  'syncTools', 'lineRanks', 'lensNode', 'linkProducer', 'readProgress', 'motionMedia',
+  'previewSettings', 'resetStore', 'saveSoon', 'typeHidden', 'motionChanged', 'focusFrom',
+  'negated', 'progressText', 'legendCount', 'applyLayout', 'applySizing', 'contextMenu',
+  'emphasisDim', 'progressAt', 'heldBudget', 'pickHub', 'commitSuggestions', 'noteTitle',
+  'streamPositions', 'showConnections', 'disclose', 'syncLens', 'heads', 'findBlur',
+  'updateSummary', 'layoutAdvice', 'resetAdapter', 'commitSizing', 'nextRevision',
+  'commitLayout', 'guard', 'focusFilter', 'lensed', 'scoped', 'exclusions', 'canvasOnly',
+  'frameGroup', 'clearHover', 'sector', 'maxDegree', 'stale', 'stats', 'onHub', 'discs',
+  'apriori', 'showAll', 'partial', 'seen', 'scales', 'act', 'trail', 'slots'];
 export const mangleProps = new RegExp(`^(?:${MANGLED_PROPS.join('|')})$`);

@@ -114,14 +114,14 @@ test('production software Apply preserves renderer/canvas/camera/frame/selection
   const atlas = f.renderer.atlas;
   f.renderer.fitAll = () => { throw new Error('Hidden Fit'); };
   Renderer.create = new Proxy(Renderer.create, { apply() { throw new Error('Renderer reconstructed'); } });
-  try { await f.view.applyLayout(values); } finally { Renderer.create = originalFactory; }
+  try { await f.view[compiled('applyLayout')](values); } finally { Renderer.create = originalFactory; }
   expect(f.view.detailRenderer).toBe(f.renderer); expect(f.renderer.canvas).toBe(canvas); expect(f.renderer[compiled('cameraFrame')]).toBe(frame); expect(f.renderer.camera).toEqual(camera); expect([f.renderer[compiled('centerX')], f.renderer[compiled('centerY')], f.renderer.scale]).toEqual(center);
   expect(f.renderer.selected).toBe(2); expect(f.renderer.grid.pick(80, 90, .1)).toBe(0); expect(f.renderer.grid.pick(0, 0, .1)).toBe(-1);
   expect(f.renderer.positions).toBe(f.next); expect(f.renderer.atlas).not.toBe(atlas); expect(f.view.contentEl.dataset.mode).toBe('nodes'); expect(f.requests()).toBe(1); expect(f.writes.length).toBe(1);
 });
 const onScreen = (r: any, ids: number[]) => ids.map(i => r.screenPoint(i)).every(p => p.x >= 0 && p.x <= r.width && p.y >= 0 && p.y <= r.height);
 test('batch 4 L3 Fit graph frames current coordinates of a small set after Apply without replacing the camera frame', async () => {
-  const f = await fixture(); await f.view.applyLayout(values); const frame = f.renderer[compiled('cameraFrame')];
+  const f = await fixture(); await f.view[compiled('applyLayout')](values); const frame = f.renderer[compiled('cameraFrame')];
   f.renderer.fitAll(0); expect(onScreen(f.renderer, [0, 1, 2])).toBe(true); expect(f.renderer[compiled('cameraFrame')]).toBe(frame);
 });
 test('batch 4 L3 adjacent: Fit graph after filtering to nodes outside the construction frame shows them', async () => {
@@ -171,7 +171,7 @@ const originalFactory = Renderer.create;
 
 test('production same-context upload reuses position/atlas textures, buffers and programs', async () => {
   const f = await fixture(), d = driver(f.renderer), canvas = f.renderer.canvas, programs = f.renderer[compiled('programs')], gl = f.renderer.gl;
-  await f.view.applyLayout(values);
+  await f.view[compiled('applyLayout')](values);
   expect(f.renderer.gl).toBe(gl); expect(f.renderer.canvas).toBe(canvas); expect(Array.isArray(programs)).toBe(true); expect(f.renderer[compiled('programs')]).toBe(programs); expect(d.allocations()).toBe(0);
   expect(d.calls.filter(c => c[0] === 'sub').length).toBe(2); expect(d.calls.filter(c => c[0] === 'image').length).toBe(0); expect(f.requests()).toBe(1);
 });
@@ -179,20 +179,20 @@ test('production same-context upload reuses position/atlas textures, buffers and
 test('production collapsed geometry/picker/group framing/discs and label collisions follow new coordinates', async () => {
   const f = await fixture({ groupCodes: new Uint32Array([0, 0, 1]), groupLabels: ['one', 'two'], collapsed: new Uint8Array([1, 0]) });
   expect(f.renderer.hubs[0].x).toBe(1);
-  await f.view.applyLayout(values);
+  await f.view[compiled('applyLayout')](values);
   expect(f.renderer.hubs[0].x).toBe(81); expect(f.renderer.hubs[0].y).toBe(91); expect(f.renderer.display[0]).toBe(81); expect(f.renderer.display[2]).toBe(81);
   expect(f.renderer.visible[0]).toBe(0); expect(f.renderer.coordinateState(f.next, f.view.visible, {}).picker.pick(80, 90, .1)).toBe(0);
   expect(f.renderer.atlas.nodes.every((nodes: Uint32Array) => !nodes.includes(0) && !nodes.includes(1))).toBe(true);
-  let target: any; f.renderer.flyTo = (...args: any[]) => { target = args; }; f.renderer.frameGroup(0); expect(target).toBeDefined();
+  let target: any; f.renderer.flyTo = (...args: any[]) => { target = args; }; f.renderer[compiled('frameGroup')](0); expect(target).toBeDefined();
 });
 
 test('production failed save/compensation retains CPU/display state, reports disk uncertainty, later Apply succeeds', async () => {
   const f = await fixture(), display = f.renderer.display; let count = 0;
   f.plugin.saveData = async () => { if (++count === 1) throw new Error('disk write failed'); };
-  expect(await outcome(f.view.applyLayout(values))).toContain('disk write failed'); retained(f); expect(f.renderer.display).toBe(display);
+  expect(await outcome(f.view[compiled('applyLayout')](values))).toContain('disk write failed'); retained(f); expect(f.renderer.display).toBe(display);
   f.plugin.saveData = async () => { throw new Error('disk unavailable'); };
-  const error = await outcome(f.view.applyLayout(values)); expect(error).toContain('restoring saved settings also failed'); expect(error).toContain('recovery uncertain'); retained(f);
-  f.plugin.saveData = async () => {}; await f.view.applyLayout(values); expect(f.renderer.positions).toBe(f.next);
+  const error = await outcome(f.view[compiled('applyLayout')](values)); expect(error).toContain('restoring saved settings also failed'); expect(error).toContain('recovery uncertain'); retained(f);
+  f.plugin.saveData = async () => {}; await f.view[compiled('applyLayout')](values); expect(f.renderer.positions).toBe(f.next);
 });
 
 test('production actual CPU preparation validates every coordinate, rejects stale viewport/theme/view/disposal', async () => {
@@ -202,7 +202,7 @@ test('production actual CPU preparation validates every coordinate, rejects stal
   for (const mode of ['resize', 'labels', 'theme', 'view', 'disposed', 'scope']) {
     const f = await fixture(), entered = deferred(), release = deferred(); let count = 0;
     f.plugin.saveData = async (data: any) => { f.writes.push(structuredClone(data)); if (++count === 1) { entered.resolve(); await release.promise; } };
-    const pending = outcome(f.view.applyLayout(values)); await entered.promise;
+    const pending = outcome(f.view[compiled('applyLayout')](values)); await entered.promise;
     if (mode === 'resize') f.renderer.width++;
     if (mode === 'labels') f.plugin.settings.labelSize++;
     if (mode === 'theme') f.renderer.refreshTheme();
@@ -216,19 +216,19 @@ test('production actual CPU preparation validates every coordinate, rejects stal
 test('production ordinary save snapshots latest settings and camera; later winning Apply is not clobbered', async () => {
   const f = await fixture(), entered = deferred(), release = deferred(); let count = 0;
   f.plugin.saveData = async (data: any) => { f.writes.push(structuredClone(data)); if (++count === 1) { entered.resolve(); await release.promise; } };
-  const pending = f.view.applyLayout(values); await entered.promise; f.plugin.settings.visuals.glow = .42; f.renderer.camera = { x: 7, y: 8, ratio: 4 };
+  const pending = f.view[compiled('applyLayout')](values); await entered.promise; f.plugin.settings.visuals.glow = .42; f.renderer.camera = { x: 7, y: 8, ratio: 4 };
   const ordinary = f.plugin.save(); release.resolve(); await Promise.all([pending, ordinary]);
   expect(f.writes.at(-1).settings.layout.force.scalingRatio).toBe(8); expect(f.writes.at(-1).settings.visuals.glow).toBe(.42); expect(f.renderer.camera).toEqual({ x: 7, y: 8, ratio: 4 });
   const g = await fixture(), start = deferred(), finish = deferred(); count = 0;
   g.plugin.saveData = async (data: any) => { g.writes.push(structuredClone(data)); if (++count === 1) { start.resolve(); await finish.promise; } };
-  const first = outcome(g.view.applyLayout(values)); await start.promise; g.view.activeRevision++; g.view.detailGeneration++;
-  const second = outcome(g.view.applyLayout({ ...values, scalingRatio: 9 })); finish.resolve(); expect(await first).toContain('generation changed'); expect(await second).toBe('success'); expect(g.writes.at(-1).settings.layout.force.scalingRatio).toBe(9);
+  const first = outcome(g.view[compiled('applyLayout')](values)); await start.promise; g.view.activeRevision++; g.view.detailGeneration++;
+  const second = outcome(g.view[compiled('applyLayout')]({ ...values, scalingRatio: 9 })); finish.resolve(); expect(await first).toContain('generation changed'); expect(await second).toBe('success'); expect(g.writes.at(-1).settings.layout.force.scalingRatio).toBe(9);
 });
 
 test('production upload failure restores last-good CPU/GPU state; lost context and failed rollback report uncertainty', async () => {
   for (const mode of ['once', 'lost', 'throw']) {
     const f = await fixture(), d = driver(f.renderer), atlas = f.renderer.atlas; d.fail(mode);
-    const result = await outcome(f.view.applyLayout(values)); expect(result).not.toBe('success'); retained(f); expect(f.renderer.atlas).toBe(atlas); expect(f.writes.length).toBe(2);
+    const result = await outcome(f.view[compiled('applyLayout')](values)); expect(result).not.toBe('success'); retained(f); expect(f.renderer.atlas).toBe(atlas); expect(f.writes.length).toBe(2);
     if (mode === 'once') expect(result).toContain('GPU coordinate upload failed'); else expect(result).toContain('GPU recovery uncertain');
   }
 });
@@ -266,11 +266,11 @@ test('production sizing preview/cancel keeps renderer camera selection scope set
 
 test('production sizing apply acknowledgement and rejected save preserve last-saved policy', async () => {
   const f = await fixture(), value = { radius: 6, prominence: 9, compensation: .5, floor: .2, curve: 'linear' as const }, camera = { ...f.renderer.camera };
-  f.renderer[compiled('previewSizing')](value); await f.plugin.commitSizing(value, () => true); f.renderer[compiled('previewSizing')](null, true);
+  f.renderer[compiled('previewSizing')](value); await f.plugin[compiled('commitSizing')](value, () => true); f.renderer[compiled('previewSizing')](null, true);
   expect(f.plugin.settings.nodeSizing.policy).toBe('predictable'); expect(f.plugin.settings.nodeSize).toBe(6); expect(f.renderer.camera).toEqual(camera); expect(f.renderer.selected).toBe(2); expect(f.requests()).toBe(0);
   const saved = structuredClone(f.plugin.settings); let calls = 0; f.plugin.saveData = async () => { if (++calls === 1) throw new Error('synthetic failure'); };
   f.renderer[compiled('previewSizing')]({ ...value, radius: 10 });
-  await expect(f.plugin.commitSizing({ ...value, radius: 10 }, () => true)).rejects.toThrow('synthetic failure'); f.renderer[compiled('previewSizing')](null, true);
+  await expect(f.plugin[compiled('commitSizing')]({ ...value, radius: 10 }, () => true)).rejects.toThrow('synthetic failure'); f.renderer[compiled('previewSizing')](null, true);
   expect(f.plugin.settings).toEqual(saved); expect(calls).toBe(2);
 });
 
@@ -279,7 +279,7 @@ test('Repair R2 carrier-size edits invalidate stale label multipliers and coales
   const f = await fixture(), v = { radius: 10, prominence: 1, compensation: 0, floor: .3, curve: 'log' as const }, camera = { ...f.renderer.camera }, positions = f.renderer.positions;
   f.renderer.projection.carrierNodes[0] = 1; f.plugin.settings.visuals.carrierLod = false;
   f.renderer.setView(new Uint8Array([1, 0, 0]), {});
-  await f.plugin.commitSizing(v, () => true); f.renderer[compiled('previewSizing')](null, true);
+  await f.plugin[compiled('commitSizing')](v, () => true); f.renderer[compiled('previewSizing')](null, true);
   await f.renderer[compiled('prepareLabels')](() => true);
   const multiplier = () => f.renderer.atlas.levels.find((level: Float32Array) => level.length > 0)[10];
   expect(multiplier()).toBeCloseTo(.6);
@@ -395,7 +395,7 @@ test('graduated production: a click is the one CPU tier authority, hover never r
   for (const i of [1, 3, 1, 4, 2, 2, 0]) { f.tap(i); expect(f.actual()).toEqual(f.expected(i)); }
   f.hover(EMPTY); expect(f.actual()).toEqual(f.expected(0));
   const all = new Uint8Array(5).fill(1);
-  r.setView(all, { typeHidden: new Uint8Array([1]) }); expect(f.actual()).toEqual(f.expected(0, new Uint8Array(3))); expect(f.tiers()).toEqual([255, 0, 0, 0, 0]);
+  r.setView(all, { [compiled('typeHidden')]: new Uint8Array([1]) }); expect(f.actual()).toEqual(f.expected(0, new Uint8Array(3))); expect(f.tiers()).toEqual([255, 0, 0, 0, 0]);
   r.setView(new Uint8Array([1, 0, 1, 1, 1]), {}); expect(f.actual()).toEqual(f.expected(0, undefined, new Uint8Array([1, 0, 1, 1, 1])));
   r.setView(new Uint8Array([0, 1, 1, 1, 1]), {}); expect(f.actual()).toEqual([[0, 0, 0, 0, 0], [0, 0, 0]]);
   r.setView(all, {}); expect(f.actual()).toEqual(f.expected(0));
@@ -492,7 +492,7 @@ test('graduated labels fold unlabelled direct connections into a "+N more" butto
   expect(shown).toBeGreaterThan(0); expect(shown).toBeLessThanOrEqual(24); expect(more.hidden).toBe(false); expect(more.tagName).toBe('BUTTON');
   expect(more.textContent).toBe(`+${hidden} more`); expect(more.attributes['aria-label']).toBe(`Show ${hidden} more direct connections of ${r[k('name')](0)}`);
   // The default hook is a safe no-op; a host hook receives the focus.
-  more.click(); r.onMoreConnections = (n: number) => asked.push(n); more.click(); expect(asked).toEqual([0]); expect(f.opened).toEqual([]);
+  more.click(); r[compiled('onMoreConnections')] = (n: number) => asked.push(n); more.click(); expect(asked).toEqual([0]); expect(f.opened).toEqual([]);
   // Labels carry the full name for assistive technology without hover tooltips.
   for (const el of r[k('tierLabels')]) expect(el.attributes['aria-description']).toBe(el.textContent);
   f.tap(EMPTY); paint(); expect(more.hidden).toBe(true); expect(r[k('tierLabels')]).toEqual([]);
@@ -591,7 +591,7 @@ test('connection card: grouped rows travel, history goes back and forward, keys 
 test('neighbourhood: reach 0–3, additive expansion, anchored travel, filters and one exit', async () => {
   const f = await graduated([[0, 1], [1, 2], [2, 3], [0, 4]]), { r, k } = f, card = () => r[k('noteCard')], bar = () => r[k('isolationBar')], opens: string[][] = [], copies: string[] = [];
   f.tap(0); control(card(), 'Open note').click(); control(card(), 'New tab').click(); expect(f.opened).toEqual([0, 0]);
-  r.openNote = (path: string, mode: string) => opens.push([path, mode]); r.copyLink = (path: string) => copies.push(path);
+  r[compiled('openNote')] = (path: string, mode: string) => opens.push([path, mode]); r.copyLink = (path: string) => copies.push(path);
   for (const name of ['Open note', 'New tab', 'Open to the right', 'Copy link']) control(card(), name).click();
   expect(opens).toEqual([['0.md', 'reuse'], ['0.md', 'tab'], ['0.md', 'split']]); expect(copies).toEqual(['0.md']);
   const before = { ...r.camera }; control(card(), 'Focus here').click(); expect(r[k('flight')].to).not.toEqual(before);
@@ -626,7 +626,7 @@ test('neighbourhood frontier badges are bounded, clickable, text-only and indepe
   const mask = r[k('filterVisible')]; f.hover(1); expect(r[k('filterVisible')]).toBe(mask); expect(r[k('isolation')].node).toBe(0);
   const badge = r[k('frontierBadges')][0]; expect(badge.el.textContent).toBe('+1'); expect(badge.el.className).toContain('graph-ng-count');
   badge.el.click(); expect(r[k('filterVisible')][badge.node + 30]).toBe(1); expect(r[k('frontier')].has(badge.node)).toBe(false);
-  r.setView(new Uint8Array(61).fill(1), { typeHidden: new Uint8Array([1]) });
+  r.setView(new Uint8Array(61).fill(1), { [compiled('typeHidden')]: new Uint8Array([1]) });
   expect(r[k('filterVisible')].reduce((a: number, b: number) => a + b)).toBe(1); expect(r[k('frontierBadges')]).toHaveLength(0);
   const base = new Uint8Array(61).fill(1); base[0] = 0; r.setView(base, {});
   expect(r[k('isolation')]).toBeUndefined(); expect(r[k('filterVisible')]).toBe(base);
@@ -784,38 +784,38 @@ test('lens production animation and picking follow sparse overrides without chan
   const f = await graduated([[0, 1], [0, 2], [1, 3]]), { r, k } = f;
   const positions = r.positions, bytes = [...positions], display = r[k('display')], camera = { ...r.camera }, settings = JSON.stringify(f.settings);
   const before = [0, 1, 2, 3, 4].map(n => r.screenPoint(n));
-  r.setLens(0); expect(r.lensNode).toBe(0); expect(r[k('lensPoints')].size).toBe(2);
+  r[compiled('setLens')](0); expect(r[compiled('lensNode')]).toBe(0); expect(r[k('lensPoints')].size).toBe(2);
   const motion = r[k('lensMotion')]; r[k('animate')](motion.start + 110);
   expect(r[k('lensBlend')]).toBeCloseTo(.5, 10); const middle = r.screenPoint(1); expect(r.pick(middle.x, middle.y)).toBe(1);
   r[k('animate')](motion.start + 220); const pulled = r.screenPoint(1);
   expect(pulled).not.toEqual(before[1]); expect(r.pick(pulled.x, pulled.y)).toBe(1); expect(r.pick(before[1].x, before[1].y)).not.toBe(1);
   for (const n of [0, 3, 4]) expect(r.screenPoint(n)).toEqual(before[n]);
-  f.hover(1); expect(r[k('focusNode')]).toBe(0); expect(r.lensNode).toBe(0);
+  f.hover(1); expect(r[k('focusNode')]).toBe(0); expect(r[compiled('lensNode')]).toBe(0);
   const distance = Math.hypot(pulled.x - before[0].x, pulled.y - before[0].y);
   r.setCamera(r.camera.x, r.camera.y, r.camera.ratio / 2);
   const a = r.screenPoint(0), b = r.screenPoint(1); expect(Math.hypot(b.x - a.x, b.y - a.y)).toBeCloseTo(distance, 4);
-  r.setCamera(camera.x, camera.y, camera.ratio); r.setLens(-1); r[k('animate')](r[k('lensMotion')].start + 220);
-  expect(r[k('lensPoints')].size).toBe(0); expect(r.lensNode).toBe(-1);
+  r.setCamera(camera.x, camera.y, camera.ratio); r[compiled('setLens')](-1); r[k('animate')](r[k('lensMotion')].start + 220);
+  expect(r[k('lensPoints')].size).toBe(0); expect(r[compiled('lensNode')]).toBe(-1);
   for (let n = 0; n < 5; n++) expect(r.screenPoint(n)).toEqual(before[n]);
   expect(r.positions).toBe(positions); expect([...positions]).toEqual(bytes); expect(r[k('display')]).toBe(display); expect(r.camera).toEqual(camera); expect(JSON.stringify(f.settings)).toBe(settings);
 });
 test('lens production retargeting and view invalidation remove stale overrides', async () => {
   const { r, k } = await graduated([[0, 1], [0, 2], [1, 3]]);
   const finish = () => r[k('animate')](r[k('lensMotion')].start + 220);
-  r.setLens(0); finish(); r.setLens(3); expect(r.lensNode).toBe(3); expect(r[k('lensAnchor')]).toBe(0);
+  r[compiled('setLens')](0); finish(); r[compiled('setLens')](3); expect(r[compiled('lensNode')]).toBe(3); expect(r[k('lensAnchor')]).toBe(0);
   finish(); expect(r[k('lensAnchor')]).toBe(3); finish(); expect([...r[k('lensPoints')].keys()]).toEqual([1]); expect(r[k('lensBytes')][2 * 4 + 2]).toBe(0);
-  r.setView(new Uint8Array(5).fill(1), { typeHidden: new Uint8Array([1]) }); expect(r[k('lensPoints')].size).toBe(0);
+  r.setView(new Uint8Array(5).fill(1), { [compiled('typeHidden')]: new Uint8Array([1]) }); expect(r[k('lensPoints')].size).toBe(0);
   r.setView(new Uint8Array(5).fill(1), {}); expect([...r[k('lensPoints')].keys()]).toEqual([1]);
-  r.setView(new Uint8Array([1, 1, 1, 0, 1]), {}); expect(r.lensNode).toBe(-1); finish(); expect(r[k('lensAnchor')]).toBe(-1); expect(r[k('lensPoints')].size).toBe(0);
-  expect(() => r.setLens(NaN)).toThrow('LENS_NODE_INDEX'); expect(() => r.setLens(99)).toThrow('LENS_NODE_INDEX');
+  r.setView(new Uint8Array([1, 1, 1, 0, 1]), {}); expect(r[compiled('lensNode')]).toBe(-1); finish(); expect(r[k('lensAnchor')]).toBe(-1); expect(r[k('lensPoints')].size).toBe(0);
+  expect(() => r[compiled('setLens')](NaN)).toThrow('LENS_NODE_INDEX'); expect(() => r[compiled('setLens')](99)).toThrow('LENS_NODE_INDEX');
 });
 test('lens production L and Escape are keyboard reachable; reduced motion has no pending transition', async () => {
   const { r, k } = await graduated([[0, 1], [0, 2]]); r.selected = 0;
   const key = (name: string) => { let handled = false; r[k('keyDown')]({ key: name, target: r.canvas, preventDefault() { handled = true; } }); return handled; };
   try {
-    fixtureReducedMotion = true; expect(key('L')).toBe(true); expect(r.lensNode).toBe(0); expect(r[k('lensBlend')]).toBe(1); expect(r[k('lensMotion')]).toBeUndefined();
-    expect(key('Escape')).toBe(true); expect(r.lensNode).toBe(-1); expect(r[k('lensPoints')].size).toBe(0); expect(r.selected).toBe(0);
-    key('l'); key('l'); expect(r.lensNode).toBe(-1); expect(r[k('lensMotion')]).toBeUndefined();
+    fixtureReducedMotion = true; expect(key('L')).toBe(true); expect(r[compiled('lensNode')]).toBe(0); expect(r[k('lensBlend')]).toBe(1); expect(r[k('lensMotion')]).toBeUndefined();
+    expect(key('Escape')).toBe(true); expect(r[compiled('lensNode')]).toBe(-1); expect(r[k('lensPoints')].size).toBe(0); expect(r.selected).toBe(0);
+    key('l'); key('l'); expect(r[compiled('lensNode')]).toBe(-1); expect(r[k('lensMotion')]).toBeUndefined();
   } finally { fixtureReducedMotion = false; }
 });
 test('lens production Canvas edges, node arcs and relationship picking use the interpolated coordinates', async () => {
@@ -823,7 +823,7 @@ test('lens production Canvas edges, node arcs and relationship picking use the i
   const arcs: number[][] = [], starts: number[][] = [], ends: number[][] = [];
   Object.assign(ctx, { arc: (...v: number[]) => arcs.push(v), moveTo: (...v: number[]) => starts.push(v), lineTo: (...v: number[]) => ends.push(v) });
   try {
-    r.setLens(0); r[k('animate')](r[k('lensMotion')].start + 110); r[k('drawCanvas')]();
+    r[compiled('setLens')](0); r[k('animate')](r[k('lensMotion')].start + 110); r[k('drawCanvas')]();
     const a = r.screenPoint(0), b = r.screenPoint(1);
     expect(arcs.some(([x, y]) => x === b.x && y === b.y)).toBe(true);
     expect(starts).toContainEqual([a.x, a.y]); expect(ends).toContainEqual([b.x, b.y]);
@@ -834,22 +834,22 @@ test('lens production WebGL batches touched offsets by texture row; animation ch
   const { r, k } = await graduated([[0, 1], [0, 2]]), writes: any[][] = [];
   r.gl = new Proxy({ isContextLost: () => false, texImage2D: (...v: any[]) => writes.push(['image', ...v]), texSubImage2D: (...v: any[]) => writes.push(['sub', ...v]), bufferData: (...v: any[]) => writes.push(['buffer', ...v]) }, { get: (o: any, key: string) => key in o ? o[key] : key.toUpperCase() === key ? 1 : () => {} });
   try {
-    r.setLens(0); const offsets = writes.filter(v => v[0] === 'sub'); expect(offsets.length).toBe(1);
+    r[compiled('setLens')](0); const offsets = writes.filter(v => v[0] === 'sub'); expect(offsets.length).toBe(1);
     expect(offsets[0]!.slice(3, 7)).toEqual([1, 0, 2, 1]);
     expect([...offsets[0]!.at(-1)]).toEqual(Array.from(r[k('lensBytes')]).slice(4, 12));
     writes.length = 0; const motion = r[k('lensMotion')]; r[k('animate')](motion.start + 110); r[k('animate')](motion.start + 220);
     expect(writes).toEqual([]);
     r[k('uploadLens')](); expect(writes[0]?.at(-1)).toBe(r[k('lensBytes')]); // restoration allocation retains the active ring
-    r.setLens(-1); r[k('animate')](r[k('lensMotion')].start + 220); expect([...r[k('lensBytes')]].every(v => v === 0)).toBe(true);
+    r[compiled('setLens')](-1); r[k('animate')](r[k('lensMotion')].start + 220); expect([...r[k('lensBytes')]].every(v => v === 0)).toBe(true);
   } finally { r.gl = null; }
 });
 
 test('lens production layout adoption and rollback retain a coherent overlay without owning coordinates', async () => {
   const { r, k } = await graduated([[0, 1], [0, 2]]), original = r.positions;
-  r.setLens(0); r[k('animate')](r[k('lensMotion')].start + 220);
+  r[compiled('setLens')](0); r[k('animate')](r[k('lensMotion')].start + 220);
   const before = r.screenPoint(1), next = Float32Array.from(original, (v: number) => v + 50);
   const token = await prepare(r, next, () => true); token.commit();
-  expect(r.positions).toBe(next); expect(r.lensNode).toBe(0); const moved = r.screenPoint(1); expect(moved).not.toEqual(before); expect(r.pick(moved.x, moved.y)).toBe(1);
+  expect(r.positions).toBe(next); expect(r[compiled('lensNode')]).toBe(0); const moved = r.screenPoint(1); expect(moved).not.toEqual(before); expect(r.pick(moved.x, moved.y)).toBe(1);
   token.rollback(); token.discard(); expect(r.positions).toBe(original); expect(r.screenPoint(1)).toEqual(before); expect(r.pick(before.x, before.y)).toBe(1);
 });
 
@@ -859,7 +859,7 @@ test('wiring: "+N more" opens a bounded group list and focuses its filter withou
   const f = await graduated(Array.from({ length: 60 }, (_, i) => [0, i + 1] as [number, number]), 61), { r, k } = f, card = () => r[k('noteCard')];
   const rows = () => card().querySelectorAll('button').filter((b: any) => b.className === 'graph-ng-connection');
   expect(readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8')).toContain('onMoreConnections = focus => this.detailRenderer?.showConnections(focus)');
-  r.onMoreConnections = (n: number) => r.showConnections(n); // the main.ts hook
+  r[compiled('onMoreConnections')] = (n: number) => r[compiled('showConnections')](n); // the main.ts hook
   // Two declared groups (55 and 5), so the hub starts as a collapsed overview.
   r.setView(new Uint8Array(61).fill(1), { groupCodes: Uint32Array.from({ length: 61 }, (_, i) => i > 55 ? 1 : 0), groupLabels: ['Alpha', 'Beta'] });
   f.tap(0); r[k('focusLevel')] = 1; r[k('placeOverlay')](); expect(rows().length).toBe(0);
@@ -868,8 +868,8 @@ test('wiring: "+N more" opens a bounded group list and focuses its filter withou
   expect(r.selected).toBe(0); expect(rows().length).toBe(50); expect(card().textContent).not.toContain('Show all'); expect((ControlElement as any).active).toBe(card().querySelector('input'));
   expect(r.camera).toEqual(camera); expect(r.positions).toBe(positions);
   // From no selection the hook selects the focus and opens its card; a hidden note is ignored.
-  f.tap(EMPTY); expect(card().textContent).toBe(''); r.showConnections(0); expect(r.selected).toBe(0); expect(rows().length).toBe(50);
-  r.showConnections(-1); r.showConnections(99); expect(r.selected).toBe(0);
+  f.tap(EMPTY); expect(card().textContent).toBe(''); r[compiled('showConnections')](0); expect(r.selected).toBe(0); expect(rows().length).toBe(50);
+  r[compiled('showConnections')](-1); r[compiled('showConnections')](99); expect(r.selected).toBe(0);
 });
 // The owner's case: a 221-connection hub near the top-left, its labels running under the Recent strip and
 // tier legend. Panel rects are injected (the synthetic DOM has no layout); the browser evidence harness
@@ -944,7 +944,7 @@ test('wiring: card Lens action, lens-displaced picking/arrows/cue/labels, and Es
   try {
     fixtureReducedMotion = true;
     f.tap(0); const lens = control(card(), 'Connection lens'); expect(lens.attributes['aria-pressed']).toBe('false'); expect(lens.attributes['aria-label']).toBe('Connection lens: 0');
-    lens.click(); expect(r.lensNode).toBe(0); expect(control(card(), 'Connection lens').attributes['aria-pressed']).toBe('true');
+    lens.click(); expect(r[compiled('lensNode')]).toBe(0); expect(control(card(), 'Connection lens').attributes['aria-pressed']).toBe('true');
     const pulled = r.screenPoint(1); expect(pulled).not.toEqual(before);
     // Tier-lifted picking (min size) finds the displaced note at its drawn position, not its grid cell.
     r[k('focusLevel')] = 1; expect(r.pick(pulled.x, pulled.y)).toBe(1); expect(r.pick(before.x, before.y)).not.toBe(1);
@@ -956,26 +956,26 @@ test('wiring: card Lens action, lens-displaced picking/arrows/cue/labels, and Es
     const row = rows().find((b: any) => b.attributes['aria-label']?.startsWith('Go to 1:')); row.onmouseenter(); r[k('placeOverlay')]();
     expect(r[k('cueRing')].style.transform).toContain(`translate(${Math.round(pulled.x)}px, ${Math.round(pulled.y)}px)`);
     // Travel moves the lens with the card; Alt+Left in the card goes back (and the lens follows).
-    row.click(); expect(r.selected).toBe(1); expect(r.lensNode).toBe(1); expect(r[k('lensAnchor')]).toBe(1); expect(control(card(), 'Connection lens').attributes['aria-pressed']).toBe('true');
-    cardKey('ArrowLeft', card(), true); expect(r.selected).toBe(0); expect(r.lensNode).toBe(0);
+    row.click(); expect(r.selected).toBe(1); expect(r[compiled('lensNode')]).toBe(1); expect(r[k('lensAnchor')]).toBe(1); expect(control(card(), 'Connection lens').attributes['aria-pressed']).toBe('true');
+    cardKey('ArrowLeft', card(), true); expect(r.selected).toBe(0); expect(r[compiled('lensNode')]).toBe(0);
     // L from inside the card toggles exactly once (card keys do not swallow it, nothing fires twice).
-    cardKey('l', rows()[0]); expect(r.lensNode).toBe(-1); expect(control(card(), 'Connection lens').attributes['aria-pressed']).toBe('false');
-    cardKey('L', rows()[0]); expect(r.lensNode).toBe(0);
+    cardKey('l', rows()[0]); expect(r[compiled('lensNode')]).toBe(-1); expect(control(card(), 'Connection lens').attributes['aria-pressed']).toBe('false');
+    cardKey('L', rows()[0]); expect(r[compiled('lensNode')]).toBe(0);
     // Escape layers: the card first (lens stays), then the lens, then nothing left to clear.
-    expect(canvasKey('Escape')).toBe(true); expect(card().textContent).toBe(''); expect(r.selected).toBe(-1); expect(r.lensNode).toBe(0);
-    expect(canvasKey('Escape')).toBe(true); expect(r.lensNode).toBe(-1); expect(r[k('lensPoints')].size).toBe(0);
+    expect(canvasKey('Escape')).toBe(true); expect(card().textContent).toBe(''); expect(r.selected).toBe(-1); expect(r[compiled('lensNode')]).toBe(0);
+    expect(canvasKey('Escape')).toBe(true); expect(r[compiled('lensNode')]).toBe(-1); expect(r[k('lensPoints')].size).toBe(0);
     { const d = r[k('display')]; expect(r.screenPoint(1)).toEqual({ x: (d[2] - r[compiled('centerX')]) * r.scale + r[k('width')] / 2, y: (d[3] - r[compiled('centerY')]) * r.scale + r[k('height')] / 2 }); }
     // The card's own Escape also closes only the card.
-    f.tap(0); control(card(), 'Connection lens').click(); expect(r.lensNode).toBe(0); cardKey('Escape', rows()[0]); expect(card().textContent).toBe(''); expect(r.lensNode).toBe(0);
+    f.tap(0); control(card(), 'Connection lens').click(); expect(r[compiled('lensNode')]).toBe(0); cardKey('Escape', rows()[0]); expect(card().textContent).toBe(''); expect(r[compiled('lensNode')]).toBe(0);
     // A click on empty canvas still clears both.
-    f.tap(EMPTY); expect(r.lensNode).toBe(-1);
+    f.tap(EMPTY); expect(r[compiled('lensNode')]).toBe(-1);
   } finally { fixtureReducedMotion = false; }
 });
 
 // Review regressions exercise the shipped class, not an alternate UI implementation.
 test('review: hover never shows the focus controls; a click does, and they stay when the pointer leaves for the overlay', async () => {
   const f = await graduated(Array.from({ length: 40 }, (_, i) => [0, i + 1] as [number, number]), 41), { r, k } = f;
-  r.onMoreConnections = (n: number) => r.showConnections(n);
+  r[compiled('onMoreConnections')] = (n: number) => r[compiled('showConnections')](n);
   f.hover(0); r[k('focusLevel')] = 1; r[k('placeOverlay')]();
   expect(r[k('focusNode')]).toBe(-1); expect(r[k('moreButton')]).toBeUndefined(); expect(r[k('legend')].hidden).toBe(true); expect(r.card.node).toBe(-1);
   f.tap(0); r[k('focusLevel')] = 1; r[k('placeOverlay')]();
@@ -1035,7 +1035,7 @@ test('review: a distant high-degree lens cannot starve picking a nearby unrelate
   const { r, k } = await graduated(pairs, 503, 50000), next = r.positions.slice();
   next[1002] = 1e7; next[1003] = 0; next[1004] = 1e7 + 100; next[1005] = 0;
   const token = await prepare(r, next, () => true); token.commit(); token.discard();
-  r.setLens(0); r[k('animate')](r[k('lensMotion')].start + 220);
+  r[compiled('setLens')](0); r[k('animate')](r[k('lensMotion')].start + 220);
   const a = r.screenPoint(501), b = r.screenPoint(502);
   expect(r[k('lensPoints')].size).toBe(400);
   expect(r[k('pickEdge')]((a.x + b.x) / 2, (a.y + b.y) / 2)).toBe(pairs.length - 1);
@@ -1046,16 +1046,16 @@ test('review: a 5000-connection lens uploads at most one span per touched textur
   const gpu = new Float32Array(r[k('lensBytes')].length), width = r.positionWidth;
   r.gl = new Proxy({ isContextLost: () => false, texSubImage2D: (...v: any[]) => { writes.push(v); gpu.set(v[8], (v[3] * width + v[2]) * 4); } }, { get: (o: any, key: string) => key in o ? o[key] : key.toUpperCase() === key ? 1 : () => {} });
   try {
-    r.setLens(0); expect(writes.length).toBe(Math.ceil(5001 / width)); expect(gpu).toEqual(r[k('lensBytes')]);
+    r[compiled('setLens')](0); expect(writes.length).toBe(Math.ceil(5001 / width)); expect(gpu).toEqual(r[k('lensBytes')]);
     r[k('animate')](r[k('lensMotion')].start + 220); writes.length = 0;
-    r.setLens(-1); r[k('animate')](r[k('lensMotion')].start + 220);
+    r[compiled('setLens')](-1); r[k('animate')](r[k('lensMotion')].start + 220);
     expect(writes.length).toBe(Math.ceil(5001 / width)); expect(gpu.every(v => v === 0)).toBe(true);
   } finally { r.gl = null; }
 });
 
 test('review: Focus action frames effective lens coordinates, not hidden layout positions', async () => {
   const { r, k } = await graduated([[0, 1], [0, 2]]); r[k('selectNote')](0, true);
-  r.setLens(0); r[k('animate')](r[k('lensMotion')].start + 220);
+  r[compiled('setLens')](0); r[k('animate')](r[k('lensMotion')].start + 220);
   let box: number[] = []; r.frame = (...args: number[]) => { box = args; };
   control(r[k('noteCard')], 'Focus here').click();
   const xs = [0, 1, 2].map(n => r[k('renderCoordinate')](n, 0)), ys = [0, 1, 2].map(n => r[k('renderCoordinate')](n, 1));
@@ -1069,11 +1069,11 @@ test('review: Open reuses only unpinned notes and reveals the destination; expli
   const leaf = (name: string, pinned = false) => ({ getViewState: () => ({ pinned }), openFile: async (f: unknown) => { expect(f).toBe(file); opened.push(name); } });
   const pinned = leaf('pinned', true), reusable = leaf('reuse'), created = leaf('created'); let leaves = [pinned, reusable];
   view.app = { vault: { getAbstractFileByPath: () => file }, workspace: { getLeavesOfType: () => leaves, getLeaf: (...args: unknown[]) => { requested.push(args); return created; }, revealLeaf: async (target: unknown) => { revealed.push(target); } } };
-  view.openNote('Synthetic.md', 'reuse'); await Promise.resolve(); await Promise.resolve();
+  view[compiled('openNote')]('Synthetic.md', 'reuse'); await Promise.resolve(); await Promise.resolve();
   expect(opened).toEqual(['reuse']); expect(revealed).toEqual([reusable]); expect(requested).toEqual([]);
-  leaves = [pinned]; view.openNote('Synthetic.md', 'reuse'); await Promise.resolve(); await Promise.resolve();
+  leaves = [pinned]; view[compiled('openNote')]('Synthetic.md', 'reuse'); await Promise.resolve(); await Promise.resolve();
   expect(requested).toEqual([['tab']]); expect(revealed.at(-1)).toBe(created);
-  view.openNote('Synthetic.md', 'tab'); view.openNote('Synthetic.md', 'split'); await Promise.resolve(); await Promise.resolve();
+  view[compiled('openNote')]('Synthetic.md', 'tab'); view[compiled('openNote')]('Synthetic.md', 'split'); await Promise.resolve(); await Promise.resolve();
   expect(requested.slice(-2)).toEqual([['tab'], ['split', 'vertical']]); expect(opened).not.toContain('pinned');
 });
 
@@ -1140,7 +1140,7 @@ test('docked card beside the graph tools: the card docks left of an open panel; 
   f.tap(1); r[k('focusLevel')] = 1; r[k('placeOverlay')]();
   expect([...r[k('cardRect')]]).toEqual([800 - 8 - 320, 8, 320, 300]);
   // Opening the panel (368 px over the stage) moves the card left of it, not under it.
-  tools = 368; r.syncTools(); r[k('placeOverlay')]();
+  tools = 368; r[compiled('syncTools')](); r[k('placeOverlay')]();
   const rect = [...r[k('cardRect')]]; expect(rect).toEqual([800 - 368 - 8 - 320, 8, 320, 300]); expect(root.style.transform).toBe(`translate(${rect[0]}px, 8px)`);
   expect(rect[0]! + rect[2]!).toBeLessThanOrEqual(800 - 368);
   // The panel covers the minimap's column, so the card may use the full height.
@@ -1149,7 +1149,7 @@ test('docked card beside the graph tools: the card docks left of an open panel; 
   let box: number[] = []; const frame = r.frame; r.frame = (...args: number[]) => { box = args; }; control(root, 'Focus here').click();
   expect(box.slice(5)).toEqual([368 + 320 + 16, 0]);
   // Group framing keeps clear of the panel even without a card.
-  r[k('selectNote')](-1); r[k('view')].groupCodes = new Uint32Array(5); r.frameGroup(0); r.frame = frame;
+  r[k('selectNote')](-1); r[k('view')].groupCodes = new Uint32Array(5); r[compiled('frameGroup')](0); r.frame = frame;
   expect(box.slice(5)).toEqual([368, 0]);
   // Off-screen arrows sit inside the area left of card and panel.
   f.tap(1); r[k('focusLevel')] = 1; r.setCamera(r.camera.x, r.camera.y, r.camera.ratio * .05); r[k('placeOverlay')]();
@@ -1157,11 +1157,11 @@ test('docked card beside the graph tools: the card docks left of an open panel; 
   expect(shown.length).toBeGreaterThan(0);
   for (const el of shown) expect(Number(/translate\((-?[\d.]+)px/.exec(el.style.transform)![1]) + 16).toBeLessThanOrEqual(800 - 368 - 320 - 16);
   // A panel that leaves no room for the docked card turns the card into a sheet across the remaining width.
-  tools = 500; r.syncTools(); r[k('placeOverlay')]();
+  tools = 500; r[compiled('syncTools')](); r[k('placeOverlay')]();
   expect(root.className).toBe('graph-ng-card graph-ng-sheet'); expect(root.style.width).toBe('300px'); expect(r[k('cardRect')][2]).toBe(300);
   // A panel that covers the graph is ignored; closing it restores the edge dock.
-  tools = 700; r.syncTools(); r[k('placeOverlay')](); expect([...r[k('cardRect')]]).toEqual([472, 8, 320, 300]); expect(root.style.width).toBe('');
-  tools = 368; r.syncTools(); tools = 0; r.syncTools(); r[k('placeOverlay')](); expect([...r[k('cardRect')]]).toEqual([472, 8, 320, 300]);
+  tools = 700; r[compiled('syncTools')](); r[k('placeOverlay')](); expect([...r[k('cardRect')]]).toEqual([472, 8, 320, 300]); expect(root.style.width).toBe('');
+  tools = 368; r[compiled('syncTools')](); tools = 0; r[compiled('syncTools')](); r[k('placeOverlay')](); expect([...r[k('cardRect')]]).toEqual([472, 8, 320, 300]);
 });
 test('docked card: Only connections, Lens and path cards share the dock; labels never draw over them', async () => {
   const f = await graduated([[0, 1], [1, 2], [2, 3], [0, 4], [4, 3]], 6), { r, k } = f, root = r[k('noteCard')];
@@ -1171,8 +1171,8 @@ test('docked card: Only connections, Lens and path cards share the dock; labels 
   control(root, 'Show only connections').click(); expect(r[k('isolation')]).toBeDefined(); expect(dock()).toBe(at);
   // The anchor has no hidden neighbours at reach 1: no Expand at all, never a disabled "+0".
   expect(root.querySelectorAll('button').some((b: any) => b.textContent.startsWith('Expand'))).toBe(false);
-  control(root, 'Connection lens').click(); expect(r.lensNode).toBe(0); expect(dock()).toBe(at);
-  r.isolate(-1); r.setLens(-1);
+  control(root, 'Connection lens').click(); expect(r[compiled('lensNode')]).toBe(0); expect(dock()).toBe(at);
+  r.isolate(-1); r[compiled('setLens')](-1);
   const shift = (n: number) => { const { x, y } = r.screenPoint(n), e = { pointerId: 1, clientX: x, clientY: y, pointerType: 'mouse', shiftKey: true }; r[k('pointerDown')](e); r[k('pointerUp')](e); };
   f.tap(0); shift(3); expect(root.textContent).toContain('Path: 0 → 3'); expect(dock()).toBe(at);
   expect(control(root, 'Close').textContent).toBe(''); expect(root.textContent).not.toContain('×');
@@ -1183,8 +1183,8 @@ test('docked card: Only connections, Lens and path cards share the dock; labels 
 test('context menu: right-click on a note, a line and empty canvas shows the registry entries through the host menu seam', async () => {
   const f = await graduated([[0, 1], [1, 2], [2, 3]]), { r, k } = f, menus: { ids: string[]; path?: string; run: (id: string) => void }[] = [];
   r[k('showMenu')] = (entries: any[], _x: number, _y: number, path?: string) => menus.push({ ids: entries.map(e => e.id), path, run: id => entries.find(e => e.id === id).run() });
-  const opens: [string, string][] = []; r.openNote = (path: string, mode: string) => opens.push([path, mode]);
-  const right = async (q: { x: number; y: number }) => { let prevented = false; r.input.contextMenu({ clientX: q.x, clientY: q.y, preventDefault() { prevented = true; } }); expect(prevented).toBe(true); await Bun.sleep(0); };
+  const opens: [string, string][] = []; r[compiled('openNote')] = (path: string, mode: string) => opens.push([path, mode]);
+  const right = async (q: { x: number; y: number }) => { let prevented = false; r.input[compiled('contextMenu')]({ clientX: q.x, clientY: q.y, preventDefault() { prevented = true; } }); expect(prevented).toBe(true); await Bun.sleep(0); };
   const a = r.screenPoint(1), b = r.screenPoint(2);
   await right(a); expect(menus[0]!.ids).toEqual(['menu-open', 'menu-tab', 'menu-right', 'menu-focus', 'menu-lens', 'menu-only', 'menu-copy']); expect(typeof menus[0]!.path).toBe('string');
   menus[0]!.run('menu-right'); expect(opens).toEqual([[menus[0]!.path!, 'split']]);
@@ -1245,7 +1245,7 @@ test('wave-4 wiring: Find path to… in the menu; Escape clears path, card, lens
   const chips = () => { r[k('placeOverlay')](); return crumbs.hidden ? [] : crumbs.querySelectorAll('button').filter((b: any) => b.className === 'graph-ng-crumb').map((b: any) => b.textContent); };
   const row = (name: string) => card().querySelectorAll('button').find((b: any) => b.attributes['aria-label']?.startsWith(`Go to ${name}:`));
   // Right-click a second note with a selection: the registry menu offers the path.
-  f.tap(0); const q = r.screenPoint(3); r.input.contextMenu({ clientX: q.x, clientY: q.y, preventDefault() {} }); await Bun.sleep(0);
+  f.tap(0); const q = r.screenPoint(3); r.input[compiled('contextMenu')]({ clientX: q.x, clientY: q.y, preventDefault() {} }); await Bun.sleep(0);
   expect(menus[0]!.ids).toContain('find-path'); menus[0]!.run('find-path');
   expect(r[k('pathView')]).toBeDefined(); expect(card().textContent).toContain('Path: 0 → 3');
   esc(); expect(r[k('pathView')]).toBeUndefined(); expect(card().textContent).toBe('');
@@ -1254,9 +1254,9 @@ test('wave-4 wiring: Find path to… in the menu; Escape clears path, card, lens
   esc(); expect(r.card.node).toBe(-1); expect(chips()).toEqual(['0', '1', '2']);
   control(crumbs, '0').click(); expect(r.selected).toBe(0); expect(r.card.node).toBe(0); expect(r.card.history.items).toEqual([0, 1, 2]);
   // Escape layers: card, then lens, then only-connections.
-  r[k('keyDown')]({ key: 'l', target: r.canvas, preventDefault() {} }); expect(r.lensNode).toBe(0); r.isolate(0);
-  esc(); expect(r.card.node).toBe(-1); expect(r.lensNode).toBe(0);
-  esc(); expect(r.lensNode).toBe(-1); expect(r[k('isolation')]).toBeDefined();
+  r[k('keyDown')]({ key: 'l', target: r.canvas, preventDefault() {} }); expect(r[compiled('lensNode')]).toBe(0); r.isolate(0);
+  esc(); expect(r.card.node).toBe(-1); expect(r[compiled('lensNode')]).toBe(0);
+  esc(); expect(r[compiled('lensNode')]).toBe(-1); expect(r[k('isolation')]).toBeDefined();
   esc(); expect(r[k('isolation')]).toBeUndefined();
   // A filter prunes hidden visits; a different view clears the trail.
   r.setView(new Uint8Array([1, 0, 1, 1, 1, 1]), {}); expect(chips()).toEqual(['0', '2']);
@@ -1269,8 +1269,8 @@ test('wave-4 wiring: hover never moves a path highlight or a pinned lens', async
   f.hover(1); await Bun.sleep(50); expect(r.hovered).toBe(1); expect(f.actual()).toEqual(path);
   r[k('pointerMove')]({ pointerId: 9, clientX: r.screenPoint(2).x, clientY: r.screenPoint(2).y, pointerType: 'mouse', altKey: true }); expect(f.actual()).toEqual(path);
   r[k('pointerLeave')](); f.tap(EMPTY);
-  f.tap(0); r[k('keyDown')]({ key: 'l', target: r.canvas, preventDefault() {} }); expect(r.lensNode).toBe(0);
-  const lensed = f.actual(); f.hover(3); await Bun.sleep(50); expect(r.hovered).toBe(3); expect(f.actual()).toEqual(lensed); expect(r.lensNode).toBe(0);
+  f.tap(0); r[k('keyDown')]({ key: 'l', target: r.canvas, preventDefault() {} }); expect(r[compiled('lensNode')]).toBe(0);
+  const lensed = f.actual(); f.hover(3); await Bun.sleep(50); expect(r.hovered).toBe(3); expect(f.actual()).toEqual(lensed); expect(r[compiled('lensNode')]).toBe(0);
 });
 
 
@@ -1330,17 +1330,17 @@ test('review: collapsing an inner path note clears its path, not just paths with
 test('review: a failed Back-to detail attempt consumes pending focus before any early return', async () => {
   const { view } = await fixture();
   const setFocus = () => { view[compiled('pendingFocus')] = { projection: view.projection, node: 2, lens: true }; };
-  setFocus(); view.positions = undefined; await view.showDetails(); expect(view[compiled('pendingFocus')]).toBeUndefined();
+  setFocus(); view.positions = undefined; await view[compiled('showDetails')](); expect(view[compiled('pendingFocus')]).toBeUndefined();
   view.positions = new Float32Array(6); view.gpu = { available: false, reason: 'synthetic refusal' };
   view[compiled('admitDetail')] = () => false; view.showGroups = () => {}; setFocus(); let saves = 0; view.app = { ...view.app, workspace: { ...view.app?.workspace, requestSaveLayout: () => { saves++; } } };
-  await view.showDetails(); expect(view[compiled('pendingFocus')]).toBeUndefined();
+  await view[compiled('showDetails')](); expect(view[compiled('pendingFocus')]).toBeUndefined();
   expect(view.getState()).toEqual({ presentation: 'nodes' }); expect(saves).toBe(1);
 });
 
 test('review: travel, clamped framing and Fit all centre in the unobscured stage', async () => {
   const f = await graduated([[0, 1], [1, 2]], 3), { r, k } = f;
   f.settings.visuals.cameraAnimationMs = 0; f.tap(0);
-  r.measureTools = () => 200; r.syncTools();
+  r.measureTools = () => 200; r[compiled('syncTools')]();
   for (const width of [800, 500]) {
     r[k('width')] = width; r[k('placeOverlay')]();
     r[k('travel')](1);
@@ -1405,7 +1405,7 @@ test('review: clearing Recent refreshes card navigation and starts the next trip
 test('review: minimap collapse schedules a card-height refresh; stable drawing never remeasures tools', async () => {
   const f = await graduated([[0, 1]], 2), { r, k } = f;
   f.tap(0); const card = r[k('noteCard')], mini = r[k('miniMap')]; let measures = 0;
-  r.measureTools = () => { measures++; return 0; }; r.syncTools();
+  r.measureTools = () => { measures++; return 0; }; r[compiled('syncTools')]();
   r[k('draw')](); expect(card.style.maxHeight).toBe('456px');
   mini.root.children[1].onclick(); expect(frameCallbacks.size).toBeGreaterThan(0);
   r[k('draw')](); expect(card.style.maxHeight).toBe('544px');
@@ -1433,7 +1433,7 @@ test('review: filter changes remove stale hover and minimap focus; hidden-type e
   const all = new Uint8Array([1, 1, 1]); r.setView(all, {});
   const a = r.screenPoint(0), b = r.screenPoint(1);
   f.hover({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }); expect(r[k('hoveredEdge')]).toBe(0);
-  r.setView(all, { typeHidden: new Uint8Array([1]) });
+  r.setView(all, { [compiled('typeHidden')]: new Uint8Array([1]) });
   expect(r[k('hoveredEdge')]).toBe(-1); expect(r.container.title).toBe('');
   r.setView(all, {}); expect(r[k('hoveredEdge')]).toBe(0);
   f.settings.visuals.edgeOpacity = 0; r.refreshVisuals(); expect(r[k('hoveredEdge')]).toBe(-1);
@@ -1478,7 +1478,7 @@ test('hover pulse: only the hovered note grows and rings, the graph is untouched
 
 test('navigator filters lazily fetched titles and declared groups without graph motion, catches text keys, and resets on travel', async () => {
   const f = await graduated(Array.from({ length: 221 }, (_, i) => [0, i + 1] as [number, number]), 222), { r, k } = f;
-  let titles = 0; r.noteTitle = (path: string) => { titles++; return Number(path.replace('.md', '')) % 2 ? '<b>Recovery check</b>' : 'Access review'; };
+  let titles = 0; r[compiled('noteTitle')] = (path: string) => { titles++; return Number(path.replace('.md', '')) % 2 ? '<b>Recovery check</b>' : 'Access review'; };
   r.setView(new Uint8Array(222).fill(1), { groupCodes: Uint32Array.from({ length: 222 }, (_, n) => n % 3), groupLabels: ['Atlas', 'Beacon', 'Cedar'] });
   f.tap(0); const card = r[k('noteCard')], input = card.querySelector('input'), rows = () => card.querySelectorAll('button').filter((b: any) => b.className === 'graph-ng-connection');
   expect(rows().length).toBe(0); expect(card.textContent).toContain('221 direct connections in 3 groups');
@@ -1493,7 +1493,7 @@ test('navigator filters lazily fetched titles and declared groups without graph 
   // Typing must not invoke graph shortcuts or suppress native input behavior.
   for (const key of ['l', 'r', 'Home', 'ArrowLeft', 'Enter']) {
     let prevented = false; card.onkeydown({ key, target: input, preventDefault() { prevented = true; }, stopPropagation() {} }); expect(prevented).toBe(false);
-    expect(r.lensNode).toBe(-1); expect(r.selected).toBe(0);
+    expect(r[compiled('lensNode')]).toBe(-1); expect(r.selected).toBe(0);
   }
   await type('no such title'); expect(rows().length).toBe(0); expect(card.textContent).toContain('No matching connections');
   card.onkeydown({ key: 'Escape', target: input, preventDefault() {}, stopPropagation() {} }); expect(r.selected).toBe(0); expect(input.value).toBe('');
@@ -1600,7 +1600,7 @@ test('Escape clears hovered animation and stale pointer replay, while history re
   expect(r[k('hoverFx')].n).toBe(2); const history = [...r.card.history.items];
   r[k('keyDown')]({ key: 'Escape', target: r.canvas, preventDefault() {} });
   r[k('placeOverlay')]();
-  expect(r.selected).toBe(-1); expect(r.hovered).toBe(-1); expect(r.hoveredEdge).toBe(-1);
+  expect(r.selected).toBe(-1); expect(r.hovered).toBe(-1); expect(r[compiled('hoveredEdge')]).toBe(-1);
   expect(r[k('hoverFx')].n).toBe(-1); expect(r[k('focusNode')]).toBe(-1); expect(r[k('near')]).toEqual([]);
   expect(r[k('hoverLabel')].textContent).toBe(''); expect(r[k('pathView')]).toBeUndefined();
   expect(r.card.history.items).toEqual(history);
@@ -1638,7 +1638,7 @@ test('WebGL frames reuse edge ranks without endpoint scans or another edge pass 
   r[k('programs')] = [0, 1, 2, 3].map(handle => ({ handle, uniforms: {} }));
   d.gl.useProgram = (handle: number) => { program = handle; };
   d.gl.drawArraysInstanced = () => calls.push(program);
-  r[k('draw')](); const ranks = r.lineRanks, ink = r[k('ink')], columns = [r.projection.source, r.projection.target, r.projection.offsets];
+  r[k('draw')](); const ranks = r[compiled('lineRanks')], ink = r[k('ink')], columns = [r.projection.source, r.projection.target, r.projection.offsets];
   const guard = (column: Uint32Array) => new Proxy(column, { get(target, key) { if (typeof key === 'string' && /^\d+$/.test(key)) throw new Error('per-frame edge/degree scan'); return Reflect.get(target, key, target); } });
   [r.projection.source, r.projection.target, r.projection.offsets] = columns.map(guard);
   try {
@@ -1647,7 +1647,7 @@ test('WebGL frames reuse edge ranks without endpoint scans or another edge pass 
     calls.length = 0; r[k('draw')]();
     expect(calls.filter(x => x === 0)).toHaveLength(1); expect(calls).toHaveLength(normal.length);
     expect(normal.indexOf(0)).toBeLessThan(normal.indexOf(1)); expect(calls.indexOf(0)).toBeGreaterThan(calls.indexOf(1));
-    expect(r.lineRanks).toBe(ranks); expect(r[k('ink')]).toBe(ink);
+    expect(r[compiled('lineRanks')]).toBe(ranks); expect(r[k('ink')]).toBe(ink);
   } finally { [r.projection.source, r.projection.target, r.projection.offsets] = columns; }
 });
 
@@ -1672,8 +1672,8 @@ test('density production passes are bounded, reuse target, restore blend/viewpor
   expect(events.filter(x => x[0] === 'target').at(-1)).toEqual(['target', null]);
   expect(events.filter(x => x[0] === 'blend').at(-1)).toEqual(['blend', d.gl.ONE, d.gl.ONE_MINUS_SRC_ALPHA]);
   expect(events.filter(x => x[0] === 'viewport').at(-1)).toEqual(['viewport', 0, 0, r.canvas.width, r.canvas.height]);
-  const images = d.calls.filter(x => x[0] === 'image').length, ranks = r.lineRanks;
-  r[k('draw')](); expect(textures).toBe(1); expect(targets).toBe(1); expect(d.calls.filter(x => x[0] === 'image')).toHaveLength(images); expect(r.lineRanks).toBe(ranks);
+  const images = d.calls.filter(x => x[0] === 'image').length, ranks = r[compiled('lineRanks')];
+  r[k('draw')](); expect(textures).toBe(1); expect(targets).toBe(1); expect(d.calls.filter(x => x[0] === 'image')).toHaveLength(images); expect(r[compiled('lineRanks')]).toBe(ranks);
   for (const mode of ['focus', 'off'] as const) { settings.visuals.edgeMode = mode; events.length = 0; r[k('draw')](); expect(events.some(x => x[0] === 'quad')).toBe(false); }
   settings.visuals.edgeMode = 'all'; settings.visuals.edgeOpacity = 0; events.length = 0; r[k('draw')](); expect(events.some(x => x[0] === 'quad')).toBe(false);
   settings.visuals.edgeOpacity = .4; settings.visuals.edgeCompositing = 'blend'; events.length = 0; r[k('draw')](); expect(events.filter(x => x[0] === 'draw')).toEqual(baseline);
@@ -1722,7 +1722,7 @@ test('adaptive compiled Canvas, bundled GLSL and hit radii agree across tiers, z
       radii.length = 0; r[k('drawCanvas')](); expect(radii.length).toBe(5);
       for (let n = 0; n < 5; n++) {
         const hot = n === 0 || n === 1, ego = n === 0, radius = r.nodeRadius(n, hot), g = r[k('stateBytes')][n * 4 + 1] / 255;
-        const expected = emphasisGL({ radius, ego, note: false, st: { g }, emphasis: r.emphasisBudget(), minSize: v.tierMinSize, focus: level, id: n, hovered: 1, pulse: { x: pulse }, max: Math.max });
+        const expected = emphasisGL({ radius, ego, note: false, st: { g }, emphasis: r[compiled('emphasisBudget')](), minSize: v.tierMinSize, focus: level, id: n, hovered: 1, pulse: { x: pulse }, max: Math.max });
         expect(radii[n]).toBeCloseTo(expected, 8); expect(r[k('drawnRadius')](n, hot, level)).toBeCloseTo(expected, 8);
       }
     }
@@ -1747,14 +1747,14 @@ test('adaptive compiled fan-out shifts disc area into contrast without enlarging
   const f = await graduated([[0, 1], [1, 2]], 5), { r, k } = f, v = f.settings.visuals;
   f.tap(0); r[k('hoverFx')].n = -1;
   r[k('baseNodeRadius')] = () => 1; r.sizes.fill(1);
-  const sample = (degree: number) => { r[k('directs')] = new Array(degree).fill(1); return [r[k('drawnRadius')](1, false, 1), r.emphasisDim()]; };
+  const sample = (degree: number) => { r[k('directs')] = new Array(degree).fill(1); return [r[k('drawnRadius')](1, false, 1), r[compiled('emphasisDim')]()]; };
   const sparse = sample(2), dense = sample(240); expect(sparse[0]).toBeGreaterThan(6); expect(dense[0]).toBeLessThan(3.2);
   expect(dense[1]).toBeLessThan(sparse[1]); expect(r[k('drawnRadius')](0, true, 1)).toBe(7);
   // Broad 2-hop focus also spends less area, even if the focus itself has few direct connections.
   r[k('directs')] = [1, 2]; const near = r.near; r.near = new Array(2000).fill(2); expect(r[k('drawnRadius')](1, false, 1)).toBeLessThan(3); r.near = near;
   r[k('baseNodeRadius')] = () => 20; expect(r[k('drawnRadius')](1, false, 1)).toBe(20);
   r[k('hoverFx')].n = 1; r.fx[0] = 1.6; expect(r[k('drawnRadius')](1, true, 1)).toBeCloseTo(23, 8);
-  v.emphasis = 'scale'; expect(r[k('drawnRadius')](1, true, 1)).toBeCloseTo(22 * 1.25 * 1.6, 8); expect(r.emphasisDim()).toBe(v.dimOpacity);
+  v.emphasis = 'scale'; expect(r[k('drawnRadius')](1, true, 1)).toBeCloseTo(22 * 1.25 * 1.6, 8); expect(r[compiled('emphasisDim')]()).toBe(v.dimOpacity);
   expect(r[k('drawnRadius')](0, true, 1)).toBeCloseTo(22 * 1.6, 8);
 });
 
@@ -1775,10 +1775,10 @@ test('compiled WebGL dispatch supplies adaptive budget and contrast, with no coo
 test('review: adaptive context dim holds through the deselect fade instead of jumping before it', async () => {
   const f = await graduated([[0, 1], [1, 2]], 5), { r, k } = f; f.settings.visuals.emphasis = 'adaptive';
   f.tap(0); r[k('directs')] = new Array(240).fill(1); r[k('focusTarget')] = 1; r[k('focusLevel')] = 1;
-  const focused = r.emphasisDim(); expect(focused).toBeLessThan(f.settings.visuals.dimOpacity);
+  const focused = r[compiled('emphasisDim')](); expect(focused).toBeLessThan(f.settings.visuals.dimOpacity);
   r[k('directs')] = []; r.near = []; r[k('focusTarget')] = 0; r[k('focusLevel')] = .5;
-  expect(r.emphasisDim()).toBe(focused);
-  r[k('focusLevel')] = 0; expect(r.emphasisDim()).toBe(f.settings.visuals.dimOpacity);
+  expect(r[compiled('emphasisDim')]()).toBe(focused);
+  r[k('focusLevel')] = 0; expect(r[compiled('emphasisDim')]()).toBe(f.settings.visuals.dimOpacity);
 });
 
 test('review: the density target upsamples with linear filtering', async () => {
