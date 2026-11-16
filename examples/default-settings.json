@@ -125,6 +125,7 @@
     "haloOpacity": 0.08,
     "autoPalette": true,
     "labelFade": true,
+    "labelStyle": "anchored",
     "cameraAnimationMs": 450,
     "glowMaxNodes": 250000,
     "curvesMaxEdges": 60000,

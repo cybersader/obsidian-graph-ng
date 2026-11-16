@@ -1,3 +1,4 @@
+import { panelHelp, disclosure } from './panel-help';
 import { folderPredicate, folderView } from './saved-views';
 import { setIcon } from 'obsidian';
 import { sizingValues, sizingSettings, MAX_NODE_RADIUS, type NodeSizingValues } from './node-sizing';
@@ -10,14 +11,15 @@ import { suggestions } from './core/expr/autocomplete';
 import { declaredKeys } from './core/columns';
 import { describePredicate, groupLabel, NO_COLOR, VIEW_LIMITS, validateSaved, validateView, type ExploreResult, type ExploreView, type SavedView, type ViewCamera } from './core/explore';
 import { canonical, validateDerivedGroup, validatePredicate, type GraphDeclaration, type GroupSource, type Predicate, type Scalar } from './core/declaration';
-import { defaults, defaultVisuals, type DegreeCurve, type EdgeMode, type Settings, type Visuals } from './settings';
+import { defaults, defaultVisuals, type EdgeMode, type Settings, type Visuals } from './settings';
 import { progressiveSlider, type Curve, type SliderOptions } from './progressive-slider';
 /** Slider travel per numeric layout control; typed values outside the span stay unclamped. */
 const PHYSICS_CURVES: Partial<Record<PhysicsKey, Curve>> = { scalingRatio: { min: .1, max: 100, log: true }, gravity: { min: 0, max: 20, k: 3 }, slowDown: { min: .1, max: 100, log: true }, iterations: { min: 1, max: 1000, log: true, int: true }, barnesHutTheta: { min: .1, max: 3, k: 2 } };
-import { recommendedPhysics, type Suggestion } from './recommend';
+import { recommendedPhysics, suggestionCopy, type Suggestion } from './recommend';
 /** The view owns the worker, renderer and persistence; the panel only edits state. */
 export interface PanelHost {
   settings(): Settings;
+  loading?(): { stage: string; done?: number; total?: number } | undefined;
   information?: HTMLElement;
   members?: HTMLElement;
   scope?(): string;
@@ -68,7 +70,7 @@ function toolButton(host: HTMLElement, text: string, icon: string) {
   return button;
 }
 const SECTIONS: Record<string, [Section, string][]> = { views: [['views', 'Saved views']], filters: [['filters', 'Filters'], ['groups', 'Grouping'], ['edges', 'Relationships']], appearance: [['display', 'Appearance'], ['colors', 'Color rules']], layout: [['physics', 'Layout']] };
-const PULL_IN = 'Pull in disconnected notes';
+const PULL_IN = 'Pull in notes';
 /** Reified rules make relationship notes; only then is Lines/Nodes a choice. */
 export const hasReified = (d: GraphDeclaration) => d.edges.some(e => e.kind === 'reified');
 /** One apply with only `display.reifiedAsNodes` flipped; query, filters and scope stay in settings. */
@@ -76,12 +78,10 @@ export async function setRelationshipDisplay(plugin: { settings: Settings; apply
   const s = plugin.settings; if (s.declaration.display.reifiedAsNodes === nodes) return;
   await plugin.apply({ ...s, declaration: { ...s.declaration, display: { ...s.declaration.display, reifiedAsNodes: nodes } } });
 }
-/** Toggle/select row: name on the left with an optional muted line under it; the caller appends the control. Long
- * toggle labels split at "(...)" or ": " into name and description; the control keeps the full accessible name. */
-function settingRow(host: HTMLElement, label: string, cls: string, desc?: string, tag: 'label' | 'div' = 'label') {
-  const row = host.createEl(tag, { cls: `graph-ng-setting ${cls}` }), [, name = label, a, b] = (!desc && /^(.+?)(?: \((.+)\)|: (.+))$/.exec(label)) || [], more = desc ?? a ?? b;
-  row.createSpan({ cls: 'graph-ng-setting-name', text: name });
-  if (more) row.createDiv({ cls: 'graph-ng-setting-desc', text: more[0]!.toUpperCase() + more.slice(1) });
+/** Short setting name; explanations share the same on-demand help as sliders. */
+function settingRow(host: HTMLElement, label: string, cls: string, desc?: string, _tag?: string) {
+  const row = host.createDiv({ cls: `graph-ng-setting ${cls}` }), [, name = label, a, b] = (!desc && /^(.+?)(?: \((.+)\)|: (.+))$/.exec(label)) || [];
+  panelHelp(row, name, desc ?? a ?? b, 'graph-ng-setting-name');
   return row;
 }
 let expressionPanelId = 0;
@@ -102,7 +102,6 @@ export class ExplorePanel {
   private sizingDraft?: Record<keyof NodeSizingValues, string>;
   private sizingMessage = '';
   private sizingBusy = false;
-  private sizingOutput?: HTMLElement;
   private lensButton?: HTMLButtonElement;
   private physicsError = '';
   private physicsBusy = false;
@@ -220,6 +219,12 @@ export class ExplorePanel {
     this.body.hidden = this.root.hidden || this.tool === 'information' || this.tool === 'members'; this.render();
     this.host.toolsChanged?.();
   }
+  /** Progress-only update: no control rebuild, focus changes or draft work. */
+  updateSummary(): void {
+    if (this.root.hidden || this.disposed) return;
+    const external = Boolean(this.settings.projectionFile);
+    this.summary(external, external ? undefined : this.host.result());
+  }
   render() {
     const external = Boolean(this.settings.projectionFile), r = external ? undefined : this.host.result();
     this.search.disabled = external;
@@ -260,17 +265,19 @@ export class ExplorePanel {
   private summary(external: boolean, r?: ExploreResult) {
     this.counts.empty();
     if (this.host.scoped?.()) this.counts.createDiv({ cls: 'graph-ng-scope-name', text: `In ${this.host.scope?.()}` });
-    if (external || !r) { this.note(this.counts, external ? 'External aggregate' : 'Waiting for projection…'); return; }
+    const loading = this.host.loading?.();
+    if (external || !r) { this.note(this.counts, loading?.stage ?? (external ? 'External aggregate' : 'Waiting for projection…')); return; }
     const stats = this.counts.createDiv({ cls: 'graph-ng-stats' });
     const shown = sum(r.visible), notes = r.nodes - shown, edges = r.edges - r.visibleEdges;
-    statRow(stats, 'circle-dot', 'Notes shown', num(shown)); statRow(stats, 'spline', 'Edges drawn', num(r.visibleEdges));
+    statRow(stats, 'circle-dot', loading ? 'Notes shown so far' : 'Notes shown', num(shown)); statRow(stats, 'spline', loading ? 'Edges drawn so far' : 'Edges drawn', num(r.visibleEdges));
+    if (loading) { statRow(stats, 'loader', loading.stage, loading.total && loading.done !== undefined ? `${Math.min(100, Math.round(100 * loading.done / loading.total))}%` : '', 'graph-ng-loading-counts'); return; }
     if (notes || edges) statRow(stats, 'eye-off', 'Hidden, see why', `${plural(notes, 'note')}, ${plural(edges, 'edge')}`, '', () => this.show('information'));
   }
   private note(host: HTMLElement, text: string) { return host.createDiv({ cls: 'graph-ng-explore-note', text }); }
   /** One bounded text editor serves filters, colours and custom group values. */
   private expressionField(host: HTMLElement, r: ExploreResult, label: string, context: 'filter' | 'group', submit: (expr: string) => void) {
     const details = host.createEl('details', { cls: 'graph-ng-expression' }); details.open = this.drafts.has(label);
-    details.createEl('summary', { text: label });
+    disclosure(details, label);
     const input = details.createEl('input', { attr: { type: 'text', 'aria-label': label, placeholder: context === 'filter' ? 'note.status == "open"' : 'note.category', spellcheck: 'false' } });
     input.value = this.drafts.get(label) ?? '';
     const completions = details.createEl('datalist'), id = `graph-ng-expr-${this.expressionPanelId}-${label.split(' ').join('-')}`; completions.id = id; input.setAttribute('list', id);
@@ -318,7 +325,7 @@ export class ExplorePanel {
       edit.onclick = () => { this.drafts.set(`Edit filter ${i + 1}`, converted.text!); this.render(); };
       if (f.kind !== 'expr') {
         const builder = chip.createEl('details', { cls: 'graph-ng-chip-json' });
-        setIcon(builder.createEl('summary', { cls: 'clickable-icon', attr: { 'aria-label': `Edit builder filter ${i + 1} as JSON`, title: 'Edit as JSON' } }), 'braces');
+        disclosure(builder, '', { 'aria-label': `Edit builder filter ${i + 1} as JSON` });
         const input = builder.createEl('textarea', { attr: { 'aria-label': `Builder filter ${i + 1}` } }); input.value = JSON.stringify(f, null, 2);
         const error = builder.createDiv({ cls: 'graph-ng-explore-error', attr: { role: 'alert' } });
         builder.createEl('button', { text: 'Save builder entry' }).onclick = () => { try { const value: unknown = JSON.parse(input.value); validatePredicate(value); this.update({ filters: this.view.filters.map((p, j) => j === i ? value : p) }); } catch (e) { error.textContent = String(e); } };
@@ -330,7 +337,7 @@ export class ExplorePanel {
     this.filterToggles(host, r);
     const add = host.createEl('details', { cls: 'graph-ng-add-filter' }); add.open = this.adding || this.drafts.has('Filter expression');
     add.ontoggle = () => { this.adding = add.open; };
-    setIcon(add.createEl('summary', { text: 'Add filter' }).createSpan({ cls: 'graph-ng-stat-icon' }), 'plus');
+    disclosure(add, 'Add filter');
     this.predicateForm(add, r, 'Add filter', p => { this.adding = false; this.update({ filters: [...this.view.filters, p] }); }, true);
   }
   /** One checkbox per value of a small, complete facet; unticking hides the value through an ordinary filter. */
@@ -369,7 +376,7 @@ export class ExplorePanel {
       values.hidden = isFolder || op.value === 'exists'; values.multiple = op.value === 'in'; values.size = op.value === 'in' ? 5 : 1; values.empty();
       const facet = r.facets.find(f => `k:${f.key}` === property.value);
       for (const v of facet?.values ?? []) values.createEl('option', { value: v.raw, text: v.label });
-      if (facet && facet.distinct > facet.values.length) values.createEl('option', { text: `… ${facet.distinct - facet.values.length} more (raise facetValues)`, attr: { disabled: 'true' } });
+      if (facet && facet.distinct > facet.values.length) values.createEl('option', { text: `… ${facet.distinct - facet.values.length} more (increase the value limit)`, attr: { disabled: 'true' } });
       count();
     };
     property.onchange = op.onchange = sync; values.onchange = count; sync();
@@ -430,13 +437,13 @@ export class ExplorePanel {
         fold.onclick = () => this.update({ collapsedGroups: collapsed.has(key) ? this.view.collapsedGroups.filter(k => k !== key) : [...this.view.collapsedGroups, key] }, collapsed.has(key) ? () => this.host.focusGroup(i) : undefined);
       }
     }
-    const notes = nodes ? this.host.carriers() : 0, v = this.settings.visuals;
-    if (notes) host.createDiv({ cls: 'graph-ng-explore-note graph-ng-carrier-note', text: `${notes.toLocaleString()} relationship notes draw small and beneath${v.carrierTint ? `, in their endpoints' color (bridges: ${v.carrierBridge === 'blend' ? 'blended' : 'source color'}${v.carrierBridgeAccent ? ', accented' : ''})` : ''}.${v.carrierLod ? ' Zoomed out, they fold into their edges.' : ''}` });
-    if (order.length > this.groupLimit) host.createEl('button', { text: `Show ${Math.min(this.settings.explore.legendPageSize, order.length - this.groupLimit)} more, ${num(order.length - this.groupLimit)} left` }).onclick = () => { this.groupLimit += this.settings.explore.legendPageSize; this.render(); };
+    const notes = nodes ? this.host.carriers() : 0;
+    if (notes) panelHelp(host, plural(notes, 'relationship note'), 'Drawn smaller and beneath other notes. Appearance controls their color and visibility when zoomed out.');
+    if (order.length > this.groupLimit) host.createEl('button', { text: `Show ${Math.min(this.settings.explore.legendPageSize, order.length - this.groupLimit)} more, ${num(order.length - this.groupLimit)} groups left` }).onclick = () => { this.groupLimit += this.settings.explore.legendPageSize; this.render(); };
   }
   /** Group by a bounded transform of an existing value; no note needs a new property. */
   private derivedForm(host: HTMLElement, r: ExploreResult) {
-    const details = host.createEl('details', { cls: 'graph-ng-derived' }); details.createEl('summary', { text: 'Group by part of a value…' });
+    const details = host.createEl('details', { cls: 'graph-ng-derived' }); disclosure(details, 'Group by part of a value');
     // Visible labels; the stored transform keeps its 0-based segment index (-1 = last).
     const form = details.createDiv({ cls: 'graph-ng-derive-grid' });
     const field = <K extends 'select' | 'input'>(label: string, tag: K, attr: Record<string, string>) => { const l = form.createEl('label', { cls: 'graph-ng-field' }), caption = l.createSpan({ text: label }); return [l.createEl(tag, { attr: { 'aria-label': label, ...attr } }), caption] as const; };
@@ -475,7 +482,7 @@ export class ExplorePanel {
     eye.checked = !hidden.has(NO_COLOR); eye.onchange = () => toggle(NO_COLOR, eye.checked);
     rest.createSpan({ cls: 'graph-ng-legend-name', text: this.settings.visuals.autoPalette ? 'No rule (group colors)' : 'No rule' });
     countSpan(rest, r.colorCounts[d.colors.length]!);
-    this.note(host, 'First matching rule colors a note; no relayout.');
+    panelHelp(host, 'Rule order', 'The first matching rule sets the color. Changing colors does not move notes.');
     let name: HTMLInputElement, color: HTMLInputElement;
     this.predicateForm(host, r, 'Add rule', p => {
       const label = name.value.trim(); if (!label) throw new Error('Name the rule'); if (d.colors.some(c => c.name === label)) throw new Error('Rule names must be unique');
@@ -497,13 +504,13 @@ export class ExplorePanel {
     this.flag(host, 'edgeDirection', 'Show direction (fade from source to target)');
   }
   private flag(host: HTMLElement, key: { [K in keyof Visuals]: Visuals[K] extends boolean ? K : never }[keyof Visuals], label: string, labels = false) {
-    const row = settingRow(host, label, 'graph-ng-toggle'), box = row.createEl('input', { attr: { type: 'checkbox', 'aria-label': label } });
+    const row = settingRow(host, label, 'graph-ng-toggle'), box = row.createEl('input', { attr: { type: 'checkbox', 'aria-label': label.split(/ \(|: /)[0]! } });
     box.checked = this.settings.visuals[key];
     box.onchange = () => { this.settings.visuals[key] = box.checked; this.host.visualsChanged(labels); this.guards.forEach(update => update()); };
   }
   private slider(host: HTMLElement, label: string, curve: Curve, get: () => number, set: (v: number) => void, labels = false, more: Partial<SliderOptions> = {}) {
     const { min, max } = curve, [, name = label, unit] = /^(.+) \((px|ms)\)$/.exec(label) ?? [];
-    const { number } = progressiveSlider(host, { label, name, unit, curve, value: String(get()), attr: { min: String(min), max: String(max), title: `${min}–${max}; exact values accepted` }, ...more, changed: value => {
+    const { number } = progressiveSlider(host, { label, name, unit, curve, value: String(get()), attr: { min: String(min), max: String(max) }, ...more, changed: value => {
       const n = value.trim() ? Number(value) : NaN, valid = Number.isFinite(n) && n >= min && n <= max;
       number.setAttribute('aria-invalid', String(!valid)); if (!valid) return;
       set(n); this.host.visualsChanged(false); this.guards.forEach(update => update());
@@ -511,7 +518,7 @@ export class ExplorePanel {
   }
   private guard(host: HTMLElement, effect: string) {
     const box = host.createEl('details', { cls: 'graph-ng-guard' });
-    const summary = box.createEl('summary'), reason = box.createDiv();
+    const summary = disclosure(box).querySelector('.graph-ng-disclosure-label')!, reason = box.createDiv();
     const update = () => { const reasons = this.host.policy().filter(r => r.includes(effect) || r.includes('software renderer')); box.hidden = !reasons.length; summary.textContent = `${effect[0]!.toUpperCase() + effect.slice(1)} ${reasons.some(r => r.includes('limited')) ? 'limited' : 'turned off'} by the performance guard`; reason.textContent = reasons.join('; '); };
     this.guards.push(update); update();
   }
@@ -520,29 +527,37 @@ export class ExplorePanel {
     const draft = this.physicsDraft ??= applied();
     const fill = (values: Required<PhysicsValues>, note: string, name: string) => { this.physicsUndo = { values: { ...draft }, name, applied: false }; for (const [key] of PHYSICS_FIELDS) { const v = values[key]; draft[key] = typeof v === 'boolean' ? v : String(v); } this.physicsError = ''; this.physicsNote = note; this.render(); };
     const size = this.host.result(), recommended = recommendedPhysics(size?.nodes ?? 1000, size?.edges ?? 3000);
-    this.note(host, 'Change values or pick a preset, then Apply and recompute. Nothing is saved or moved until you apply. Fit graph is separate.');
-    const presets = settingRow(host, 'Presets', 'graph-ng-presets', 'Each one scales the recommended values for this graph size.', 'div').createDiv({ cls: 'graph-ng-setting-line', attr: { role: 'group', 'aria-label': 'Layout presets' } });
-    const reset = presets.createEl('button', { text: 'Reset to recommended', attr: { title: 'Values measured to read well for a graph of this size' } });
+    panelHelp(host, 'Layout drafts', 'Changes stay here until Apply and recompute. Fit graph is separate.');
+    const presets = settingRow(host, 'Presets', 'graph-ng-presets', 'Groups apart loosens the layout; Fill the screen tightens it. Faster uses fewer steps; presets stay drafts until Apply.', 'div').createDiv({ cls: 'graph-ng-setting-line', attr: { role: 'group', 'aria-label': 'Layout presets' } });
+    const reset = presets.createEl('button', { text: 'Recommended' });
     reset.disabled = this.physicsBusy;
-    reset.onclick = () => fill(recommended, 'Recommended values for this graph loaded.', 'Reset to recommended');
-    for (const [name, effect] of PHYSICS_PRESETS) {
-      const b = presets.createEl('button', { text: name, attr: { title: effect } }); b.disabled = this.physicsBusy;
-      b.onclick = () => fill(presetValues(name, recommended), `${name} loaded: ${effect} Apply and recompute to see it.`, name);
+    reset.onclick = () => fill(recommended, 'Recommended values for this graph loaded.', 'Recommended');
+    for (const [name] of PHYSICS_PRESETS) {
+      const b = presets.createEl('button', { text: name }); b.disabled = this.physicsBusy;
+      b.onclick = () => fill(presetValues(name, recommended), `${name} loaded.`, name);
     }
     const advice = this.host.layoutAdvice?.();
     if (advice) {
       // Keeps every other draft value; only turns Strong gravity on with a measured pull.
-      const fix = presets.createEl('button', { text: PULL_IN, attr: { title: advice.reason } }); fix.disabled = this.physicsBusy;
+      const fix = presets.createEl('button', { text: PULL_IN }); fix.disabled = this.physicsBusy;
       fix.onclick = () => fill({ ...draft, strongGravityMode: true, gravity: advice.gravity } as unknown as Required<PhysicsValues>, `${PULL_IN} loaded. Apply and recompute to see it.`, PULL_IN);
-      this.note(host, advice.reason);
+      panelHelp(host, 'Why pull them in?', advice.reason);
     }
-    const undo = this.physicsUndo, back =presets.createEl('button', { text: 'Undo last preset', attr: { title: undo ? `Back to the values before ${undo.name}` : 'No preset to undo' } });
+    const undo = this.physicsUndo, back =presets.createEl('button', { text: 'Undo preset' });
     back.disabled = this.physicsBusy || !undo;
     back.onclick = () => { if (!undo) return; Object.assign(draft, undo.values); this.physicsUndo = undefined; this.physicsNote = `${undo.name} undone.`; if (undo.applied) void run(); else this.render(); };
-    const changes = host.createDiv({ cls: 'graph-ng-explore-note', attr: { 'aria-live': 'polite' } }), show = (v: string | boolean) => typeof v === 'boolean' ? (v ? 'on' : 'off') : v;
-    const summarize = () => { const now = applied(), diff = PHYSICS_FIELDS.filter(([key]) => draft[key] !== now[key]).map(([key, title]) => `${title} ${show(now[key])} → ${show(draft[key])}`); changes.textContent = [this.physicsNote, diff.length ? `What changes on apply: ${diff.join('; ')}.` : 'No pending changes.'].filter(Boolean).join(' '); };
+    const changes = host.createDiv({ cls: 'graph-ng-layout-changes', attr: { 'aria-live': 'polite' } }), show = (v: string | boolean) => typeof v === 'boolean' ? (v ? 'on' : 'off') : v;
+    const summarize = () => {
+      const now = applied(), diff = PHYSICS_FIELDS.filter(([key]) => draft[key] !== now[key]); changes.empty();
+      if (this.physicsNote) changes.createDiv({ text: this.physicsNote });
+      if (!diff.length) changes.createDiv({ text: 'No pending changes.' });
+      else {
+        const details = changes.createEl('details'); disclosure(details, `${diff.length} pending changes`);
+        for (const [key, title] of diff) statRow(details, 'minus', title, `${show(now[key])} → ${show(draft[key])}`);
+      }
+    };
     const basic = host.createDiv(), advanced = host.createEl('details', { cls: 'graph-ng-physics-advanced' });
-    advanced.createEl('summary', { text: 'Advanced physics' }); advanced.open = this.physicsAdvanced; advanced.ontoggle = () => { this.physicsAdvanced = advanced.open; };
+    disclosure(advanced, 'Advanced layout'); advanced.open = this.physicsAdvanced; advanced.ontoggle = () => { this.physicsAdvanced = advanced.open; };
     for (const [key, title, help, more] of PHYSICS_FIELDS) {
       const parent = more ? advanced : basic, value = draft[key], def = recommended[key];
       if (typeof value === 'boolean') {
@@ -574,33 +589,27 @@ export class ExplorePanel {
     this.lensButton.disabled = !state?.available; this.lensButton.setAttribute('aria-pressed', String(!!state?.active));
     this.lensButton.textContent = state?.active ? 'Connection lens: on' : 'Connection lens: off';
   }
-  updateSizingReadout() { if (this.sizingOutput) this.sizingOutput.textContent = this.host.sizingReadout?.() ?? 'Open Notes to inspect actual radii.'; }
+  updateSizingReadout() { /* Renderer compatibility: no live sizing paragraph. */ }
   private nodes(host: HTMLElement) {
     const group = host.createDiv({ cls: 'graph-ng-nodes' }); group.createEl('h4', { text: 'Nodes' });
     const current = sizingValues(this.settings);
     const draft = this.sizingDraft ??= { radius: String(current.radius), prominence: String(current.prominence), compensation: String(current.compensation * 100), floor: String(current.floor * 100), curve: current.curve };
-    this.note(group, this.settings.nodeSizing?.policy !== 'predictable' ? 'Legacy sizing. Apply adopts predictable sizing.' : 'Predictable sizing, saved in plugin settings.');
+    panelHelp(group, 'Sizing drafts', 'Preview is temporary; Apply saves predictable sizing. Restore returns to your saved sizes.');
     const fields: [Exclude<keyof NodeSizingValues, 'curve'>, string, string, Curve][] = [
-      ['radius', 'Base node radius', 'CSS px', { min: .01, max: 20, k: 3 }], ['prominence', 'Maximum degree prominence', '× radius', { min: 1, max: 9, k: 2 }],
-      ['compensation', 'Density compensation', '%', { min: 0, max: 100 }], ['floor', 'Minimum retained size', '% > 0', { min: .1, max: 100, k: 2 }],
+      ['radius', 'Node size', 'px', { min: .01, max: 20, k: 3 }], ['prominence', 'Hub size limit', '×', { min: 1, max: 9, k: 2 }],
+      ['compensation', 'Shrink crowded dots', '%', { min: 0, max: 100 }], ['floor', 'Smallest dot size', '%', { min: .1, max: 100, k: 2 }],
     ];
-    const inputs: HTMLInputElement[] = [];
+    const help = { radius: 'Dot radius before zoom and crowding adjustments. Type a larger value for larger dots.', prominence: 'Largest hub radius compared with an unconnected note. 1 keeps dots the same size.', compensation: 'How much crowding shrinks dots, not the space between them. 0 turns shrinking off.', floor: 'Minimum size kept after shrinking, as a percentage of the requested size. Must be greater than 0.' };
     const message = group.createDiv({ cls: 'graph-ng-explore-note', attr: { role: 'status', 'aria-live': 'polite' } }); message.textContent = this.sizingMessage;
     const changed = (key: keyof NodeSizingValues, value: string) => { draft[key] = value; this.sizingPreview = false; this.host.previewSizing?.(null); this.sizingMessage = message.textContent = 'Draft not previewed or saved.'; this.updateSizingReadout(); };
-    const curveRow = settingRow(group, 'Degree curve', 'graph-ng-select');
-    const curve = curveRow.createEl('select', { attr: { 'aria-label': 'Degree curve' } }); curve.disabled = this.sizingBusy;
+    const curveRow = settingRow(group, 'Size by connections', 'graph-ng-select', 'Chooses how connection counts change dot sizes. Previous keeps the earlier sizing curve.');
+    const curve = curveRow.createEl('select', { attr: { 'aria-label': 'Size by connections' } }); curve.disabled = this.sizingBusy;
     for (const [v, t] of [['sqrt', 'Square root'], ['log', 'Logarithmic'], ['linear', 'Linear'], ['legacy', 'Previous']]) curve.createEl('option', { value: v, text: t });
-    const hint = () => ({ sqrt: 'Area grows with √degree: hubs stand out, leaves stay readable.', log: 'Area grows with log degree: gentle, most notes look alike.', linear: 'Area grows with degree: only the largest hubs grow.', legacy: 'Earlier curve: radius grows with log degree.' })[draft.curve as DegreeCurve];
-    curve.value = draft.curve; const curveHint = curveRow.createDiv({ cls: 'graph-ng-setting-desc', text: hint() });
-    curve.onchange = () => { changed('curve', curve.value); curveHint.textContent = hint(); };
+    curve.value = draft.curve; curve.onchange = () => changed('curve', curve.value);
     const base = sizingValues(defaults('links')), initial = { ...base, compensation: base.compensation * 100, floor: base.floor * 100 };
     for (const [key, title, unit, range] of fields) {
-      const { number } = progressiveSlider(group, { label: title, unit, curve: range, value: draft[key], def: initial[key], disabled: this.sizingBusy, cls: 'graph-ng-sizing-row', attr: { min: key === 'prominence' ? '1' : '0', max: String(key === 'radius' ? MAX_NODE_RADIUS : key === 'prominence' ? 9 : 100) }, changed: value => changed(key, value) });
-      inputs.push(number);
+      progressiveSlider(group, { label: title, unit, desc: help[key], curve: range, value: draft[key], def: initial[key], disabled: this.sizingBusy, cls: 'graph-ng-sizing-row', attr: { min: key === 'prominence' ? '1' : '0', max: String(key === 'radius' ? MAX_NODE_RADIUS : key === 'prominence' ? 9 : 100) }, changed: value => changed(key, value) });
     }
-    const help = group.createEl('details'); help.createEl('summary', { text: 'Sizing, density & brightness' });
-    this.note(help, `Radius slider: 0.01–20 CSS px; type custom values up to ${MAX_NODE_RADIUS}. Degree counts incident edges, not hierarchy; curves other than Previous scale disc area, so a hub at maximum prominence P covers P² leaf areas. Density shrinks marks, not spacing. Highlights add 2 px; glow, halos and overlapping edges can still brighten a core.`);
-    this.sizingOutput = group.createDiv({ cls: 'graph-ng-explore-note' }); this.updateSizingReadout();
     const values = () => {
       const parsed = Object.fromEntries(Object.entries(draft).map(([key, value]) => [key, key === 'curve' ? value : value.trim() ? Number(value) : NaN])) as unknown as NodeSizingValues;
       parsed.compensation /= 100; parsed.floor /= 100; sizingSettings(this.settings, parsed); return parsed;
@@ -608,14 +617,14 @@ export class ExplorePanel {
     const actions = group.createDiv({ cls: 'graph-ng-form' });
     const preview = actions.createEl('button', { text: 'Preview sizing' }); preview.disabled = this.sizingBusy || !this.host.previewSizing;
     preview.onclick = () => { try { this.host.previewSizing?.(values()); this.sizingPreview = true; this.sizingMessage = 'Previewing. Not saved.'; } catch (e) { this.host.previewSizing?.(null); this.sizingMessage = `Not previewed: ${String(e)}`; } message.textContent = this.sizingMessage; this.updateSizingReadout(); };
-    const apply = actions.createEl('button', { text: this.sizingBusy ? 'Saving…' : 'Apply and save sizing' }); apply.disabled = this.sizingBusy || !this.host.applySizing;
+    const apply = actions.createEl('button', { text: this.sizingBusy ? 'Saving…' : 'Apply sizing' }); apply.disabled = this.sizingBusy || !this.host.applySizing;
     apply.onclick = async () => {
       if (this.sizingBusy || this.disposed) return;
       try { const v = values(); this.sizingBusy = true; this.render(); await this.host.applySizing!(v); this.sizingDraft = undefined; this.sizingPreview = false; this.sizingMessage = 'Saved'; }
       catch (e) { this.host.previewSizing?.(null); this.sizingMessage = `Not saved: ${String(e)}. Preview cleared.`; }
       finally { this.sizingBusy = false; if (!this.disposed) this.render(); }
     };
-    const cancel = actions.createEl('button', { text: 'Restore saved sizing' }); cancel.disabled = this.sizingBusy;
+    const cancel = actions.createEl('button', { text: 'Restore sizing' }); cancel.disabled = this.sizingBusy;
     cancel.onclick = () => { this.host.previewSizing?.(null); this.sizingDraft = undefined; this.sizingPreview = false; this.sizingMessage = 'Saved sizing restored'; this.render(); };
   }
   /** Opinionated defaults for the loaded graph's shape. Preview is unsaved; only Apply writes. */
@@ -624,8 +633,6 @@ export class ExplorePanel {
     const box = host.createDiv({ cls: 'graph-ng-nodes' }); box.createEl('h4', { text: 'Suggested for this graph' });
     const message = box.createDiv({ cls: 'graph-ng-explore-note', attr: { role: 'status', 'aria-live': 'polite' } }); message.textContent = this.suggestMessage;
     if (!list) return void this.note(box, 'Open Notes first.');
-    const advice = this.host.layoutAdvice?.();
-    if (advice) this.note(box, `Layout: ${advice.reason} Use ${PULL_IN} under Layout, then Apply and recompute.`);
     if (!list.length) return void this.note(box, 'Settings already match.');
     const apply = async (items: Suggestion[]) => {
       if (this.suggestBusy || this.disposed) return;
@@ -634,34 +641,34 @@ export class ExplorePanel {
       finally { this.suggestPreview = false; this.suggestBusy = false; if (!this.disposed) this.render(); }
     };
     for (const item of list) {
-      const row = box.createDiv({ cls: 'graph-ng-legend-row' });
-      const text = row.createDiv({ cls: 'graph-ng-suggestion' }); text.createDiv({ text: `${item.label}: ${item.current} → ${item.value}` }); text.createDiv({ cls: 'graph-ng-explore-note', text: item.reason });
+      const row = box.createDiv({ cls: 'graph-ng-suggestion-row' }), copy = suggestionCopy(item);
+      const text = row.createDiv({ cls: 'graph-ng-suggestion' }); text.createDiv({ cls: 'graph-ng-suggestion-name', text: item.label });
+      text.createDiv({ text: copy.change }); panelHelp(text, copy.why, item.reason, 'graph-ng-suggestion-why');
       const one = row.createEl('button', { text: 'Apply', attr: { 'aria-label': `Apply ${item.label}` } }); one.disabled = this.suggestBusy || !this.host.applySuggestions; one.onclick = () => apply([item]);
     }
-    const actions = box.createDiv({ cls: 'graph-ng-form' });
-    const preview = actions.createEl('button', { text: this.suggestPreview ? 'End preview' : 'Preview suggestions' }); preview.disabled = this.suggestBusy || !this.host.previewSuggestions;
+    const actions = box.createDiv({ cls: 'graph-ng-actions' });
+    const preview = actions.createEl('button', { text: this.suggestPreview ? 'End preview' : 'Preview' }); preview.disabled = this.suggestBusy || !this.host.previewSuggestions;
     preview.onclick = () => {
       this.suggestPreview = !this.suggestPreview; this.host.previewSuggestions!(this.suggestPreview ? list : null);
       this.suggestMessage = this.suggestPreview ? 'Previewing. Not saved.' : ''; this.render();
     };
-    const all = actions.createEl('button', { text: this.suggestBusy ? 'Saving…' : 'Apply all and save', cls: 'mod-cta' }); all.disabled = this.suggestBusy || !this.host.applySuggestions; all.onclick = () => apply(list);
+    const all = actions.createEl('button', { text: this.suggestBusy ? 'Saving…' : 'Apply all', cls: 'mod-cta' }); all.disabled = this.suggestBusy || !this.host.applySuggestions; all.onclick = () => apply(list);
   }
   private display(host: HTMLElement) {
     const s = this.settings, v = s.visuals;
     type NumericVisual = { [K in keyof Visuals]: Visuals[K] extends number ? K : never }[keyof Visuals];
-    const initial = defaultVisuals(), slider = (key: NumericVisual, label: string, curve: Curve) =>
-      this.slider(host, label, curve, () => v[key], value => { v[key] = value; }, false, { def: initial[key] });
+    const initial = defaultVisuals(), slider = (key: NumericVisual, label: string, curve: Curve, desc?: string) =>
+      this.slider(host, label, curve, () => v[key], value => { v[key] = value; }, false, { def: initial[key], desc });
     this.suggested(host);
     this.nodes(host);
-    this.note(host, 'Closing ends a preview; drafts stay here. Live controls below save automatically in plugin settings, not named views.');
-    host.createEl('h4', { text: 'Live appearance defaults' });
+    panelHelp(host.createEl('h4'), 'Live appearance', 'These controls save immediately in plugin settings, not saved views. Closing the panel ends any preview.');
     this.slider(host, 'Label density', { min: .25, max: 3, log: true }, () => s.labelDensity, x => { s.labelDensity = x; }, true, { def: 1 });
     this.edgeMode(host);
-    const composite = settingRow(host, 'Edge compositing', '', 'Density reduces faint overlap; Blend keeps the original strokes. Canvas or an unavailable target uses Blend.').createEl('select', { attr: { 'aria-label': 'Edge compositing' } });
+    const composite = settingRow(host, 'Edge compositing', '', 'Density reduces faint overlap; Blend keeps the original strokes. Canvas uses Blend.').createEl('select', { attr: { 'aria-label': 'Edge compositing' } });
     for (const value of ['blend', 'density'] as const) composite.createEl('option', { text: value === 'blend' ? 'Blend (default)' : 'Density', value });
     composite.value = v.edgeCompositing;
     composite.onchange = () => { v.edgeCompositing = composite.value as Visuals['edgeCompositing']; this.host.visualsChanged(false); };
-    slider('edgeOpacity', 'Edge opacity (0–1)', { min: 0, max: 1, k: 2.5 });
+    slider('edgeOpacity', 'Edge opacity', { min: 0, max: 1, k: 2.5 }, '0 hides every edge, including highlights; 1 is fully opaque. Relationships remain available in Filters.');
     slider('edgeColorMix', 'Edge color blend', { min: 0, max: 1 });
     slider('glow', 'Glow', { min: 0, max: 1, k: 2 });
     this.guard(host, 'glow');
@@ -670,41 +677,44 @@ export class ExplorePanel {
     this.guard(host, 'curves');
     this.flag(host, 'groupHalos', 'Group halos (faint tint behind groups at mid zoom)');
     this.guard(host, 'halos');
-    this.flag(host, 'autoPalette', 'Color by group when no rule matches');
-    this.flag(host, 'hoverHighlight', 'Graduated connection highlighting on the selected note');
-    this.note(host, 'Direct connections brightest, then neighbours of neighbours; the rest fades. Ancestor and same-group levels need a declared hierarchy and groups; none are inferred.');
+    this.flag(host, 'autoPalette', 'Group colors (when no rule matches)');
+    this.flag(host, 'hoverHighlight', 'Highlight connections: Direct connections are brightest, then neighbours of neighbours; the rest fades. Groups and ancestors must be declared.');
     if (this.host.toggleLens) {
       this.lensButton = host.createEl('button', { cls: 'graph-ng-lens-toggle', attr: { 'aria-label': 'Connection lens', 'aria-pressed': 'false' } });
       this.lensButton.onclick = () => { this.host.toggleLens?.(); this.updateLensControl(); };
-      this.updateLensControl(); this.note(host, 'Select a note, then bring its direct connections into rings. Temporary; L toggles, Escape closes.');
+      this.updateLensControl(); panelHelp(host, 'About the lens', 'Brings the selected note’s direct connections into rings temporarily. L toggles it; Escape closes it.');
     }
-    this.flag(host, 'clickOpens', 'Click opens notes directly (skip the connection card)');
-    const find = host.createEl('details', { cls: 'graph-ng-highlight-options' }); find.createEl('summary', { text: 'Finding connections' });
-    const emphasis = settingRow(find, 'Highlight emphasis', '', 'Adaptive uses screen-pixel targets and less growth for large neighbourhoods; Scale keeps the original magnification.').createEl('select', { attr: { 'aria-label': 'Highlight emphasis' } });
+    this.flag(host, 'clickOpens', 'Click to open (skip the connection card)');
+    const find = host.createEl('details', { cls: 'graph-ng-highlight-options' }); disclosure(find, 'Finding connections');
+    const emphasis = settingRow(find, 'Highlight emphasis', '', 'Adaptive limits growth in large neighbourhoods. Scale keeps the original magnification.').createEl('select', { attr: { 'aria-label': 'Highlight emphasis' } });
     for (const mode of ['adaptive', 'scale'] as const) emphasis.createEl('option', { value: mode, text: mode === 'adaptive' ? 'Adaptive (default)' : 'Scale' }).selected = v.emphasis === mode;
     emphasis.onchange = () => { v.emphasis = emphasis.value as typeof v.emphasis; this.host.visualsChanged(false); };
     this.slider(find, 'Highlighted size target (px)', { min: 0, max: 16, k: 1.5 }, () => v.tierMinSize, x => { v.tierMinSize = x; }, false, { def: initial.tierMinSize, desc: 'Adaptive reduces this target for large neighbourhoods; Scale uses it as a minimum. 0 disables neighbour size targets.' });
-    this.flag(find, 'tierRings', 'Rings around the focus and direct connections');
+    this.flag(find, 'tierRings', 'Connection rings (around the focus and direct connections)');
     this.flag(find, 'focusEdges', 'Strong focus edges (fade the rest)');
-    this.flag(find, 'offscreenPips', 'Arrows to off-screen direct connections');
-    this.flag(find, 'tierLegend', 'Legend with counts per tier');
-    this.flag(find, 'focusRipple', 'Ripple when selecting a note');
+    this.flag(find, 'offscreenPips', 'Off-screen arrows (point to direct connections)');
+    this.flag(find, 'tierLegend', 'Connection counts (show a legend for each tier)');
+    this.flag(find, 'focusRipple', 'Selection ripple');
     this.flag(find, 'bridgesFirst', 'Bridges first: rank connections to other groups higher');
-    this.flag(find, 'breadcrumb', 'Trail of visited notes along the top');
+    this.flag(find, 'breadcrumb', 'Visited notes (show a trail along the top)');
     this.flag(find, 'minimap', 'Minimap (hidden under 500 px wide)');
-    this.flag(host, 'labelFade', 'Fade labels by zoom and importance', true);
-    this.slider(host, 'Label scale by tier', { min: 1, max: 1.6, k: 1.5 }, () => v.labelTierScale, x => { v.labelTierScale = x; }, true, { def: initial.labelTierScale });
-    this.flag(host, 'labelPlates', 'Label plates');
-    this.note(host, 'Focus labels largest, then direct connections, then neighbours of neighbours. Hubs get larger labels. 1 keeps one size.');
+    const labels = settingRow(host, 'Label style', '', 'Anchored names stay one size and point to their dots. Ranked names grow by connection count and fade with zoom.').createEl('select', { attr: { 'aria-label': 'Label style' } });
+    for (const [value, text] of [['anchored', 'Anchored'], ['ranked', 'Ranked']]) labels.createEl('option', { value, text });
+    labels.value = v.labelStyle ?? 'anchored';
+    labels.onchange = () => { v.labelStyle = labels.value as Visuals['labelStyle']; this.host.visualsChanged(true); this.render(); };
+    if ((v.labelStyle ?? 'anchored') === 'ranked') {
+      this.flag(host, 'labelFade', 'Fade labels (by zoom and importance)', true);
+      this.slider(host, 'Label size range', { min: 1, max: 1.6, k: 1.5 }, () => v.labelTierScale, x => { v.labelTierScale = x; }, true, { def: initial.labelTierScale, desc: 'Focus and well-connected notes get larger names. 1 keeps names one size.' });
+    }
+    this.flag(host, 'labelPlates', 'Label backgrounds');
     this.flag(host, 'zoomAdapt', 'Adapt to zoom: fade crowded edges and shrink hubs when zoomed out');
     if (this.host.setRelationshipDisplay && hasReified(s.declaration)) this.relationshipDisplay(host);
     if (this.host.carriers()) {
       slider('carrierOpacity', 'Relationship-note opacity', { min: 0, max: 1, k: 2 });
       slider('carrierSize', 'Relationship-note size', { min: .001, max: 4, k: 2 });
-      this.flag(host, 'carrierTint', 'Color relationship notes by their endpoints');
-      this.flag(host, 'carrierLod', 'Fold relationship notes into edges when zoomed out');
+      this.flag(host, 'carrierTint', 'Endpoint colors (for relationship notes)');
+      this.flag(host, 'carrierLod', 'Fold into edges (relationship notes when zoomed out)');
     }
-    this.note(host, 'Edge opacity 0 hides all edges, including highlights. Relationships remain available in Filters and group lists.');
     host.createEl('button', { text: 'Fit graph' }).onclick = () => this.host.fit();
   }
   /** Edges: All / Focus only / Off. Live, saved with plugin settings. */
@@ -723,7 +733,7 @@ export class ExplorePanel {
   private relationshipDisplay(host: HTMLElement) {
     const nodes = this.settings.declaration.display.reifiedAsNodes, count = this.host.relationshipNotes?.() ?? 0;
     const row = host.createDiv({ cls: 'graph-ng-row graph-ng-segmented', attr: { role: 'group', 'aria-label': 'Relationship notes' } });
-    row.createSpan({ text: 'Relationship notes' });
+    panelHelp(row, 'Relationship notes', `Lines join the endpoints; Nodes makes each relationship a clickable dot${count ? ` (${plural(count, 'added dot')})` : ''}. Switching saves globally and rebuilds the layout.`);
     for (const [value, text] of [[false, 'Lines'], [true, 'Nodes']] as const) {
       const button = row.createEl('button', { text, attr: { 'aria-pressed': String(nodes === value) } }); button.disabled = this.relationBusy || nodes === value;
       button.onclick = async () => {
@@ -733,7 +743,6 @@ export class ExplorePanel {
         finally { this.relationBusy = false; if (!this.disposed) this.render(); }
       };
     }
-    this.note(host, `Lines: each relationship note is one line between its endpoints. Nodes: each is a clickable dot between them${count ? ` (adds ${count.toLocaleString()} dots)` : ''}. Switching re-projects and re-runs layout; this is a global setting, not part of saved views.`);
     if (this.relationMessage) host.createDiv({ cls: 'graph-ng-explore-note', text: this.relationMessage, attr: { role: 'status' } });
   }
   private viewDefinition(host: HTMLElement, saved: SavedView) {

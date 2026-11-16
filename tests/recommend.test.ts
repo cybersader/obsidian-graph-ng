@@ -61,21 +61,21 @@ function fixture() {
 }
 test('card previews without saving, applies one or all through the acknowledged save path', async () => {
   const f = fixture(), before = structuredClone(f.plugin.settings), visuals = f.plugin.settings.visuals;
-  expect(f.panel.body.textContent).toContain('Edge opacity: 0.4 → 0.15');
-  control(f.panel.body, 'Preview suggestions').click(); expect(f.preview().length).toBe(5); expect(f.writes.length).toBe(0); expect(f.plugin.settings).toEqual(before);
+  expect(f.panel.body.textContent).toContain('Fainter lines'); expect(f.panel.body.textContent).toContain('Straight lines'); expect(f.panel.body.textContent).not.toMatch(/true|false|→/);
+  control(f.panel.body, 'Preview').click(); expect(f.preview().length).toBe(5); expect(f.writes.length).toBe(0); expect(f.plugin.settings).toEqual(before);
   control(f.panel.body, 'End preview').click(); expect(f.preview()).toBeNull(); expect(f.writes.length).toBe(0);
-  control(f.panel.body, 'Preview suggestions').click(); f.panel.endPreview(); expect(f.preview()).toBeNull(); expect(f.panel.suggestPreview).toBe(false);
+  control(f.panel.body, 'Preview').click(); f.panel.endPreview(); expect(f.preview()).toBeNull(); expect(f.panel.suggestPreview).toBe(false);
   const one = f.panel.body.querySelectorAll('button').find((b: any) => b.getAttribute('aria-label') === 'Apply Glow');
   await one.onclick(); expect(f.writes.length).toBe(1); expect(f.writes[0].settings.visuals.glow).toBe(0);
   expect(f.plugin.settings.visuals.glow).toBe(0); expect(f.plugin.settings.visuals.edgeOpacity).toBe(.4); expect(f.plugin.settings.visuals).toBe(visuals);
-  await (control(f.panel.body, 'Apply all and save') as any).onclick();
+  await (control(f.panel.body, 'Apply all') as any).onclick();
   expect(f.plugin.settings.labelDensity).toBe(.5); expect(f.plugin.settings.visuals.curvedEdges).toBe(false); expect(f.panel.suggestMessage).toBe('Saved');
   expect(f.panel.body.textContent).toContain('Settings already match.'); f.panel.dispose();
 });
 test('failed save leaves live settings untouched, restores storage and reports', async () => {
   const f = fixture(), before = structuredClone(f.plugin.settings); let calls = 0;
   f.plugin.saveData = async () => { if (++calls === 1) throw new Error('disk refused'); };
-  await (control(f.panel.body, 'Apply all and save') as any).onclick();
+  await (control(f.panel.body, 'Apply all') as any).onclick();
   expect(f.plugin.settings).toEqual(before); expect(calls).toBe(2); expect(f.panel.suggestMessage).toContain('disk refused'); expect(f.panel.suggestBusy).toBe(false);
   await expect(f.plugin.commitSuggestions(recommend(dense(), f.plugin.settings), () => false)).rejects.toThrow('view changed'); expect(f.plugin.settings).toEqual(before);
   f.panel.dispose();
@@ -108,8 +108,8 @@ test('outside counts notes beyond the largest connected part; layout advice name
   expect(layoutAdvice(many, strong)).toBeUndefined(); expect(layoutAdvice(many, none)).toBeUndefined();
   expect(layoutAdvice({ ...many, outside: 100 }, room)).toBeUndefined(); expect(layoutAdvice({ ...many, outside: undefined }, room)).toBeUndefined();
 });
-test('the Suggested card names the layout fix without offering to save it', () => {
+test('the Suggested card leaves layout advice in Layout', () => {
   const f = fixture(); f.host.layoutAdvice = () => ({ gravity: .124, reason: '8,000 notes sit in disconnected parts.' }); f.panel.render();
-  expect(f.panel.body.textContent).toContain('Layout: 8,000 notes sit in disconnected parts. Use Pull in disconnected notes under Layout, then Apply and recompute.');
+  expect(f.panel.body.textContent).not.toContain('disconnected parts'); expect(f.panel.body.textContent).not.toContain('Pull in notes');
   f.panel.dispose();
 });

@@ -18,7 +18,7 @@ test('legacy and new installations retain defaults until explicit adoption; load
   expect((await loadSettings(disk, 'synthetic-settings', 'links', () => {})).settings.nodeSizing.policy).toBe('legacy');
   for (const canvas of [false, true]) expect(baseRadius(fresh, 800, 600, 60000, 1, canvas)).toBe(fresh.nodeSize * (canvas ? 1 : densityScale(800, 600, 60000, 1, 3)));
 });
-test('predictable radius linear in requested CSS px independently of zoom and density; renderer parity', () => {
+test('predictable radius linear in requested px independently of zoom and density; renderer parity', () => {
   const s = sizingSettings(defaults('links'), values);
   for (const n of [0, 1, 60000, 1000000]) for (const z of [.01, 1, 20]) {
     const b = baseRadius(s, 800, 600, n, z);
@@ -82,10 +82,10 @@ function panelFixture() {
 }
 test('numeric drafts preview/apply/cancel, invalid blank never reaches renderer or persistence', async () => {
   const f = panelFixture(), before = structuredClone(f.plugin.settings);
-  f.input('Base node radius', ''); control(f.panel.body, 'Preview sizing').click(); expect(f.preview()).toBeNull(); expect(f.writes.length).toBe(0);
-  f.input('Base node radius', '12'); control(f.panel.body, 'Preview sizing').click(); expect(f.preview().radius).toBe(12); expect(f.plugin.settings).toEqual(before);
-  control(f.panel.body, 'Restore saved sizing').click(); expect(f.preview()).toBeNull(); expect(f.writes.length).toBe(0);
-  f.input('Maximum degree prominence', '9'); await (control(f.panel.body, 'Apply and save sizing') as any).onclick(); expect(f.plugin.settings.visuals.degreeSizing).toBe(8); expect(f.panel.sizingMessage).toBe('Saved'); f.panel.dispose();
+  f.input('Node size', ''); control(f.panel.body, 'Preview sizing').click(); expect(f.preview()).toBeNull(); expect(f.writes.length).toBe(0);
+  f.input('Node size', '12'); control(f.panel.body, 'Preview sizing').click(); expect(f.preview().radius).toBe(12); expect(f.plugin.settings).toEqual(before);
+  control(f.panel.body, 'Restore sizing').click(); expect(f.preview()).toBeNull(); expect(f.writes.length).toBe(0);
+  f.input('Hub size limit', '9'); await (control(f.panel.body, 'Apply sizing') as any).onclick(); expect(f.plugin.settings.visuals.degreeSizing).toBe(8); expect(f.panel.sizingMessage).toBe('Saved'); f.panel.dispose();
 });
 test('shared rendering source contract keeps appearance out of layout and uses dynamic label offsets', () => {
   const renderer = readFileSync(new URL('../src/webgl-renderer.ts', import.meta.url), 'utf8');
@@ -107,9 +107,9 @@ test('label shader uses shared nodeSize uniform once and loading has no settings
 
 test('UI save failure clears preview and exposes error without applying drafts', async () => {
   const f = panelFixture(), before = structuredClone(f.plugin.settings);
-  f.input('Base node radius', '8'); control(f.panel.body, 'Preview sizing').click();
+  f.input('Node size', '8'); control(f.panel.body, 'Preview sizing').click();
   f.host.applySizing = async () => { throw new Error('storage unavailable'); };
-  await (control(f.panel.body, 'Apply and save sizing') as any).onclick();
+  await (control(f.panel.body, 'Apply sizing') as any).onclick();
   expect(f.preview()).toBeNull(); expect(f.plugin.settings).toEqual(before); expect(f.panel.sizingMessage).toContain('storage unavailable'); expect(f.panel.sizingBusy).toBe(false); f.panel.dispose();
 });
 
@@ -118,8 +118,8 @@ test('Repair R1 rejects unsupported finite radii before preview or persistence',
   const f = panelFixture(), before = structuredClone(f.plugin.settings);
   for (const value of [1e20, Number.MAX_VALUE, MAX_NODE_RADIUS + 1, MAX_NODE_RADIUS * (1 + Number.EPSILON)]) {
     expect(() => sizingSettings(f.plugin.settings, { ...values, radius: value })).toThrow('binary32');
-    f.input('Base node radius', String(value)); control(f.panel.body, 'Preview sizing').click();
-    expect(f.preview()).toBeNull(); await (control(f.panel.body, 'Apply and save sizing') as any).onclick();
+    f.input('Node size', String(value)); control(f.panel.body, 'Preview sizing').click();
+    expect(f.preview()).toBeNull(); await (control(f.panel.body, 'Apply sizing') as any).onclick();
     expect(f.writes.length).toBe(0); expect(f.plugin.settings).toEqual(before);
   }
   const edge = sizingSettings(f.plugin.settings, { ...values, radius: MAX_NODE_RADIUS, prominence: 9 }); edge.visuals.carrierSize = 4; validateSettings(edge);
@@ -191,8 +191,8 @@ test('saved settings without a degree curve keep the earlier appearance; curve r
   expect(upgradeSettings(settingsForSave(next), 'links').visuals.degreeCurve).toBe('linear');
 });
 test('curve selector drafts, previews and applies the curve explicitly', async () => {
-  const f = panelFixture(); const select: any = f.panel.body.querySelectorAll('select').find((e: any) => e.getAttribute('aria-label') === 'Degree curve');
+  const f = panelFixture(); const select: any = f.panel.body.querySelectorAll('select').find((e: any) => e.getAttribute('aria-label') === 'Size by connections');
   expect(select.value).toBe('sqrt'); select.value = 'log'; select.onchange(); expect(f.preview()).toBeNull(); expect(f.writes.length).toBe(0);
   control(f.panel.body, 'Preview sizing').click(); expect(f.preview().curve).toBe('log'); expect(f.plugin.settings.visuals.degreeCurve).toBe('sqrt');
-  await (control(f.panel.body, 'Apply and save sizing') as any).onclick(); expect(f.plugin.settings.visuals.degreeCurve).toBe('log'); f.panel.dispose();
+  await (control(f.panel.body, 'Apply sizing') as any).onclick(); expect(f.plugin.settings.visuals.degreeCurve).toBe('log'); f.panel.dispose();
 });

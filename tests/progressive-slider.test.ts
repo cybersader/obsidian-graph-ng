@@ -44,13 +44,13 @@ test('slider keeps real-value aria, keyboard moves through the curve and commits
   m.number.value = '5'; m.number.oninput(); expect(m.range.value).toBe(String(STEPS)); expect(m.seen.at(-1)).toBe('5');
 });
 test('ARIA: the range is a named slider with real min, max, now and unit-bearing text; the chip is named by the label', () => {
-  const m = mount('4', { label: 'Base node radius', unit: 'CSS px', curve: { min: .01, max: 20, k: 3 } });
-  expect(m.range.getAttribute('type')).toBe('range'); expect(m.range.getAttribute('aria-label')).toBe('Base node radius slider');
-  expect([m.range.getAttribute('aria-valuemin'), m.range.getAttribute('aria-valuemax'), m.range.getAttribute('aria-valuenow'), m.range.getAttribute('aria-valuetext')]).toEqual(['0.01', '20', '4', '4 CSS px']);
-  expect(m.number.getAttribute('type')).toBe('number'); expect(m.number.getAttribute('aria-label')).toBe('Base node radius');
-  expect(m.row.querySelector('.graph-ng-slider-unit').textContent).toBe('CSS px'); expect(m.bubble.getAttribute('aria-hidden')).toBe('true');
-  expect(m.row.querySelector('.graph-ng-setting-name').textContent).toBe('Base node radius');
-  const d = mount('1', { desc: 'Soft light around notes' }); expect(d.row.querySelector('.graph-ng-setting-desc').textContent).toBe('Soft light around notes');
+  const m = mount('4', { label: 'Node size', unit: 'px', curve: { min: .01, max: 20, k: 3 } });
+  expect(m.range.getAttribute('type')).toBe('range'); expect(m.range.getAttribute('aria-label')).toBe('Node size slider');
+  expect([m.range.getAttribute('aria-valuemin'), m.range.getAttribute('aria-valuemax'), m.range.getAttribute('aria-valuenow'), m.range.getAttribute('aria-valuetext')]).toEqual(['0.01', '20', '4', '4 px']);
+  expect(m.number.getAttribute('type')).toBe('number'); expect(m.number.getAttribute('aria-label')).toBe('Node size');
+  expect(m.row.querySelector('.graph-ng-slider-unit').textContent).toBe('px'); expect(m.bubble.getAttribute('aria-hidden')).toBe('true');
+  expect(m.row.querySelector('.graph-ng-setting-name').textContent).toBe('Node size');
+  const d = mount('1', { desc: 'Soft light around notes' }); expect(d.row.querySelector('.graph-ng-help-popover').textContent).toBe('Soft light around notes'); expect(d.row.querySelector('.graph-ng-help-popover').hidden).toBe(true);
   const off = mount('1', { disabled: true }); expect([off.range.disabled, off.number.disabled, off.reset.disabled]).toEqual([true, true, true]);
 });
 test('default tick sits at the default position; reset shows only off-default and restores by icon or double-click', () => {

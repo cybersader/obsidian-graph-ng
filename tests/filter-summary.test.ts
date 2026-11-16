@@ -41,7 +41,7 @@ test('graph information renders icon stat rows, a plain-English issues list and 
   // Issues list only what the breakdown does not: loading is the coverage line, duplicate IDs and missing targets are breakdown rows.
   expect(host.querySelector('.graph-ng-explore-note').textContent).toBe('Links pending: link targets are still being resolved.');
   expect(host.querySelector('.graph-ng-coverage-state').textContent).toBe('Still loading properties and links');
-  expect(host.querySelectorAll('.graph-ng-stat-sub').map((x: any) => x.textContent)).toContain('These notes share an ID with another note. Give each note a unique ID to include it.');
+  expect(host.querySelectorAll('.graph-ng-help-popover').map((x: any) => x.textContent)).toContain('These notes share an ID with another note. Give each note a unique ID to include it.');
   expect(host.textContent).not.toContain('Properties loaded'); expect(host.textContent).not.toContain('Partial graph');
   expect(host.textContent).not.toContain(' · ');
   // The tile bar, card and table are gone.

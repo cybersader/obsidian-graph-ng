@@ -1,4 +1,5 @@
 import { setIcon } from 'obsidian';
+import { panelHelp } from './panel-help';
 /** Shared progressive range slider: curve-mapped position, exact numeric chip, fine scrubbing. Stored values keep their own units. */
 export interface Curve { min: number; max: number; /** power curve exponent; >1 adds resolution near min */ k?: number; /** logarithmic (min > 0) */ log?: boolean; /** whole numbers only */ int?: boolean }
 export const STEPS = 1000;
@@ -39,7 +40,7 @@ export interface SliderOptions {
   label: string;
   /** Visible name when it differs from `label`. */
   name?: string;
-  /** One muted line under the name. */
+  /** On-demand help attached to the name. */
   desc?: string;
   unit?: string;
   curve: Curve;
@@ -53,14 +54,13 @@ export interface SliderOptions {
   changed: (value: string) => void;
   commit?: () => void;
 }
-/** One settings row: name and reset on top, optional description, then track and exact number chip. */
+/** Name with on-demand help, then track, exact value and a fixed reset slot. */
 export function progressiveSlider(parent: HTMLElement, o: SliderOptions) {
   const { curve: c, unit = '', def } = o, name = o.name ?? o.label;
   const row = parent.createDiv({ cls: `graph-ng-setting graph-ng-slider${o.cls ? ` ${o.cls}` : ''}` });
-  row.createSpan({ cls: 'graph-ng-setting-name', text: name });
+  panelHelp(row, name, o.desc, 'graph-ng-setting-name');
   const reset = row.createEl('button', { cls: 'clickable-icon graph-ng-slider-reset', attr: { 'aria-label': `Reset ${name} to ${def}${unit ? ` ${unit}` : ''}`, title: `Reset to default (${def})` } });
   setIcon(reset, 'rotate-ccw');
-  if (o.desc) row.createDiv({ cls: 'graph-ng-setting-desc', text: o.desc });
   const line = row.createDiv({ cls: 'graph-ng-slider-line' }), track = line.createDiv({ cls: 'graph-ng-slider-track' });
   const scale = track.createSpan({ cls: 'graph-ng-slider-scale', attr: { 'aria-hidden': 'true' } });
   const fill = track.createSpan({ cls: 'graph-ng-slider-fill', attr: { 'aria-hidden': 'true' } });
@@ -70,6 +70,7 @@ export function progressiveSlider(parent: HTMLElement, o: SliderOptions) {
   const chip = line.createEl('label', { cls: 'graph-ng-slider-chip' });
   const number = chip.createEl('input', { attr: { type: 'number', step: 'any', 'aria-label': o.label, ...o.attr } });
   if (unit) chip.createSpan({ cls: 'graph-ng-slider-unit', text: unit, attr: { 'aria-hidden': 'true' } });
+  line.appendChild(reset);
   number.value = o.value; bubble.hidden = mode.hidden = true;
   range.disabled = number.disabled = reset.disabled = !!o.disabled;
   if (def === undefined) tick.hidden = true; else tick.style.left = at(toPosition(c, def));

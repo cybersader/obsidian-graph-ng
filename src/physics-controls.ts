@@ -13,8 +13,8 @@ export const PHYSICS_FIELDS: readonly [PhysicsKey, string, string, boolean][] = 
   ['outboundAttractionDistribution', 'Dissuade hubs', 'High-degree notes pull less, so hubs drift to the outside of their cluster and their neighbours spread out.', true],
   ['adjustSizes', 'Prevent overlap', 'Treats each dot as having size so dots stop stacking on top of each other. Settles more slowly.', true],
   ['strongGravityMode', 'Strong gravity', 'Pull to center no longer weakens with distance, so far-off disconnected parts are pulled in hard. Use with a small Pull to center.', true],
-  ['iterations', 'Quality (iterations)', 'How many layout steps run. More = more settled shapes but a slower apply. Whole number, 1 or more.', true],
-  ['slowDown', 'Step slowdown', 'Higher = smaller, steadier moves each step (less jitter, may stop before fully settled). Not animation speed. Above 0.', true],
+  ['iterations', 'Quality (iterations)', 'More steps settle the layout further but take longer. Enter a whole number, 1 or more.', true],
+  ['slowDown', 'Step slowdown', 'Higher values make smaller moves each step, not slower animation. Must be greater than 0.', true],
   ['barnesHutTheta', 'Approximation', 'Lower = more accurate repulsion but slower on large graphs; higher = faster and rougher. Above 0.', true],
 ];
 const FORCE_KEYS = PHYSICS_FIELDS.map(([key]) => key).filter(key => key !== 'iterations') as (keyof ForceSettings)[];

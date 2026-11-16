@@ -43,8 +43,8 @@ test('numeric drafts survive rerenders; reset restores every recommended value; 
   expect(numbers(f)[0].value).toBe('100000');
   input(f, 0, '999999'); input(f, 1, '0'); f.panel.render();
   expect(numbers(f)[0].value).toBe('999999'); expect(f.applied()).toBe(0);
-  expect(f.panel.body.textContent).toContain('What changes on apply: Spread notes 100000 → 999999; Pull to center 1 → 0.');
-  control(f.panel.body, 'Reset to recommended').click(); expect(f.settings.layout.force.scalingRatio).toBe(100000);
+  expect(f.panel.body.textContent).toContain('2 pending changes'); expect(f.panel.body.textContent).toContain('Spread notes100000 → 999999'); expect(f.panel.body.textContent).toContain('Pull to center1 → 0');
+  control(f.panel.body, 'Recommended').click(); expect(f.settings.layout.force.scalingRatio).toBe(100000);
   const d = room;
   for (const [key, label] of PHYSICS_FIELDS) { const e = byLabel(f, label); expect(typeof d[key] === 'boolean' ? e.checked : e.value).toBe(typeof d[key] === 'boolean' ? d[key] : String(d[key])); }
   const apply: any = control(f.panel.body, 'Apply and recompute'); const pending = apply.onclick(); apply.onclick(); await pending;
@@ -52,7 +52,7 @@ test('numeric drafts survive rerenders; reset restores every recommended value; 
 });
 test('every control has a plain label and an effect hint; advanced controls sit in a collapsed section', () => {
   const f = fixture(), details: any = f.panel.body.querySelector('details');
-  expect(details.open).toBeFalsy(); expect(details.textContent).toContain('Advanced physics');
+  expect(details.open).toBeFalsy(); expect(details.textContent).toContain('Advanced layout');
   for (const [, label, hint, advanced] of PHYSICS_FIELDS) {
     expect(hint.length).toBeGreaterThan(30); expect(f.panel.body.textContent).toContain(hint);
     expect(details.contains(byLabel(f, label))).toBe(advanced);
@@ -199,7 +199,7 @@ test('recommended values scale with graph size and stay valid', () => {
 });
 test('undo restores the tuned values before a preset, and re-applies them in one click once the preset was applied', async () => {
   const f = fixture(); f.settings.layout.force.scalingRatio = 1200; f.settings.layout.force.gravity = 20; f.settings.layout.force.slowDown = 20; f.panel.physicsDraft = undefined; f.panel.render();
-  const before = structuredClone(f.settings), undo = () => control(f.panel.body, 'Undo last preset') as any;
+  const before = structuredClone(f.settings), undo = () => control(f.panel.body, 'Undo preset') as any;
   expect(undo().disabled).toBe(true);
   input(f, 0, '900'); control(f.panel.body, 'Fill the screen').click();
   expect(byLabel(f, 'Pull to center').value).toBe(String(room.gravity * 3)); expect(undo().disabled).toBe(false);
@@ -210,18 +210,18 @@ test('undo restores the tuned values before a preset, and re-applies them in one
   expect(f.applied()).toBe(1); expect(f.settings.layout.iterations).toBe(Math.round(room.iterations / 2));
   undo().click(); await new Promise(r => setTimeout(r, 0));
   expect(f.applied()).toBe(2); expect(f.settings.layout).toEqual(before.layout);
-  control(f.panel.body, 'Reset to recommended').click(); undo().click(); expect(byLabel(f, 'Spread notes').value).toBe('1200');
+  control(f.panel.body, 'Recommended').click(); undo().click(); expect(byLabel(f, 'Spread notes').value).toBe('1200');
   f.panel.dispose();
 });
-test('Pull in disconnected notes loads only Strong gravity and its pull into the draft; nothing is saved', async () => {
+test('Pull in notes loads only Strong gravity and its pull into the draft; nothing is saved', async () => {
   const reason = '8,000 notes sit in disconnected parts.', f = fixture({ layoutAdvice: () => ({ gravity: .124, reason }) });
   Object.assign(f.settings.layout.force, { scalingRatio: 23.64, gravity: .5, strongGravityMode: false }); f.panel.physicsDraft = undefined; f.panel.render();
   expect(f.panel.body.textContent).toContain(reason);
-  const before = structuredClone(f.settings); control(f.panel.body, 'Pull in disconnected notes').click();
+  const before = structuredClone(f.settings); control(f.panel.body, 'Pull in notes').click();
   expect(f.settings).toEqual(before); expect(f.applied()).toBe(0);
   expect(f.panel.physicsDraft).toMatchObject({ scalingRatio: '23.64', gravity: '0.124', strongGravityMode: true });
-  expect(f.panel.body.textContent).toContain('Pull to center 0.5 → 0.124; Strong gravity off → on.');
+  expect(f.panel.body.textContent).toContain('Pull to center0.5 → 0.124'); expect(f.panel.body.textContent).toContain('Strong gravityoff → on');
   await (control(f.panel.body, 'Apply and recompute') as any).onclick();
   expect(f.settings.layout.force).toMatchObject({ scalingRatio: 23.64, gravity: .124, strongGravityMode: true }); f.panel.dispose();
-  const plain = fixture(); expect(plain.panel.body.textContent).not.toContain('Pull in disconnected notes'); plain.panel.dispose();
+  const plain = fixture(); expect(plain.panel.body.textContent).not.toContain('Pull in notes'); plain.panel.dispose();
 });

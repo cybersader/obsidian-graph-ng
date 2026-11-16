@@ -1,4 +1,5 @@
 import { setIcon } from 'obsidian';
+import { disclosure, panelHelp } from './panel-help';
 import type { EdgeRuleCounts } from './pipeline';
 import type { ExploreResult } from './core/explore';
 import { filterSummary, hiddenClause } from './filter-summary';
@@ -81,7 +82,7 @@ export function renderReadout(host: HTMLElement, a: Accounting) {
 function partRows(host: HTMLElement, parts: Part[], r: InformationReport, act: InformationActions, after?: (p: Part) => void) {
   for (const p of parts) {
     const go = p.go, list = p.icon === 'unlink' && r.missed?.length ? host.createEl('details', { cls: 'graph-ng-stat-list' }) : undefined;
-    statRow(list ? list.createEl('summary') : host, p.icon, p.label, (p.count < 0 ? '−' : '') + n(Math.abs(p.count)), '', go === undefined ? undefined : go < -1 ? act.display && (() => act.display!(true)) : act.filter && (() => act.filter!(go)));
+    statRow(list ? disclosure(list) : host, p.icon, p.label, (p.count < 0 ? '−' : '') + n(Math.abs(p.count)), '', go === undefined ? undefined : go < -1 ? act.display && (() => act.display!(true)) : act.filter && (() => act.filter!(go)));
     for (const [rule, from, to] of list ? r.missed! : []) list!.createDiv({ cls: 'graph-ng-stat-sub', text: `${from} → ${to} (${rule})` });
     if (list && p.count > r.missed!.length) list.createDiv({ cls: 'graph-ng-stat-sub', text: `First ${r.missed!.length} listed` });
     after?.(p);
@@ -108,7 +109,7 @@ export function renderInformation(host: HTMLElement, message: string, state: str
   const notes = host.createDiv({ cls: 'graph-ng-stats graph-ng-coverage' });
   let acted = false;
   partRows(notes, a.parts, r, act, p => {
-    if (p.icon === 'copy') notes.createDiv({ cls: 'graph-ng-stat-sub', text: 'These notes share an ID with another note. Give each note a unique ID to include it.' });
+    if (p.icon === 'copy') panelHelp(notes, 'Resolve duplicate IDs', 'These notes share an ID with another note. Give each note a unique ID to include it.');
     if (p.lines && !acted) { acted = true; relationshipActions(notes, r, e, act); }
   });
   statRow(notes, 'files', 'Markdown notes in vault', n(a.total), 'graph-ng-stat-total');

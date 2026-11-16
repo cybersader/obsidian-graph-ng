@@ -2,6 +2,27 @@
 
 Results belong to an exact invocation, fixture, source revision and hardware class. They do not establish all-scale acceptance. Original slice-1 source is `041e1382` (2026-11-10); release-readiness baseline is `9b8cc07`. Historical tables below remain dated evidence. The slice-2 section records the new worker/browser/native invocations and unmet targets separately. Raw receipts remain ignored and local; publish only scrubbed summaries without hostnames, usernames, real-vault paths or private projections.
 
+## Compact graph tools, wave 8 track P — 2026-11-16
+
+Source: the commit carrying this section, based on `5bec048`. Hardware class: Linux x86-64 desktop, disposable browser-native Obsidian harness, Canvas fallback (WebGL unavailable). The synthetic fixture has 1,200 ordinary notes, 300 relationship notes and 48 groups; the captured projection shows 1,200 notes and 1,593 edges. This verifies panel presentation, not canvas label changes, Electron fidelity, physical GPU behavior or mobile/touch acceptance.
+
+Final build: **361,772 raw / 121,376 gzip bytes**, versus **360,925 / 120,920** at the baseline: **+847 raw / +456 gzip**. Unchanged caps: **365,000 / 122,000**. Bundle SHA-256: `133ad469cebaac2e3c1f0e3678e83978d79c76f403b07a560066c7f2ce4ada58`. Build, all six ordered gates and **585 tests** pass (155,992 expectations); tests include help dismissal/text-only content, conditional Ranked controls and 100 summary updates preserving focused body drafts and scroll.
+
+Exact commands, run separately from the track worktree:
+
+- `flock -w 3000 -E 75 /tmp/openclast-bun.lock timeout --kill-after=5s 1800s ./scripts/run.sh build`
+- `flock -w 3000 -E 75 /tmp/openclast-bun.lock timeout --kill-after=5s 1800s ./scripts/run.sh test --timeout 10000`
+- `GATE_COMMIT_RANGE=5bec048..HEAD flock -w 3000 -E 75 /tmp/openclast-bun.lock timeout --kill-after=5s 1800s ./scripts/run.sh gates`
+
+Native harness commands below are relative to the owning evidence checkout; its `run.sh` owns the harness lock. Plugin snapshots contain each build's JS, manifest, styles and synthetic settings. Final capture's installed JS hash matches the hash above.
+
+- `.workspace/visual-qa/run.sh wave8-p-before-small plugin-wave8-p-before vault-wave8-p steps-wave8-p-before.json 10`
+- `.workspace/visual-qa/run.sh wave8-p-final plugin-wave8-p-after vault-wave8-p steps-wave8-p-after.json 10`
+
+Receipts are `.workspace/visual-qa/runs/wave8-p-{before-small,final}.json`; both complete with teardown. Before screenshots `wave8-p-before-small.step-10-before-both-appearance.{light,dark}.png` and `wave8-p-before-small.step-13-before-both-layout.{light,dark}.png`, and final screenshots `wave8-p-final.step-10-after-both-appearance.{light,dark}.png`, `wave8-p-final.step-13-after-both-layout.{light,dark}.png`, `wave8-p-final.step-16-after-both-filters.{light,dark}.png`, and `wave8-p-final.step-22-after-both-help.{light,dark}.png` are in that directory and were visually inspected. Final panels have aligned horizontal units, centered slider thumbs, unwrapped preset buttons, compact suggestions, shared chevrons and readable top-layer help in both themes. Each captured Appearance/Layout/Filters body has 314 px client width and scroll width; no horizontal overflow at this desktop size. The focus probe observes the help popover open. No console/page errors were recorded. Graph information was captured but is not claimed as reviewed here; its redesign belongs to another track.
+
+Known scope: Anchored/Ranked settings and UI are integrated here, but canvas implementation belongs to the label track. Independent senior review is scheduled over the merged wave before shipping. These receipts do not establish release readiness or broad performance acceptance.
+
 ## Centering — 2026-11-16
 
 Question: with the room force values (Spread 23.64, Pull to center 0.5, Strong gravity off, Step slowdown 3.607, Approximation 0.369, 100 steps), why do disconnected parts not gather around the middle? Answer: the settings, not the solver.

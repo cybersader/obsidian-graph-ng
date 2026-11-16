@@ -20,7 +20,7 @@ function fixture() {
   const settings = defaults('links'), root = new ControlElement(), toolbar = root.createDiv(), canvas = root.createEl('canvas'), context = {}, camera = { x: .3, y: .4, ratio: .2 }, scope = new Uint8Array([1, 0]);
   const state = { settings, root, toolbar, canvas, context, camera, scope, selection: 1, view: emptyView(), saved: 0, viewCalls: 0, fit: 0, layout: 0, visual: 0, restored: 0, presentation: '', preview: null as any };
   const host: any = { settings: () => settings, result: () => undefined, mode: () => 'nodes', scope: () => 'Synthetic group', policy: () => effectPolicy(settings.visuals, 100, 60001, 2, false, true).reasons, carriers: () => 0,
-    setView: (view: any, after?: () => void) => { state.viewCalls++; state.view = view; settings.explore.view = view; after?.(); }, persist: () => state.saved++, previewSizing: (value: any) => { state.preview = value; }, applySizing: async () => {}, sizingReadout: () => '0.01–0.09 CSS px', applyLayout: async () => { state.layout++; }, fit: () => { state.fit++; }, visualsChanged: () => { state.visual++; }, camera: () => camera, restoreCamera: () => { state.restored++; }, presentation: (mode: string) => { state.presentation = mode; }, information: root.createDiv(), members: root.createDiv() };
+    setView: (view: any, after?: () => void) => { state.viewCalls++; state.view = view; settings.explore.view = view; after?.(); }, persist: () => state.saved++, previewSizing: (value: any) => { state.preview = value; }, applySizing: async () => {}, sizingReadout: () => '0.01–0.09 px', applyLayout: async () => { state.layout++; }, fit: () => { state.fit++; }, visualsChanged: () => { state.visual++; }, camera: () => camera, restoreCamera: () => { state.restored++; }, presentation: (mode: string) => { state.presentation = mode; }, information: root.createDiv(), members: root.createDiv() };
   const panel: any = new ExplorePanel(root as any, host, state.view, toolbar as any);
   return { ...state, state, host, panel };
 }
@@ -41,17 +41,17 @@ test('UX stable tools retain canvas/context/camera/selection/query/scope; no Fit
 });
 test('UX Escape/Close returns focus to correct opener without committing drafts', () => {
   const f = fixture(), opener = control(f.toolbar, 'Appearance'); opener.click();
-  const radius = input(f.panel.root, 'Base node radius'); radius.value = '0.0123'; radius.oninput();
+  const radius = input(f.panel.root, 'Node size'); radius.value = '0.0123'; radius.oninput();
   control(f.panel.root, 'Preview sizing').click(); expect(f.state.preview.radius).toBe(.0123); expect(f.settings.nodeSize).toBe(3);
   let stopped = 0; f.panel.root.onkeydown({ key: 'Escape', preventDefault() { stopped++; }, stopPropagation() { stopped++; } });
   expect(stopped).toBe(2); expect(ControlElement.active).toBe(opener); expect(f.state.preview).toBeNull(); expect(f.settings.nodeSize).toBe(3);
-  opener.click(); expect(input(f.panel.root, 'Base node radius').value).toBe('0.0123'); expect(f.panel.sizingMessage).toContain('Preview ended'); f.panel.dispose();
+  opener.click(); expect(input(f.panel.root, 'Node size').value).toBe('0.0123'); expect(f.panel.sizingMessage).toContain('Preview ended'); f.panel.dispose();
 });
 test('UX closing while sizing save is pending does not cancel the submitted transaction', async () => {
   const f = fixture(); f.panel.show('appearance'); let release!: () => void;
   f.host.applySizing = () => new Promise<void>(resolve => { release = resolve; });
   control(f.panel.root, 'Preview sizing').click(); const preview = f.state.preview;
-  const done = (control(f.panel.root, 'Apply and save sizing') as any).onclick(); expect(f.panel.sizingBusy).toBe(true);
+  const done = (control(f.panel.root, 'Apply sizing') as any).onclick(); expect(f.panel.sizingBusy).toBe(true);
   f.panel.close(); expect(f.state.preview).toBe(preview); release(); await done; expect(f.panel.sizingBusy).toBe(false); expect(f.panel.sizingMessage).toBe('Saved'); f.panel.dispose();
 });
 test('UX named view opening is inert; only explicit Open restores existing record and camera', async () => {
@@ -68,7 +68,7 @@ test('UX honest empty picker and explicit presentation choices preserve opening 
   control(f.toolbar, 'Notes').click(); expect(f.state.presentation).toBe('nodes'); control(f.toolbar, 'Group overview').click(); expect(f.state.presentation).toBe('groups'); f.panel.dispose();
 });
 test('UX exact low-opacity input preserves zero; invalid input never saves and guards sit by controls', () => {
-  const f = fixture(); f.panel.show('appearance'); const opacity = input(f.panel.root, 'Edge opacity (0–1)');
+  const f = fixture(); f.panel.show('appearance'); const opacity = input(f.panel.root, 'Edge opacity');
   opacity.value = '0.00001'; opacity.oninput(); expect(f.settings.visuals.edgeOpacity).toBe(.00001); opacity.value = '0'; opacity.oninput(); expect(f.settings.visuals.edgeOpacity).toBe(0);
   const calls = f.state.visual; for (const bad of ['', '-1', 'Infinity', '1.01']) { opacity.value = bad; opacity.oninput(); expect(opacity.getAttribute('aria-invalid')).toBe('true'); }
   expect(f.state.visual).toBe(calls); expect(f.settings.visuals.edgeOpacity).toBe(0);
@@ -77,9 +77,9 @@ test('UX exact low-opacity input preserves zero; invalid input never saves and g
   const toggle = input(f.panel.root, 'Curved edges'); toggle.checked = false; toggle.onchange(); expect(curves.hidden).toBe(true); f.panel.dispose();
 });
 test('UX radius slider broadens precision without weakening finite numeric safety bounds', () => {
-  const f = fixture(); f.panel.show('appearance'); const slider = input(f.panel.root, 'Base node radius slider'); expect(slider.getAttribute('aria-valuemin')).toBe('0.01'); expect(slider.getAttribute('aria-valuemax')).toBe('20');
-  slider.value = '0'; slider.oninput(); expect(input(f.panel.root, 'Base node radius').value).toBe('0.01'); slider.value = '1000'; slider.oninput(); expect(input(f.panel.root, 'Base node radius').value).toBe('20'); expect(slider.getAttribute('aria-valuenow')).toBe('20');
-  const radius = input(f.panel.root, 'Base node radius'); radius.value = '1e20'; radius.oninput(); control(f.panel.root, 'Preview sizing').click(); expect(f.state.preview).toBeNull(); expect(f.panel.sizingMessage).toContain('Not previewed'); f.panel.dispose();
+  const f = fixture(); f.panel.show('appearance'); const slider = input(f.panel.root, 'Node size slider'); expect(slider.getAttribute('aria-valuemin')).toBe('0.01'); expect(slider.getAttribute('aria-valuemax')).toBe('20');
+  slider.value = '0'; slider.oninput(); expect(input(f.panel.root, 'Node size').value).toBe('0.01'); slider.value = '1000'; slider.oninput(); expect(input(f.panel.root, 'Node size').value).toBe('20'); expect(slider.getAttribute('aria-valuenow')).toBe('20');
+  const radius = input(f.panel.root, 'Node size'); radius.value = '1e20'; radius.oninput(); control(f.panel.root, 'Preview sizing').click(); expect(f.state.preview).toBeNull(); expect(f.panel.sizingMessage).toContain('Not previewed'); f.panel.dispose();
 });
 test('UX member navigator renders bounded name/path rows, searches existing members and supports arrows', () => {
   const view: any = Object.create(GraphView.prototype), opened: string[] = [];
@@ -347,7 +347,7 @@ test('UX relationship notes Lines | Nodes: shown only with reified rules; one ap
   expect(buttons().length).toBe(0);
   f.settings.declaration.edges.push({ kind: 'reified', name: 'crosswalk', sourceProperty: 'from', targetProperty: 'to' }); f.panel.render();
   const [lines, nodes] = buttons() as any[]; expect(lines.getAttribute('aria-pressed')).toBe('true'); expect(lines.disabled).toBe(true); expect(nodes.disabled).toBe(false);
-  const note = f.panel.root.querySelectorAll('div').find((e: any) => e.textContent.startsWith('Lines: each'))!; expect(note.textContent).toContain('adds 44,123 dots'); expect(note.textContent).not.toContain(' · ');
+  const note = f.panel.root.querySelectorAll('.graph-ng-help-popover').find((e: any) => e.textContent.startsWith('Lines join'))!; expect(note.textContent).toContain('44,123 added dots'); expect(note.hidden).toBe(true); expect(note.textContent).not.toContain(' · ');
   fail = true; await nodes.onclick(); expect(applies).toBe(1); expect(f.panel.root.textContent).toContain('Not switched: Error: synthetic save failure');
   expect(plugin.settings.declaration.display.reifiedAsNodes).toBe(false);
   fail = false; await (buttons()[1] as any).onclick(); expect(applies).toBe(2);
@@ -358,22 +358,22 @@ test('UX relationship notes Lines | Nodes: shown only with reified rules; one ap
 });
 test('settings rows: Edges and layout Presets use the name, description and control row; a panel title is never repeated as a heading', () => {
   const f = fixture(), headings = () => [...f.panel.root.querySelectorAll('h3'), ...f.panel.root.querySelectorAll('h4')].map(e => e.textContent);
-  const row = (name: string) => f.panel.root.querySelectorAll('.graph-ng-setting').find((r: any) => r.children[0]?.textContent === name) as any;
+  const row = (name: string) => f.panel.root.querySelectorAll('.graph-ng-setting').find((r: any) => (r.children[0]?.querySelector('.graph-ng-help-trigger')?.textContent ?? r.children[0]?.textContent) === name) as any;
   const parts = (r: any) => r.children.map((c: any) => [...c.classes].find((n: string) => n.startsWith('graph-ng-setting-')));
   f.panel.show('appearance');
   expect(headings().filter(t => t === 'Appearance')).toHaveLength(1); expect(headings()).toContain('Color rules');
-  const edges = row('Edges'); expect(edges.tagName).toBe('DIV'); expect(parts(edges)).toEqual(['graph-ng-setting-name', 'graph-ng-setting-desc', 'graph-ng-setting-line']);
-  const modes = edges.children[2]; expect(modes.getAttribute('role')).toBe('group'); expect(modes.getAttribute('aria-label')).toBe('Edges');
+  const edges = row('Edges'); expect(edges.tagName).toBe('DIV'); expect(parts(edges)).toEqual(['graph-ng-setting-name', 'graph-ng-setting-line']);
+  const modes = edges.children[1]; expect(modes.getAttribute('role')).toBe('group'); expect(modes.getAttribute('aria-label')).toBe('Edges');
   expect(modes.children.map((b: any) => b.textContent)).toEqual(['All', 'Focus only', 'Off']);
   control(modes, 'Focus only').click(); expect(f.settings.visuals.edgeMode).toBe('focus'); expect(modes.children.map((b: any) => b.getAttribute('aria-pressed'))).toEqual(['false', 'true', 'false']);
   // Sliders share the row: name first, a description line where given, then the track line.
-  const slider = row('Highlighted size target'); expect(parts(slider).filter(Boolean)).toEqual(['graph-ng-setting-name', 'graph-ng-setting-desc']);
+  const slider = row('Highlighted size target'); expect(parts(slider).filter(Boolean)).toEqual(['graph-ng-setting-name']);
   expect(f.panel.root.textContent).not.toContain('Hover delay');
   f.panel.show('layout');
   expect(headings().filter(t => t === 'Layout')).toHaveLength(1);
-  const presets = row('Presets'); expect(presets.tagName).toBe('DIV'); expect(parts(presets)).toEqual(['graph-ng-setting-name', 'graph-ng-setting-desc', 'graph-ng-setting-line']);
-  const buttons = presets.children[2]; expect(buttons.getAttribute('aria-label')).toBe('Layout presets');
-  expect(buttons.children.map((b: any) => b.textContent)).toEqual(['Reset to recommended', 'Groups apart', 'Fill the screen', 'Faster', 'Undo last preset']);
+  const presets = row('Presets'); expect(presets.tagName).toBe('DIV'); expect(parts(presets)).toEqual(['graph-ng-setting-name', 'graph-ng-setting-line']);
+  const buttons = presets.children[1]; expect(buttons.getAttribute('aria-label')).toBe('Layout presets');
+  expect(buttons.children.map((b: any) => b.textContent)).toEqual(['Recommended', 'Groups apart', 'Fill the screen', 'Faster', 'Undo preset']);
   f.panel.show('views'); expect(headings().filter(t => t === 'Saved views')).toHaveLength(1);
 });
 test('count lists: group legend rows keep the name and the count in separate elements; the count class is tabular and right-aligned', () => {
