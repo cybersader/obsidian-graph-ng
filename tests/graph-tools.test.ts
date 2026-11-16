@@ -226,7 +226,7 @@ async function navigationFixture() {
   const requests: string[] = [], originalCreate = DetailRenderer.create;
   Object.assign(view, { contentEl: root, view: { ...emptyView(), query: 'keep', filters: [{ kind: 'exists', key: 'category' }] }, closed: false, renderRevision: 0,
     plugin: { settings, subscribe: () => () => {}, saveSoon() {}, pipeline: { request(_revision: number, request: any) { requests.push(request.kind); throw new Error('Unexpected worker request'); } } },
-    app: { workspace: { on() {} } }, registerEvent() {}, async refresh() {}, contributionPage: { clear() { clear++; } } });
+    app: { workspace: { on() {}, requestSaveLayout() {} } }, registerEvent() {}, async refresh() {}, contributionPage: { clear() { clear++; } } });
   await view.onOpen();
   const renderer: any = Object.create(DetailRenderer.prototype), canvas = view.stage.createEl('canvas'), context = {};
   const projection = { nodeCount: 3, source: new Uint32Array(), target: new Uint32Array(), type: new Uint32Array(), carrierNodes: new Uint8Array(3) };

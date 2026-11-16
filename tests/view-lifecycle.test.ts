@@ -331,7 +331,7 @@ test('presentation state is per view, validates unknown values and restores only
   const make = () => {
     const plugin: any = { settings: { explore: { view: emptyView() }, listPageSize: 100 } };
     const view: any = new GraphView(null as any, plugin), shown: string[] = [];
-    view.app = { workspace: { requestSaveLayout() { shown.push('saved'); } } };
+    view.app = { workspace: { requestSaveLayout() { shown.push('saved'); } } }; view.contentEl = { dataset: {} };
     view.showDetails = async () => { shown.push('nodes'); };
     view.toGroups = () => { shown.push('groups'); };
     return { view, shown };
@@ -347,5 +347,14 @@ test('presentation state is per view, validates unknown values and restores only
       await a.view.setState(state, {}); expect(a.view.getState()).toEqual({ presentation: 'groups' });
     }
     expect(inherited).toBe(7);
+    // Review 2026-11-16: an already-open leaf re-receiving its own state must not rebuild (camera, selection, drill-in survive).
+    const c = make(); c.view.positions = new Float32Array(2); c.view.projection = {}; c.view.contentEl.dataset.mode = 'nodes';
+    await c.view.setState({ presentation: 'nodes' }, {}); expect(c.shown).toEqual([]);
+    c.view.contentEl.dataset.mode = 'groups'; await c.view.setState({ presentation: 'groups' }, {}); expect(c.shown).toEqual([]);
+    c.view.contentEl.dataset.mode = 'nodes-building'; await c.view.setState({ presentation: 'groups' }, {}); expect(c.shown).toEqual([]);
+    // A refused detail admission is remembered as Group overview, so the next refresh does not re-enter Notes and repeat the Notice.
+    const d = make(); d.view.positions = new Float32Array(2); d.view.projection = {}; d.view.visible = new Uint32Array(1);
+    d.view.presentation = 'nodes'; d.view.gpu = { available: true, reason: '' }; d.view.admitDetail = () => false; delete d.view.showDetails;
+    await d.view.showDetails(); expect(d.view.getState()).toEqual({ presentation: 'groups' }); expect(d.view.contentEl.dataset.mode).toBe('groups');
   } finally { if (old) base.setState = old; else delete base.setState; }
 });

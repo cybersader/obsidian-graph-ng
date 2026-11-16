@@ -323,7 +323,8 @@ export class GraphView extends ItemView {
   getState() { return { presentation: this.presentation }; }
   async setState(state: { presentation?: unknown }, result: ViewStateResult) {
     this.presentation = state?.presentation === 'nodes' ? 'nodes' : 'groups';
-    if (this.positions && this.projection) { if (this.presentation === 'nodes') await this.showDetails(); else this.toGroups(); }
+    const shown = this.contentEl.dataset.mode;
+    if (this.positions && this.projection && shown !== this.presentation && shown !== 'nodes-building') { if (this.presentation === 'nodes') await this.showDetails(); else this.toGroups(); }
     await super.setState(state, result);
   }
   private rememberPresentation(mode: 'nodes' | 'groups') { this.presentation = mode; this.app.workspace.requestSaveLayout(); }
@@ -804,7 +805,7 @@ export class GraphView extends ItemView {
         this.contentEl.dataset.exploreMs = String(performance.now() - started); const g = this.view.group; this.contentEl.dataset.groupSource = !g ? 'declared' : g.from === 'folder' ? `folder:${g.depth}` : g.from === 'expr' ? 'expression' : `${g.from}:${g.key}`; this.contentEl.dataset.visibleNodes = String(sum(result.explore.visible));
         this.contributionPage.update(this.contributionContext()); this.statusText = this.statusText;
         if (detail && fits) detail.setView(this.detailVisible()!, this.renderView());
-        else if (detail || this.contentEl.dataset.mode === 'groups') this.showGroups(true);
+        else if (detail || this.contentEl.dataset.mode === 'groups') { if (detail) this.rememberPresentation('groups'); this.showGroups(true); }
         this.explorePanel?.setState(this.view); after?.(); if (owns()) this.viewFeedback(fits ? '' : CANVAS_FALLBACK); finish();
       } catch (error) {
         finish(error);
@@ -897,7 +898,7 @@ export class GraphView extends ItemView {
     try {
       if (this.gpu.reason === 'Not probed') this.gpu = await this.plugin.pipeline.request<typeof this.gpu | undefined>(this.activeRevision, { kind: 'gpu' }) ?? gpuStatus();
       if (renderRevision !== this.renderRevision || this.closed) return;
-      if (!this.admitDetail(bits)) { this.contentEl.dataset.mode = 'groups'; return; }
+      if (!this.admitDetail(bits)) { this.contentEl.dataset.mode = 'groups'; this.rememberPresentation('groups'); return; }
       this.renderer?.dispose(); this.stage.empty(); if (clearPanel) { this.contributionPage.clear(); this.panel.empty(); }
       this.detailRenderer = await DetailRenderer.create(this.stage, this.projection, this.positions, bits, this.plugin.settings, i => this.openPath(renderPath(this.projection!, i)), () => this.toGroups(), this.colors!, () => renderRevision === this.renderRevision, !this.gpu.available, () => {
         if (renderRevision !== this.renderRevision || this.closed) return;
@@ -924,7 +925,7 @@ export class GraphView extends ItemView {
       else this.detailRenderer.fitAll(0);
       if (focus?.projection === this.projection) this.detailRenderer.focusNote(focus.node, focus.lens);
       this.explorePanel?.render();
-    } catch (e) { if (renderRevision !== this.renderRevision) return; this.gpu = { available: false, reason: String(e) }; this.showGroups(); this.statusText = [this.statusText, 'GPU unavailable; showing Group overview.'].filter(Boolean).join(' '); }
+    } catch (e) { if (renderRevision !== this.renderRevision) return; this.gpu = { available: false, reason: String(e) }; this.rememberPresentation('groups'); this.showGroups(); this.statusText = [this.statusText, 'GPU unavailable; showing Group overview.'].filter(Boolean).join(' '); }
   }
 }
 const CANVAS_FALLBACK = 'Too many notes to draw individually on this renderer; showing Group overview. Narrow filters to see notes.';

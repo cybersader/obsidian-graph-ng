@@ -54,7 +54,7 @@ export class Breadcrumb {
       if (i || older.length) { const chevron = make('span', 'graph-ng-crumbs-sep', li); setIcon(chevron, 'chevron-right'); chevron.setAttribute('aria-hidden', 'true'); }
       const chip = make('button', 'graph-ng-crumb', li); chip.textContent = label; chip.title = label; chip.style.opacity = String(crumbFade(c.index - at));
       if (c.current && c.node === selected) chip.setAttribute('aria-current', 'location');
-      else { chip.setAttribute('aria-label', (c.index < at ? 'Back to ' : 'Forward to ') + label); go(c, chip); }
+      else { chip.setAttribute('aria-label', (c.index < at ? 'Back to ' : c.index > at ? 'Forward to ' : 'Return to ') + label); go(c, chip); }
     });
     const clear = make('button', 'clickable-icon graph-ng-crumbs-clear'); setIcon(clear, 'x'); clear.setAttribute('aria-label', 'Clear recent notes'); clear.title = 'Clear recent notes'; clear.onclick = () => this.clearCrumbs();
   }
