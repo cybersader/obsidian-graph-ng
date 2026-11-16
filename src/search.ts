@@ -1,4 +1,5 @@
 import { setIcon } from 'obsidian';
+import { workingText } from './working';
 import { panelHelp } from './panel-help';
 import { registerAction, type RendererControls } from './interaction';
 import { VIEW_LIMITS } from './core/explore';
@@ -82,17 +83,19 @@ export class Omnibox {
     const token = ++this.findToken, query = normal(this.findInput.value), h = this.host, p = this.findSource.projection();
     const visible = h.visible; let best: number[] = [], failed = false;
     if (query && p && h.live && p.nodeCount === h.visible.length) {
+      workingText(this.findStatus, 'Searching…', true);
       const keep = new Uint8Array(p.nodeCount); for (let i = 0; i < keep.length; i++) keep[i] = +h.openable(i);
       // `keep` is transferred to the worker (its buffer detaches), so re-check results against the live view.
       try { best = (await this.findSource.rank(query, keep)).filter(n => Number.isInteger(n) && n >= 0 && n < p.nodeCount && h.openable(n)).slice(0, 20); } catch { failed = true; }
     }
-    if (token !== this.findToken || !h.live || p !== this.findSource.projection() || visible !== h.visible || query !== normal(this.findInput.value)) return;
+    if (token !== this.findToken) return;
+    if (!h.live || p !== this.findSource.projection() || visible !== h.visible || query !== normal(this.findInput.value)) { this.findReset(); return; }
     this.ranked = query; this.findHits = best; this.findActive = -1; this.findRing.hidden = true; this.findPaint(p);
-    if (failed) this.findStatus.textContent = 'Search unavailable. Try again.';
+    if (failed) workingText(this.findStatus, 'Search unavailable. Try again.');
   }
   private findPaint(p?: RenderProjection) {
     const list = this.findList; list.textContent = ''; this.findInput.setAttribute('aria-expanded', String(this.findHits.length > 0)); this.findInput.removeAttribute('aria-activedescendant');
-    this.findStatus.textContent = this.ranked && !this.findHits.length ? 'No matching notes' : '';
+    workingText(this.findStatus, this.ranked && !this.findHits.length ? 'No matching notes' : '');
     if (!p) return;
     this.findHits.forEach((node, i) => {
       const row = list.appendChild(Object.assign(document.createElement('div'), { className: 'graph-ng-find-row', id: `${this.findId}-${i}` })), path = renderPath(p, node);

@@ -5,6 +5,7 @@ The owner-approved bounded download ceilings for this UI pass are **375,000 raw 
 ## Unreleased Nodes sizing successor
 
 - Native panel polish: align Graph information labels and counts, remove the filter icon's warning color, and match Obsidian's compact header, setting rows, switches and slider thumb styling. Keep exact slider values beside names, full-width tracks below, on-demand help, keyboard controls and a single scrolling body. Saved views puts Open and Delete beside each name. Add the Motion picker and working-state text hooks for the coordinated motion/status tracks; their runtime effects require the merged wave.
+- Canvas chrome uses aligned hairline frames, consistent radii, even connection-card padding and clearer search name/group hierarchy. Loading and search status text shares a low-contrast CSS shimmer; stage changes cross-fade briefly, numeric progress keeps the sweep continuous, and completed work is static. Reduced motion disables both effects. Search clears pending status on completion, failure, close and stale-view replies. No animation loop, dependency, graph-authority or download-cap change.
 
 - Visual cleanup: make Members rows stay unboxed under host button styles, reduce Appearance suggestions to one change label with on-demand help, name the Layout and folder-view actions plainly, and add a keyboard-accessible X to note search. Closing search returns focus to the graph and discards late results.
 

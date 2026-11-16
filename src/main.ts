@@ -1,4 +1,5 @@
 import { disclosure, panelHelp } from './panel-help';
+import { workingText } from './working';
 import { LayoutPreview } from './layout-preview';
 import type { CoordinateToken } from './webgl-renderer';
 import { legacySizing, sizingSettings, type NodeSizingValues } from './node-sizing';
@@ -278,10 +279,17 @@ export class GraphView extends ItemView {
       : [];
     const chips = [this.viewFeedbackText, ...health].filter(Boolean), readout = state === 'ready' && !this.provisional && this.report;
     const info = this.statusSummary.querySelector<HTMLElement>('.graph-ng-summary-info') ?? this.statusSummary.createEl('button', { cls: 'graph-ng-summary-info', attr: { 'aria-label': 'Graph information' } });
-    info.empty(); info.hidden = !readout && !chips.length;
+    info.hidden = !readout && !chips.length;
     info.onclick = () => this.explorePanel?.show('information', info);
-    if (readout) renderReadout(info, accounting(readout, this.explored));
-    for (const chip of chips) info.createSpan({ cls: 'graph-ng-summary-chip', text: chip });
+    if (this.loading()) {
+      let progress = info.querySelector<HTMLElement>('.graph-ng-summary-progress');
+      if (!progress) { info.empty(); progress = info.createSpan({ cls: 'graph-ng-summary-progress' }); }
+      workingText(progress, chips.join(' '), true);
+    } else {
+      info.empty();
+      if (readout) renderReadout(info, accounting(readout, this.explored));
+      for (const chip of chips) info.createSpan({ cls: 'graph-ng-summary-chip', text: chip });
+    }
     this.statusSummary.querySelector('.graph-ng-summary-help')?.remove();
     if (this.detailFallback) panelHelp(this.statusSummary, 'Notes unavailable', this.detailFallback, 'graph-ng-summary-chip graph-ng-summary-help');
     this.statusSummary.hidden = !chips.length && !readout && !this.detailFallback; this.statusSummary.title = '';

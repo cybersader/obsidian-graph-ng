@@ -5,6 +5,7 @@ import type { Projection } from '../src/core/projection';
 import { actions, type RendererControls } from '../src/interaction';
 import { omnibox, searchable, invalidateSearch, disposeSearch, SEARCH_DEBOUNCE_MS, type SearchSource } from '../src/search';
 import type { RenderProjection } from '../src/render-projection';
+import { workingText } from '../src/working';
 
 /** Just enough DOM for the find box: no layout, no events beyond the handler properties it sets. */
 class El {
@@ -13,6 +14,8 @@ class El {
   [handler: `on${string}`]: ((e?: any) => void) | undefined | null;
   static active: El | null = null;
   constructor(readonly tagName: string) {}
+  get lastElementChild(): El | null { return this.children.at(-1) ?? null; }
+  addClass(cls: string) { if (!this.className.split(' ').includes(cls)) this.className = [this.className, cls].filter(Boolean).join(' '); }
   get textContent(): string { return this.text + this.children.map(c => c.textContent).join(''); }
   set textContent(v: string) { this.children = []; this.text = v; }
   empty() { this.textContent = ''; }
@@ -75,6 +78,45 @@ function rig(p = render(), w = worker(), visible = Uint8Array.from({ length: p.n
   return { host, calls, filters, masks, key, type, box: () => omnibox(host)! };
 }
 const names = (hits: SearchHit[]) => hits.map(h => NAMES[h.node]);
+
+test('working text preserves progress sweep, cross-fades stages and stops on completion', () => {
+  const el = new El('div'), status = el as unknown as HTMLElement;
+  workingText(status, 'Reading notes 40%', true);
+  const first = el.lastElementChild;
+  workingText(status, 'Reading notes 60%', true);
+  expect(el.lastElementChild).toBe(first); expect(el.textContent).toBe('Reading notes 60%');
+  workingText(status, 'Laying out 60/100', true);
+  expect(el.children).toHaveLength(2);
+  expect(el.children[0]!.getAttribute('aria-hidden')).toBe('true');
+  expect(el.children[0]!.getAttribute('data-text')).toBe('Reading notes 60%');
+  expect(el.textContent).toBe('Laying out 60/100');
+  workingText(status, 'Ready');
+  expect(el.lastElementChild!.className).toBe('graph-ng-status-current');
+  workingText(status, ''); expect(el.children).toHaveLength(0);
+});
+
+test('search working status belongs to the current request and clears on close or stale view', async () => {
+  const pending: ((v: number[]) => void)[] = [];
+  const r = rig(undefined, undefined, undefined, () => new Promise(resolve => pending.push(resolve))), b = r.box();
+  b.findShow(); b.findInput.value = 'a'; const first = b.findSearch();
+  const status = b.findStatus as unknown as El;
+  expect(status.textContent).toBe('Searching…'); expect(status.lastElementChild!.className).toContain('graph-ng-working');
+  b.findInput.value = 'b'; const second = b.findSearch();
+  pending[0]!([1]); await first; expect(status.textContent).toBe('Searching…');
+  pending[1]!([3]); await second; expect(status.textContent).toBe('');
+  b.findInput.value = 'c'; const stale = b.findSearch(); (r.host as { visible: Uint8Array }).visible = r.host.visible.slice();
+  pending[2]!([0]); await stale; expect(status.children).toHaveLength(0);
+  const closed = b.findSearch(); b.findClose(); expect(status.children).toHaveLength(0);
+  pending[3]!([]); await closed; expect(status.children).toHaveLength(0);
+});
+
+test('working status treats labels as text and bounds retained transition nodes', () => {
+  const el = new El('div');
+  for (const text of ['<img onerror=alert(1)>', 'Saving…', 'Applying…', 'Done']) workingText(el as unknown as HTMLElement, text, text !== 'Done');
+  expect(el.children).toHaveLength(2); expect(el.textContent).toBe('Done');
+  expect(el.children.every(c => c.tagName === 'span')).toBe(true);
+  expect(el.children.every(c => !c.className.split(' ').includes('graph-ng-working'))).toBe(true);
+});
 
 test('match classes: name prefix, then name substring, then identity only', () => {
   expect(searchKey('Folder/Alpha Beta.MD', 'ID-7')).toBe('alpha beta\u0000id-7');

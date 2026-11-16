@@ -4,6 +4,8 @@ export class ControlElement {
   children: ControlElement[] = [];
   attributes: Record<string, string> = {};
   classes = new Set<string>();
+  className = '';
+  get lastElementChild(): ControlElement | null { return this.children.at(-1) ?? null; }
   parent?: ControlElement;
   get parentElement() { return this.parent; }
   private text = '';
@@ -33,7 +35,8 @@ export class ControlElement {
   createEl(tag: string, options: any = {}) {
     const child = new ControlElement(tag.toUpperCase());
     child.parent = this; child.ownerDocument = this.ownerDocument; child.textContent = options.text ?? ''; child.value = options.value ?? '';
-    for (const cls of (options.cls ?? '').split(' ').filter(Boolean)) child.classes.add(cls);
+    child.className = options.cls ?? '';
+    for (const cls of child.className.split(' ').filter(Boolean)) child.classes.add(cls);
     for (const [key, value] of Object.entries(options.attr ?? {})) child.setAttribute(key, value as string);
     this.children.push(child); return child;
   }
