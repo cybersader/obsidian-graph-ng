@@ -1766,3 +1766,20 @@ test('compiled WebGL dispatch supplies adaptive budget and contrast, with no coo
   }
   expect(uploads).toBe(0);
 });
+
+test('review: adaptive context dim holds through the deselect fade instead of jumping before it', async () => {
+  const f = await graduated([[0, 1], [1, 2]], 5), { r, k } = f; f.settings.visuals.emphasis = 'adaptive';
+  f.tap(0); r[k('directs')] = new Array(240).fill(1); r[k('focusTarget')] = 1; r[k('focusLevel')] = 1;
+  const focused = r.emphasisDim(); expect(focused).toBeLessThan(f.settings.visuals.dimOpacity);
+  r[k('directs')] = []; r.near = []; r[k('focusTarget')] = 0; r[k('focusLevel')] = .5;
+  expect(r.emphasisDim()).toBe(focused);
+  r[k('focusLevel')] = 0; expect(r.emphasisDim()).toBe(f.settings.visuals.dimOpacity);
+});
+
+test('review: the density target upsamples with linear filtering', async () => {
+  const { r, k } = await graduated([[0, 1]], 2), d = driver(r), params: number[][] = [];
+  d.gl.createTexture = () => ({}); d.gl.createFramebuffer = () => ({}); d.gl.checkFramebufferStatus = () => d.gl.FRAMEBUFFER_COMPLETE;
+  d.gl.texParameteri = (_t: number, name: number, value: number) => params.push([name, value]);
+  r[k('densitySize')] = [0, 0]; r[k('densityTarget')]();
+  expect(params.slice(-2)).toEqual([[d.gl.TEXTURE_MIN_FILTER, d.gl.LINEAR], [d.gl.TEXTURE_MAG_FILTER, d.gl.LINEAR]]);
+});

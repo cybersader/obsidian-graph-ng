@@ -713,6 +713,8 @@ export class DetailRenderer {
       this.densityBuffer ??= gl.createFramebuffer();
       gl.activeTexture(gl.TEXTURE0 + 6); gl.bindTexture(gl.TEXTURE_2D, this.textures[6]!);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      // Linear upscale: NEAREST gives uneven line weight at fractional scaling and on capped (>2048 px) panes.
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.densityBuffer);
       if (this.densityBuffer) gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.textures[6]!, 0);
       this.densityReady = !!this.densityBuffer && gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE && gl.getError() === gl.NO_ERROR;
@@ -1033,7 +1035,13 @@ export class DetailRenderer {
     }); return picked;
   }
   /** Cached tier lengths only: no new traversal, texture or projection-wide CPU work on WebGL frames. */
-  private emphasisBudget() { return this.settings.visuals.emphasis === 'adaptive' ? 1 / Math.sqrt(1 + Math.max(this.directs.length, this.near.length / 4) / 12) : 0; }
+  /** Held while a deselect eases out, so context dim does not jump before the fade. */
+  private heldBudget = 1;
+  private emphasisBudget() {
+    if (this.settings.visuals.emphasis !== 'adaptive') return 0;
+    if (this.focusTarget > 0 || this.focusLevel <= 0) this.heldBudget = 1 / Math.sqrt(1 + Math.max(this.directs.length, this.near.length / 4) / 12);
+    return this.heldBudget;
+  }
   private emphasisDim() { return this.isolation ? 1 : this.settings.visuals.dimOpacity * Math.max(.3, this.emphasisBudget() || 1); }
   /** One CPU radius authority for drawing, picking and overlays; mirrors the node shader. */
   private drawnRadius(n: number, hot: boolean, focus: number, base = this.baseNodeRadius(), budget = this.emphasisBudget()) {

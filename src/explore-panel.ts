@@ -681,7 +681,7 @@ export class ExplorePanel {
     this.flag(host, 'clickOpens', 'Click opens notes directly (skip the connection card)');
     const find = host.createEl('details', { cls: 'graph-ng-highlight-options' }); find.createEl('summary', { text: 'Finding connections' });
     const emphasis = settingRow(find, 'Highlight emphasis', '', 'Adaptive uses screen-pixel targets and less growth for large neighbourhoods; Scale keeps the original magnification.').createEl('select', { attr: { 'aria-label': 'Highlight emphasis' } });
-    for (const mode of ['adaptive', 'scale'] as const) emphasis.createEl('option', { value: mode, text: mode === 'adaptive' ? 'Adaptive' : 'Scale' }).selected = v.emphasis === mode;
+    for (const mode of ['adaptive', 'scale'] as const) emphasis.createEl('option', { value: mode, text: mode === 'adaptive' ? 'Adaptive (default)' : 'Scale' }).selected = v.emphasis === mode;
     emphasis.onchange = () => { v.emphasis = emphasis.value as typeof v.emphasis; this.host.visualsChanged(false); };
     this.slider(find, 'Highlighted size target (px)', { min: 0, max: 16, k: 1.5 }, () => v.tierMinSize, x => { v.tierMinSize = x; }, false, { def: initial.tierMinSize, desc: 'Adaptive reduces this target for large neighbourhoods; Scale uses it as a minimum. 0 disables neighbour size targets.' });
     this.flag(find, 'tierRings', 'Rings around the focus and direct connections');
