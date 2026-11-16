@@ -89,7 +89,7 @@ export function recommend(t: GraphStats, s: Settings): Suggestion[] {
 export function recommendedPhysics(nodes: number, edges: number): Required<PhysicsValues> {
   const n = Math.max(1, nodes), size = n + Math.max(0, edges);
   return {
-    scalingRatio: 10, slowDown: 1, strongGravityMode: true, linLogMode: false, outboundAttractionDistribution: false, adjustSizes: false,
+    familyPull: 0, scalingRatio: 10, slowDown: 1, strongGravityMode: true, linLogMode: false, outboundAttractionDistribution: false, adjustSizes: false,
     gravity: +Math.min(.25, Math.max(.1, .2 * (1000 / n) ** .17)).toFixed(3),
     iterations: Math.min(300, Math.max(100, Math.round(1e7 / size / 10) * 10)),
     barnesHutTheta: n < 2000 ? .8 : 1.2,

@@ -1,4 +1,4 @@
-import { validateLayout } from './core/layout-options';
+import { layoutIdentity, validateLayout } from './core/layout-options';
 import { probeGpu } from './gpu-probe';
 import { renderProjection } from './render-projection';
 import { runLayout, runLayoutStream, type LayoutInput } from './core/layout';
@@ -62,7 +62,7 @@ let declarationHash = '', layoutHash = '', hashes: Uint32Array = new Uint32Array
 /** Same source, producer and layout parameters: positions are valid warm-start hints even when only
  * grouping, display columns or other non-topology declaration fields changed. */
 function compatible(g: GenerationMeta) {
-  return g.format === CACHE_FORMAT && g.layoutHash === layoutHash && g.producer === LAYOUT_PRODUCER && g.source === config.source && g.streamEveryIterations === config.streamEveryIterations && canonical(g.layout) === canonical(config.layout);
+  return g.format === CACHE_FORMAT && g.layoutHash === layoutHash && g.producer === LAYOUT_PRODUCER && g.source === config.source && g.streamEveryIterations === config.streamEveryIterations && canonical(layoutIdentity(g.layout)) === canonical(layoutIdentity(config.layout));
 }
 /** Exact identity of a persisted generation: compatible, same declaration and group level. */
 const matches = (g: GenerationMeta) => compatible(g) && g.declarationHash === declarationHash && g.groupLevel === config.groupLevel;
@@ -83,7 +83,7 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       // Equal ID strings from different declared properties need not identify the same notes.
       if (saved && canonical(config.declaration.identity) !== canonical(r.config.declaration.identity)) saved = undefined;
       config = r.config;
-      declarationHash = await digest(identityDeclaration(layoutDeclaration(config.declaration))); layoutHash = await digest({ layout: config.layout, streamEveryIterations: config.streamEveryIterations });
+      declarationHash = await digest(identityDeclaration(layoutDeclaration(config.declaration, config.layout.force.familyPull > 0))); layoutHash = await digest({ layout: layoutIdentity(config.layout), streamEveryIterations: config.streamEveryIterations });
       if (saved && !compatible(saved.meta)) saved = undefined;
       if (interim && !matches(interim.meta)) interim = undefined;
       // held: this worker already has compatible coordinates, so the view can skip the disk read.
@@ -105,7 +105,7 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       const old = r.generation;
       if (!config.source.endsWith('/local')) return undefined;
       // Old keys omit source/format; local-only hints can never be stamped for a new view.
-      if (!['graphology-fa2@0.10.1', LAYOUT_PRODUCER].includes(old.producer) || !validSavedLayout(old) || old.layoutHash !== await digest(config.layout) || r.declarationHash !== declarationHash) return undefined;
+      if (!['graphology-fa2@0.10.1', LAYOUT_PRODUCER].includes(old.producer) || !validSavedLayout(old) || old.layoutHash !== await digest(layoutIdentity(config.layout)) || r.declarationHash !== declarationHash) return undefined;
       const keys = new Uint32Array((old.edgeKeys?.length ?? 0) * 2);
       old.edgeKeys?.forEach((key, i) => keys.set(hashEdge(key), i * 2));
       const m = { format: CACHE_FORMAT, declarationHash, layoutHash, layout: config.layout, key: old.key, producer: LAYOUT_PRODUCER, source: config.source, groupLevel: config.groupLevel, streamEveryIterations: config.streamEveryIterations };
@@ -136,7 +136,7 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       if (revision !== projectionRevision || !positions) throw new Error('Projection generation changed');
       validateLayout(r.options);
       const start = performance.now();
-      const next = await runLayoutStream({ count: projection.paths.length, source: projection.source, target: projection.target, offsets: projection.offsets, targets: projection.targets, seed: Number.parseInt(meta.key.slice(0, 8), 16), initial: positions.slice() }, r.options, config.streamEveryIterations, () => {}, yieldTask, takeBuffer);
+      const next = await runLayoutStream({ count: projection.paths.length, source: projection.source, target: projection.target, offsets: projection.offsets, targets: projection.targets, up: projection.up, seed: Number.parseInt(meta.key.slice(0, 8), 16), initial: positions.slice() }, r.options, config.streamEveryIterations, () => {}, yieldTask, takeBuffer);
       return { positions: next, milliseconds: performance.now() - start, cached: false };
     }
     case 'layout': {
@@ -165,7 +165,10 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
             if (prior === interim) input.movable = undefined; else input = undefined;
           }
         }
-        if (!input) input = { count: projection.paths.length, source: projection.source, target: projection.target, offsets: projection.offsets, targets: projection.targets, seed };
+        if (!input) input = { count: projection.paths.length, source: projection.source, target: projection.target, offsets: projection.offsets, targets: projection.targets, up: projection.up, seed };
+        // A parent-only edit changes no link endpoint. On active-family key misses relax
+        // every note, rather than incorrectly treating all existing notes as pinned.
+        if (config.layout.force.familyPull && projection.up) input.movable = undefined;
         if (input.movable && !input.movable.some(Boolean)) { positions = input.initial!; reused = fromSaved ? 'all' : 'interim'; }
         else { if (input.movable && input.initial) reused = fromSaved ? 'some' : 'interim-some'; positions = await runLayoutStream(input, config.layout, config.streamEveryIterations, (p, iteration, total) => self.postMessage({ kind: 'positions', revision, positions: p, iteration, total }, { transfer: [p.buffer] }), yieldTask, takeBuffer); }
       }

@@ -8,6 +8,8 @@ export interface LayoutInput {
   /** Optional authoritative undirected CSR; legacy callers may supply edges only. */
   offsets?: Uint32Array;
   targets?: Uint32Array;
+  /** Borrowed declared child-to-parent CSR; independent of the link edges and their mass. */
+  up?: { offsets: Uint32Array; targets: Uint32Array };
   seed: number;
   initial?: Float32Array;
   movable?: Uint8Array;
@@ -37,12 +39,24 @@ export class LayoutSolver {
   private oldForces: Float32Array;
   private convergence: Float32Array;
   private tree?: BarnesHut;
+  private familyDegree?: Uint32Array;
   private compensation = 1;
   constructor(private input: LayoutInput, private options: LayoutOptions) {
     validateLayout(options);
     const n = input.count;
     if (!Number.isSafeInteger(n) || n < 0 || input.source.length !== input.target.length || (input.initial && input.initial.length !== n * 2) || (input.movable && input.movable.length !== n)) throw new Error('Invalid layout input');
     for (let e = 0; e < input.source.length; e++) if (input.source[e]! >= n || input.target[e]! >= n) throw new Error('Invalid layout endpoint');
+    if (input.up) {
+      const { offsets, targets } = input.up;
+      if (offsets.length !== n + 1 || offsets[0] !== 0 || offsets[n] !== targets.length) throw new Error('Invalid hierarchy CSR');
+      for (let i = 0; i < n; i++) if (offsets[i]! > offsets[i + 1]!) throw new Error('Invalid hierarchy CSR');
+      for (const parent of targets) if (parent >= n) throw new Error('Invalid hierarchy endpoint');
+      if (options.force.familyPull) {
+        const degree = this.familyDegree = new Uint32Array(n);
+        for (let i = 0; i < n; i++) degree[i] = offsets[i + 1]! - offsets[i]!;
+        for (const parent of targets) degree[parent]!++;
+      }
+    }
     this.positions = input.initial ? input.initial.slice() : initialPositions(n, input.seed ^ options.seed, options.initialRadius);
     if (!this.positions.every(Number.isFinite)) throw new Error('Invalid initial positions');
     this.limit = input.movable ? options.relaxIterations : options.iterations;
@@ -80,11 +94,17 @@ export class LayoutSolver {
       const gravity = distance > 0 ? f.gravity * mass[i]! / (f.strongGravityMode ? 1 : distance) : 0;
       forces[2 * i]! -= x * gravity; forces[2 * i + 1]! -= y * gravity;
     }
-    for (let e = 0; e < source.length; e++) {
-      const a = source[e]!, b = target[e]!, x = p[2 * a]! - p[2 * b]!, y = p[2 * a + 1]! - p[2 * b + 1]!;
+    const up = f.familyPull ? this.input.up : undefined;
+    let child = 0;
+    // Link attraction and optional linear parent pull share the integrator, not degree mass.
+    // CSR advances once per child: O(edges + notes + parents), never pairwise siblings.
+    for (let e = 0; e < source.length + (up?.targets.length ?? 0); e++) {
+      const family = e >= source.length, h = e - source.length;
+      if (family) while (up!.offsets[child + 1]! <= h) child++;
+      const a = family ? child : source[e]!, b = family ? up!.targets[h]! : target[e]!, x = p[2 * a]! - p[2 * b]!, y = p[2 * a + 1]! - p[2 * b + 1]!;
       const distance = Math.sqrt(x * x + y * y) - (f.adjustSizes ? 2 * o.nodeRadius : 0);
       if ((f.adjustSizes || f.linLogMode) && distance <= 0) continue;
-      const factor = -this.compensation * (f.linLogMode ? Math.log1p(distance) / distance : 1) / (f.outboundAttractionDistribution ? mass[a]! : 1);
+      const factor = family ? -f.familyPull / Math.sqrt(this.familyDegree![a]! * this.familyDegree![b]!) : -this.compensation * (f.linLogMode ? Math.log1p(distance) / distance : 1) / (f.outboundAttractionDistribution ? mass[a]! : 1);
       forces[2 * a]! += x * factor; forces[2 * a + 1]! += y * factor;
       forces[2 * b]! -= x * factor; forces[2 * b + 1]! -= y * factor;
     }

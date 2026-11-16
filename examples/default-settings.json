@@ -70,6 +70,7 @@
       "scalingRatio": 2,
       "strongGravityMode": false,
       "gravity": 1,
+      "familyPull": 0,
       "slowDown": 1,
       "barnesHutOptimize": true,
       "barnesHutTheta": 1.2

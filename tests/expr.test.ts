@@ -1,4 +1,5 @@
 /** SPDX-License-Identifier: MIT */
+import { layoutIdentity } from '../src/core/layout-options';
 import { test, expect } from 'bun:test';
 import { build } from 'esbuild';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
@@ -143,7 +144,7 @@ test('legacy entries survive save/load without rewriting; conversion only fits c
 });
 test('compiled cache identities preserve historical bytes and expression twins never relayout', async () => {
   const { d, rows } = fixture(); d.groups = [{ from: 'derived', key: 'k', transform: { kind: 'segment', delimiter: ':', index: -1 } }];
-  const legacy = layoutDeclaration(d), expected = await digest({ declaration: legacy, layout: DEFAULT_LAYOUT, producer: 'fixture', rows: declaredFacts(rows, legacy) });
+  const legacy = layoutDeclaration(d), expected = await digest({ declaration: legacy, layout: layoutIdentity(DEFAULT_LAYOUT), producer: 'fixture', rows: declaredFacts(rows, legacy) });
   expect(await generationKey(rows, d, DEFAULT_LAYOUT, 'fixture')).toBe(expected);
   const twin = { ...d, groups: [{ from: 'expr' as const, expr: 'note.k.segment(":", -1)' }], colors: [{ name: 'Typed', color: '#123456', predicate: { kind: 'expr' as const, expr: 'note.k == null' } }] };
   expect(await generationKey(rows, twin, DEFAULT_LAYOUT, 'fixture')).toBe(expected);

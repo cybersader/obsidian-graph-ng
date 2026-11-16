@@ -14,7 +14,7 @@ import { canonical, validateDerivedGroup, validatePredicate, type GraphDeclarati
 import { defaults, defaultVisuals, type EdgeMode, type Settings, type Visuals } from './settings';
 import { progressiveSlider, type Curve, type SliderOptions } from './progressive-slider';
 /** Slider travel per numeric layout control; typed values outside the span stay unclamped. */
-const PHYSICS_CURVES: Partial<Record<PhysicsKey, Curve>> = { scalingRatio: { min: .1, max: 100, log: true }, gravity: { min: 0, max: 20, k: 3 }, slowDown: { min: .1, max: 100, log: true }, iterations: { min: 1, max: 1000, log: true, int: true }, barnesHutTheta: { min: .1, max: 3, k: 2 } };
+const PHYSICS_CURVES: Partial<Record<PhysicsKey, Curve>> = { familyPull: { min: 0, max: 10 }, scalingRatio: { min: .1, max: 100, log: true }, gravity: { min: 0, max: 20, k: 3 }, slowDown: { min: .1, max: 100, log: true }, iterations: { min: 1, max: 1000, log: true, int: true }, barnesHutTheta: { min: .1, max: 3, k: 2 } };
 import { recommendedPhysics, suggestionCopy, type Suggestion } from './recommend';
 /** The view owns the worker, renderer and persistence; the panel only edits state. */
 export interface PanelHost {
@@ -92,7 +92,6 @@ export class ExplorePanel {
   private viewBusy = false;
   private openRequest = 0;
   private physicsDraft?: Record<PhysicsKey, string | boolean>;
-  private physicsNote = '';
   private physicsAdvanced = false;
   private sizingDraft?: Record<keyof NodeSizingValues, string>;
   private sizingMessage = '';
@@ -517,45 +516,47 @@ export class ExplorePanel {
   private physics(host: HTMLElement) {
     const applied = (): Record<PhysicsKey, string | boolean> => { const l = this.settings.layout; return Object.fromEntries(PHYSICS_FIELDS.map(([key]) => { const v = key === 'iterations' ? l.iterations : l.force[key]; return [key, typeof v === 'boolean' ? v : String(v)]; })) as Record<PhysicsKey, string | boolean>; };
     const draft = this.physicsDraft ??= applied();
-    const fill = (values: Required<PhysicsValues>, note: string, name: string) => { this.physicsUndo = { values: { ...draft }, name, applied: false }; for (const [key] of PHYSICS_FIELDS) { const v = values[key]; draft[key] = typeof v === 'boolean' ? v : String(v); } this.physicsError = ''; this.physicsNote = note; this.render(); };
+    const fill = (values: Required<PhysicsValues>, name: string) => { this.physicsUndo = { values: { ...draft }, name, applied: false }; for (const [key] of PHYSICS_FIELDS) { const v = values[key]; draft[key] = typeof v === 'boolean' ? v : String(v); } this.physicsError = ''; this.render(); };
     const size = this.host.result(), recommended = recommendedPhysics(size?.nodes ?? 1000, size?.edges ?? 3000);
     panelHelp(host, 'How changes apply', 'Apply layout saves these changes and recomputes note positions. Fit graph is separate.');
     const presets = settingRow(host, 'Presets', 'graph-ng-presets', 'Groups apart loosens the layout; Fill the screen tightens it. Faster uses fewer steps; presets stay drafts until Apply.').createDiv({ cls: 'graph-ng-setting-line', attr: { role: 'group', 'aria-label': 'Layout presets' } });
-    panelButton(presets, 'Recommended', () => fill(recommended, 'Recommended values for this graph loaded.', 'Recommended'), this.physicsBusy);
-    for (const [name] of PHYSICS_PRESETS) {
-      panelButton(presets, name, () => fill(presetValues(name, recommended), `${name} loaded.`, name), this.physicsBusy);
-    }
+    const names = ['Recommended', ...PHYSICS_PRESETS.map(([name]) => name)], select = presets.createEl('select', { attr: { 'aria-label': 'Layout preset' } });
+    for (const name of names) select.createEl('option', { text: name, value: name });
+    select.value = names.includes(this.physicsUndo?.name ?? '') ? this.physicsUndo!.name : 'Recommended'; select.disabled = this.physicsBusy;
+    panelButton(presets, 'Use preset', () => fill(select.value === 'Recommended' ? recommended : presetValues(select.value, recommended), select.value), this.physicsBusy);
     const advice = this.host.layoutAdvice?.();
     if (advice) {
       // Keeps every other draft value; only turns Strong gravity on with a measured pull.
-      panelButton(presets, PULL_IN, () => fill({ ...draft, strongGravityMode: true, gravity: advice.gravity } as unknown as Required<PhysicsValues>, `${PULL_IN} loaded. Apply layout to see it.`, PULL_IN), this.physicsBusy);
+      panelButton(presets, PULL_IN, () => fill({ ...draft, strongGravityMode: true, gravity: advice.gravity } as unknown as Required<PhysicsValues>, PULL_IN), this.physicsBusy);
       panelHelp(host, 'Why pull them in?', advice.reason);
     }
     const undo = this.physicsUndo;
-    panelButton(presets, 'Undo preset', () => { if (!undo) return; Object.assign(draft, undo.values); this.physicsUndo = undefined; this.physicsNote = `${undo.name} undone.`; if (undo.applied) void run(); else this.render(); }, this.physicsBusy || !undo);
-    const changes = host.createDiv({ cls: 'graph-ng-layout-changes', attr: { 'aria-live': 'polite' } }), show = (v: string | boolean) => typeof v === 'boolean' ? (v ? 'on' : 'off') : v;
+    if (undo) {
+      const button = iconButton(presets, 'Undo preset', 'undo-2'); button.disabled = this.physicsBusy;
+      button.onclick = () => { Object.assign(draft, undo.values); this.physicsUndo = undefined; if (undo.applied) void run(); else this.render(); };
+    }
     const summarize = () => {
-      const now = applied(), diff = PHYSICS_FIELDS.filter(([key]) => draft[key] !== now[key]); changes.empty();
-      if (this.physicsNote) changes.createDiv({ text: this.physicsNote });
-      if (!diff.length) changes.createDiv({ text: 'No pending changes.' });
-      else {
-        const details = changes.createEl('details'); disclosure(details, plural(diff.length, 'pending change'));
+      const now = applied(), diff = PHYSICS_FIELDS.filter(([key]) => draft[key] !== now[key]); changes.empty(); changes.hidden = !diff.length;
+      if (diff.length) {
+        const details = changes.createEl('details'); disclosure(details, plural(diff.length, 'change'));
+        const show = (v: string | boolean) => typeof v === 'boolean' ? (v ? 'on' : 'off') : v;
         for (const [key, title] of diff) statRow(details, 'minus', title, `${show(now[key])} → ${show(draft[key])}`);
       }
     };
     const basic = host.createDiv(), advanced = host.createEl('details', { cls: 'graph-ng-physics-advanced' });
     disclosure(advanced, 'Advanced layout'); advanced.open = this.physicsAdvanced; advanced.ontoggle = () => { this.physicsAdvanced = advanced.open; };
     for (const [key, title, help, more] of PHYSICS_FIELDS) {
+      if (key === 'familyPull' && !this.settings.declaration.hierarchy) continue;
       const parent = more ? advanced : basic, value = draft[key], def = recommended[key];
       if (typeof value === 'boolean') {
         const row = settingRow(parent, title, 'graph-ng-toggle graph-ng-physics-field', help), input = row.querySelector('input')!;
         input.disabled = this.physicsBusy; input.checked = value; input.onchange = () => { draft[key] = input.checked; summarize(); };
-      } else progressiveSlider(parent, { label: title, desc: help, curve: PHYSICS_CURVES[key]!, value, def: def as number, disabled: this.physicsBusy, cls: 'graph-ng-physics-field', attr: { step: key === 'iterations' ? '1' : 'any', ...(key === 'gravity' ? { min: '0' } : key === 'iterations' ? { min: '1' } : {}) }, changed: v => { draft[key] = v; summarize(); } });
+      } else progressiveSlider(parent, { label: title, desc: help, curve: PHYSICS_CURVES[key]!, value, def: def as number, disabled: this.physicsBusy, cls: 'graph-ng-physics-field', attr: { step: key === 'iterations' ? '1' : 'any', ...(key === 'familyPull' ? { min: '0', max: '10' } : key === 'gravity' ? { min: '0' } : key === 'iterations' ? { min: '1' } : {}) }, changed: v => { draft[key] = v; summarize(); } });
     }
-    summarize();
     host.createDiv({ cls: 'graph-ng-explore-error', text: this.physicsError, attr: { role: 'alert' } });
-    const actions = host.createDiv({ cls: 'graph-ng-form' });
+    const actions = host.createDiv({ cls: 'graph-ng-layout-actions' });
     const apply = actions.createEl('button', { cls: 'mod-cta' }); workingText(apply, this.physicsBusy ? 'Recomputing…' : 'Apply layout', this.physicsBusy);
+    const changes = actions.createDiv({ cls: 'graph-ng-layout-changes', attr: { 'aria-live': 'polite' } }); summarize();
     apply.disabled = this.physicsBusy;
     apply.onclick = () => run();
     const run = async () => {
@@ -563,7 +564,7 @@ export class ExplorePanel {
       try {
         const values = Object.fromEntries(PHYSICS_FIELDS.map(([key]) => { const v = draft[key]; return [key, typeof v === 'boolean' ? v : v.trim() ? Number(v) : NaN]; })) as unknown as PhysicsValues;
         physicsSettings(this.settings, values);
-        this.physicsBusy = true; this.physicsError = ''; this.physicsNote = ''; this.render();
+        this.physicsBusy = true; this.physicsError = ''; this.render();
         await this.host.applyLayout(values);
         if (this.physicsUndo) this.physicsUndo.applied = true;
       } catch (e) { this.physicsError = `Not applied: ${e instanceof Error ? e.message : String(e)}`; }

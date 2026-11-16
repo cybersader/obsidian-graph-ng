@@ -8,9 +8,9 @@ export type Predicate = { kind: 'expr'; expr: string } | { kind: 'eq'; key: stri
 export const predicateColumn = (p: Predicate): string | string[] | undefined => p.kind === 'expr' ? expressionReferences(p.expr) : p.kind === 'folder' ? undefined : p.key;
 /** Colors and focus emphasis are presentation. Layout/cache identity excludes them, so a legend or
  * highlight edit never reseeds or relayouts. Absent fields keep historical digest bytes. */
-export const layoutDeclaration = (d: GraphDeclaration): GraphDeclaration => {
+export const layoutDeclaration = (d: GraphDeclaration, family = false): GraphDeclaration => {
   const { hierarchy: _, groupContext: __, interest: ___, ...rest } = d;
-  return { ...rest, colors: [], edges: d.edges.map(e => { const { highlight: _h, ...x } = e as EdgeDeclaration & { highlight?: unknown }; return x as EdgeDeclaration; }) };
+  return { ...rest, ...(family && d.hierarchy ? { hierarchy: d.hierarchy } : {}), colors: [], edges: d.edges.map(e => { const { highlight: _h, ...x } = e as EdgeDeclaration & { highlight?: unknown }; return x as EdgeDeclaration; }) };
 };
 export type EdgeDeclaration =
   | { name: string; kind: 'reified'; sourceProperty: string; targetProperty: string; typeProperty?: string; type?: string; highlight?: 'tint' }

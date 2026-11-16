@@ -10,7 +10,7 @@ import { ControlElement, control } from './support/controls-dom';
 const { default: GraphPlugin, GraphView } = await import('../src/main');
 const values = { scalingRatio: 2, gravity: 1, slowDown: 1 };
 function fixture(extra: object = {}) {
-  const settings = defaults('links'), root = new ControlElement(); let applied = 0;
+  const settings = defaults('links'), root = new ControlElement(); settings.declaration.hierarchy = { parentProperty: 'parentRef' }; let applied = 0;
   const render = ExplorePanel.prototype.render; ExplorePanel.prototype.render = function () {};
   let panel: any;
   try { panel = new ExplorePanel(root as any, { settings: () => settings, result: () => ({ nodes: 16000, edges: 50000 }), async applyLayout(v: any) { applied++; settings.layout = physicsSettings(settings, v).layout; }, ...extra } as any, emptyView()); }
@@ -18,6 +18,7 @@ function fixture(extra: object = {}) {
   panel.render = () => { panel.body.empty(); panel.physics(panel.body); }; panel.render();
   return { panel, settings, applied: () => applied };
 }
+function choose(f: ReturnType<typeof fixture>, name: string) { const select = f.panel.body.querySelector('select'); select.value = name; control(f.panel.body, 'Use preset').click(); }
 const numbers = (f: ReturnType<typeof fixture>): any[] => f.panel.body.querySelectorAll('input').filter((e: any) => e.type === 'number');
 function input(f: ReturnType<typeof fixture>, key: number, value: string) {
   const e: any = numbers(f)[key]; e.value = value; e.oninput();
@@ -43,8 +44,8 @@ test('numeric drafts survive rerenders; reset restores every recommended value; 
   expect(numbers(f)[0].value).toBe('100000');
   input(f, 0, '999999'); input(f, 1, '0'); f.panel.render();
   expect(numbers(f)[0].value).toBe('999999'); expect(f.applied()).toBe(0);
-  expect(f.panel.body.textContent).toContain('2 pending changes'); expect(f.panel.body.textContent).toContain('Spread notes100000 → 999999'); expect(f.panel.body.textContent).toContain('Pull to center1 → 0');
-  control(f.panel.body, 'Recommended').click(); expect(f.settings.layout.force.scalingRatio).toBe(100000);
+  expect(f.panel.body.textContent).toContain('2 changes'); expect(f.panel.body.textContent).toContain('Spread notes100000 → 999999'); expect(f.panel.body.textContent).toContain('Pull to center1 → 0');
+  choose(f, 'Recommended'); expect(f.settings.layout.force.scalingRatio).toBe(100000);
   const d = room;
   for (const [key, label] of PHYSICS_FIELDS) { const e = byLabel(f, label); expect(typeof d[key] === 'boolean' ? e.checked : e.value).toBe(typeof d[key] === 'boolean' ? d[key] : String(d[key])); }
   const apply: any = control(f.panel.body, 'Apply layout'); const pending = apply.onclick(); apply.onclick(); await pending;
@@ -57,16 +58,16 @@ test('every control has a plain label and an effect hint; advanced controls sit 
     expect(hint.length).toBeGreaterThan(30); expect(f.panel.body.textContent).toContain(hint);
     expect(details.contains(byLabel(f, label))).toBe(advanced);
   }
-  expect(PHYSICS_FIELDS.filter(([, , , advanced]) => !advanced).map(([key]) => key)).toEqual(['scalingRatio', 'gravity']);
+  expect(PHYSICS_FIELDS.filter(([, , , advanced]) => !advanced).map(([key]) => key)).toEqual(['scalingRatio', 'gravity', 'familyPull']);
   f.panel.dispose();
 });
 test('presets and checkboxes only fill drafts; one explicit apply sends every exposed value', async () => {
   const f = fixture(); let sent: any; f.panel.host.applyLayout = async (v: any) => { sent = v; f.settings.layout = physicsSettings(f.settings, v).layout; };
   const before = structuredClone(f.settings);
-  control(f.panel.body, 'Groups apart').click();
+  choose(f, 'Groups apart');
   expect(f.settings).toEqual(before); expect(sent).toBeUndefined();
   expect(byLabel(f, 'Strong gravity').checked).toBe(true); expect(byLabel(f, 'Pull to center').value).toBe(String(room.gravity / 2));
-  expect(f.panel.body.textContent).toContain('Groups apart loaded');
+  expect(f.panel.body.querySelector('select').value).toBe('Groups apart');
   const overlap = byLabel(f, 'Prevent overlap'); overlap.checked = true; overlap.onchange();
   f.panel.render(); expect(byLabel(f, 'Prevent overlap').checked).toBe(true);
   await (control(f.panel.body, 'Apply layout') as any).onclick();
@@ -199,17 +200,17 @@ test('recommended values scale with graph size and stay valid', () => {
 test('undo restores the tuned values before a preset, and re-applies them in one click once the preset was applied', async () => {
   const f = fixture(); f.settings.layout.force.scalingRatio = 1200; f.settings.layout.force.gravity = 20; f.settings.layout.force.slowDown = 20; f.panel.physicsDraft = undefined; f.panel.render();
   const before = structuredClone(f.settings), undo = () => control(f.panel.body, 'Undo preset') as any;
-  expect(undo().disabled).toBe(true);
-  input(f, 0, '900'); control(f.panel.body, 'Fill the screen').click();
+  expect(f.panel.body.querySelectorAll('button').some((e: any) => e.getAttribute('aria-label') === 'Undo preset')).toBe(false);
+  input(f, 0, '900'); choose(f, 'Fill the screen');
   expect(byLabel(f, 'Pull to center').value).toBe(String(room.gravity * 3)); expect(undo().disabled).toBe(false);
   undo().click();
   expect(byLabel(f, 'Spread notes').value).toBe('900'); expect(byLabel(f, 'Pull to center').value).toBe('20'); expect(byLabel(f, 'Strong gravity').checked).toBe(false);
-  expect(f.applied()).toBe(0); expect(f.settings).toEqual(before); expect(undo().disabled).toBe(true);
-  input(f, 0, '1200'); control(f.panel.body, 'Faster').click(); await (control(f.panel.body, 'Apply layout') as any).onclick();
+  expect(f.applied()).toBe(0); expect(f.settings).toEqual(before); expect(f.panel.body.querySelectorAll('button').some((e: any) => e.getAttribute('aria-label') === 'Undo preset')).toBe(false);
+  input(f, 0, '1200'); choose(f, 'Faster'); await (control(f.panel.body, 'Apply layout') as any).onclick();
   expect(f.applied()).toBe(1); expect(f.settings.layout.iterations).toBe(Math.round(room.iterations / 2));
   undo().click(); await new Promise(r => setTimeout(r, 0));
   expect(f.applied()).toBe(2); expect(f.settings.layout).toEqual(before.layout);
-  control(f.panel.body, 'Recommended').click(); undo().click(); expect(byLabel(f, 'Spread notes').value).toBe('1200');
+  choose(f, 'Recommended'); undo().click(); expect(byLabel(f, 'Spread notes').value).toBe('1200');
   f.panel.dispose();
 });
 test('Pull in notes loads only Strong gravity and its pull into the draft; nothing is saved', async () => {
@@ -223,4 +224,18 @@ test('Pull in notes loads only Strong gravity and its pull into the draft; nothi
   await (control(f.panel.body, 'Apply layout') as any).onclick();
   expect(f.settings.layout.force).toMatchObject({ scalingRatio: 23.64, gravity: .124, strongGravityMode: true }); f.panel.dispose();
   const plain = fixture(); expect(plain.panel.body.textContent).not.toContain('Pull in notes'); plain.panel.dispose();
+});
+test('family control needs a declaration; pending count lives beside Apply and empty status is hidden', async () => {
+  const f = fixture();
+  expect(byLabel(f, 'Family pull').value).toBe('0');
+  const changes = f.panel.body.querySelector('.graph-ng-layout-changes');
+  expect(changes.hidden).toBe(true); expect(f.panel.body.textContent).not.toContain('No pending changes');
+  const family = byLabel(f, 'Family pull'); family.value = '2'; family.oninput();
+  expect(changes.hidden).toBe(false); expect(changes.textContent).toContain('1 change');
+  expect(changes.parentElement.contains(control(f.panel.body, 'Apply layout'))).toBe(true);
+  await (control(f.panel.body, 'Apply layout') as any).onclick(); expect(f.settings.layout.force.familyPull).toBe(2);
+  expect(f.panel.body.querySelector('.graph-ng-layout-changes').hidden).toBe(true);
+  delete f.settings.declaration.hierarchy; f.panel.render(); expect(byLabel(f, 'Family pull')).toBeUndefined();
+  const legacy = JSON.parse(JSON.stringify(f.settings)); delete legacy.layout.force.familyPull;
+  expect(upgradeSettings(legacy, 'links').layout.force.familyPull).toBe(0); f.panel.dispose();
 });

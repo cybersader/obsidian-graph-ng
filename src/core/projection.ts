@@ -35,7 +35,7 @@ export interface Projection {
   /** Per reified rule: kept relationship notes, each counted once under the first rule it satisfies. */
   ruleNotes?: Record<string, number>;
   /** Declared hierarchy, when bound: per node, the resolved parents in CSR form (self and
-   * unresolved references dropped, duplicates collapsed). Presentation only. */
+   * unresolved references dropped, duplicates collapsed). Also used by optional family pull. */
   up?: { offsets: Uint32Array; targets: Uint32Array };
   /** Per edge 1 when its reified rule declares `highlight: 'tint'`; absent when no rule does. */
   tint?: Uint8Array;

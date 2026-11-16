@@ -28,7 +28,7 @@ All top-level fields except `carrierResolvers` are required. Unknown declaration
 | `display` | Required boolean `reifiedAsNodes`. False connects endpoints with a carrier; true makes the relationship note an intermediate node. The Appearance control **Relationship notes: Lines | Nodes** edits only this field. |
 | `columns` | Nonempty property-key strings materialized as dictionary-coded columns for filtering. Color/group keys are also materialized. |
 | `colors` | Ordered `{name,color,predicate}` rules, first match wins. Colors must be `#rrggbb`, `#rrggbbaa`, or a restricted `var(--name)` reference resolved from computed host CSS. These are explicit declarations, not a hidden palette tied to any ontology. |
-| `hierarchy` | Optional `{parentProperty}`: a frontmatter property whose scalar value(s) name the parent's identity (declared identity or exact path). Presentation only; see [Focus emphasis](#focus-emphasis-optional). |
+| `hierarchy` | Optional `{parentProperty}`: a frontmatter property whose scalar value(s) name the parent's identity (declared identity or exact path). Focus emphasis and optional Family pull; see [Focus emphasis](#focus-emphasis-optional). |
 | `groupContext` | Optional boolean. `true` shows other members of the focus's current group as a faint highlight tier. |
 | `interest` | Optional `{property}`: a frontmatter property holding a finite number; higher ranks a note earlier among a focus's connections. Presentation only; see [Interest ranking](#interest-ranking-optional). |
 | `carrierResolvers` | Optional unique `{kind,key}` bindings. `$path` means an exact local note path; other keys are declared frontmatter lookups. Absent/ambiguous matches cannot navigate. Carrier strings have no guessed meaning. |
@@ -36,7 +36,7 @@ All top-level fields except `carrierResolvers` are required. Unknown declaration
 
 ## Focus emphasis (optional)
 
-Three optional, ontology-neutral fields extend the graduated hover/selection highlight. Absent fields mean the existing topological tiers exactly; no migration rewrites them. They are excluded from layout identity, so adding or editing them never reseeds or relayouts (a new `parentProperty` is ingested like any declared key).
+Three optional, ontology-neutral fields extend the graduated hover/selection highlight. Absent fields mean the existing topological tiers exactly; no migration rewrites them. With Family pull off (the default), they are excluded from layout identity, so adding or editing them does not itself reseed or relayout (a new `parentProperty` is ingested like any declared key). With `layout.force.familyPull > 0`, hierarchy and its parent-property facts enter layout identity and parent-only edits recompute. Group context and tint stay presentation-only.
 
 - `hierarchy.parentProperty` — each note's parents are the values of this property (a scalar or a list), resolved like inline edge targets: declared identity first, then exact path. Unresolved values and self references are dropped, duplicates collapse, multiple parents are allowed. The focus's ancestors (up to 8 levels, at most 256 notes, cycle-safe) form the *ancestor* tier.
 - `groupContext: true` — with a current grouping, other filter-visible members of the focus's group form the *same group* tier (bounded and reported when truncated).

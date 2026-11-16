@@ -1,6 +1,7 @@
 import { test, expect } from 'bun:test';
 import { WorkerPipeline, LAYOUT_PRODUCER, currentDetailGeneration, type Transport, type ProjectResult, type LayoutResult, type DetailResult } from '../src/pipeline';
 import { defaultDeclaration, digest } from '../src/core/declaration';
+import { layoutIdentity } from '../src/core/layout-options';
 import { DEFAULT_LAYOUT } from '../src/core/layout';
 import { packRows, unpackRows, transferables, encodeStrings, decodeStrings } from '../src/core/columns';
 import { buildProjection, type FactRow } from '../src/core/projection';
@@ -25,7 +26,7 @@ class MemoryAdapter implements BinaryAdapter {
   async list(p: string) { const direct = (s: string) => s.startsWith(p + '/') && !s.slice(p.length + 1).includes('/'); return { files: [...this.files.keys()].filter(direct), folders: [...this.dirs].filter(direct) }; }
 }
 async function generation(n = 1, declarationHash = 'a'.repeat(64), key = 'b'.repeat(64)): Promise<BinaryGeneration> {
-  const meta: GenerationMeta = { format: CACHE_FORMAT, declarationHash, key, layoutHash: await digest({ layout, streamEveryIterations: 1 }), layout, source: config.source, groupLevel: config.groupLevel, streamEveryIterations: config.streamEveryIterations, producer: LAYOUT_PRODUCER };
+  const meta: GenerationMeta = { format: CACHE_FORMAT, declarationHash, key, layoutHash: await digest({ layout: layoutIdentity(layout), streamEveryIterations: 1 }), layout, source: config.source, groupLevel: config.groupLevel, streamEveryIterations: config.streamEveryIterations, producer: LAYOUT_PRODUCER };
   return encodeLayout({ meta, identities: Array.from({ length: n }, (_, i) => `path:${i}.md`), positions: Float32Array.from({ length: n * 2 }, (_, i) => i / 2), edgeKeys: new Uint32Array(), groups: { groups: [], groupEdges: [] } });
 }
 const options = { directory: 'plugin/cache/local', chunkBytes: 64, maxGenerationBytes: 1024 * 1024 * 8, cachedDeclarations: 1 };
@@ -125,7 +126,7 @@ test('legacy slice-1 positions migrate as hints and are reverified, never exact 
   const p = pipeline();
   try {
     const hashes = await p.request<{ declarationHash: string }>(1, { kind: 'configure', config });
-    const old = { key: '1'.repeat(64), identities: ['0.md'], positions: [3, 4], producer: 'graphology-fa2@0.10.1', layoutHash: await digest(layout), edgeKeys: [] };
+    const old = { key: '1'.repeat(64), identities: ['0.md'], positions: [3, 4], producer: 'graphology-fa2@0.10.1', layoutHash: await digest(layoutIdentity(layout)), edgeKeys: [] };
     const binary = await p.request<BinaryGeneration>(1, { kind: 'migrate', declarationHash: hashes.declarationHash, generation: old });
     expect(binary.meta.format).toBe(CACHE_FORMAT); expect(decodeLayout(binary).positions).toEqual(new Float32Array([3, 4]));
     await p.request(1, { kind: 'load', generation: binary }); await p.request(1, { kind: 'rows', reset: true, columns: packRows([{ path: '0.md', properties: {} }], declaration) }); await p.request(1, { kind: 'project' });
@@ -236,7 +237,7 @@ test('legacy hints are never relabelled with a nonlocal view identity', async ()
   const p = pipeline();
   try {
     const hashes = await p.request<{ declarationHash: string }>(1, { kind: 'configure', config: { ...config, source: 'obsidian-links@1/opaque-other-view' } });
-    expect(await p.request(1, { kind: 'migrate', declarationHash: hashes.declarationHash, generation: { key: '1'.repeat(64), identities: ['0.md'], positions: [3, 4], producer: 'graphology-fa2@0.10.1', layoutHash: await digest(layout) } })).toBeUndefined();
+    expect(await p.request(1, { kind: 'migrate', declarationHash: hashes.declarationHash, generation: { key: '1'.repeat(64), identities: ['0.md'], positions: [3, 4], producer: 'graphology-fa2@0.10.1', layoutHash: await digest(layoutIdentity(layout)) } })).toBeUndefined();
   } finally { p.dispose(); }
 });
 test('cache quarantine/failed partial artifacts obey count and byte caps without touching source paths', async () => {

@@ -8,6 +8,8 @@ export interface ForceSettings {
   scalingRatio: number;
   strongGravityMode: boolean;
   gravity: number;
+  /** Additional linear attraction along declared child-parent pairs; zero is off. */
+  familyPull: number;
   slowDown: number;
   barnesHutOptimize: boolean;
   barnesHutTheta: number;
@@ -33,9 +35,14 @@ export const DEFAULT_LAYOUT: LayoutOptions = {
   batchIterations: 5, convergenceThreshold: 0, convergenceIterations: 3,
   maxTreeDepth: 32, nodeRadius: 1, maxForce: 10,
   force: { linLogMode: false, outboundAttractionDistribution: false, adjustSizes: false,
-    edgeWeightInfluence: 1, scalingRatio: 2, strongGravityMode: false, gravity: 1,
+    edgeWeightInfluence: 1, scalingRatio: 2, strongGravityMode: false, gravity: 1, familyPull: 0,
     slowDown: 1, barnesHutOptimize: true, barnesHutTheta: 1.2 },
 };
+/** Keep off/default cache bytes identical to generations written before family pull existed. */
+export function layoutIdentity(options: LayoutOptions) {
+  const { familyPull, ...force } = options.force;
+  return familyPull ? options : { ...options, force };
+}
 export function validateLayout(options: LayoutOptions): void {
   for (const key of Object.keys(options)) if (!Object.hasOwn(DEFAULT_LAYOUT, key)) throw new Error(`Unknown layout setting: ${key}`);
   for (const key of ['iterations', 'relaxIterations', 'batchIterations', 'convergenceIterations', 'maxTreeDepth'] as const)
@@ -46,6 +53,7 @@ export function validateLayout(options: LayoutOptions): void {
   if (!Number.isSafeInteger(options.seed)) throw new Error('Invalid layout.seed');
   if (!options.force || typeof options.force !== 'object') throw new Error('force is required');
   for (const key of Object.keys(options.force)) if (!Object.hasOwn(DEFAULT_LAYOUT.force, key)) throw new Error(`Unknown force setting: ${key}`);
+  if (options.force.familyPull > 10) throw new Error('Invalid force.familyPull');
   for (const [key, value] of Object.entries(DEFAULT_LAYOUT.force)) {
     const actual = options.force[key as keyof ForceSettings];
     if (typeof value === 'boolean' ? typeof actual !== 'boolean' : typeof actual !== 'number' || !Number.isFinite(actual) || actual < 0 || (['scalingRatio', 'slowDown', 'barnesHutTheta'].includes(key) && actual === 0)) throw new Error(`Invalid force.${key}`);

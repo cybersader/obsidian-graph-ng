@@ -81,8 +81,8 @@ test('one layout draft change uses singular copy', () => {
   const f = fixture(); f.panel.show('layout');
   const input: any = f.root.querySelectorAll('input').find(e => e.getAttribute('aria-label') === 'Pull to center');
   expect(input).toBeDefined(); input.value = '2'; input.oninput();
-  expect(f.root.querySelector('.graph-ng-layout-changes')!.textContent).toContain('1 pending change');
-  expect(f.root.querySelector('.graph-ng-layout-changes')!.textContent).not.toContain('1 pending changes'); f.panel.dispose();
+  expect(f.root.querySelector('.graph-ng-layout-changes')!.textContent).toContain('1 change');
+  expect(f.root.querySelector('.graph-ng-layout-changes')!.textContent).not.toContain('1 changes'); f.panel.dispose();
 });
 
 test('toggle names retain native labels and help names activate their checkbox', () => {

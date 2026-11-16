@@ -435,7 +435,10 @@ test('settings rows: Edges and layout Presets use the name, description and cont
   expect(headings().filter(t => t === 'Layout')).toHaveLength(1);
   const presets = row('Presets'); expect(presets.tagName).toBe('DIV'); expect(parts(presets)).toEqual(['graph-ng-setting-name', 'graph-ng-setting-line']);
   const buttons = presets.children[1]; expect(buttons.getAttribute('aria-label')).toBe('Layout presets');
-  expect(buttons.children.map((b: any) => b.textContent)).toEqual(['Recommended', 'Groups apart', 'Fill the screen', 'Faster', 'Undo preset']);
+  expect(buttons.children.map((b: any) => b.tagName)).toEqual(['SELECT', 'BUTTON']);
+  expect(buttons.querySelector('select').children.map((o: any) => o.textContent)).toEqual(['Recommended', 'Groups apart', 'Fill the screen', 'Faster']);
+  expect(buttons.querySelector('select').value).toBe('Recommended');
+  expect(buttons.querySelector('button').textContent).toBe('Use preset');
   f.panel.show('views'); expect(headings().filter(t => t === 'Saved views')).toHaveLength(1);
 });
 test('count lists: group legend rows keep the name and the count in separate elements; the count class is tabular and right-aligned', () => {
