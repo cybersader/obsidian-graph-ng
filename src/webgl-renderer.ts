@@ -1040,7 +1040,9 @@ export class DetailRenderer {
     if (!v.zoomAdapt || !v.edgeOpacity || v.edgeMode === 'off') return [1, Infinity] as const;
     if (this.ink?.display !== this.display) this.ink = { ...edgeInk(this.display, this.projection.source, this.projection.target, this.edgeDrawn), display: this.display };
     const layers = overdraw(this.ink, edges, width, this.scale);
-    return [inkShare(v, layers), fadeLength(v, this.ink, this.scale, layers)] as const;
+    // Bounded overview allowance; home/8 and closer use the original share. Retained alpha has no zoom boost.
+    const overview = Math.max(1, Math.min(8, this.camera.ratio / this.homeRatio * 8));
+    return [Math.min(1, inkShare(v, layers) * overview), fadeLength(v, this.ink, this.scale, layers)] as const;
   }
   private edgeDrawn = (e: number) => !!this.edgeOn[e] && !!this.filterVisible[this.projection.source[e]!] && !!this.filterVisible[this.projection.target[e]!];
   /** Drawn rows between the picked edge's endpoints, either direction, picked edge first (bounded). */
@@ -1308,7 +1310,7 @@ export class DetailRenderer {
     if (!gl) { this.drawCanvas(); this.placeOverlay(); if (more) this.refresh(); return; }
     gl.viewport(0, 0, this.canvas.width, this.canvas.height); gl.clearColor(p[8]! / 255, p[9]! / 255, p[10]! / 255, 1); gl.clear(gl.COLOR_BUFFER_BIT);
     const lod = this.lodLevel(), policy = this.policy, fade = labelFade(this.settings.nodeSize, this.settings.labelRenderedSizeThreshold, this.camera.ratio, LABEL_RATIOS, v.labelFade, lod);
-    const notes = this.carrierLevel(zoom), edgeWidth = this.settings.edgeSize * zoomFade(v, this.visibleEdges, zoom, this.width, this.height), alpha = edgeAlpha(v, v.zoomAdapt ? 0 : this.visibleEdges, zoom, policy.dark, this.width, this.height);
+    const notes = this.carrierLevel(zoom), edgeWidth = this.settings.edgeSize * zoomFade(v, this.visibleEdges, zoom, this.width, this.height), alpha = edgeAlpha(v, v.zoomAdapt ? 0 : this.visibleEdges, v.zoomAdapt ? 1 : zoom, policy.dark);
     const nodeSize = this.baseNodeRadius();
     const focus = v.hoverHighlight ? this.focusLevel : 0, haloAlpha = v.haloOpacity * Math.min(1, Math.max(0, (this.camera.ratio - .06) / .25));
     // Halos (under), edges, edge notes, other nodes, collapsed hubs, labels.
@@ -1506,7 +1508,7 @@ export class DetailRenderer {
     ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0); ctx.fillStyle = this.theme.background; ctx.fillRect(0, 0, this.width, this.height); ctx.strokeStyle = this.theme.edge; ctx.lineWidth = s.edgeSize;
     // The edge shader's tier weights: rest, neighbours of neighbours, then direct strokes on top.
-    const zoom = this.camera.ratio / this.homeRatio, base = edgeAlpha(s.visuals, s.visuals.zoomAdapt ? 0 : this.visibleEdges, zoom, this.policy.dark, this.width, this.height), width = s.edgeSize * zoomFade(s.visuals, this.visibleEdges, zoom, this.width, this.height);
+    const zoom = this.camera.ratio / this.homeRatio, base = edgeAlpha(s.visuals, s.visuals.zoomAdapt ? 0 : this.visibleEdges, s.visuals.zoomAdapt ? 1 : zoom, this.policy.dark), width = s.edgeSize * zoomFade(s.visuals, this.visibleEdges, zoom, this.width, this.height);
     const mask = this.tierMask, strong = s.visuals.focusEdges ? focusAlpha(this.directs.length) : 0, mode = s.visuals.edgeMode, [ink, reach] = this.edgeQuiet(2 * Math.max(.5, width));
     // The same quantile admission and long-line threshold as the shader; focus tiers are never sampled.
     for (const tier of mode === 'off' ? [] : focus ? mode === 'focus' ? [128, 255] : [0, 128, 255] : mode === 'focus' ? [] : [-1]) {

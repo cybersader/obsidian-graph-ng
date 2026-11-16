@@ -746,3 +746,36 @@ Real Obsidian 1.12.7 in the OpenClast browser-native harness (headless Playwrigh
 The before frame is a uniform veil: about 8 lines overlap each core pixel, each at roughly 1.5 eight-bit steps, and the dither turns them into grain. Node glow at the mid camera touches 71% of pixels but adds 0.0043 mean luminance, so it is not the field haze and was left unchanged.
 
 Verification is `build` and `test --timeout 10000` (532 pass / 0 fail), plus `gates`, where all six lanes pass. The bundle is 350,298 raw / 117,382 gzip against the 355,000 / 118,000 caps (+381 / +175 bytes). This is single-run, synthetic evidence on a software rasterizer, not native GPU, FPS or real-vault acceptance.
+
+## Importance-ranked overview — 2026-11-15
+
+The next renderer candidate (`2979e8a`, based on `d29955f`) redistributes the existing context-line share toward endpoint degree, declared interest and cross-group edges. Importance alone does not enlarge the requested share. The final refinement adds an overview allowance to the same geometry-derived budget, capped at eight shares and fading to one by home/8, while keeping adaptive retained-line opacity constant rather than boosting it close up. Retained detail lines avoid the second density-opacity penalty. Strong focus has a continuous direct-neighbour-count target rather than the former 50-neighbour cutoff; all focus-tier lines retain their admission exemption. Canvas and WebGL share the rank column, admission threshold, picking and emphasis policy, but not identical rasterization.
+
+The before/after recipe reuses the preceding synthetic 16,000-note / 52,511-edge fixture, fixed 1,210 × 700 canvas and world cameras, owner edge settings and default node sizing. It runs actual Obsidian through the existing OpenClast harness, with only the synthetic GPU probe overridden for SwiftShader WebGL2. Each invocation is bounded to 25 minutes and serialized with `flock -w 1800 /tmp/graph-ng-harness.lock`. Private owner screenshots were inspected locally as visual references, never used as fixtures or copied into the repository. All runtime receipts and screenshots remain ignored under `.workspace/overview-qa/runs/`.
+
+The baseline receipt is `before2.json`; the earlier `before.json` hub camera was invalid and is excluded. The selected synthetic hub has 491 incident rows and 351 distinct visible neighbours, not exactly 483 neighbours. A separate compiled Canvas regression uses exactly 483 neighbours and verifies that all 483 edge segments are stroked even with zero context admission, with the degree-scaled target and explicit zero-opacity opt-out intact. The extra `old-veil-near` baseline probe disables both line admission and length control; it is a diagnostic, **not** an exact reconstruction of historical `001e8ff`. Historical veil comparisons use the preceding benchmark table instead. The haze recipe freezes the graph theme; files ending `.light.png` therefore do not establish light graph-theme acceptance.
+
+
+### Measured result and remaining visual gap
+
+`refine.json` is the final measured candidate (bundle SHA-256 `f835ef4971c9f886763f41b67f68b4e5b5b192b9a3bcf531b4c6d42f00b67032`). `after.json` records the rejected first candidate: its near-view edge-added luminance was 0.01273, above the historical veil's 0.01162. The refinement removes the close-zoom opacity boost, rather than hiding focus edges to lower the measurement. Both baseline and final harness runs completed with no console/page errors and completed teardown.
+
+| Camera | Metric | Baseline `before2` | Final `refine` |
+|---|---|---:|---:|
+| Fit all (home) | pixels changed by edges, ≥1 / ≥8 levels | 0.01% / 0% | 0.01% / 0.01% |
+| Connected web, ratio 0.2130 | pixels changed, ≥1 level | 0.04% | 0.04% |
+| Mid, ratio 0.0710 | pixels changed, ≥1 / ≥8 levels | 2.63% / 0.02% | 3.28% / 2.08% |
+| Mid | edge-added mean luminance | 0.00007 | 0.00031 |
+| Near, ratio 0.0237 | pixels changed, ≥1 / ≥8 levels | 29.04% / 14.96% | 35.27% / 33.47% |
+| Near | edge-added mean luminance | 0.00167 | 0.00332 |
+| Near | field median luminance (background 0.01298) | 0.01450 | 0.01670 |
+| Selected hub, ratio 0.0237 | edge-added mean luminance | 0.05193 | 0.05104 |
+| Selected hub | field median luminance | 0.06783 | 0.06344 |
+
+The final unselected near frame has more legible retained strokes than the line-share baseline, but remains below the **historical veil** in coverage (35.27% / 33.47% versus 91.6% / 76.8%), median luminance (0.01670 versus 0.0267), and edge-added mean luminance (0.00332 versus 0.01162, 71.4% lower). The selected hub is a separate intentional emphasis state, not an unselected haze comparison: its bright direct fan is clearer while total edge-added light is slightly below its own baseline. Label plates change full-scene luminance; haze measurements therefore compare edge-on/off within each candidate, not full-scene means across different label treatments.
+
+Visually inspected dark screenshots show readable mid-zoom labels and a distinctly stronger direct hub fan against weaker two-hop lines. **The fit-all synthetic overview still reads as a dense dot ball.** Its edge coverage remains only 0.01%; these receipts do not establish that global cluster structure is now readable. Default synthetic node coverage and the fixed layout remain limiting, and the task does not change layout. Glyph-quad plate overlap remains a point for independent visual review; no blanket typography or light-theme acceptance is claimed.
+
+Evidence pairs are `before2` / `refine` with suffixes `.step-21-overview.dark.png`, `.step-27-web-mid.dark.png`, `.step-30-web-near.dark.png`, and `.step-36-hub-selected.dark.png`, all beneath `.workspace/overview-qa/runs/`. These are synthetic images; private reference images remain outside the repository.
+
+Exact capture invocations from the isolated worktree were `bash .workspace/overview-qa/serial-run.sh before2 plugin-before vault-16k before2.json 25` and `bash .workspace/overview-qa/serial-run.sh refine plugin-refine vault-16k refine.json 25`. The wrapper owns the shared browser lock. Verification uses the required outer `flock -w 3000 -E 75 /tmp/openclast-bun.lock timeout --kill-after=5s 1800s ./scripts/run.sh` prefix with `build`, `test --timeout 10000`, and `gates`; the inner local-verification lock remains owned by `scripts/run.sh`, never recursively acquired. Results: **554 tests pass, zero fail, 146,515 expectations; all six gates pass.** Bundle: **351,887 raw / 117,977 gzip / 101,879 Brotli**, leaving 3,113 raw and 23 gzip bytes under the unchanged caps. No overage. Software-rasterizer frame measurements are retained in the JSON but do not establish hardware GPU performance, FPS, mobile acceptance or real-vault acceptance. Independent senior review remains parent-owned and pending.

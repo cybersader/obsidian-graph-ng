@@ -1528,3 +1528,38 @@ test('overview base radius is shared by Canvas/WebGL, preserves degree sizing an
   }
   r.gl = original;
 });
+
+test('compiled Canvas retains all 483 selected hub edges even when context admission is zero', async () => {
+  const degree = 483, xy = new Float32Array((degree + 1) * 2);
+  for (let i = 1; i <= degree; i++) { xy[i * 2] = 100 * Math.cos(i * Math.PI * 2 / degree); xy[i * 2 + 1] = 100 * Math.sin(i * Math.PI * 2 / degree); }
+  const f = await graduated(Array.from({ length: degree }, (_, i) => [0, i + 1] as [number, number]), degree + 1, 0, undefined, xy), { r, k } = f;
+  const saved = { stroke: ctx.stroke, moveTo: ctx.moveTo, beginPath: ctx.beginPath };
+  let segments = 0; const strokes: [number, number][] = [];
+  Object.assign(ctx, { beginPath: () => { segments = 0; }, moveTo: () => { segments++; }, stroke: () => { if (segments) strokes.push([ctx.globalAlpha, segments]); } });
+  try {
+    Object.assign(f.settings.visuals, { focusEdges: true, zoomAdapt: true });
+    f.tap(0); expect(r.selected).toBe(0); expect(r[k('directs')]).toHaveLength(degree);
+    r[k('focusLevel')] = 1; r[k('edgeQuiet')] = () => [0, 1]; r.atlas = undefined;
+    r[k('drawCanvas')](); expect(strokes).toHaveLength(1); expect(strokes[0]![1]).toBe(degree);
+    expect(strokes[0]![0]).toBeCloseTo(.95 / Math.sqrt(degree / 24), 12);
+    strokes.length = 0; f.settings.visuals.edgeOpacity = 0; r[k('drawCanvas')](); expect(strokes).toEqual([]);
+  } finally { Object.assign(ctx, saved); }
+});
+
+test('compiled overview admission is capped at eight shares and retained alpha has no close-zoom boost', async () => {
+  const { r, k, settings } = await graduated([[0, 1]], 2);
+  settings.visuals.zoomAdapt = true; r.visibleEdges = 10000;
+  r[k('ink')] = { display: r[k('display')], area: 1, length: 1, clipped: 1 };
+  for (const zoom of [.001, .125, .25, 1, 8]) {
+    r.camera.ratio = r[k('homeRatio')] * zoom;
+    const share = r[k('edgeQuiet')](1)[0], base = .2 / (10000 / r.scale);
+    expect(share).toBeCloseTo(Math.min(1, base * Math.max(1, Math.min(8, zoom * 8))), 12);
+    expect(share).toBeLessThanOrEqual(Math.min(1, base * 8));
+  }
+  r[k('edgeQuiet')] = () => [1, Infinity]; r.atlas = undefined;
+  const saved = ctx.stroke, alphas: number[] = []; ctx.stroke = () => alphas.push(ctx.globalAlpha);
+  try {
+    for (const zoom of [.05, .2, 1]) { r.camera.ratio = r[k('homeRatio')] * zoom; r[k('drawCanvas')](); }
+    expect(alphas).toHaveLength(3); expect(alphas[0]).toBe(alphas[1]); expect(alphas[1]).toBe(alphas[2]);
+  } finally { ctx.stroke = saved; }
+});
