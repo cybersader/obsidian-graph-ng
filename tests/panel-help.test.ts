@@ -18,16 +18,16 @@ test('one weighted build never regresses on repeated stages, revised totals or c
   const p = new BuildProgress(); p.start(); const seen: number[] = [];
   for (const [step, fraction] of [[0, 0], [0, .8], [0, .2], [1, 0], [2, .4], [0, 0], [2, .1], [3, 0], [4, 0]]) { p.text(step!, fraction); seen.push(p.percent); }
   expect(seen).toEqual([0, 24, 24, 30, 68, 68, 68, 95, 100]);
-  p.start(); expect(p.text(0)).toBe('Build 2: Reading notes 0%');
-  expect(p.text(2, .4)).toBe('Build 2: Laying out notes 68%');
+  p.start(); expect(p.text(0)).toBe('Reading notes 0%');
+  expect(p.text(2, .4)).toBe('Laying out notes 68%');
 });
 test('summary retains the same working glyph span through number and step updates', () => {
-  const f = fixture(); let stage = 'Build 1: Reading notes 10%'; f.host.loading = () => ({ stage }); f.panel.show('filters');
+  const f = fixture(); let stage = 'Reading notes 10%'; f.host.loading = () => ({ stage }); f.panel.show('filters');
   const span = f.panel.counts.querySelector('.graph-ng-working');
   f.panel.counts.empty = () => { throw new Error('Progress must stay connected during percentage and step updates'); };
-  stage = 'Build 1: Reading notes 20%'; f.panel.updateSummary(); expect(f.panel.counts.querySelector('.graph-ng-working')).toBe(span);
+  stage = 'Reading notes 20%'; f.panel.updateSummary(); expect(f.panel.counts.querySelector('.graph-ng-working')).toBe(span);
   expect(f.panel.counts.querySelector('.graph-ng-status-previous')).toBeUndefined();
-  stage = 'Build 1: Laying out notes 64%'; f.panel.updateSummary(); expect(f.panel.counts.querySelector('.graph-ng-working')).toBe(span);
+  stage = 'Laying out notes 64%'; f.panel.updateSummary(); expect(f.panel.counts.querySelector('.graph-ng-working')).toBe(span);
   expect(f.panel.counts.querySelector('.graph-ng-status-previous')).toBeDefined(); f.panel.dispose();
 });
 test('Filters relationships exposes the existing Lines and Notes save/rebuild action', async () => {

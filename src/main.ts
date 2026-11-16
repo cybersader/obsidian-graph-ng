@@ -771,13 +771,13 @@ export class GraphView extends ItemView {
     const revision = this.activeRevision, projection = this.projection, old = this.detailRenderer;
     const current = generationCurrent(() => [this.closed, this.activeRevision, this.projection, this.positions, this.plugin.settings.layout, canonical(this.plugin.settings.layout), this.renderRevision, this.detailRenderer, this.detailScope, this.visible, this.explored]);
     await this.plugin.serialize(async () => {
-      let token: CoordinateToken | undefined, finish: ((committed: boolean) => void) | undefined, committed = false, streamError: unknown;
+      let token: CoordinateToken | undefined, finish: ((committed: boolean) => void) | undefined, committed = false, working = false, streamError: unknown;
       const previousStream = this.plugin.pipeline.onPositions;
       const ready = () => current() && (!token || token.current());
       try {
         if (this.closed || !current() || !projection || this.detailGeneration !== revision || this.plugin.settings.projectionFile) throw new Error('Layout unavailable or generation changed');
         const next = physicsSettings(this.plugin.settings, values);
-        this.layoutWorking = true; (this.buildProgress ??= new BuildProgress()).start(); this.progressAt = 0; this.statusText = this.buildProgress.text(2);
+        this.layoutWorking = working = true; (this.buildProgress ??= new BuildProgress()).start(); this.progressAt = 0; this.statusText = this.buildProgress.text(2);
         finish = old?.beginLayout();
         this.plugin.pipeline.onPositions = event => {
           if (event.revision !== revision || !current() || streamError) { this.plugin.pipeline.recycle(event.positions.buffer as ArrayBuffer); return; }
@@ -798,7 +798,7 @@ export class GraphView extends ItemView {
       } finally {
         this.plugin.pipeline.onPositions = previousStream; token?.discard();
         try { finish?.(committed); }
-        finally { this.layoutWorking = false; this.statusText = this.provisional ? pendingText(this.report) : ''; }
+        finally { if (working) { this.layoutWorking = false; this.statusText = this.provisional ? pendingText(this.report) : ''; } }
       }
     });
   }

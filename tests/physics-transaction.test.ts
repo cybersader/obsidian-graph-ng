@@ -170,8 +170,8 @@ test('review: sizing invalidation during retained layout rebuilds labels on roll
 test('review: property promotion cannot erase active Apply progress', async () => {
   const f = await fixture(); f.view.groupGraph = {}; f.view.contentEl.dataset.state = 'ready';
   f.plugin.adapter = { [compiled('factsComplete')]: () => true, [compiled('linksPending')]: () => false, [compiled('pendingProperties')]: () => 0 };
-  f.view.layoutWorking = true; f.view.statusText = 'Build 2: Laying out notes 68%';
-  f.view[compiled('promoteProperties')](); expect(f.view.statusText).toBe('Build 2: Laying out notes 68%');
+  f.view.layoutWorking = true; f.view.statusText = 'Laying out notes 68%';
+  f.view[compiled('promoteProperties')](); expect(f.view.statusText).toBe('Laying out notes 68%');
 });
 test('review: committed expanded coordinates rebuild minimap bounds without moving camera frame', async () => {
   const f = await fixture(), r = f.renderer, frame = r[compiled('cameraFrame')], camera = { ...r.camera };
@@ -2020,4 +2020,60 @@ test('only note sheets fold beside tools; edge and path cards stay readable', as
   expect(root.textContent).toContain('Go to source');
   r[k('pathView')] = { from: 0, to: 2, hops: [], found: [], edges: [], note: 'No path' };
   r[k('showPath')](); r[k('placeOverlay')](); expect(root.dataset.folded).toBe('false'); expect(root.textContent).toContain('No path');
+});
+
+test('review regression: deleting a non-current Recent visit with the card closed does not render a missing node', async () => {
+  const { r, k } = await graduated([[0, 1], [1, 2]], 3);
+  [0, 1, 2].forEach(n => r[k('selectNote')](n, true));
+  r[k('selectNote')](-1); r[k('placeOverlay')]();
+  const chip: any = control(r[k('crumbTrail')].root, '0');
+  expect(() => chip.onkeydown!({ key: 'Delete', preventDefault() {}, stopPropagation() {} })).not.toThrow();
+  expect(r.card.history.items).toEqual([1, 2]); expect(r.card.history.at).toBe(1);
+  expect(r.card.node).toBe(-1); expect(r.selected).toBe(-1); expect(r[k('noteCard')].textContent).toBe('');
+  r[k('placeOverlay')](); control(r[k('crumbTrail')].root, '1').click();
+  expect(r.card.node).toBe(1); expect(r.selected).toBe(1);
+});
+
+test.each(['canvas keyboard', 'card keyboard', 'card buttons', 'Recent chips'])('review regression: retained Apply blocks %s before history mutation', async entry => {
+  const { r, k } = await graduated([[0, 1], [1, 2]], 3);
+  [0, 1, 2].forEach(n => r[k('selectNote')](n, true)); r.card.step(-1); r[k('placeOverlay')]();
+  const card = r[k('noteCard')], recent = r[k('crumbTrail')].root;
+  const finish = r.beginLayout(), camera = { ...r.camera };
+  try {
+    for (const step of [-1, 1]) {
+      const event = { key: step < 0 ? 'ArrowLeft' : 'ArrowRight', altKey: true, target: entry === 'canvas keyboard' ? r.canvas : card, preventDefault() {}, stopPropagation() {} };
+      if (entry === 'canvas keyboard') { r.canvas.focus(); r[k('keyDown')](event); }
+      else if (entry === 'card keyboard') card.onkeydown(event);
+      else if (entry === 'card buttons') control(card, step < 0 ? 'Back' : 'Forward').click();
+      else control(recent, step < 0 ? '0' : '2').click();
+      expect(r.card.history.at).toBe(1); expect(r.card.history.items).toEqual([0, 1, 2]);
+      expect(r.card.node).toBe(1); expect(r.selected).toBe(1); expect(r.camera).toEqual(camera);
+    }
+  } finally { finish(false); }
+  expect(r.card.step(-1)).toBe(true); expect(r.selected).toBe(0); expect(r.card.history.at).toBe(0);
+  expect(r.card.step(1)).toBe(true); expect(r.selected).toBe(1); expect(r.card.history.at).toBe(1);
+});
+
+test('review regression: Connections travel frames a collapsed member at its hub clear of the card', async () => {
+  const { r, k, settings } = await graduated([[0, 1], [1, 2]], 3);
+  settings.visuals.motion = 'off';
+  r.setView(new Uint8Array([1, 1, 1]), { groupCodes: new Uint32Array([0, 1, 1]), groupLabels: ['Start', 'Collapsed'], collapsed: new Uint8Array([0, 1]) });
+  r[k('selectNote')](0, true); r[k('placeOverlay')]();
+  expect(r.visible[1]).toBe(0); expect(r[k('filterVisible')][1]).toBe(1);
+  const row = r[k('noteCard')].querySelectorAll('button').find((b: any) => b.className === 'graph-ng-connection');
+  const camera = { ...r.camera }; row.click();
+  expect(r.card.node).toBe(1); expect(r.selected).toBe(1); expect(r.camera).not.toEqual(camera);
+  const hub = r[k('hubs')][0], [right, bottom] = r[k('cardInset')](), point = r.screenPoint(1);
+  expect(r[k('renderCoordinate')](1, 0)).toBe(hub.x); expect(r[k('renderCoordinate')](1, 1)).toBe(hub.y);
+  expect(point.x).toBeCloseTo((r.width - right) / 2, 5); expect(point.y).toBeCloseTo((r.height - bottom) / 2, 5);
+});
+
+test('review regression: rejected Apply preserves the previous refresh error and working state', async () => {
+  const f = await fixture(), status = 'Refresh failed: synthetic projection error', previousStream = () => {};
+  f.view.detailGeneration = -1; f.view.provisional = true; f.view.report = { linksPending: true };
+  f.view.statusText = status; f.plugin.pipeline.onPositions = previousStream;
+  const working = f.view.layoutWorking;
+  expect(await outcome(f.view[compiled('applyLayout')](values))).toContain('Layout unavailable or generation changed');
+  expect(f.view.statusText).toBe(status); expect(f.view.layoutWorking).toBe(working);
+  expect(f.plugin.pipeline.onPositions).toBe(previousStream); expect(f.requests()).toBe(0); expect(f.writes).toEqual([]);
 });

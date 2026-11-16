@@ -133,6 +133,8 @@ export interface CardHost {
   /** Whether the connection lens is open on this note; hosts without a lens omit it (no Lens action). */
   lensed?(n: number): boolean;
   act(action: CardAction, n: number): void;
+  /** Check before mutating history while the host suppresses semantic navigation. */
+  canTravel?(): boolean;
   travel(n: number): void;
   cue(n: number): void;
   /** Hubs only: light just these open sections' notes (undefined restores the whole hub), plus
@@ -215,6 +217,7 @@ export class ConnectionCard {
   hide() { this.setQuery(this.navQuery); if (this.node >= 0) this.host.disclose?.(this.node, undefined, []); this.node = -1; this.rows = []; this.size = undefined; this.lensToggle = this.more = undefined; this.navList = this.navInput = this.navStatus = undefined; this.navSections = []; this.root.textContent = ''; this.root.removeAttribute?.('aria-label'); }
   /** Back (-1) or forward (1) through visited notes, also from a closed card (the breadcrumb). */
   step(step: number) {
+    if (this.host.canTravel?.() === false) return true; // Consume the shortcut; do not fall through to directional selection.
     const n = this.history.go(step); if (n === undefined) return false;
     this.moving = true; try { this.go(n); } finally { this.moving = false; }
     return true;

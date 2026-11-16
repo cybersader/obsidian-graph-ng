@@ -508,7 +508,7 @@ export class DetailRenderer {
       const h = this.card.history;
       if (newer && h.at > index) this.card.step(index - h.at);
       else if (!newer && h.at === index) this.card.step(index ? -1 : 1);
-      trimHistory(h, index, newer); this.card.render(); this.refresh();
+      trimHistory(h, index, newer); if (this.card.node >= 0) this.card.render(); this.refresh();
       if (h.items.length < 2) this.canvas.focus();
     });
     this.panels = [stack, this.miniMap.root];
@@ -1239,6 +1239,7 @@ export class DetailRenderer {
       groups: n => { const names = new Map<number, string>(), name = (m: number) => names.get(m) ?? names.set(m, this.name(m)).get(m)!; return connectionGroups(n, this.edges, p, on, this.baseVisible, byInterest(this.interestOf(n), (a, b) => name(a).localeCompare(name(b)))); },
       isolated: () => !!this.isolation,
       frontier: n => this.frontier.get(n) ?? 0,
+      canTravel: () => !this.layoutActive && !this.view.loading,
       lensed: n => this.lensWanted >= 0 && this.lensWanted === n,
       act: (a, n) => this.cardAction(a, n),
       travel: n => { if (!this.layoutActive) this.travel(n); },
@@ -1683,7 +1684,7 @@ export class DetailRenderer {
   private updateLegend() { paintLegend(this.legendRows, this.legendCounts, this.tierMask, this.tierTotals); }
   /** Centre the note in measured free space, keeping zoom unless travel supplies a target. */
   private panTo(n: number, ratio = this.camera.ratio) {
-    if (n < 0 || !this.visible[n]) return;
+    if (n < 0 || !this.filterVisible[n]) return;
     this.centreOn(this.renderCoordinate(n, 0), this.renderCoordinate(n, 1), ratio, undefined, ...this.cardInset());
   }
   /** One expanding ring from the focus to its farthest direct connection (world reach, O(degree)). */
