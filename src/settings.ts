@@ -30,6 +30,8 @@ export interface Visuals {
   labelFade: boolean;
   /** Anchored names stay uniform and opaque; ranked preserves the graduated atlas. */
   labelStyle: 'anchored' | 'ranked';
+  /** Full animates briefly; reduced/off and the OS preference apply instant states. */
+  motion: 'full' | 'reduced' | 'off';
   cameraAnimationMs: number;
   glowMaxNodes: number;
   curvesMaxEdges: number;
@@ -87,7 +89,7 @@ export interface ExploreSettings { panelOpen: boolean; facetValues: number; lege
 export const defaultVisuals = (): Visuals => ({
   degreeSizing: 4, degreeCurve: 'sqrt', edgeOpacity: .4, edgeDensityReference: 3000, edgeColorMix: .65, edgeMode: 'all', edgeCompositing: 'blend', edgeDirection: false, glow: .3,
   curvedEdges: true, curvature: .12, curveSegments: 8, hoverHighlight: true, dimOpacity: .12, groupHalos: false, haloOpacity: .05,
-  autoPalette: true, labelFade: true, labelStyle: 'anchored', cameraAnimationMs: 450, glowMaxNodes: 250000, curvesMaxEdges: 60000, halosMaxGroups: 48, hubsMaxGroups: 256, softwareEffects: false,
+  autoPalette: true, labelFade: true, labelStyle: 'anchored', motion: 'full', cameraAnimationMs: 450, glowMaxNodes: 250000, curvesMaxEdges: 60000, halosMaxGroups: 48, hubsMaxGroups: 256, softwareEffects: false,
   carrierTint: true, carrierBridge: 'blend', carrierBridgeAccent: .35, carrierOpacity: .7, carrierSize: .6, carrierDensityReference: 8000, carrierLod: true, carrierLodNear: .3, carrierLodFar: .6, zoomAdapt: true, labelTierScale: 1.2, labelPlates: true,
   emphasis: 'adaptive', tierMinSize: 7, tierRings: true, focusEdges: true, offscreenPips: true, focusRipple: true, tierLegend: true, clickOpens: false, bridgesFirst: true, minimap: true, breadcrumb: true,
 });
@@ -109,6 +111,7 @@ export function validateVisuals(v: unknown): asserts v is Visuals {
   if (!EDGE_MODES.includes(o.edgeMode as EdgeMode)) throw new Error('visuals.edgeMode must be all, focus or off');
   if (o.edgeCompositing !== 'blend' && o.edgeCompositing !== 'density') throw new Error('visuals.edgeCompositing must be blend or density');
   if (o.labelStyle !== 'anchored' && o.labelStyle !== 'ranked') throw new Error('visuals.labelStyle must be anchored or ranked');
+  if (!['full', 'reduced', 'off'].includes(o.motion as string)) throw new Error('visuals.motion must be full, reduced or off');
   if (o.emphasis !== 'adaptive' && o.emphasis !== 'scale') throw new Error('visuals.emphasis must be adaptive or scale');
   if (o.carrierBridge !== 'blend' && o.carrierBridge !== 'source') throw new Error('visuals.carrierBridge must be blend or source');
   const { carrierSize: z, carrierLodNear: a, carrierLodFar: b } = o as Record<string, number>;

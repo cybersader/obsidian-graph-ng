@@ -126,6 +126,7 @@
     "autoPalette": true,
     "labelFade": true,
     "labelStyle": "anchored",
+    "motion": "full",
     "cameraAnimationMs": 450,
     "glowMaxNodes": 250000,
     "curvesMaxEdges": 60000,

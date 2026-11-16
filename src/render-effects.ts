@@ -214,9 +214,10 @@ export function carrierAlpha(v: Visuals, visibleCarriers: number, zoom: number):
   const density = thinning(v.carrierDensityReference, visibleCarriers), boost = Math.min(3, Math.max(1, 1 / Math.sqrt(Math.max(zoom, 1e-6))));
   return carrierVisibility(zoom, v.carrierLodNear, v.carrierLodFar, v.carrierLod) * Math.min(1, Math.max(.1, v.carrierOpacity * density * boost));
 }
-/** Hover preview of one node: ease-out to 1.6x over 150 ms with a ring breathing on a 1.2 s period,
- * back over 120 ms. Reduced motion is the static end state. Returns [scale, ring, another frame]. */
+/** Hover only: 150 ms ease-out, two gentle one-second breaths, then a static ring.
+ * Leave over 120 ms. Reduced/off is instant. Returns [scale, ring, another frame]. */
 export function hoverPulse(t: number, out: boolean, still: boolean): [number, number, boolean] {
-  const e = still ? 1 : Math.min(1, t / (out ? 120 : 150)), up = out ? (1 - e) ** 3 : 1 - (1 - e) ** 3;
-  return [1 + .6 * up, up * (still ? .5 : .42 + .12 * Math.sin(t * Math.PI / 600)), !still && (!out || e < 1)];
+  const e = still ? 1 : Math.min(1, Math.max(0, t) / (out ? 120 : 150)), up = out ? (1 - e) ** 3 : 1 - (1 - e) ** 3;
+  const breath = !still && !out && t > 150 && t < 2150 ? .04 * Math.sin((t - 150) * Math.PI / 500) : 0;
+  return [1 + .6 * up, up * (.5 + breath), !still && (out ? e < 1 : t < 2150)];
 }

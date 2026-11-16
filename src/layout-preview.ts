@@ -33,10 +33,12 @@ export class LayoutPreview {
     } catch (e) { this.recycle(positions); if (current()) this.failed(e); this.closed = true; }
     finally { this.starting = undefined; if (this.next) this.recycle(this.next); this.next = undefined; }
   }
-  async finish() {
+  /** Stop streams first; optionally hold the last painted preview until its replacement is ready. */
+  async finish(retain = false) {
     this.closed = true;
     if (this.next) this.recycle(this.next); this.next = undefined;
     await this.starting;
+    if (retain) return;
     this.renderer?.dispose(); if (this.renderer) this.recycle(this.renderer.positions);
     this.renderer = undefined;
   }

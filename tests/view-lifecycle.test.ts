@@ -491,6 +491,23 @@ test('choosing the displayed Group overview replaces fallback Notes intent', asy
   view.explorePanel.dispose();
 });
 
+test('final renderer replaces the retained preview only after create confirms its first paint', async () => {
+  const { GraphView } = await import('../src/main'), { DetailRenderer } = await import('../src/webgl-renderer');
+  const view: any = Object.create(GraphView.prototype), preview: any = Object.create(DetailRenderer.prototype);
+  let painted = false, disposed = 0, emptied = 0, release!: () => void;
+  Object.assign(preview, { canvas: { style: {} }, dispose() { expect(painted).toBe(true); disposed++; } });
+  const final: any = { fitAll() {}, syncTools() {} }, original = DetailRenderer.create;
+  Object.assign(view, { contentEl: { dataset: { state: 'ready', mode: 'nodes-building' } }, renderer: preview, detailRenderer: undefined,
+    projection: {}, positions: new Float32Array(2), visible: new Uint8Array([1]), colors: new Uint32Array(1), gpu: { available: true, reason: 'fixture' },
+    renderRevision: 1, plugin: { settings: {}, pipeline: {} }, app: {}, stage: { empty() { emptied++; } }, panel: { empty() {} },
+    contributionPage: { clear() {} }, rememberPresentation() {}, admitDetail: () => true, renderView: () => ({}), status: new ControlElement(), statusSummary: new ControlElement() });
+  DetailRenderer.create = async () => { await new Promise<void>(resolve => { release = resolve; }); painted = true; return final; };
+  try {
+    const pending = view.showDetails(); expect(disposed).toBe(0); expect(emptied).toBe(0); expect(preview.canvas.style.position).toBe('absolute');
+    release(); await pending; expect(disposed).toBe(1); expect(view.renderer).toBe(final); expect(view.contentEl.dataset.mode).toBe('nodes');
+  } finally { DetailRenderer.create = original; }
+});
+
 test('fallback summary uses compact on-demand help outside the information button and panel footprint', async () => {
   const { GraphView } = await import('../src/main'), { readFileSync } = await import('node:fs');
   const view: any = Object.create(GraphView.prototype), summary = new ControlElement();

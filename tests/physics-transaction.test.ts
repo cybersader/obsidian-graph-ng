@@ -56,7 +56,7 @@ const rendererStorage = { getItem() { if (rejectStorage) throw new Error('storag
 const rendererWindow = { devicePixelRatio: 1 };
 const module = { exports: {} as any };
 const obsidian = { ItemView: class {}, Menu: class {}, Plugin: class {}, PluginSettingTab: class {}, Setting: class {}, TFile: class {}, apiVersion: 'synthetic', Notice: class {}, setIcon: (el: any, icon: string) => { el.dataset ??= {}; el.dataset.icon = icon; el.icon = icon; } };
-vm.runInNewContext(source + `\n;module.exports.__renderer=${rendererName};`, { module, exports: module.exports, require: () => obsidian, console, structuredClone, setTimeout: fixtureTimeout, clearTimeout: clearFixtureTimeout, performance, TextEncoder, TextDecoder, MessageChannel, document, localStorage: rendererStorage, window: rendererWindow, devicePixelRatio: 1, getComputedStyle: () => ({ getPropertyValue: () => '' }), matchMedia: (query: string) => ({ matches: query.includes('prefers-reduced-motion') && fixtureReducedMotion, addEventListener() {}, removeEventListener() {} }), ResizeObserver: class { observe() {} disconnect() {} }, requestAnimationFrame: requestFrame, cancelAnimationFrame: cancelFrame }, { filename: 'production-main.js' });
+vm.runInNewContext(source + `\n;module.exports.__renderer=${rendererName};`, { module, exports: module.exports, require: () => obsidian, console, structuredClone, setTimeout: fixtureTimeout, clearTimeout: clearFixtureTimeout, performance, TextEncoder, TextDecoder, MessageChannel, document, localStorage: rendererStorage, window: rendererWindow, devicePixelRatio: 1, getComputedStyle: () => ({ getPropertyValue: () => '' }), matchMedia: (query: string) => ({ get matches() { return query.includes('prefers-reduced-motion') && fixtureReducedMotion; }, addEventListener() {}, removeEventListener() {} }), ResizeObserver: class { observe() {} disconnect() {} }, requestAnimationFrame: requestFrame, cancelAnimationFrame: cancelFrame }, { filename: 'production-main.js' });
 const GraphPlugin = module.exports.default, GraphView = module.exports.GraphView, Renderer = module.exports.__renderer;
 const mangle = JSON.parse(readFileSync(new URL('../.workspace/evidence/main-mangle-cache.json', import.meta.url), 'utf8'));
 const compiled = (name: string) => { const key = mangle[name]; if (typeof key !== 'string') throw new Error(`Production mapping missing: ${name}`); return key; };
@@ -1457,7 +1457,7 @@ test('hover pulse: only the hovered note grows and rings, the graph is untouched
   const arcs: number[][] = [], arc = ctx.arc; ctx.arc = (x: number, y: number, a: number) => arcs.push([x, y, a]);
   try {
     draw(); const plain = arcs.splice(0);
-    // Hover: only that note eases up; breathing keeps frames coming while the pointer rests.
+    // Hover: only that note eases up; two breaths finish even while the pointer rests.
     f.hover(2); expect(r.hovered).toBe(2); draw(); expect(fx().n).toBe(2); expect(scale()).toBeLessThan(1.1); expect(frameCallbacks.size).toBe(1);
     fx().at -= 150; arcs.length = 0; draw(); expect(scale()).toBeCloseTo(1.6, 2); expect(radius(2)).toBeGreaterThanOrEqual(rest * 1.6 - 1e-6); expect(radius(1)).toBe(other);
     const p = r.screenPoint(2), q = r.screenPoint(1); expect(r.pick(p.x + rest * 1.45 + 4, p.y)).toBe(2);
@@ -1465,6 +1465,7 @@ test('hover pulse: only the hovered note grows and rings, the graph is untouched
     const at = (a: number[], s: { x: number; y: number }) => a[0] === s.x && a[1] === s.y;
     expect(arcs.filter(a => !at(a, p))).toEqual(plain.filter(a => !at(a, p))); expect(arcs.filter(a => at(a, p)).length).toBe(plain.filter(a => at(a, p)).length + 1); expect(arcs.some(a => at(a, q))).toBe(true);
     expect(JSON.stringify([f.actual(), r[k('focusNode')], r.selected, [...r[k('colorBytes')]], r.camera])).toBe(graph);
+    fx().at -= 2150; draw(); expect(frameCallbacks.size).toBe(0); expect(r[k('fx')]).toEqual([1.6, .5]);
     // Leave: eases back down, then the loop stops.
     r[k('pointerLeave')](); draw(); expect(fx().out).toBe(true); expect(frameCallbacks.size).toBe(1);
     fx().at -= 120; draw(); expect(fx().n).toBe(-1); expect(scale()).toBe(1); expect(frameCallbacks.size).toBe(0); expect(radius(2)).toBe(rest);

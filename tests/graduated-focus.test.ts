@@ -1,4 +1,5 @@
 import { test, expect, afterAll } from 'bun:test';
+import './support/motion-regressions';
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { focusTiers, incidentEdges, tierNode, tierEdge, tierLabel } from '../src/render-data';
 import { focusLabels } from '../src/render-labels';
@@ -168,11 +169,12 @@ test('graduated tiers in Nodes display: relationship-note dots from a real proje
     if (reifiedAsNodes) expect(r.tiers[at('x.md')]).toBe(D);
   }
 });
-test('hover pulse maths: 150 ms ease-out to 1.6x, gentle 1.2 s breathing ring, 120 ms ease back, static under reduced motion', () => {
+test('hover pulse maths: 150 ms ease-out to 1.6x, two gentle one-second breaths then zero frames, 120 ms ease back, static under reduced motion', () => {
   expect(hoverPulse(0, false, false)[0]).toBe(1); expect(hoverPulse(150, false, false)[0]).toBeCloseTo(1.6, 9); expect(hoverPulse(9999, false, false)[0]).toBeCloseTo(1.6, 9);
   let last = 1; for (let t = 10; t <= 150; t += 10) { const s = hoverPulse(t, false, false)[0]; expect(s).toBeGreaterThan(last); last = s; }
   expect(hoverPulse(75, false, false)[0]).toBeGreaterThan(1.3); // ease-out: most of the growth comes early
-  for (let t = 150; t < 2400; t += 37) { const [, ring, more] = hoverPulse(t, false, false); expect(ring).toBeGreaterThanOrEqual(.3); expect(ring).toBeLessThanOrEqual(.54); expect(more).toBe(true); expect(hoverPulse(t + 1200, false, false)[1]).toBeCloseTo(ring, 9); }
+  for (let t = 150; t < 2150; t += 37) { const [, ring, more] = hoverPulse(t, false, false); expect(ring).toBeGreaterThanOrEqual(.46); expect(ring).toBeLessThanOrEqual(.54); expect(more).toBe(true); }
+  for (const t of [2150, 10000, 60000]) expect(hoverPulse(t, false, false)).toEqual([1.6, .5, false]);
   expect(hoverPulse(0, true, false)[0]).toBe(1.6); expect(hoverPulse(60, true, false)[0]).toBeLessThan(1.2); expect(hoverPulse(120, true, false)).toEqual([1, 0, false]);
   expect(hoverPulse(0, false, true)).toEqual([1.6, .5, false]); expect(hoverPulse(5000, false, true)).toEqual([1.6, .5, false]); expect(hoverPulse(0, true, true)).toEqual([1, 0, false]);
 });

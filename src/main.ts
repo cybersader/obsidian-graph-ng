@@ -539,7 +539,7 @@ export class GraphView extends ItemView {
       try { layout = await this.plugin.pipeline.request<LayoutResult>(revision, { kind: 'layout' }); }
       catch (error) { if (String(error).includes('Saved identities')) { await this.plugin.store.quarantine(result.meta); } throw error; }
       if (!current()) return;
-      await preview.finish();
+      await preview.finish(true);
       if (!current()) return;
       this.positions = layout.positions;
       this.cacheTrace.push({ expected: result.meta.key, stored: layout.stored, nodes: result.nodes, ...coverage, valid: layout.cached }); if (this.cacheTrace.length > 16) this.cacheTrace.shift();
@@ -964,12 +964,16 @@ export class GraphView extends ItemView {
       if (this.gpu.reason === 'Not probed') this.gpu = await this.plugin.pipeline.request<typeof this.gpu | undefined>(this.activeRevision, { kind: 'gpu' }) ?? gpuStatus();
       if (renderRevision !== this.renderRevision || this.closed) return;
       if (!this.admitDetail(bits)) { this.showGroups(true); return; }
-      this.renderer?.dispose(); this.stage.empty(); if (clearPanel) { this.contributionPage.clear(); this.panel.empty(); }
+      const preview = this.renderer instanceof DetailRenderer && this.renderer !== this.detailRenderer ? this.renderer : undefined;
+      if (preview) preview.canvas.style.position = 'absolute';
+      else { this.renderer?.dispose(); this.stage.empty(); }
+      if (clearPanel) { this.contributionPage.clear(); this.panel.empty(); }
       this.detailRenderer = await DetailRenderer.create(this.stage, this.projection, this.positions, bits, this.plugin.settings, i => this.openPath(renderPath(this.projection!, i)), () => this.toGroups(), this.colors!, () => renderRevision === this.renderRevision, !this.gpu.available, () => {
         if (renderRevision !== this.renderRevision || this.closed) return;
         this.gpu = { available: false, reason: 'WebGL context could not be restored' };
         this.showGroups(); void this.showDetails(bits, clearPanel);
       }, this.renderView());
+      preview?.dispose();
       this.renderer = this.detailRenderer; this.contentEl.dataset.mode = 'nodes'; this.detailFallback = ''; this.statusText = this.statusText;
       const detailGeneration = this.detailGeneration;
       this.detailRenderer.describeEdges = edges => this.plugin.pipeline.request(detailGeneration, { kind: 'relationships', edges });

@@ -261,7 +261,6 @@ interface Camera { x: number; y: number; ratio: number }
 /** Runtime view masks from the worker's explore result; colors stay worker-computed. */
 export interface RenderView { loading?: boolean; groupCodes?: Uint32Array; groupLabels?: readonly string[]; collapsed?: Uint8Array; typeHidden?: Uint8Array; colors?: Uint32Array }
 interface Hub { group: number; x: number; y: number; count: number; radius: number }
-const reducedMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /** Draw directly from projection columns. Camera frames touch uniforms only. */
 export class DetailRenderer {
@@ -310,6 +309,9 @@ export class DetailRenderer {
   /** Direct connections the label layout ranked (the "+N more" total before shown labels). */
   private moreTotal = 0;
   private media = matchMedia('(prefers-color-scheme: dark)');
+  private motionMedia = matchMedia('(prefers-reduced-motion: reduce)');
+  private still() { return this.settings.visuals.motion !== 'full' || this.motionMedia.matches; }
+  private motionChanged = () => this.refresh();
   private programs: Program[] = [];
   private vaos: WebGLVertexArrayObject[] = [];
   private buffers: WebGLBuffer[] = [];
@@ -377,6 +379,7 @@ export class DetailRenderer {
   private focusLevel = 0;
   private focusTarget = 0;
   private focusAt = 0;
+  private focusFrom = 0;
   private flight?: { from: Camera; to: Camera; start: number; ms: number };
   private halos: Halo[] = [];
   private hubs: Hub[] = [];
@@ -456,11 +459,12 @@ export class DetailRenderer {
     let renderer: DetailRenderer | undefined;
     try {
       renderer = new DetailRenderer(container, p, positions, visible, settings, onNode, onZoomOut, colors, software, onUnavailable, view);
+      renderer.canvas.style.visibility = 'hidden';
       await renderer.initialize();
       if (!current()) throw new Error('Renderer superseded');
       await renderer.prepareLabels(current);
       if (!current()) throw new Error('Renderer superseded');
-      renderer.refresh(); return renderer;
+      renderer.draw(); renderer.canvas.style.visibility = ''; return renderer;
     } catch (error) {
       if (renderer) renderer.dispose();
       else for (const canvas of container.querySelectorAll('canvas')) { canvas.getContext('webgl2')?.getExtension('WEBGL_lose_context')?.loseContext(); canvas.remove(); }
@@ -510,6 +514,7 @@ export class DetailRenderer {
     this.canvas.addEventListener('webglcontextlost', this.contextLost); this.canvas.addEventListener('webglcontextrestored', this.contextRestored);
     if (!view.loading) input.attach(this.container);
     this.media.addEventListener('change', this.refreshTheme);
+    this.motionMedia.addEventListener('change', this.motionChanged);
     this.observer = new ResizeObserver(() => { const changed = this.resize(); this.syncTools(); if (changed && this.ready) void this.prepareLabels(() => !this.disposed).catch(() => {}); }); this.observer.observe(container);
     this.panelObserver = new ResizeObserver(() => { if (this.measurePanels()) this.refresh(); }); for (const el of this.panels) this.panelObserver.observe(el);
   }
@@ -898,7 +903,7 @@ export class DetailRenderer {
   /** Eased camera transition; honors reduced motion and the configured duration. */
   flyTo(x: number, y: number, ratio: number, ms = this.settings.visuals.cameraAnimationMs) {
     if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(ratio)) throw new Error('CAMERA_NONFINITE');
-    if (ms <= 0 || reducedMotion()) { this.setCamera(x, y, ratio); return; }
+    if (ms <= 0 || this.still()) { this.setCamera(x, y, ratio); return; }
     this.flight = { from: { ...this.camera }, to: { x, y, ratio: this.clampRatio(ratio) }, start: performance.now(), ms }; this.refresh();
   }
   /** Frame a world-space box (nodes, a group or everything) with margin, inside the view less a
@@ -958,7 +963,7 @@ export class DetailRenderer {
     if (!this.visible[node]) node = -1;
     if (node === this.lensWanted) return;
     const now = performance.now();
-    if (this.lensMotion) this.lensBlend = lensAmount(this.lensMotion.from, this.lensMotion.to, now - this.lensMotion.start, 220, reducedMotion());
+    if (this.lensMotion) this.lensBlend = lensAmount(this.lensMotion.from, this.lensMotion.to, now - this.lensMotion.start, 220, this.still());
     this.lensWanted = node;
     // A different target first returns the old ring, then opens the new one. Rapid toggles
     // reverse from the current amount rather than snapping or leaking old overrides.
@@ -971,7 +976,7 @@ export class DetailRenderer {
   }
   private animateLens(now: number): boolean {
     const motion = this.lensMotion; if (!motion) return false;
-    this.lensBlend = lensAmount(motion.from, motion.to, now - motion.start, 220, reducedMotion());
+    this.lensBlend = lensAmount(motion.from, motion.to, now - motion.start, 220, this.still());
     if (this.lensBlend !== motion.to) return true;
     this.lensMotion = undefined;
     if (!motion.to) {
@@ -979,7 +984,7 @@ export class DetailRenderer {
       this.lensWanted = this.lensAnchor; this.rebuildLens(); this.emphasize(); this.lensChanged();
       if (this.lensAnchor >= 0) {
         this.lensMotion = { from: 0, to: 1, start: now };
-        return reducedMotion() ? this.animateLens(now) : true;
+        return this.still() ? this.animateLens(now) : true;
       }
     }
     return false;
@@ -1153,8 +1158,8 @@ export class DetailRenderer {
       if (edges) this.tierTotals[0] = this.near.filter(n => !notes[n]).length;
       this.directs = this.near.filter(n => n !== this.focusNode && s[n * 4 + 1] === 255 && !notes[n]); this.updateLegend();
     }
-    this.focusTarget = this.near.length ? 1 : 0; this.focusAt = performance.now();
-    if (immediate) this.focusLevel = this.focusTarget;
+    this.focusFrom = this.focusLevel; this.focusTarget = this.near.length ? 1 : 0; this.focusAt = performance.now();
+    if (immediate || this.still()) this.focusLevel = this.focusTarget;
   }
   private noteCaption(n: number) { return this.path(n).split('/').pop()!.replace(/\.md$/, '') + (n === this.focusNode ? (this.tierPartial & 1 ? ' (neighbours of neighbours truncated)' : '') + (this.tierPartial & 2 ? ' (same group truncated)' : '') : ''); }
   /** Selection drives the persistent focus. Touch and keyboard selections show the card; only its
@@ -1367,20 +1372,20 @@ export class DetailRenderer {
   private animate(now: number) {
     let more = this.animateLens(now);
     if (this.flight) {
-      const f = this.flight, t = Math.min(1, (now - f.start) / f.ms), e = easeInOut(t);
+      const f = this.flight, t = this.still() ? 1 : Math.min(1, (now - f.start) / f.ms), e = easeInOut(t);
       this.camera.x = f.from.x + (f.to.x - f.from.x) * e; this.camera.y = f.from.y + (f.to.y - f.from.y) * e;
       this.camera.ratio = Math.exp(Math.log(f.from.ratio) + (Math.log(f.to.ratio) - Math.log(f.from.ratio)) * e);
-      if (t >= 1) this.flight = undefined; else more = true;
+      if (t >= 1) { Object.assign(this.camera, f.to); this.flight = undefined; } else more = true;
     }
-    if (this.ripple) { if (now - this.ripple.start >= RIPPLE_MS) this.ripple = undefined; else more = true; }
+    if (this.ripple) { if (this.still() || now - this.ripple.start >= RIPPLE_MS) this.ripple = undefined; else more = true; }
     // O(1) per frame; frames are requested only while the preview moves.
     const h = this.hovered, x = this.hoverFx;
     if (h >= 0 ? h !== x.n || x.out : x.n >= 0 && !x.out) Object.assign(x, h >= 0 ? { n: h, out: false } : { out: true }, { at: now });
-    const [grow, ring, next] = x.n < 0 ? [1, 0, false] : hoverPulse(now - x.at, x.out, reducedMotion()); this.fx = [grow, ring];
+    const [grow, ring, next] = x.n < 0 ? [1, 0, false] : hoverPulse(now - x.at, x.out, this.still()); this.fx = [grow, ring];
     if (x.out && !next) x.n = -1; more ||= next;
     if (this.focusLevel !== this.focusTarget) {
-      const step = (now - this.focusAt) / (reducedMotion() ? 1 : 140); this.focusAt = now;
-      this.focusLevel = this.focusTarget > this.focusLevel ? Math.min(1, this.focusLevel + step) : Math.max(0, this.focusLevel - step);
+      const t = this.still() ? 1 : Math.min(1, Math.max(0, (now - this.focusAt) / 220));
+      this.focusLevel = this.focusFrom + (this.focusTarget - this.focusFrom) * easeInOut(t);
       more ||= this.focusLevel !== this.focusTarget;
     }
     return more;
@@ -1606,7 +1611,7 @@ export class DetailRenderer {
   /** One expanding ring from the focus to its farthest direct connection (world reach, O(degree)). */
   private startRipple(n: number) {
     const v = this.settings.visuals; this.ripple = undefined;
-    if (n < 0 || n !== this.focusNode || !v.focusRipple || !v.hoverHighlight || !this.directs.length || reducedMotion()) return;
+    if (n < 0 || n !== this.focusNode || !v.focusRipple || !v.hoverHighlight || !this.directs.length || this.still()) return;
     let reach = 0; const fx = this.renderCoordinate(n, 0), fy = this.renderCoordinate(n, 1);
     for (const d of this.directs) reach = Math.max(reach, Math.hypot(this.renderCoordinate(d, 0) - fx, this.renderCoordinate(d, 1) - fy));
     this.ripple = { start: performance.now(), reach };
@@ -1780,7 +1785,7 @@ export class DetailRenderer {
     void this.initialize().then(() => { if (!this.disposed && !this.lost) this.canvas.dataset.context = 'restored'; }).catch(() => { if (!this.disposed) { this.canvas.dataset.context = 'failed'; this.onUnavailable(); } });
   };
   dispose() { clearTimeout(this.sizingTimer);
-    if (this.disposed) return; this.disposed = true; this.labelsRevision++; clearTimeout(this.restoreTimer); this.restoreTimer = undefined; cancelAnimationFrame(this.frameId); clearTimeout(this.frameTimer); this.frameTimer = undefined; this.observer.disconnect(); this.panelObserver?.disconnect(); this.media.removeEventListener('change', this.refreshTheme);
+    if (this.disposed) return; this.disposed = true; this.labelsRevision++; clearTimeout(this.restoreTimer); this.restoreTimer = undefined; cancelAnimationFrame(this.frameId); clearTimeout(this.frameTimer); this.frameTimer = undefined; this.observer.disconnect(); this.panelObserver?.disconnect(); this.media.removeEventListener('change', this.refreshTheme); this.motionMedia.removeEventListener('change', this.motionChanged);
     this.input.detach(this.container); this.limitChip.stop(); disposeSearch(this.canvas); this.miniMap.dispose();
     this.canvas.removeEventListener('webglcontextlost', this.contextLost); this.canvas.removeEventListener('webglcontextrestored', this.contextRestored);
     const gl = this.gl; if (gl && !this.lost) { gl.deleteFramebuffer(this.densityBuffer); for (const p of this.programs) gl.deleteProgram(p.handle); for (const b of [...this.buffers, ...this.labelBuffers, ...this.discBuffers]) if (b) gl.deleteBuffer(b); for (const v of [...this.vaos, ...this.labelVaos]) gl.deleteVertexArray(v); for (const t of this.textures) gl.deleteTexture(t); }
