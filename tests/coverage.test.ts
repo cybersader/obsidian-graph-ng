@@ -1,4 +1,5 @@
 import { test, expect } from 'bun:test';
+import { readFileSync } from 'node:fs';
 import './support/obsidian-fixture';
 import { ControlElement } from './support/controls-dom';
 import { buildProjection, type FactRow } from '../src/core/projection';
@@ -172,8 +173,8 @@ test('relationship display has one explicit save/rebuild switch, separate from s
   const warning = host.querySelector('.graph-ng-stat-warning');
   expect(warning.textContent).toContain('Filtered relationship notes4');
   expect(warning.textContent).toContain('Hidden where kind exists');
-  const remove = warning.querySelector('button'); expect(remove.textContent).toBe('Remove “kind is missing” filter');
-  expect(warning.children.indexOf(remove)).toBeLessThan(warning.children.findIndex((c: any) => c.querySelector('.graph-ng-help-trigger')));
+  const remove = warning.querySelector('.graph-ng-stat-remove'); expect(remove.getAttribute('aria-label')).toBe('Remove “kind is missing” filter');
+  expect(remove.textContent).toBe(''); expect(warning.querySelector('.graph-ng-help-popover').hidden).toBe(true);
   expect(host.textContent).not.toMatch(/reveals|would be/);
   show.click(); remove.click(); expect(calls).toEqual([['display', true], ['remove', 0]]);
   // Drawn as notes: they are dots now, the switch offers lines back, and the warning says they are hidden.
@@ -268,10 +269,13 @@ test('filter actions use predicates, not complementary hidden labels or affected
   const warnings = host.querySelectorAll('.graph-ng-stat-warning');
   const names = ['kind is missing', 'rank exists', 'In folder Synthetic', 'note.rank > 2'];
   warnings.forEach((w: any, i: number) => {
-    const row = w.querySelector('.graph-ng-stat'), action = w.querySelectorAll('button').find((b: any) => b.textContent === `Remove “${names[i]}” filter`);
+    const row = w.querySelector('.graph-ng-stat-label'), action = w.querySelector('.graph-ng-stat-remove');
+    expect(action.getAttribute('aria-label')).toBe(`Remove “${names[i]}” filter`);
     expect(row.getAttribute('aria-label')).toBe(`Edit “${names[i]}” filter`); row.click();
     expect(calls.at(-1)).toEqual(['filter', i]); action.click(); expect(calls.at(-1)).toEqual(['remove', i]);
-    expect(w.querySelector('.graph-ng-help-trigger').textContent).toBe(`Hidden ${hiddenClause(filters[i]!).text}`);
+    expect(w.querySelector('.graph-ng-help-trigger').getAttribute('aria-label')).toBe(`About “${names[i]}” filter`);
+    expect(w.querySelector('.graph-ng-help-trigger').textContent).toBe('');
+    expect(w.querySelector('.graph-ng-help-popover').textContent).toContain(`Hidden ${hiddenClause(filters[i]!).text}`);
     expect(w.querySelector('.graph-ng-help-popover').hidden).toBe(true);
   });
   expect(host.textContent).not.toMatch(/reveals|would be| · /);
@@ -286,7 +290,7 @@ test('information restores open help without replacing its primary action with e
   const warning = () => host.querySelector('.graph-ng-stat-warning'), help = () => warning().querySelector('.graph-ng-help-trigger'), tip = () => warning().querySelector('.graph-ng-help-popover');
   help().focus(); help().onfocus(); expect(tip().hidden).toBe(false); render();
   expect(tip().hidden).toBe(false); expect(ControlElement.active).toBe(help());
-  expect(warning().children[1].textContent).toBe('Remove “kind is missing” filter');
+  expect(warning().querySelector('.graph-ng-stat-remove').getAttribute('aria-label')).toBe('Remove “kind is missing” filter');
   tip().ontoggle({ newState: 'closed' }); expect(tip().hidden).toBe(true);
   ControlElement.active = undefined; render(); expect(tip().hidden).toBe(true);
 });
@@ -308,4 +312,28 @@ test('pending target diagnostics remain provisional and issues never claim no is
   host.querySelectorAll('button').find((b: any) => b.textContent === 'Inspect duplicate IDs2').click(); expect(calls).toEqual(['duplicates']);
   host.querySelectorAll('button').find((b: any) => b.textContent === 'Inspect pending targets1').click();
   for (const id of ['edges', 'missing']) expect(host.querySelectorAll('details').find((s: any) => s.dataset.info === id).open).toBe(true);
+});
+
+test('attention rows share the information grid without a box or expanded explanation', () => {
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+  expect(css).not.toMatch(/\.graph-ng-stat-warning \{/);
+  expect(css).toContain('.graph-ng-status .graph-ng-stat { grid-template-columns:16px minmax(0,1fr) auto var(--gng-row-h); }');
+  expect(css).toContain('.graph-ng-stat-remove { width:var(--gng-row-h); padding:var(--gng-space-1); }');
+  const rows = vault(), p = buildProjection(rows, d), filters = [{ kind: 'exists' as const, key: 'kind' }, { kind: 'folder' as const, prefix: ['Synthetic'] }];
+  const e = { ...explore(p, d, { ...emptyView(), filters }, new Uint32Array(p.paths.length), 0, { facetValues: 50 }), carrierHidden: [3, 1] };
+  const report: InformationReport = { nodes: p.paths.length, edges: p.source.length, listed: rows.length, linksPending: false, provisional: false, unresolved: 0, duplicates: 0 };
+  const host: any = new ControlElement();
+  host.ownerDocument = { get activeElement() { return ControlElement.active; } };
+  const calls: number[] = [], render = () => renderInformation(host, '', 'ready', report, e, { remove: i => calls.push(i) }); render();
+  const warnings = () => host.querySelectorAll('.graph-ng-stat-warning');
+  expect(warnings()).toHaveLength(2);
+  warnings().forEach((row: any) => {
+    expect(row.classes.has('graph-ng-stat')).toBe(true); expect(row.parentElement).toBe(host);
+    expect(row.children.map((c: any) => [...c.classes][0])).toEqual(['graph-ng-stat-icon', 'graph-ng-stat-label', 'graph-ng-count', 'clickable-icon']);
+    expect(row.querySelector('.graph-ng-stat-label').textContent).toBe('Filtered relationship notes');
+    expect(row.querySelector('.graph-ng-help-popover').hidden).toBe(true);
+  });
+  warnings()[1].querySelector('.graph-ng-stat-remove').focus(); render();
+  expect(ControlElement.active).toBe(warnings()[1].querySelector('.graph-ng-stat-remove'));
+  ControlElement.active!.click(); expect(calls).toEqual([1]); ControlElement.active = undefined;
 });

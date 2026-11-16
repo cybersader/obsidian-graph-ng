@@ -93,6 +93,7 @@ function partRows(host: HTMLElement, parts: Part[], r: InformationReport, act: I
   }
 }
 const informationState = new WeakMap<HTMLElement, Map<string, boolean>>();
+const pendingHelp = (host: HTMLElement) => panelHelp(host, 'Source checks pending', 'Provisional: targets may resolve as properties and Obsidian links load.');
 /** Preserve semantic disclosures, focus, open help and scroll through asynchronous updates. */
 export function renderInformation(host: HTMLElement, message: string, state: string | undefined, r?: InformationReport, view?: Explored, act: InformationActions = {}, loading?: { indexed?: number; listed?: number }) {
   const opened = informationState.get(host) ?? new Map<string, boolean>(); informationState.set(host, opened);
@@ -117,7 +118,7 @@ function renderBody(host: HTMLElement, message: string, state: string | undefine
     }
     statRow(host, 'timer', 'Layout', r?.layout ? layoutText(r.layout) : r?.progress ? layoutProgress(r.progress) : 'Waiting for graph');
     if (r) statRow(host, 'spline', 'Relationship notes', r.relationshipNodes ? 'Notes' : 'Lines');
-    panelHelp(host, 'Source checks pending', 'Checks are provisional until properties and links finish loading. Missing targets may still resolve.');
+    pendingHelp(host);
     return;
   }
   if (!r) return;
@@ -137,14 +138,16 @@ function renderBody(host: HTMLElement, message: string, state: string | undefine
   };
   e?.carrierHidden?.forEach((hidden, i) => {
     if (!hidden) return;
-    const f = e.filters[i]!, name = filterSummary(f).text, warn = host.createDiv({ cls: 'graph-ng-stat-warning' });
-    statRow(warn, 'filter', 'Filtered relationship notes', n(hidden), '', act.filter && (() => act.filter!(i))).setAttribute('aria-label', `Edit “${name}” filter`);
-    if (act.remove) warn.createEl('button', { text: `Remove “${name}” filter` }).onclick = () => act.remove!(i);
-    panelHelp(warn, `Hidden ${hiddenClause(f).text}`, 'These relationship notes do not pass the active filter, even when displayed as notes. Removing this filter leaves other filters and hidden groups unchanged.');
+    const f = e.filters[i]!, name = `“${filterSummary(f).text}” filter`, row = host.createDiv({ cls: 'graph-ng-stat graph-ng-stat-warning' });
+    const tip = panelHelp(row, '', `Hidden ${hiddenClause(f).text}. Other filters and hidden groups still apply after removal.`, 'graph-ng-stat-icon');
+    const help = tip.parentElement!.querySelector('button')!; help.setAttribute('aria-label', `About ${name}`); setIcon(help, 'filter');
+    const edit = row.createEl(act.filter ? 'button' : 'span', { cls: 'graph-ng-stat-label', text: 'Filtered relationship notes', attr: { 'aria-label': `Edit ${name}` } });
+    edit.onclick = () => act.filter?.(i); countSpan(row, hidden);
+    if (act.remove) { const remove = row.createEl('button', { cls: 'clickable-icon graph-ng-stat-remove', attr: { 'aria-label': `Remove ${name}` } }); setIcon(remove, 'x'); remove.onclick = () => act.remove!(i); }
   });
   if (r.duplicates) statRow(host, 'copy', 'Inspect duplicate IDs', n(r.duplicates), '', act.duplicates);
   if (r.unresolved) statRow(host, 'unlink', r.linksPending ? 'Inspect pending targets' : 'Inspect missing targets', n(r.unresolved), '', () => reveal('missing'));
-  if (r.linksPending) panelHelp(host, 'Source checks pending', 'Missing targets may still resolve while Obsidian links load. These checks are provisional.');
+  if (r.linksPending) pendingHelp(host);
   else if (!r.duplicates && !r.unresolved) statRow(host, 'check', 'Source checks', 'No issues found');
   const notes = section('notes', 'files', 'Note accounting', n(a.total), 'graph-ng-coverage');
   partRows(notes, a.parts, r, act); statRow(notes, 'files', 'Markdown notes in vault', n(a.total), 'graph-ng-stat-total');
@@ -156,7 +159,7 @@ function renderBody(host: HTMLElement, message: string, state: string | undefine
     const nodes = !!r.relationshipNodes, display = section('display', 'spline', 'Relationship display', nodes ? 'Notes' : 'Lines');
     for (const [rule, count] of Object.entries(r.ruleNotes!)) statRow(display, nodes ? 'circle-dot' : 'spline', `${rule} relationship notes`, n(count));
     if (act.display) display.createEl('button', { text: `Show relationships as ${nodes ? 'lines' : 'notes'} (save and rebuild)` }).onclick = () => act.display!(!nodes);
-    panelHelp(display, 'Lines / Notes', 'Lines connect the endpoints; Notes show relationship notes as dots. Changing display saves the setting and rebuilds the graph, without removing filters.');
+    panelHelp(display, 'Lines / Notes', 'Lines join endpoints; Notes draw dots. Changing display saves and rebuilds; filters stay active.');
   }
   const layout = section('layout', 'timer', 'Layout', r.layout?.cached || r.layout?.reused ? 'Reused' : r.layout ? 'Computed' : 'Pending');
   layout.createDiv({ text: r.layout ? layoutText(r.layout) : r.progress ? layoutProgress(r.progress) : 'Waiting for graph' });
