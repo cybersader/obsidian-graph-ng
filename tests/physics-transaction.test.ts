@@ -1327,8 +1327,9 @@ test('review: a failed Back-to detail attempt consumes pending focus before any 
   const setFocus = () => { view[compiled('pendingFocus')] = { projection: view.projection, node: 2, lens: true }; };
   setFocus(); view.positions = undefined; await view.showDetails(); expect(view[compiled('pendingFocus')]).toBeUndefined();
   view.positions = new Float32Array(6); view.gpu = { available: false, reason: 'synthetic refusal' };
-  view[compiled('admitDetail')] = () => false; setFocus();
+  view[compiled('admitDetail')] = () => false; setFocus(); let saves = 0; view.app = { ...view.app, workspace: { ...view.app?.workspace, requestSaveLayout: () => { saves++; } } };
   await view.showDetails(); expect(view[compiled('pendingFocus')]).toBeUndefined();
+  expect(view.getState()).toEqual({ presentation: 'groups' }); expect(saves).toBe(1);
 });
 
 test('review: travel, clamped framing and Fit all centre in the unobscured stage', async () => {
