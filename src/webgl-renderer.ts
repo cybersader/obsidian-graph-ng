@@ -150,6 +150,8 @@ void main() {
  int s = int(source), t = int(target); seed = uint(gl_InstanceID);
  uint tier = tierByte == 253u ? 255u : tierByte > 200u ? ((tierMask & 1) != 0 ? tierByte : 0u) : tierByte > 0u && (tierMask & 4) != 0 ? tierByte : 0u;
  tint = vec4(0.);
+ // Density pass 2 takes only context; pass 3 preserves all protected strokes verbatim.
+ if (layer > 1 && (layer == 2) == (tier > 0u && focus > 0. || gl_InstanceID == edgeHovered)) { gl_Position = offscreen; return; }
  // The length fade can only reduce this upper bound. Skip texture fetches for most overview rows.
  if (float(lineRank) >= inkShare * 16777216. && (tier == 0u || focus <= 0.) && gl_InstanceID != edgeHovered) { gl_Position = offscreen; return; }
  vec4 sa = state(s), sb = state(t);
@@ -179,6 +181,7 @@ void main() {
  if (tierByte == 253u) { rgb = mix(rgb, color(4).rgb, focus); alpha += (1. - alpha) * focus; wide *= 1. + 1.5 * focus; gl_Position = clip(mix(mix(a, q, u), mix(q, b, u), u) + side * c.y * wide); }
  if (gl_InstanceID == edgeHovered) { rgb = color(4).rgb; alpha = min(1., max(alpha, edgeAlpha) * 3.); }
  tint = vec4(rgb * alpha, alpha);
+ if (layer == 2) tint *= .25;
 }`;
 // Stochastic rounding shares one threshold across premultiplied RGBA: zero stays zero and
 // RGB never exceeds alpha. Adding signed noise to RGB alone clips dark lines into biased light.
@@ -187,6 +190,20 @@ precision highp float; precision highp int; in vec4 tint; flat in uint seed; out
 void main() {
  uvec2 p = uvec2(gl_FragCoord.xy); uint h = p.x * 1973u + p.y * 9277u + seed * 26699u; h = (h ^ (h >> 16)) * 73244475u; h ^= h >> 16;
  outputColor = floor(tint * 255. + (float(h & 1023u) + .5) / 1024.) / 255.;
+}`;
+// One bounded RGBA8 target: quarter-scaled premultiplied ink, independent of float extensions.
+// A power shoulder suppresses faint overlap without erasing isolated strokes. Saturated
+// RGBA8 density uses the configured edge colour rather than clipped RGB (which turns white).
+const densityVertex = common + glsl`
+out vec2 uv;
+void main() { vec2 q = corners[gl_VertexID]; uv = (q + 1.) * .5; gl_Position = vec4(q, 0., 1.); }`;
+const densityFragment = glsl`#version 300 es
+precision highp float; uniform sampler2D atlas; uniform vec3 outline; in vec2 uv; out vec4 outputColor;
+void main() {
+ vec4 c = texture(atlas, uv); float d = c.a * 4.;
+ float a = min(.9, .2 * d + .8 * d * d / (1. + d * d));
+ vec3 rgb = c.a < .99 ? c.rgb / max(c.a, .00001) : outline;
+ outputColor = vec4(rgb * a, a);
 }`;
 const labelVertex = common + glsl`
 layout(location=0) in vec4 a;
@@ -287,6 +304,9 @@ export class DetailRenderer {
   private vaos: WebGLVertexArrayObject[] = [];
   private buffers: WebGLBuffer[] = [];
   private textures: WebGLTexture[] = [];
+  private densityBuffer: WebGLFramebuffer | null = null;
+  private densitySize = [0, 0];
+  private densityReady = false;
   private labelBuffers: WebGLBuffer[] = [];
   private labelVaos: WebGLVertexArrayObject[] = [];
   private discBuffers: (WebGLBuffer | null)[] = [null, null];
@@ -649,7 +669,7 @@ export class DetailRenderer {
     if (this.disposed || this.lost) return;
     const gl = this.gl;
     if (!gl) { this.ready = true; this.refresh(); return; }
-    for (const [v, f] of [[edgeVertex, solidFragment], [nodeVertex, nodeFragment], [labelVertex, labelFragment], [discVertex, discFragment]]) {
+    for (const [v, f] of [[edgeVertex, solidFragment], [nodeVertex, nodeFragment], [labelVertex, labelFragment], [discVertex, discFragment], [densityVertex, densityFragment]]) {
       const started = performance.now(); this.programs.push(await this.program(v!, f!)); this.timings[`program${this.programs.length}`] = performance.now() - started; await yieldTask(); if (this.disposed || this.lost) return;
     }
     // ResizeObserver may fire while parallel shader compilation is pending.
@@ -672,6 +692,24 @@ export class DetailRenderer {
     this.timings.upload = performance.now() - uploadStart;
     gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
     await this.waitForResize(); this.resize(true); this.ready = true; if (this.atlas) this.uploadLabels(); this.refresh();
+  }
+  /** Lazy, at most 2048² RGBA8 pixels (16 MiB). CSS resolution avoids multiplying
+   * memory by DPR². Reallocate once per size; failed sizes use Blend until resize/restore. */
+  private densityTarget() {
+    const gl = this.gl!, k = Math.min(1, 2048 / Math.max(this.width, this.height));
+    const w = Math.max(1, Math.ceil(this.width * k)), h = Math.max(1, Math.ceil(this.height * k));
+    if (w !== this.densitySize[0] || h !== this.densitySize[1]) {
+      this.densitySize = [w, h];
+      if (!this.textures[6]) this.texture(6);
+      this.densityBuffer ??= gl.createFramebuffer();
+      gl.activeTexture(gl.TEXTURE0 + 6); gl.bindTexture(gl.TEXTURE_2D, this.textures[6]!);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.densityBuffer);
+      if (this.densityBuffer) gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.textures[6]!, 0);
+      this.densityReady = !!this.densityBuffer && gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE && gl.getError() === gl.NO_ERROR;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    }
+    return this.densityReady;
   }
   /** View/hover changes re-upload compact per-node textures and one per-edge byte column. */
   private uploadView() {
@@ -1326,6 +1364,7 @@ export class DetailRenderer {
     if (policy.halos && haloAlpha > .002 && this.discData[0]!.length) passes.push([3, 2, 0]);
     const edgesOnTop = !!this.isolation && focus > 0, edgePass = v.edgeOpacity > 0 && v.edgeMode !== 'off';
     if (edgePass && !edgesOnTop) passes.push([0, 0, 0]);
+    const density = edgePass && v.edgeMode === 'all' && v.edgeCompositing === 'density' && this.densityTarget();
     const [ink, reach] = this.edgeQuiet(2 * Math.max(.5, edgeWidth));
     if (this.visibleCarriers) passes.push([1, 1, 0, 0]);
     passes.push([1, 1, 0, 1]);
@@ -1342,7 +1381,18 @@ export class DetailRenderer {
       gl.uniform1i(u.segments!, policy.segments); gl.uniform1f(u.curvature!, policy.curves ? v.curvature : 0); gl.uniform1f(u.edgeAlpha!, alpha); gl.uniform1f(u.direction!, v.edgeDirection ? 1 : 0); gl.uniform1f(u.colorMix!, v.edgeColorMix); gl.uniform1f(u.inkShare!, ink); gl.uniform1f(u.fadeLength!, Math.min(reach, 1e9)); gl.uniform1f(u.focusOnly!, v.edgeMode === 'focus' ? 1 : 0);
       gl.uniform1f(u.labelAlpha!, fade.alpha); gl.uniform1f(u.labelCut!, fade.cut); gl.uniform3f(u.outline!, p[8]! / 255, p[9]! / 255, p[10]! / 255); gl.uniform1f(u.plates!, v.labelPlates ? .92 : 0); gl.uniform1f(u.discAlpha!, hub ? 1 : haloAlpha); gl.uniform1f(u.hub!, hub);
       gl.bindVertexArray(vaoIndex < 0 ? this.labelVaos[lod]! : this.vaos[vaoIndex]!);
-      if (i === 0) gl.drawArraysInstanced(gl.TRIANGLES, 0, 6 * policy.segments, this.projection.source.length);
+      if (i === 0) {
+        if (density) {
+          gl.bindFramebuffer(gl.FRAMEBUFFER, this.densityBuffer); gl.viewport(0, 0, this.densitySize[0]!, this.densitySize[1]!);
+          gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT); gl.blendFunc(gl.ONE, gl.ONE);
+          gl.uniform1i(u.layer!, 2); gl.drawArraysInstanced(gl.TRIANGLES, 0, 6 * policy.segments, this.projection.source.length);
+          gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, this.canvas.width, this.canvas.height); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+          const tone = this.programs[4]!; gl.useProgram(tone.handle); gl.uniform1i(tone.uniforms.atlas!, 6); gl.uniform3f(tone.uniforms.outline!, p[4]! / 255, p[5]! / 255, p[6]! / 255);
+          gl.bindVertexArray(null); gl.drawArrays(gl.TRIANGLES, 0, 6);
+          gl.useProgram(program.handle); gl.bindVertexArray(this.vaos[0]!); gl.uniform1i(u.layer!, 3);
+        }
+        gl.drawArraysInstanced(gl.TRIANGLES, 0, 6 * policy.segments, this.projection.source.length);
+      }
       else if (i === 1) gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, this.visible.length);
       else if (i === 2) gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, this.atlas!.levels[lod]!.length / 13);
       else gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, this.discData[hub]!.length / 8);
@@ -1630,14 +1680,14 @@ export class DetailRenderer {
   };
   private contextRestored = () => {
     if (this.disposed) return; clearTimeout(this.restoreTimer); this.restoreTimer = undefined; this.canvas.style.cursor = 'grab';
-    this.lost = false; this.programs = []; this.vaos = []; this.buffers = []; this.textures = []; this.labelBuffers = []; this.labelVaos = []; this.discBuffers = [null, null];
+    this.lost = false; this.densityBuffer = null; this.densitySize = [0, 0]; this.densityReady = false; this.programs = []; this.vaos = []; this.buffers = []; this.textures = []; this.labelBuffers = []; this.labelVaos = []; this.discBuffers = [null, null];
     void this.initialize().then(() => { if (!this.disposed && !this.lost) this.canvas.dataset.context = 'restored'; }).catch(() => { if (!this.disposed) { this.canvas.dataset.context = 'failed'; this.onUnavailable(); } });
   };
   dispose() { clearTimeout(this.sizingTimer);
     if (this.disposed) return; this.disposed = true; this.labelsRevision++; clearTimeout(this.restoreTimer); this.restoreTimer = undefined; cancelAnimationFrame(this.frameId); clearTimeout(this.frameTimer); this.frameTimer = undefined; this.observer.disconnect(); this.panelObserver?.disconnect(); this.media.removeEventListener('change', this.refreshTheme);
     this.input.detach(this.container); this.limitChip.stop(); disposeSearch(this.canvas); this.miniMap.dispose();
     this.canvas.removeEventListener('webglcontextlost', this.contextLost); this.canvas.removeEventListener('webglcontextrestored', this.contextRestored);
-    const gl = this.gl; if (gl && !this.lost) { for (const p of this.programs) gl.deleteProgram(p.handle); for (const b of [...this.buffers, ...this.labelBuffers, ...this.discBuffers]) if (b) gl.deleteBuffer(b); for (const v of [...this.vaos, ...this.labelVaos]) gl.deleteVertexArray(v); for (const t of this.textures) gl.deleteTexture(t); }
+    const gl = this.gl; if (gl && !this.lost) { gl.deleteFramebuffer(this.densityBuffer); for (const p of this.programs) gl.deleteProgram(p.handle); for (const b of [...this.buffers, ...this.labelBuffers, ...this.discBuffers]) if (b) gl.deleteBuffer(b); for (const v of [...this.vaos, ...this.labelVaos]) gl.deleteVertexArray(v); for (const t of this.textures) gl.deleteTexture(t); }
     gl?.getExtension('WEBGL_lose_context')?.loseContext();
     this.container.title = ''; this.canvas.remove(); this.overlay.remove();
   }

@@ -164,3 +164,35 @@ test('missing declared interest (NaN) ranks like zero interest instead of poison
   missing[0] = zero[0] = 1;
   expect(edgeRanks(source, target, offsets, undefined, missing, () => true)).toEqual(edgeRanks(source, target, offsets, undefined, zero, () => true));
 });
+
+test('edge compositing enum persists, migrates to exact Blend, and rejects unknown modes', () => {
+  expect(defaults('links').visuals.edgeCompositing).toBe('blend');
+  const old = defaults('links') as any; delete old.visuals.edgeCompositing;
+  expect(upgradeSettings(old, 'links').visuals.edgeCompositing).toBe('blend');
+  for (const mode of ['blend', 'density'] as const) {
+    const saved = JSON.parse(JSON.stringify({ ...old, visuals: { ...old.visuals, edgeCompositing: mode } }));
+    expect(upgradeSettings(saved, 'links').visuals.edgeCompositing).toBe(mode);
+  }
+  for (const bad of ['', 'additive', 1, null, undefined]) expect(() => validateVisuals({ ...visuals(), edgeCompositing: bad })).toThrow('visuals.edgeCompositing');
+});
+
+test('density shader power shoulder is monotone, preserves zero, bounds coverage and separates bundles', () => {
+  const fragment = source.match(/const densityFragment = glsl`([\s\S]*?)`;/)![1]!;
+  const formula = fragment.match(/float a = ([^;]+);/)![1]!;
+  const alpha = new Function('d', 'min', `return ${formula}`) as (d: number, min: typeof Math.min) => number;
+  const map = (d: number) => alpha(d, Math.min);
+  expect(map(0)).toBe(0); expect(map(.155)).toBeGreaterThan(.03);
+  expect(map(.155)).toBeLessThan(.155 / 2);
+  expect(map(.62) / map(.155)).toBeGreaterThan(4);
+  let last = 0;
+  for (let i = 0; i <= 4096; i++) { const a = map(i / 1024); expect(a).toBeGreaterThanOrEqual(last); expect(a).toBeLessThanOrEqual(.9); last = a; }
+  expect(fragment).toContain('c.a < .99 ? c.rgb / max(c.a, .00001) : outline');
+  expect(fragment).toContain('vec4(rgb * a, a)');
+  const predicate = edgeShader.match(/if \(layer > 1 && \(layer == 2\) == \((.*?)\)\)/)![1]!
+    .replaceAll('0u', '0').replaceAll('0.', '0').replaceAll('gl_InstanceID', 'id');
+  const protectedEdge = new Function('tier', 'focus', 'id', 'edgeHovered', `return ${predicate}`) as (...args: number[]) => boolean;
+  for (const tier of [0, 128, 255]) for (const focus of [0, .5, 1]) for (const hovered of [-1, 7]) {
+    expect(protectedEdge(tier, focus, 7, hovered)).toBe(tier > 0 && focus > 0 || hovered === 7);
+  }
+  expect(edgeShader).toContain('mix(nodeColor(s).rgb, nodeColor(t).rgb, u)');
+});

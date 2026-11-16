@@ -657,6 +657,10 @@ export class ExplorePanel {
     host.createEl('h4', { text: 'Live appearance defaults' });
     this.slider(host, 'Label density', { min: .25, max: 3, log: true }, () => s.labelDensity, x => { s.labelDensity = x; }, true, { def: 1 });
     this.edgeMode(host);
+    const composite = settingRow(host, 'Edge compositing', '', 'Density reduces faint overlap; Blend keeps the original strokes. Canvas or an unavailable target uses Blend.').createEl('select', { attr: { 'aria-label': 'Edge compositing' } });
+    for (const value of ['blend', 'density'] as const) composite.createEl('option', { text: value === 'blend' ? 'Blend (default)' : 'Density', value });
+    composite.value = v.edgeCompositing;
+    composite.onchange = () => { v.edgeCompositing = composite.value as Visuals['edgeCompositing']; this.host.visualsChanged(false); };
     slider('edgeOpacity', 'Edge opacity (0–1)', { min: 0, max: 1, k: 2.5 });
     slider('edgeColorMix', 'Edge color blend', { min: 0, max: 1 });
     slider('glow', 'Glow', { min: 0, max: 1, k: 2 });

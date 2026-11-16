@@ -113,6 +113,7 @@
     "edgeDensityReference": 3000,
     "edgeColorMix": 0.65,
     "edgeMode": "all",
+    "edgeCompositing": "blend",
     "edgeDirection": false,
     "glow": 0.3,
     "curvedEdges": true,

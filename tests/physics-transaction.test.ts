@@ -1644,3 +1644,57 @@ test('WebGL frames reuse edge ranks without endpoint scans or another edge pass 
     expect(r.lineRanks).toBe(ranks); expect(r[k('ink')]).toBe(ink);
   } finally { [r.projection.source, r.projection.target, r.projection.offsets] = columns; }
 });
+
+test('density production passes are bounded, reuse target, restore blend/viewport and bypass focus-only/off', async () => {
+  const f = await graduated([[0, 1], [1, 2]], 3), { r, k, settings } = f;
+  const d = driver(r), events: any[] = []; let program = -1, layer = 1, textures = 0, targets = 0;
+  r[k('programs')] = [0, 1, 2, 3, 4].map(handle => ({ handle, uniforms: { layer: 'layer' } }));
+  d.gl.createTexture = () => { textures++; return {}; }; d.gl.createFramebuffer = () => { targets++; return {}; };
+  d.gl.checkFramebufferStatus = () => d.gl.FRAMEBUFFER_COMPLETE;
+  d.gl.useProgram = (p: number) => { program = p; };
+  d.gl.uniform1i = (u: string, x: number) => { if (u === 'layer') layer = x; };
+  d.gl.drawArraysInstanced = () => events.push(['draw', program, layer]);
+  d.gl.drawArrays = () => events.push(['quad', program]);
+  d.gl.blendFunc = (...args: number[]) => events.push(['blend', ...args]);
+  d.gl.viewport = (...args: number[]) => events.push(['viewport', ...args]);
+  d.gl.bindFramebuffer = (_: number, target: unknown) => events.push(['target', target]);
+  r[k('draw')](); expect(textures).toBe(0); expect(targets).toBe(0);
+  const baseline = events.filter(x => x[0] === 'draw'); expect(baseline.filter(x => x[1] === 0)).toEqual([['draw', 0, 1]]);
+  settings.visuals.edgeCompositing = 'density'; events.length = 0; r[k('draw')]();
+  expect(events.filter(x => x[0] === 'draw' && x[1] === 0)).toEqual([['draw', 0, 2], ['draw', 0, 3]]);
+  expect(events.filter(x => x[0] === 'quad')).toEqual([['quad', 4]]);
+  expect(events.filter(x => x[0] === 'target').at(-1)).toEqual(['target', null]);
+  expect(events.filter(x => x[0] === 'blend').at(-1)).toEqual(['blend', d.gl.ONE, d.gl.ONE_MINUS_SRC_ALPHA]);
+  expect(events.filter(x => x[0] === 'viewport').at(-1)).toEqual(['viewport', 0, 0, r.canvas.width, r.canvas.height]);
+  const images = d.calls.filter(x => x[0] === 'image').length, ranks = r.lineRanks;
+  r[k('draw')](); expect(textures).toBe(1); expect(targets).toBe(1); expect(d.calls.filter(x => x[0] === 'image')).toHaveLength(images); expect(r.lineRanks).toBe(ranks);
+  for (const mode of ['focus', 'off'] as const) { settings.visuals.edgeMode = mode; events.length = 0; r[k('draw')](); expect(events.some(x => x[0] === 'quad')).toBe(false); }
+  settings.visuals.edgeMode = 'all'; settings.visuals.edgeOpacity = 0; events.length = 0; r[k('draw')](); expect(events.some(x => x[0] === 'quad')).toBe(false);
+  settings.visuals.edgeOpacity = .4; settings.visuals.edgeCompositing = 'blend'; events.length = 0; r[k('draw')](); expect(events.filter(x => x[0] === 'draw')).toEqual(baseline);
+  r[k('width')] = 4096; r[k('height')] = 2048; r[k('densityTarget')](); expect(r[k('densitySize')]).toEqual([2048, 1024]); expect(textures).toBe(1); expect(targets).toBe(1);
+  const sized = d.calls.length; r.dpr = 3; r[k('densityTarget')](); expect(d.calls).toHaveLength(sized);
+  let deleted = 0; d.gl.deleteFramebuffer = () => { deleted++; }; r.dispose(); expect(deleted).toBe(1);
+});
+
+test('density production refuses incomplete or failed allocations without retrying each frame; restore discards stale handles', async () => {
+  const { r, k } = await graduated([[0, 1]], 2), d = driver(r); let allocations = 0;
+  d.gl.createTexture = () => ({}); d.gl.createFramebuffer = () => ({});
+  d.gl.texImage2D = () => { allocations++; }; d.gl.checkFramebufferStatus = () => 0;
+  expect(r[k('densityTarget')]()).toBe(false); expect(r[k('densityTarget')]()).toBe(false); expect(allocations).toBe(1);
+  d.gl.checkFramebufferStatus = () => d.gl.FRAMEBUFFER_COMPLETE; r[k('width')]++;
+  d.gl.getError = () => 1285; expect(r[k('densityTarget')]()).toBe(false);
+  d.gl.getError = () => d.gl.NO_ERROR; r[k('width')]++; expect(r[k('densityTarget')]()).toBe(true);
+  let initialized = 0; r[k('initialize')] = async () => { initialized++; };
+  r[k('contextRestored')](); await Promise.resolve();
+  expect(initialized).toBe(1); expect(r[k('densitySize')]).toEqual([0, 0]); expect(r[k('densityBuffer')]).toBeNull(); expect(r[k('densityReady')]).toBe(false); expect(r.textures).toEqual([]);
+});
+
+test('density requested on Canvas uses identical existing strokes without an offscreen target', async () => {
+  const { r, k, settings } = await graduated([[0, 1], [1, 2]], 3), strokes: any[] = [], previous = ctx.stroke;
+  ctx.stroke = () => strokes.push([ctx.globalAlpha, ctx.strokeStyle, ctx.lineWidth]);
+  try {
+    r[k('drawCanvas')](); const baseline = [...strokes]; strokes.length = 0;
+    settings.visuals.edgeCompositing = 'density'; r[k('drawCanvas')]();
+    expect(strokes).toEqual(baseline); expect(r[k('densityBuffer')]).toBeNull();
+  } finally { ctx.stroke = previous; }
+});

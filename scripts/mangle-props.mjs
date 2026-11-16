@@ -15,7 +15,7 @@ export const MANGLED_PROPS = ['baseNodeRadius', 'queueSizingLabels', 'labelCarri
   'navShown', 'hoverHub', 'sizingRange', 'uploadSizes', 'centreOn', 'relationshipDisplay',
   'endPreview', 'guards', 'memberList', 'previewExpression', 'toolTitle', 'scopeName',
   'findReset', 'edgeQuiet', 'viewOpen', 'toolsOverlap', 'miniChanged', 'adaptSizes',
-  'placeCard',
+  'placeCard', 'densityBuffer', 'densitySize', 'densityReady', 'densityTarget',
   // Main-realm panel/renderer callbacks, never host API methods or persisted data.
   'previewSizing', 'updateSizingReadout', 'updateLensControl', 'previewSuggestions', 'visualsChanged', 'applySuggestions',
   'toggleLens', 'setRelationshipDisplay', 'commitSavedView', 'savedViewIssue', 'onSizingChange', 'sizingReadout',
