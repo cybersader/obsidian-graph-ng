@@ -14,6 +14,9 @@ class El {
   [handler: `on${string}`]: ((e?: any) => void) | undefined | null;
   static active: El | null = null;
   constructor(readonly tagName: string) {}
+  querySelector(selector: string): El | null { return this.children.find(c => c.className.split(' ').includes(selector.slice(1))) ?? null; }
+  before(node: El) { node.remove(); const p = this.parentElement!; node.parentElement = p; p.children.splice(p.children.indexOf(this), 0, node); }
+  toggleClass(cls: string, on: boolean) { if (on) this.addClass(cls); else this.className = this.className.split(' ').filter(c => c !== cls).join(' '); }
   get lastElementChild(): El | null { return this.children.at(-1) ?? null; }
   addClass(cls: string) { if (!this.className.split(' ').includes(cls)) this.className = [this.className, cls].filter(Boolean).join(' '); }
   get textContent(): string { return this.text + this.children.map(c => c.textContent).join(''); }

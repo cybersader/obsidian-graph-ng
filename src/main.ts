@@ -1,5 +1,5 @@
 import { disclosure, panelHelp, iconButton } from './panel-help';
-import { workingText } from './working';
+import { BuildProgress, workingText } from './working';
 import { LayoutPreview } from './layout-preview';
 import type { CoordinateToken } from './webgl-renderer';
 import { legacySizing, sizingSettings, type NodeSizingValues } from './node-sizing';
@@ -23,7 +23,7 @@ import { yieldTask, sliced } from './core/scheduler';
 import { WorkerPipeline, LAYOUT_PRODUCER, currentDetailGeneration, type ProjectResult, type DetailResult, type LayoutResult, type ViewResult } from './pipeline';
 import { groupPages, page } from './core/group-page';
 import { ContributionPage, type ContributionContext } from './contribution-page';
-import { accounting, layoutProgress, pendingText, readingProgress, num, plural, renderInformation, renderReadout, sum, type InformationReport } from './graph-information';
+import { accounting, pendingText, num, plural, renderInformation, renderReadout, sum, type InformationReport } from './graph-information';
 import { canonicalExplore, loadSettings, settingsForSave, validateSettings, type Settings } from './settings';
 import { searchable } from './search';
 import { DetailRenderer, GroupRenderer, gpuStatus, type Renderer, type RenderView } from './renderer';
@@ -262,19 +262,21 @@ export class GraphView extends ItemView {
     if (this.status && this.statusSummary) this.statusText = this.statusText;
   }
   private readProgress?: { indexed: number; listed: number };
-  private loading() { return this.contentEl.dataset.state === 'building' ? { stage: this.statusMessage, ...this.readProgress } : this.contentEl.dataset.state === 'ready' && this.provisional && !this.plugin.settings.projectionFile ? { stage: pendingText(this.report) } : undefined; }
+  private buildProgress = new BuildProgress();
+  private layoutWorking = false;
+  private loading() { return this.layoutWorking || this.contentEl.dataset.state === 'building' ? { stage: this.statusMessage, ...this.readProgress } : undefined; }
   private progressAt = 0;
   private progressText(text: string) { const now = performance.now(); if (now - (this.progressAt ?? 0) >= 100) { this.progressAt = now; this.statusText = text; } }
   private get statusText() { return this.statusMessage; }
   /** Graph information: a short message over structured tiles/issues; the canvas summary shows separate chips. */
   private set statusText(text: string) {
-    this.statusMessage = text;
+    this.statusMessage = text; this.contentEl.dataset.motion = this.plugin.settings.visuals?.motion ?? 'full';
     (this.explorePanel as (ExplorePanel & { updateSummary?(): void }) | undefined)?.updateSummary?.();
     const state = this.contentEl.dataset.state;
-    renderInformation(this.status, [text, this.detailFallback].filter(Boolean).join(' '), state, this.report, this.explored, this.informationActions, this.loading());
+    renderInformation(this.status, [text, this.detailFallback].filter(Boolean).join(' '), this.layoutWorking ? 'building' : state, this.report, this.explored, this.informationActions, this.loading());
     const health = state === 'error' ? [text] : this.loading() ? [this.loading()!.stage]
       : this.plugin.settings.projectionFile ? ['External aggregate, not verified']
-      : [];
+      : this.provisional ? [pendingText(this.report)] : [];
     const chips = [this.viewFeedbackText, ...health].filter(Boolean), readout = state === 'ready' && !this.provisional && this.report;
     const info = this.statusSummary.querySelector<HTMLElement>('.graph-ng-summary-info') ?? this.statusSummary.createEl('button', { cls: 'graph-ng-summary-info', attr: { 'aria-label': 'Graph information' } });
     info.hidden = !readout && !chips.length;
@@ -423,7 +425,7 @@ export class GraphView extends ItemView {
     if (this.closed || this.plugin.settings.projectionFile || !this.groupGraph || this.detailGeneration !== this.activeRevision) return;
     this.provisional = !this.plugin.adapter.factsComplete(); this.contentEl.dataset.verified = String(!this.provisional);
     if (this.report) { this.report.provisional = this.provisional; this.report.linksPending = this.plugin.adapter.linksPending(); this.report.pendingProperties = this.plugin.adapter.pendingProperties(); }
-    this.statusText = this.contentEl.dataset.state === 'building' ? this.statusText : this.provisional ? pendingText(this.report) : '';
+    this.statusText = this.layoutWorking || this.contentEl.dataset.state === 'building' ? this.statusText : this.provisional ? pendingText(this.report) : '';
   }
   async onClose() { this.explorePanel?.dispose(); this.contributionPage.clear(); this.closed = true; this.renderRevision++; this.revision++; this.renderer?.dispose(); this.unsubscribe?.(); }
   refresh(): Promise<void> {
@@ -448,8 +450,10 @@ export class GraphView extends ItemView {
     const settings = this.plugin.settings, start = performance.now();
     this.carrierLookup = undefined; this.renderRevision++; this.provisional = true; this.contentEl.dataset.verified = 'false';
     this.report = undefined; this.explored = undefined; this.positions = undefined;
-    this.readProgress = undefined; this.contentEl.dataset.state = 'building'; this.statusText = 'Reading notes…';
-    if (this.presentation === 'nodes') { this.renderer?.dispose(); this.renderer = this.detailRenderer = undefined; this.stage.empty(); this.contentEl.dataset.mode = 'nodes-building'; }
+    (this.buildProgress ??= new BuildProgress()).start(); this.progressAt = 0; this.readProgress = undefined; this.contentEl.dataset.state = 'building'; this.statusText = this.buildProgress.text(0);
+    // Hold the last useful layout, without stale captions, until a progressed replacement exists.
+    const heldLayout = this.presentation === 'nodes' ? this.detailRenderer?.beginLayout() : undefined;
+    if (this.presentation === 'nodes') this.contentEl.dataset.mode = 'nodes-building';
     let preview: LayoutPreview | undefined;
     try {
       if (settings.projectionFile) {
@@ -479,7 +483,7 @@ export class GraphView extends ItemView {
             const cache = await this.plugin.pipeline.request<{ groups?: GroupProjection } | undefined>(revision, { kind: 'load', generation: saved });
             if (cache?.groups && this.presentation !== 'nodes' && current() && !this.predicate && !(this.view && viewNarrows(this.view))) {
               this.projection = undefined; this.positions = undefined; this.groupGraph = cache.groups; this.groupGeneration = -revision; this.viewGeneration = -1; this.viewSource = this.sourceKey(null); this.showGroups(true);
-              this.statusText = readingProgress(this.plugin.adapter.coverage());
+              const c = this.plugin.adapter.coverage(); this.statusText = this.buildProgress.text(0, c.indexed / Math.max(1, c.listed));
               this.contentEl.dataset.cachedPaintMs = String(performance.now() - start); await yieldTask();
             }
           } catch { await this.plugin.store.quarantine(saved.meta); }
@@ -490,7 +494,7 @@ export class GraphView extends ItemView {
         if (!current()) return;
         await this.plugin.pipeline.request(revision, { kind: 'rows', ...batch });
         const c = this.plugin.adapter.coverage(); this.readProgress = { indexed: c.indexed, listed: c.listed };
-        this.progressText(readingProgress(c));
+        this.progressText(this.buildProgress.text(0, c.indexed / Math.max(1, c.listed)));
       }
       this.plugin.ingestedHash = hashes.ingestHash;
       this.plugin.pipeline.onGroups = event => {
@@ -503,7 +507,7 @@ export class GraphView extends ItemView {
         this.contentEl.dataset.firstGroupMs ??= String(firstGroupMs);
         this.contentEl.dataset.refreshGroupMs = String(firstGroupMs);
       };
-      this.statusText = 'Resolving relationships…';
+      this.statusText = this.buildProgress.text(1);
       const complete = this.plugin.adapter.factsComplete(); this.provisional = !complete;
       const result = await this.plugin.pipeline.request<ProjectResult>(revision, { kind: 'project', complete: !this.provisional });
       if (!current()) return;
@@ -511,7 +515,7 @@ export class GraphView extends ItemView {
       const coverage = this.plugin.adapter.coverage(); this.provisional = !this.plugin.adapter.factsComplete();
       this.contentEl.dataset.verified = String(!this.provisional);
       const report: InformationReport = this.report = { nodes: result.nodes, edges: result.edges, listed: coverage.listed, linksPending: this.plugin.adapter.linksPending(), pendingProperties: this.plugin.adapter.pendingProperties(), provisional: this.provisional, unresolved: result.unresolved, duplicates: result.quarantined.length, dropped: result.dropped, missed: result.missed, rows: result.rows, ruleNotes: result.ruleNotes, rules: settings.declaration.edges.map(e => e.name), relationshipNodes: settings.declaration.display.reifiedAsNodes, ...this.vaultCount(settings.declaration) };
-      this.statusText = 'Preparing layout…';
+      this.statusText = this.buildProgress.text(2);
       this.contentEl.dataset.nodes = String(result.nodes); this.contentEl.dataset.edges = String(result.edges);
       await yieldTask();
       const detail = await this.plugin.pipeline.request<DetailResult>(revision, { kind: 'detail' });
@@ -532,7 +536,7 @@ export class GraphView extends ItemView {
       });
       this.plugin.pipeline.onPositions = event => {
         if (event.revision === revision && current()) {
-          report.progress = { iteration: event.iteration, total: event.total }; this.progressText(layoutProgress(report.progress));
+          report.progress = { iteration: event.iteration, total: event.total }; this.progressText(this.buildProgress.text(2, event.iteration / Math.max(1, event.total)));
           // Two progressed batches, never the iteration-zero random square. A fixed-frame preview has no labels or input.
           if (event.iteration >= 2 * settings.streamEveryIterations) { preview!.push(event.positions); return; }
         }
@@ -544,10 +548,11 @@ export class GraphView extends ItemView {
       if (!current()) return;
       await preview.finish(true);
       if (!current()) return;
+      this.statusText = this.buildProgress.text(3);
       this.positions = layout.positions;
       this.cacheTrace.push({ expected: result.meta.key, stored: layout.stored, nodes: result.nodes, ...coverage, valid: layout.cached }); if (this.cacheTrace.length > 16) this.cacheTrace.shift();
       report.layout = { cached: layout.cached, reused: layout.reused, ms: layout.milliseconds, totalMs: performance.now() - start };
-      this.contentEl.dataset.state = 'ready'; this.statusText = this.provisional ? pendingText(report) : '';
+      this.buildProgress.text(4); this.contentEl.dataset.state = 'ready'; this.statusText = this.provisional ? pendingText(report) : '';
       this.contentEl.dataset.layoutMs = String(layout.milliseconds); this.contentEl.dataset.cached = String(layout.cached);
       if (this.presentation === 'nodes') await this.showDetails();
       if (settings.persistLayout && this.plugin.store.committed !== result.meta.key && complete && !this.provisional && (!settings.declaration.edges.some(e => e.kind === 'producer') || this.plugin.adapter.linksResolved)) {
@@ -560,6 +565,7 @@ export class GraphView extends ItemView {
       this.plugin.adapter.invalidate(); this.plugin.ingestedHash = ''; this.provisional = true; this.contentEl.dataset.verified = 'false';
       if (current()) { this.report = undefined; this.contentEl.dataset.state = 'error'; if (this.presentation === 'nodes') { this.contentEl.dataset.mode = 'groups'; this.showGroups(true); } this.statusText = `Projection refresh failed: ${String(e)}`; this.contributionPage.fail(`Projection refresh failed: ${String(e)}`); }
     } finally {
+      heldLayout?.(false);
       await preview?.finish();
       if (!current()) { this.plugin.adapter.invalidate(); this.plugin.ingestedHash = ''; this.contentEl.dataset.verified = 'false'; }
     }
@@ -765,19 +771,35 @@ export class GraphView extends ItemView {
     const revision = this.activeRevision, projection = this.projection, old = this.detailRenderer;
     const current = generationCurrent(() => [this.closed, this.activeRevision, this.projection, this.positions, this.plugin.settings.layout, canonical(this.plugin.settings.layout), this.renderRevision, this.detailRenderer, this.detailScope, this.visible, this.explored]);
     await this.plugin.serialize(async () => {
-      let token: CoordinateToken | undefined;
+      let token: CoordinateToken | undefined, finish: ((committed: boolean) => void) | undefined, committed = false, streamError: unknown;
+      const previousStream = this.plugin.pipeline.onPositions;
       const ready = () => current() && (!token || token.current());
       try {
         if (this.closed || !current() || !projection || this.detailGeneration !== revision || this.plugin.settings.projectionFile) throw new Error('Layout unavailable or generation changed');
         const next = physicsSettings(this.plugin.settings, values);
+        this.layoutWorking = true; (this.buildProgress ??= new BuildProgress()).start(); this.progressAt = 0; this.statusText = this.buildProgress.text(2);
+        finish = old?.beginLayout();
+        this.plugin.pipeline.onPositions = event => {
+          if (event.revision !== revision || !current() || streamError) { this.plugin.pipeline.recycle(event.positions.buffer as ArrayBuffer); return; }
+          this.progressText(this.buildProgress.text(2, event.iteration / Math.max(1, event.total)));
+          if (event.iteration > 0 && finish) { try { old!.streamPositions(event.positions); } catch (e) { streamError = e; } }
+          else this.plugin.pipeline.recycle(event.positions.buffer as ArrayBuffer);
+        };
         const result = await this.plugin.pipeline.request<LayoutResult>(revision, { kind: 'recompute', options: next.layout });
-        requireLayout(current);
+        this.plugin.pipeline.onPositions = previousStream;
+        requireLayout(current); if (streamError) throw streamError;
+        this.statusText = this.buildProgress.text(3);
         if (old && this.contentEl.dataset.mode === 'nodes') token = await old.preparePositions(result.positions, current);
         await this.plugin.commitLayout(values, ready, () => {
           token?.commit();
           this.positions = result.positions;
+          committed = true;
         });
-      } finally { token?.discard(); }
+      } finally {
+        this.plugin.pipeline.onPositions = previousStream; token?.discard();
+        try { finish?.(committed); }
+        finally { this.layoutWorking = false; this.statusText = this.provisional ? pendingText(this.report) : ''; }
+      }
     });
   }
   /** Renderer masks for the current explore result: group codes, collapsed groups, hidden types. */
@@ -970,7 +992,8 @@ export class GraphView extends ItemView {
       if (preview) preview.canvas.style.position = 'absolute';
       else { this.renderer?.dispose(); this.stage.empty(); }
       if (clearPanel) { this.contributionPage.clear(); this.panel.empty(); }
-      this.detailRenderer = await DetailRenderer.create(this.stage, this.projection, this.positions, bits, this.plugin.settings, i => this.openPath(renderPath(this.projection!, i)), () => this.toGroups(), this.colors!, () => renderRevision === this.renderRevision, !this.gpu.available, () => {
+      const projection = this.projection;
+      this.detailRenderer = await DetailRenderer.create(this.stage, projection, this.positions, bits, this.plugin.settings, i => this.openPath(renderPath(projection, i)), () => this.toGroups(), this.colors!, () => renderRevision === this.renderRevision, !this.gpu.available, () => {
         if (renderRevision !== this.renderRevision || this.closed) return;
         this.gpu = { available: false, reason: 'WebGL context could not be restored' };
         this.showGroups(); void this.showDetails(bits, clearPanel);

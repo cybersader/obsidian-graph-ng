@@ -77,6 +77,7 @@ async function fixture(renderView: any = {}) {
   const renderer = await Renderer.create(stage, p, positions, visible, plugin.settings, () => {}, () => {}, new Uint32Array(3), () => true, true, () => {}, renderView);
   renderers.push(renderer);
   Object.assign(view, { activeRevision: 7, detailGeneration: 7, projection: p, positions, visible, colors: new Uint32Array(3), contentEl: { dataset: { mode: 'nodes' } }, stage, detailRenderer: renderer, renderer });
+  Object.defineProperty(view, 'statusText', { configurable: true, get() { return this.statusMessage ?? ''; }, set(text: string) { this.statusMessage = text; } });
   renderer.camera = { x: .25, y: .4, ratio: 2 }; renderer.selected = 2;
   return { plugin, view, stage, renderer, writes, next, positions, requests: () => requests };
 }
@@ -105,6 +106,82 @@ function driver(r: any) {
   r[labelUpload](); allocations = 0; calls.length = 0;
   return { gl, calls, allocations: () => allocations, fail: (s: string) => { mode = s; } };
 }
+test('Apply rejects seed frames, streams on the same renderer and keeps pan/zoom while labels are hidden', async () => {
+  const f = await fixture(), entered = deferred(), release = deferred(), canvas = f.renderer.canvas;
+  const frame = new Float32Array([10, 12, 20, 22, 400, 500]); let recycled = 0;
+  f.view.provisional = true; f.view.report = { linksPending: false, [compiled('pendingProperties')]: 691 };
+  f.plugin.pipeline.recycle = () => recycled++;
+  f.plugin.pipeline.request = async () => {
+    expect(f.renderer.positions).toBe(f.positions); expect(f.renderer.overlay.hidden).toBe(true);
+    f.plugin.pipeline.onPositions({ revision: 7, iteration: 0, total: 100, positions: new Float32Array(6) });
+    expect(f.renderer.positions).toBe(f.positions);
+    f.plugin.pipeline.onPositions({ revision: 7, iteration: 20, total: 100, positions: frame });
+    entered.resolve(); await release.promise; return { positions: f.next };
+  };
+  const work = f.view[compiled('applyLayout')](values); await entered.promise;
+  expect(f.renderer.positions).toBe(frame); expect(f.renderer.canvas).toBe(canvas); expect(f.view.positions).toBe(f.positions); expect(recycled).toBe(1);
+  const input = f.renderer.controls(); input[compiled('panBy')](30, 10); input[compiled('zoomAt')](1.2, 0, 0); const camera = { ...f.renderer.camera };
+  expect(input.pick(0, 0)).toBe(-1); expect(f.view.statusMessage).toContain('Laying out notes');
+  release.resolve(); await work;
+  expect(f.renderer.positions).toBe(f.next); expect(f.renderer.camera).toEqual(camera); expect(f.renderer.overlay.hidden).toBe(false);
+  expect(f.view.layoutWorking).toBe(false); expect(f.view.statusMessage).toContain('691 notes left'); expect(f.view.statusMessage).toContain('Graph ready');
+});
+test('failed streamed Apply restores last-good geometry without undoing pan/zoom', async () => {
+  const f = await fixture(), display = f.renderer.display;
+  f.plugin.pipeline.request = async () => {
+    f.plugin.pipeline.onPositions({ revision: 7, iteration: 20, total: 100, positions: new Float32Array([8, 9, 10, 11, 12, 13]) });
+    f.renderer.controls()[compiled('panBy')](20, 10); return { positions: f.next };
+  };
+  f.plugin.saveData = async () => { throw Error('synthetic disk failure'); };
+  expect(await outcome(f.view[compiled('applyLayout')](values))).toContain('synthetic disk failure');
+  retained(f); expect(f.renderer.display).toBe(display); expect(f.renderer.overlay.hidden).toBe(false);
+  expect(f.renderer.camera.x).not.toBe(.25); expect(f.plugin.pipeline.onPositions).toBeUndefined();
+});
+test('Apply updates zoom-out extent after expanded coordinates without reframing the camera', async () => {
+  const f = await fixture(), camera = { ...f.renderer.camera }, frame = f.renderer[compiled('cameraFrame')];
+  f.plugin.pipeline.request = async () => ({ positions: new Float32Array([0, 0, 200, 200, 20000, 20000]) });
+  await f.view[compiled('applyLayout')](values);
+  expect(f.renderer.camera).toEqual(camera); expect(f.renderer[compiled('cameraFrame')]).toBe(frame);
+  f.renderer.controls()[compiled('zoomAt')](1000, 0, 0); expect(f.renderer.camera.ratio).toBeGreaterThan(100);
+  expect(f.renderer[compiled('anchorKey')]).toEqual([]); expect(f.renderer[compiled('rankedKey')]).toEqual([]);
+});
+test('review: retained layout suppresses semantic actions but keeps pan and zoom', async () => {
+  const f = await fixture(), r = f.renderer, k = (s: string) => mangle[s] ?? s, calls: string[] = [];
+  r[k('onNode')] = () => calls.push('open'); r[k('travel')] = () => calls.push('travel'); r[k('showMenu')] = () => calls.push('menu');
+  const finish = r.beginLayout(), input = r.controls(), camera = { ...r.camera };
+  input.open(2); input[k('travel')](2); input[k('showMenu')]([], 0, 0, 2);
+  input[k('panBy')](30, 10); input[k('zoomAt')](1.2, 0, 0);
+  expect(calls).toEqual([]); expect(input[k('openable')](2)).toBe(false); expect(r.camera).not.toEqual(camera);
+  finish(false); input.open(2); expect(calls).toEqual(['open']);
+});
+test('review: streamed geometry updates zoom extents before final adoption', async () => {
+  const f = await fixture(), r = f.renderer, finish = r.beginLayout(), frame = r[compiled('cameraFrame')];
+  const positions = new Float32Array([0, 0, 10000, 10000, 20000, 20000]);
+  r[compiled('streamPositions')](positions);
+  expect(r.grid.width).toBeGreaterThan(10000); expect(r.grid.positions).toBe(positions);
+  r.controls()[compiled('zoomAt')](1000, 0, 0); expect(r.camera.ratio).toBeGreaterThan(100); expect(r[compiled('cameraFrame')]).toBe(frame);
+  finish(false); expect(r.grid.positions).toBe(f.positions);
+});
+test('review: sizing invalidation during retained layout rebuilds labels on rollback', async () => {
+  const f = await fixture(), r = f.renderer, finish = r.beginLayout();
+  r[compiled('queueSizingLabels')](); await Bun.sleep(220); expect(r.atlas).toBeUndefined();
+  finish(false); await Bun.sleep(220); expect(r.atlas).toBeDefined();
+});
+test('review: property promotion cannot erase active Apply progress', async () => {
+  const f = await fixture(); f.view.groupGraph = {}; f.view.contentEl.dataset.state = 'ready';
+  f.plugin.adapter = { [compiled('factsComplete')]: () => true, [compiled('linksPending')]: () => false, [compiled('pendingProperties')]: () => 0 };
+  f.view.layoutWorking = true; f.view.statusText = 'Build 2: Laying out notes 68%';
+  f.view[compiled('promoteProperties')](); expect(f.view.statusText).toBe('Build 2: Laying out notes 68%');
+});
+test('review: committed expanded coordinates rebuild minimap bounds without moving camera frame', async () => {
+  const f = await fixture(), r = f.renderer, frame = r[compiled('cameraFrame')], camera = { ...r.camera };
+  f.plugin.pipeline.request = async () => ({ positions: new Float32Array([0, 0, 10000, 10000, 20000, 20000]) });
+  await f.view[compiled('applyLayout')](values); r[compiled('placeOverlay')]();
+  const mini = r[compiled('miniMap')], state = mini[compiled('miniLast')];
+  expect(state.layoutFrame?.width).toBeGreaterThan(10000);
+  expect(r[compiled('cameraFrame')]).toBe(frame); expect(r.camera).toEqual(camera);
+  const bounds = mini[compiled('miniShown')][0]; expect(bounds.minX + bounds.width).toBeGreaterThan(20000);
+});
 function retained(f: Awaited<ReturnType<typeof fixture>>) {
   expect(f.view.positions).toBe(f.positions); expect(f.renderer.positions).toBe(f.positions); expect(f.view.detailRenderer).toBe(f.renderer);
   expect(f.plugin.settings.layout.force.scalingRatio).toBe(2);
@@ -1294,6 +1371,14 @@ test('review: minimap rebuild is not starved by continuous frames and disposal c
   r.dispose(); await Bun.sleep(300); expect(mini[k('densityVersion')]).toBe(version + 1);
 });
 
+test('review: minimap theme changes recolor immediately and cancel stale deferred work', async () => {
+  const { r, k } = await graduated([[0, 1]]); r[k('placeOverlay')]();
+  const mini = r[k('miniMap')], a = mini[k('miniLast')], version = mini[k('densityVersion')];
+  mini.update({ ...a, visible: a.visible.slice() });
+  mini.update({ ...a, [k('ink')]: '#abcdef' });
+  expect(mini[k('densityVersion')]).toBe(version + 1);
+  await Bun.sleep(300); expect(mini[k('densityVersion')]).toBe(version + 1);
+});
 test('review: minimap can revisit a source after a pending rebuild returned to the original', async () => {
   const { r, k } = await graduated([[0, 1]]); r[k('placeOverlay')]();
   const mini = r[k('miniMap')], a = mini[k('miniLast')], b = { ...a, visible: a.visible.slice() }, version = mini[k('densityVersion')];
@@ -1887,6 +1972,26 @@ test('card opening minimally uncovers a selection without zoom; optional center 
   settings.visuals.clickFraming = 'fit-neighbours'; r.setCamera(r.camera.x, r.camera.y, .05); r[k('selectNote')](1, true); expect(r[k('flight')]).toBeUndefined();
   for (const n of [0, 1, 2]) { const q = r.screenPoint(n); expect(q.x).toBeGreaterThan(0); expect(q.x).toBeLessThan(r.width - r[k('cardInset')]()[0]); expect(q.y).toBeGreaterThan(0); expect(q.y).toBeLessThan(r.height); }
   expect(r.positions).toBe(positions); expect(r.projection.source).toBe(rows);
+});
+
+test('retained Apply suppresses selection framing, then frames expanded coordinates beside the card', async () => {
+  const f = await graduated([[0, 1], [1, 2]], 3), { r, k, settings } = f;
+  settings.visuals.motion = 'off'; f.tap(1);
+  const frame = r[k('cameraFrame')], finish = r.beginLayout();
+  const next = new Float32Array([0, 0, 10000, 10000, 20000, 20000]);
+  r[k('streamPositions')](next);
+  const camera = { ...r.camera };
+  for (const mode of ['off', 'center', 'fit-neighbours']) r[k('frameSelection')](mode);
+  r.card.size = undefined; r[k('placeOverlay')]();
+  expect(r.camera).toEqual(camera); expect(r[k('flight')]).toBeUndefined();
+  const token = await prepare(r, next, () => true); token.commit(); token.discard(); finish(true);
+  r[k('frameSelection')]('fit-neighbours');
+  expect(r[k('cameraFrame')]).toBe(frame); expect(r.camera.ratio).toBeGreaterThan(10);
+  for (const n of [0, 1, 2]) {
+    const q = r.screenPoint(n);
+    expect(q.x).toBeGreaterThan(0); expect(q.x).toBeLessThan(r.width - r[k('cardInset')]()[0]);
+    expect(q.y).toBeGreaterThan(0); expect(q.y).toBeLessThan(r.height);
+  }
 });
 
 test('Only connections reverses in the card without auto-fit and stays synchronized with chip exit', async () => {

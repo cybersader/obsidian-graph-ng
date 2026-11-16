@@ -598,11 +598,38 @@ export class DetailRenderer {
     return { grid, display, visible: render, hubs, halos, picker: render === grid.visible ? grid : new PickGrid(positions, render) };
 
   }
-  /** Noninteractive loading preview only. Keep its initial camera frame; no picking or labels use these coordinates. */
+  private layoutActive = false;
+  private labelsPending = false;
+  /** Keep pan/zoom and the last layout, suppress stale labels and picking until adoption.
+   * Failed/superseded applies restore CPU geometry without rolling back the user's camera. */
+  beginLayout() {
+    const { positions, display, grid, picker, visible, hubs, halos, discData } = this;
+    const previous = { positions, display, grid, picker, visible, hubs, halos, discData }, view = this.view, filter = this.filterVisible;
+    this.layoutActive = true; this.labelsRevision++; this.overlay.hidden = true; this.refresh();
+    return (committed: boolean) => {
+      this.layoutActive = false;
+      if (this.disposed) return;
+      try {
+        if (!committed) {
+          const changed = this.positions !== positions; Object.assign(this, previous);
+          if (view !== this.view || filter !== this.filterVisible) { Object.assign(this, this.coordinateState(positions, this.filterVisible, this.view)); this.discData = this.discs(this.halos, this.hubs); }
+          if (changed && this.gl && this.usable) this.uploadCoordinates();
+        }
+      } catch (e) { throw new Error(`Last-good CPU coordinates retained; GPU recovery uncertain: ${e}`); }
+      finally {
+        if (committed) this.labelsPending = false;
+        else if (this.labelsPending) void this.prepareLabels(() => !this.disposed).catch(() => {});
+        this.anchorKey = []; this.rankedKey = []; this.overlay.hidden = !!this.view.loading; this.refresh();
+      }
+    };
+  }
+  /** Progressed frames retain the camera frame. Live Apply keeps input attached. */
   streamPositions(next: Float32Array) {
-    if (!this.view.loading || !this.usable || next.length !== this.positions.length || !next.every(Number.isFinite)) throw new Error('Layout preview unavailable');
+    if (!(this.view.loading || this.layoutActive) || !this.usable || next.length !== this.positions.length || !next.every(Number.isFinite)) throw new Error('Layout preview unavailable');
     const previous = this.positions;
-    this.positions = this.display = next;
+    const geometry = this.coordinateState(next, this.filterVisible, this.view);
+    this.positions = next;
+    Object.assign(this, geometry); this.discData = this.discs(geometry.halos, geometry.hubs);
     if (this.gl) this.uploadCoordinates();
     this.refresh(); return previous;
   }
@@ -617,12 +644,12 @@ export class DetailRenderer {
       if (!Number.isFinite(next[i])) throw new Error('RENDER_NONFINITE_POSITION');
       if (i % 8192 === 0) { await yieldTask(); check(); }
     }
-    let prepared: (ReturnType<DetailRenderer['coordinateState']> & { positions: Float32Array; atlas: LabelAtlas; discData: Float32Array[] }) | undefined;
+    let prepared: (ReturnType<DetailRenderer['coordinateState']> & { positions: Float32Array; atlas: LabelAtlas; discData: Float32Array[]; homeRatio: number }) | undefined;
     const geometry = this.coordinateState(next, this.filterVisible, this.view);
     await yieldTask(); check();
     const atlas = await buildLabels(this.projection, { ...this.cameraFrame, positions: next, visible: geometry.visible }, this.sizingSettings(), this.width, this.height, this.theme.font, valid);
     check();
-    prepared = { ...geometry, positions: next, atlas, discData: this.discs(geometry.halos, geometry.hubs) };
+    prepared = { ...geometry, positions: next, atlas, discData: this.discs(geometry.halos, geometry.hubs), homeRatio: this.layoutRatio(geometry.grid) };
     this.timings.coordinates = performance.now() - started;
     let previous: typeof prepared | undefined, committed = false;
     const upload = () => { if (this.gl) { if (!this.usable) throw new Error('GPU context unavailable'); this.uploadCoordinates(); this.uploadLabels(); if (this.gl.isContextLost() || this.gl.getError() !== this.gl.NO_ERROR) throw new Error('GPU coordinate upload failed'); } };
@@ -638,7 +665,7 @@ export class DetailRenderer {
         if (!prepared || committed) throw new Error('Coordinate token already consumed'); check();
         previous = Object.fromEntries(Object.keys(prepared).map(key => [key, (this as unknown as Record<string, unknown>)[key]])) as typeof prepared;
         try {
-          Object.assign(this, prepared); upload(); committed = true;
+          Object.assign(this, prepared); this.anchorKey = []; this.rankedKey = []; upload(); committed = true;
           this.input.replayHover();
           this.refresh();
         } catch (error) {
@@ -777,13 +804,14 @@ export class DetailRenderer {
   }
   private uploadPalette() { const gl = this.gl!; gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.textures[1]!); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 256, this.theme.palette.length / 1024, 0, gl.RGBA, gl.UNSIGNED_BYTE, this.theme.palette); this.paletteUploads++; }
   private async prepareLabels(current: () => boolean) {
-    if (this.view.loading) return;
+    this.labelsPending = true;
+    if (this.view.loading || this.layoutActive) return;
     const revision = ++this.labelsRevision, w = this.width, h = this.height;
     const valid = () => !this.disposed && revision === this.labelsRevision && current();
     const started = performance.now();
     const atlas = await buildLabels(this.projection, { ...this.cameraFrame, positions: this.positions, visible: this.visible }, this.sizingSettings(), w, h, this.theme.font, valid);
     this.timings.labels = performance.now() - started;
-    if (!valid()) return; this.atlas = atlas; if (this.gl && this.ready && !this.lost) this.uploadLabels(); this.refresh();
+    if (!valid()) return; this.labelsPending = false; this.atlas = atlas; if (this.gl && this.ready && !this.lost) this.uploadLabels(); this.refresh();
   }
   private uploadLabels() {
     const started = performance.now(), gl = this.gl!;
@@ -818,7 +846,7 @@ export class DetailRenderer {
     this.onSizingChange?.();
   }
   private queueSizingLabels() {
-    this.labelsRevision++; this.atlas = undefined;
+    this.labelsRevision++; this.labelsPending = true; this.atlas = undefined;
     clearTimeout(this.sizingTimer);
     this.sizingTimer = setTimeout(() => { this.sizingTimer = undefined; if (!this.disposed) void this.prepareLabels(() => !this.disposed).catch(() => {}); }, 160);
   }
@@ -911,7 +939,8 @@ export class DetailRenderer {
   private get scale() { return this.fit / this.camera.ratio; }
   private get centerX() { return this.cameraFrame.minX + this.camera.x * this.cameraFrame.width; }
   private get centerY() { return this.cameraFrame.minY + this.camera.y * this.cameraFrame.height; }
-  private clampRatio(ratio: number) { return Math.max(this.settings.cameraMinRatio, Math.min(this.settings.cameraMaxRatio, ratio)); }
+  private layoutRatio(grid = this.grid) { return Math.max(1, grid.width * this.fit / this.width, grid.height * this.fit / this.height); }
+  private clampRatio(ratio: number) { return Math.max(this.settings.cameraMinRatio, Math.min(this.settings.cameraMaxRatio * this.layoutRatio(), ratio)); }
   setCamera(x: number, y: number, ratio: number) {
     if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(ratio)) throw new Error('CAMERA_NONFINITE');
     this.flight = undefined; this.camera.x = x; this.camera.y = y; this.camera.ratio = this.clampRatio(ratio); this.refresh();
@@ -1212,7 +1241,7 @@ export class DetailRenderer {
       frontier: n => this.frontier.get(n) ?? 0,
       lensed: n => this.lensWanted >= 0 && this.lensWanted === n,
       act: (a, n) => this.cardAction(a, n),
-      travel: n => this.travel(n),
+      travel: n => { if (!this.layoutActive) this.travel(n); },
       cue: n => { this.cue = n; this.refresh(); },
       disclose: (n, open, second) => {
         const d = this.disclosed, same = (a: Set<number>, b: number[]) => a.size === new Set(b).size && b.every(x => a.has(x));
@@ -1231,6 +1260,7 @@ export class DetailRenderer {
     this.interestMemo = { key, score }; return score;
   }
   private cardAction(action: CardAction, n: number) {
+    if (this.layoutActive) return;
     const path = this.path(n);
     if (action === 'lens') this.setLens(this.lensWanted === n ? -1 : n);
     else if (action === 'focus') this.frameNodes(reach(n, this.edges, this.projection, e => !!this.edgeOn[e], this.filterVisible, 1).nodes);
@@ -1249,6 +1279,7 @@ export class DetailRenderer {
   /** Keep the selection clear of measured chrome. Off only makes the smallest safety pan;
    * experimental modes move only when their note set is not comfortably visible. No idle work. */
   private frameSelection(mode: Settings['visuals']['clickFraming'] = 'off') {
+    if (this.view.loading || this.layoutActive) return;
     const n = this.card.node; if (n < 0) return;
     const [right, bottom] = this.cardInset(), w = this.width - right, h = this.height - bottom;
     const x = Math.min(48, w / 4), y = Math.min(96, h / 4);
@@ -1281,6 +1312,7 @@ export class DetailRenderer {
   /** Travel from a Connections row or history: the note becomes focus and selection, the camera flies
    * to it (zooming in when far out) and an active neighbourhood keeps its anchor. */
   private travel(n: number) {
+    if (this.layoutActive) return;
     if (!this.baseVisible[n]) return;
     // Travelling reveals only a hidden target that touches the region (never the traveller's other neighbours) and never moves the anchor.
     const s = this.isolation;
@@ -1459,7 +1491,7 @@ export class DetailRenderer {
     passes.push([1, 1, 0, 1]);
     if (edgePass && edgesOnTop) passes.push([0, 0, 0]);
     if (this.discData[1]!.length) passes.push([3, 3, 1]);
-    if (v.labelStyle === 'ranked' && this.atlas && fade.alpha > .004) passes.push([2, -1, 0]);
+    if (!this.view.loading && !this.layoutActive && v.labelStyle === 'ranked' && this.atlas && fade.alpha > .004) passes.push([2, -1, 0]);
     const f = (location: WebGLUniformLocation | null, value: number) => gl.uniform1f(location, value), integer = (location: WebGLUniformLocation | null, value: number) => gl.uniform1i(location, value);
     for (const [i, vaoIndex, hub, layer = 1] of passes) {
       const program = this.programs[i]!, u = program.uniforms;
@@ -1494,7 +1526,7 @@ export class DetailRenderer {
   private lodLevel() { return this.labelLevel = stickyLevel(this.labelLevel, this.camera.ratio, LABEL_RATIOS); }
   /** DOM text for the hovered note and collapsed groups only: bounded, text-only. */
   private placeOverlay() {
-    if (this.view.loading) return;
+    if (this.view.loading || this.layoutActive) return;
     this.onSizingChange?.();
     const v = this.settings.visuals, focus = v.hoverHighlight ? this.focusLevel : 0, ego = this.focusNode, node = this.hovered < 0 && focus ? ego : this.hovered;
     const radius = (n: number) => this.drawnRadius(n, true, focus);
@@ -1578,7 +1610,7 @@ export class DetailRenderer {
     }
     this.placePath(radius, focus);
     this.crumbTrail.update(v.breadcrumb, this.card.history, this.selected, this.width);
-    this.miniMap.update({ on: v.minimap && this.width >= MINIMAP_MIN_CANVAS, positions: this.display, visible: this.visible, cx: this.camera.x, cy: this.camera.y, worldW: this.width / this.scale, worldH: this.height / this.scale, focus: this.visible[this.focusNode] ? this.focusNode : -1, directs: this.directs, ink: this.theme.text, accent: this.theme.accent });
+    this.miniMap.update({ on: v.minimap && this.width >= MINIMAP_MIN_CANVAS, positions: this.display, visible: this.visible, layoutFrame: this.grid, cx: this.camera.x, cy: this.camera.y, worldW: this.width / this.scale, worldH: this.height / this.scale, focus: this.visible[this.focusNode] ? this.focusNode : -1, directs: this.directs, ink: this.theme.text, accent: this.theme.accent });
     // Greedy vertical nudge keeps coincident hub labels legible (hubs are bounded).
     const placed: [number, number, number][] = [];
     this.hubLabels.forEach((el, i) => {
@@ -1755,7 +1787,7 @@ export class DetailRenderer {
     // The label shader's terms: zoom alpha, importance cut (degree rank), degree-weighted size, background outline.
     const lod = this.lodLevel(), fade = labelFade(s.nodeSize, s.labelRenderedSizeThreshold, this.camera.ratio, LABEL_RATIOS, s.visuals.labelFade, lod), nodes = this.atlas?.nodes[lod], scales = this.atlas?.scales[lod];
     ctx.textBaseline = 'top';
-    if (s.visuals.labelStyle === 'ranked' && nodes && scales && fade.alpha > .004) nodes.forEach((n, i) => {
+    if (!this.view.loading && !this.layoutActive && s.visuals.labelStyle === 'ranked' && nodes && scales && fade.alpha > .004) nodes.forEach((n, i) => {
       const cut = Math.min(1, Math.max(0, (1 - i / nodes.length - fade.cut) / .15)); ctx.globalAlpha = tierLabel(g[n * 4 + 1]! / 255, fade.alpha * cut * cut * (3 - 2 * cut), focus, dim);
       if (ctx.globalAlpha <= .004) return; ctx.font = `${s.labelSize * scales[i]!}px ${this.theme.font}`;
       const name = this.name(n), lx = x(n) + this.nodeRadius(n, false, radius) + 4, ly = y(n) - s.labelSize * scales[i]! / 2;
@@ -1782,9 +1814,9 @@ export class DetailRenderer {
       get cardNode() { return r.card.node; },
       get edgeCard() { return r.selectedEdges.length > 0 || !!r.pathView; },
       get isolated() { return !!r.isolation; },
-      pick: (x, y) => this.pick(x, y),
-      pickHub: (x, y) => this.pickHub(x, y),
-      pickEdge: (x, y) => this.pickEdge(x, y),
+      pick: (x, y) => this.layoutActive ? -1 : this.pick(x, y),
+      pickHub: (x, y) => this.layoutActive ? -1 : this.pickHub(x, y),
+      pickEdge: (x, y) => this.layoutActive ? -1 : this.pickEdge(x, y),
       screenPoint: n => this.screenPoint(n),
       owns: t => t === this.canvas || this.overlay.contains(t as Node),
       selectNote: (n, card, keepLens) => this.selectNote(n, card, keepLens),
@@ -1796,16 +1828,16 @@ export class DetailRenderer {
         if (cursor) this.canvas.style.cursor = node >= 0 || hub >= 0 || edge >= 0 ? 'pointer' : 'grab';
       },
       groupLabel: n => this.view.groupLabels?.[this.view.groupCodes?.[n] ?? -1] ?? 'Ungrouped',
-      openable: n => !!this.filterVisible[n],
-      open: n => this.onNode(n),
-      openHub: g => this.onHub?.(g),
+      openable: n => !this.layoutActive && !!this.filterVisible[n],
+      open: n => { if (!this.layoutActive) this.onNode(n); },
+      openHub: g => { if (!this.layoutActive) this.onHub?.(g); },
       stopFlight: () => { this.flight = undefined; },
       setCamera: (x, y, ratio) => this.setCamera(x, y, ratio),
       flyTo: (x, y, ratio, ms) => this.flyTo(x, y, ratio, ms),
       panBy: (dx, dy) => this.panBy(dx, dy),
       zoomAt: (factor, x, y) => {
         // Zooming out clamps a little past the whole graph (and Fit all); it never switches views.
-        this.flight = undefined; const before = this.scale, step = zoomStep(this.camera.ratio, factor, this.settings.cameraMinRatio, this.clampRatio(Math.max(1, this.homeRatio) * ZOOM_OUT_LIMIT));
+        this.flight = undefined; const before = this.scale, step = zoomStep(this.camera.ratio, factor, this.settings.cameraMinRatio, this.clampRatio(Math.max(this.homeRatio, this.layoutRatio()) * ZOOM_OUT_LIMIT));
         this.camera.ratio = step.ratio; if (step.clamped) this.limitChip.hit(performance.now());
         this.camera.x += (x / before - x / this.scale) / this.cameraFrame.width; this.camera.y += (y / before - y / this.scale) / this.cameraFrame.height; this.refresh();
       },
@@ -1815,12 +1847,12 @@ export class DetailRenderer {
       cardStep: step => this.card.step(step),
       isolate: n => this.isolate(n),
       focusCanvas: () => this.canvas.focus(),
-      flyToNote: n => this.travel(n),
+      flyToNote: n => { if (!this.layoutActive) this.travel(n); },
       act: (a, n) => this.cardAction(a, n),
-      travel: n => this.travel(n),
+      travel: n => { if (!this.layoutActive) this.travel(n); },
       fitAll: () => this.fitAll(),
       relationship: async e => { const carrier = p.carrier[e] === 0xffffffff ? undefined : (await this.describeEdges?.([e]).catch(() => []))?.[0]?.carrier; return { source: p.source[e]!, target: p.target[e]!, note: carrier ? () => this.openPath?.(carrier) : undefined }; },
-      showMenu: (entries, x, y, n) => this.showMenu?.(entries, x, y, n >= 0 ? this.path(n) : undefined),
+      showMenu: (entries, x, y, n) => { if (!this.layoutActive) this.showMenu?.(entries, x, y, n >= 0 ? this.path(n) : undefined); },
       findPath: (from, to) => this.findPath(from, to),
     };
   }

@@ -109,21 +109,23 @@ export function renderInformation(host: HTMLElement, message: string, state: str
   const active = host.ownerDocument?.activeElement as HTMLElement | null, focused = active && host.contains(active) ? key(active) : undefined, scroll = host.scrollTop;
   const tips = controls().filter(el => el.getAttribute('aria-describedby') && !el.parentElement!.querySelector<HTMLElement>('.graph-ng-help-popover')!.hidden).map(key);
   host.querySelectorAll<HTMLDetailsElement>('details').forEach(el => { if (el.dataset.info) opened.set(el.dataset.info, el.open); });
-  host.empty(); renderBody(host, message, state, r, view, act, loading);
+  const progress = message ? host.querySelector<HTMLElement>('.graph-ng-status-message') : null;
+  for (const child of Array.from(host.children)) if (child !== progress) child.remove();
+  renderBody(host, message, state, r, view, act, loading, progress);
   host.querySelectorAll<HTMLDetailsElement>('details').forEach(el => { el.open = opened.get(el.dataset.info!) ?? false; });
   const next = controls();
   if (focused !== undefined) { const target = next.find(el => key(el) === focused) ?? host; target.tabIndex = target === host ? -1 : target.tabIndex; target.focus({ preventScroll: true }); }
   for (const el of next) if (!host.hidden && tips.includes(key(el))) el.dispatchEvent(new Event('pointerenter'));
   host.scrollTop = scroll;
 }
-function renderBody(host: HTMLElement, message: string, state: string | undefined, r: InformationReport | undefined, view: Explored | undefined, act: InformationActions, loading?: { indexed?: number; listed?: number }) {
-  if (message) workingText(host.createDiv({ cls: `graph-ng-status-message ${state === 'error' ? 'graph-ng-explore-error' : ''}` }), message, state === 'building');
+function renderBody(host: HTMLElement, message: string, state: string | undefined, r: InformationReport | undefined, view: Explored | undefined, act: InformationActions, loading?: { indexed?: number; listed?: number }, progress?: HTMLElement | null) {
+  if (message) { const label = progress ?? host.createDiv({ cls: 'graph-ng-status-message' }); label.toggleClass('graph-ng-explore-error', state === 'error'); workingText(label, message, state === 'building'); }
   if (state === 'building' || r?.provisional) {
-    workingText(host.createDiv({ cls: 'graph-ng-coverage-state', attr: { role: 'status' } }), r?.provisional ? pendingText(r) : 'Counts available when the graph is ready', true);
+    if (!message) host.createDiv({ cls: 'graph-ng-coverage-state', attr: { role: 'status' }, text: r?.provisional ? pendingText(r) : 'Counts available when the graph is ready' });
     if (loading?.indexed !== undefined && loading.listed !== undefined) {
       statRow(host, 'files', 'Notes read', num(loading.indexed)); statRow(host, 'loader', 'Notes pending', num(Math.max(0, loading.listed - loading.indexed)));
     }
-    statRow(host, 'timer', 'Layout', r?.layout ? layoutText(r.layout) : r?.progress ? layoutProgress(r.progress) : 'Waiting for graph');
+    statRow(host, 'timer', 'Layout', r?.layout ? layoutText(r.layout) : r?.progress ? `Step ${num(r.progress.iteration)} (${num(r.progress.total)} steps planned)` : 'Preparing graph');
     if (r) statRow(host, 'spline', 'Relationship notes', r.relationshipNodes ? 'Notes' : 'Lines');
     pendingHelp(host);
     return;
@@ -182,4 +184,4 @@ export function layoutText(l: NonNullable<InformationReport['layout']>) {
 /** Stage-local progress only: no elapsed-time estimate and no invented resolver percentage. */
 export const readingProgress = (c: { indexed: number; listed: number }) => `Reading notes ${Math.floor(100 * c.indexed / Math.max(1, c.listed))}%`;
 export const layoutProgress = (p: { iteration: number; total: number }) => `Laying out ${Math.floor(100 * p.iteration / Math.max(1, p.total))}% (step ${num(p.iteration)}, ${num(p.total)} steps)`;
-export const pendingText = (r?: { pendingProperties?: number; linksPending: boolean }) => `Waiting for ${[r?.pendingProperties ? `properties: ${plural(r.pendingProperties, 'note')}` : '', r?.linksPending ? 'Obsidian links' : ''].filter(Boolean).join(' and ') || 'property verification'}`;
+export const pendingText = (r?: { pendingProperties?: number; linksPending: boolean }) => `Graph ready. Waiting for Obsidian to finish reading ${r?.pendingProperties ? `properties (${plural(r.pendingProperties, 'note')} left)` : r?.linksPending ? 'links' : 'properties'}. Updates automatically; you can keep exploring.`;

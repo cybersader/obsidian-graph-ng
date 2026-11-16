@@ -35,9 +35,10 @@ test('graph information renders icon stat rows, a plain-English issues list and 
   const report: any = { nodes: 16121, edges: 49534, indexed: 90, listed: 100, linksPending: true, provisional: true, unresolved: 1, duplicates: 2, rows: 100, rules: ['crosswalk'], dropped: { crosswalk: { drawn: 10, missing: 2, excluded: 1, lines: 0 } } };
   renderInformation(host, 'Building layout in worker…', 'ready', report);
   const rows = host.querySelectorAll('.graph-ng-stat').map((t: any) => [t.children[0].children[0].getAttribute('data-icon'), t.children[1].textContent, t.children[2].textContent]);
-  expect(rows).toEqual([['timer', 'Layout', 'Waiting for graph'], ['spline', 'Relationship notes', 'Lines']]);
+  expect(rows).toEqual([['timer', 'Layout', 'Preparing graph'], ['spline', 'Relationship notes', 'Lines']]);
   expect(host.querySelectorAll('.graph-ng-count').length).toBe(rows.length);
-  expect(host.querySelector('.graph-ng-coverage-state').textContent).toBe('Waiting for Obsidian links');
+  expect(host.querySelector('.graph-ng-status-message').textContent).toBe('Building layout in worker…');
+  expect(host.querySelector('.graph-ng-working')).toBeUndefined();
   expect(host.textContent).not.toContain('49,534');
   expect(host.textContent).not.toContain('Properties loaded'); expect(host.textContent).not.toContain('Partial graph');
   expect(host.textContent).not.toContain(' · ');

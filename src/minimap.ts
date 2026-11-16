@@ -27,8 +27,8 @@ export function viewRect(f: MiniFrame, m: MiniFit, cx: number, cy: number, world
 }
 /** Drawn world bounds: the layout and the current view together, padded, so the view rectangle is
  * always fully inside the minimap, whether zoomed out past the layout or panned away from it. */
-export function miniBounds(layout: MiniFrame, cx: number, cy: number, worldW: number, worldH: number, pad = .06): MiniFrame {
-  const vx = layout.minX + cx * layout.width, vy = layout.minY + cy * layout.height;
+export function miniBounds(layout: MiniFrame, cx: number, cy: number, worldW: number, worldH: number, pad = .06, cam: MiniFrame = layout): MiniFrame {
+  const vx = cam.minX + cx * cam.width, vy = cam.minY + cy * cam.height;
   const minX = Math.min(layout.minX, vx - worldW / 2), minY = Math.min(layout.minY, vy - worldH / 2);
   const w = Math.max(layout.minX + layout.width, vx + worldW / 2) - minX, h = Math.max(layout.minY + layout.height, vy + worldH / 2) - minY, p = Math.max(w, h) * pad || 1;
   return { minX: minX - p, minY: minY - p, width: w + 2 * p, height: h + 2 * p };
@@ -44,8 +44,10 @@ export function viewMarker(r: MiniRect, w: number, h: number, min = MINI_MARKER)
 export function densityGrid(positions: ArrayLike<number>, visible: ArrayLike<number>, f: MiniFrame, m: MiniFit, w: number, h: number) {
   const grid = new Uint32Array(w * h);
   for (let i = 0; i < visible.length; i++) if (visible[i]) {
-    const cx = Math.floor(m.ox + (positions[i * 2]! - f.minX) * m.s), cy = Math.floor(m.oy + (positions[i * 2 + 1]! - f.minY) * m.s);
-    if (cx >= 0 && cy >= 0 && cx < w && cy < h) grid[cy * w + cx]!++;
+    const x = positions[i * 2]!, y = positions[i * 2 + 1]!;
+    if (x < f.minX || x > f.minX + f.width || y < f.minY || y > f.minY + f.height) continue;
+    const cx = Math.max(0, Math.min(w - 1, Math.floor(m.ox + (x - f.minX) * m.s))), cy = Math.max(0, Math.min(h - 1, Math.floor(m.oy + (y - f.minY) * m.s)));
+    grid[cy * w + cx]!++;
   }
   return grid;
 }
@@ -54,6 +56,8 @@ const stored = () => { try { return globalThis.localStorage?.getItem(STORE) === 
 
 export interface MiniState {
   on: boolean; positions: Float32Array; visible: Uint8Array;
+  /** Current geometry bounds, independent of fixed camera normalization. */
+  layoutFrame?: MiniFrame;
   /** Normalised camera centre and the view's world size. */
   cx: number; cy: number; worldW: number; worldH: number;
   focus: number; directs: readonly number[]; ink: string; accent: string;
@@ -69,6 +73,7 @@ export class Minimap {
   private miniFolded = stored();
   /** Layout-frame fit the density image is built with. */
   private fitting: MiniFit;
+  private densityFrame: MiniFrame;
   /** Bounds and fit of the last drawn frame; held still while dragging so the map never slides under the pointer. */
   private miniShown: [MiniFrame, MiniFit];
   private miniHeld = false;
@@ -90,7 +95,7 @@ export class Minimap {
     setIcon(fit, 'maximize'); fit.appendChild(Object.assign(make('span', 'graph-ng-corner-label'), { textContent: 'Fit graph' })); fit.onclick = () => this.fitCamera();
     this.densityCanvas = make('canvas') as HTMLCanvasElement;
     this.miniCanvas.width = this.densityCanvas.width = MINIMAP_W; this.miniCanvas.height = this.densityCanvas.height = MINIMAP_H;
-    this.fitting = miniFit(miniFrame, MINIMAP_W, MINIMAP_H); this.miniShown = [miniFrame, this.fitting];
+    this.densityFrame = miniFrame; this.fitting = miniFit(miniFrame, MINIMAP_W, MINIMAP_H); this.miniShown = [miniFrame, this.fitting];
     const at = (e: PointerEvent) => { const r = this.miniCanvas.getBoundingClientRect(), k = MINIMAP_W / (r.width || MINIMAP_W), [b, m] = this.miniShown; this.panCamera(...toCamera(b, m, (e.clientX - r.left) * k, (e.clientY - r.top) * k, this.miniFrame)); };
     const release = (e: PointerEvent) => { if (this.miniCanvas.hasPointerCapture(e.pointerId)) this.miniCanvas.releasePointerCapture(e.pointerId); this.miniHeld = false; if (this.miniLast) this.update(this.miniLast); };
     this.miniCanvas.addEventListener('pointerdown', e => { if (e.button > 0) return; this.miniCanvas.setPointerCapture(e.pointerId); this.miniHeld = true; at(e); });
@@ -123,23 +128,23 @@ export class Minimap {
     const changed = this.miniLast?.on !== s.on; this.miniLast = s; this.root.hidden = false;
     if (changed) this.paintToggle();
     if (this.folded) return;
-    const source = [s.positions, s.visible, s.ink];
-    // First build is immediate; later changes wait for positions to stop moving (a pan alone does not restart the wait).
-    if (!this.miniBuilt.length) this.rebuildDensity(source);
+    const source = [s.positions, s.visible, s.ink, s.layoutFrame];
+    // First build and theme changes are immediate; coordinate changes wait for positions to settle.
+    if (!this.miniBuilt.length || s.ink !== this.miniBuilt[2]) { clearTimeout(this.miniTimer); this.rebuildDensity(source); }
     else if (source.some((x, i) => x !== this.miniBuilt[i]) && source.some((x, i) => x !== this.miniWanted[i])) {
       clearTimeout(this.miniTimer); this.miniWanted = source;
-      this.miniTimer = setTimeout(() => { this.rebuildDensity([this.miniLast!.positions, this.miniLast!.visible, this.miniLast!.ink]); this.update(this.miniLast!); }, 250);
+      this.miniTimer = setTimeout(() => { this.rebuildDensity([this.miniLast!.positions, this.miniLast!.visible, this.miniLast!.ink, this.miniLast!.layoutFrame]); this.update(this.miniLast!); }, 250);
     }
-    const key = [this.densityVersion, s.cx, s.cy, s.worldW, s.worldH, s.focus, s.directs, s.accent, s.ink, this.miniHeld];
+    const key = [this.densityVersion, s.layoutFrame, s.cx, s.cy, s.worldW, s.worldH, s.focus, s.directs, s.accent, s.ink, this.miniHeld];
     if (key.every((x, i) => x === this.miniDrawn[i])) return;
     this.miniDrawn = key;
     const ctx = this.miniCanvas.getContext('2d'); if (!ctx) return;
-    const L = this.miniFrame, lf = this.fitting;
-    if (!this.miniHeld) { const b = miniBounds(L, s.cx, s.cy, s.worldW, s.worldH); this.miniShown = [b, miniFit(b, MINIMAP_W, MINIMAP_H)]; }
+    const L = this.densityFrame, lf = this.fitting;
+    if (!this.miniHeld) { const b = miniBounds(s.layoutFrame ?? this.miniFrame, s.cx, s.cy, s.worldW, s.worldH, .06, this.miniFrame); this.miniShown = [b, miniFit(b, MINIMAP_W, MINIMAP_H)]; }
     const [f, m] = this.miniShown, k = m.s / lf.s, [dx, dy] = toMini(f, m, L.minX - lf.ox / lf.s, L.minY - lf.oy / lf.s);
     ctx.clearRect(0, 0, MINIMAP_W, MINIMAP_H); ctx.drawImage(this.densityCanvas, dx, dy, MINIMAP_W * k, MINIMAP_H * k);
     // You are here: translucent accent fill, solid border; a deep zoom adds a crosshair to a minimum-size marker.
-    const r = viewMarker(viewRect(f, m, s.cx, s.cy, s.worldW, s.worldH, L), MINIMAP_W, MINIMAP_H);
+    const r = viewMarker(viewRect(f, m, s.cx, s.cy, s.worldW, s.worldH, this.miniFrame), MINIMAP_W, MINIMAP_H);
     ctx.strokeStyle = ctx.fillStyle = s.accent; ctx.lineWidth = 1.5;
     if (r.tiny) { ctx.globalAlpha = .45; ctx.beginPath(); ctx.moveTo(0, r.cy); ctx.lineTo(MINIMAP_W, r.cy); ctx.moveTo(r.cx, 0); ctx.lineTo(r.cx, MINIMAP_H); ctx.lineWidth = 1; ctx.stroke(); ctx.lineWidth = 1.5; }
     ctx.globalAlpha = .08; ctx.fillRect(r.x, r.y, r.w, r.h); ctx.globalAlpha = 1; ctx.strokeRect(r.x, r.y, r.w, r.h);
@@ -152,8 +157,9 @@ export class Minimap {
   private rebuildDensity(source: unknown[]) {
     this.miniTimer = undefined; this.miniBuilt = this.miniWanted = source; this.densityVersion++;
     const s = this.miniLast!, ctx = this.densityCanvas.getContext('2d'), image = ctx?.createImageData?.(MINIMAP_W, MINIMAP_H);
+    this.densityFrame = s.layoutFrame ?? this.miniFrame; this.fitting = miniFit(this.densityFrame, MINIMAP_W, MINIMAP_H);
     if (!ctx || !image?.data) return;
-    const grid = densityGrid(s.positions, s.visible, this.miniFrame, this.fitting, MINIMAP_W, MINIMAP_H);
+    const grid = densityGrid(s.positions, s.visible, this.densityFrame, this.fitting, MINIMAP_W, MINIMAP_H);
     let max = 1; for (const c of grid) if (c > max) max = c;
     // Alpha-only density (square-root scaled so sparse areas stay visible), then tinted with the theme ink.
     for (let i = 0; i < grid.length; i++) image.data[i * 4 + 3] = grid[i] ? 50 + 160 * Math.sqrt(grid[i]! / max) : 0;

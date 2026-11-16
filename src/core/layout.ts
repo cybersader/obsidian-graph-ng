@@ -140,8 +140,8 @@ export async function runLayoutStream(input: LayoutInput, options: LayoutOptions
   const solver = new LayoutSolver(input, options);
   const send = () => { const p = buffer(solver.positions.length); p.set(solver.positions); emit(p, solver.iteration, solver.limit); };
   if (!input.count) return solver.positions;
-  // A warm continuation already has meaningful coordinates; do not repaint a zero-step seed.
-  if (!input.initial) send(); await yieldNow();
+  // A seed is not a layout. Every published frame has completed at least one batch.
+  await yieldNow();
   while (!solver.done) {
     solver.step();
     if (!solver.done && solver.iteration % every === 0) send();

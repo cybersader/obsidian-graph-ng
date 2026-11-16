@@ -306,7 +306,7 @@ test('UX graph status uses structured phase, coverage and failures rather than E
   const view: any = Object.create(GraphView.prototype);
   Object.assign(view, { contentEl: { dataset: { state: 'building' } }, status: new ControlElement(), statusSummary: new ControlElement(), plugin: { settings: {} }, provisional: true, gpu: { available: true } });
   view.statusText = 'partial, provisional, pending'; expect(view.statusSummary.textContent).toBe('partial, provisional, pending');
-  view.contentEl.dataset.state = 'ready'; view.statusText = '0 unresolved'; expect(view.statusSummary.textContent).toBe('Waiting for property verification');
+  view.contentEl.dataset.state = 'ready'; view.statusText = '0 unresolved'; expect(view.statusSummary.textContent).toBe('Graph ready. Waiting for Obsidian to finish reading properties. Updates automatically; you can keep exploring.');
   view.provisional = false; view.statusText = 'error is a note name, not a health signal'; expect(view.statusSummary.hidden).toBe(true);
   view.report = { nodes: 4, edges: 2, indexed: 4, listed: 4, linksPending: false, provisional: false, unresolved: 3, duplicates: 0 }; view.statusText = 'details'; expect(view.statusSummary.textContent).toBe('4 notes2 edges'); expect(view.statusSummary.hidden).toBe(false); view.report = undefined;
   view.contentEl.dataset.state = 'error'; view.statusText = 'Projection refresh failed: synthetic missing file'; expect(view.statusSummary.textContent).toContain('synthetic missing file'); expect(view.statusSummary.textContent).not.toContain('Retry');
@@ -440,7 +440,7 @@ test('TBR-2R admitted software Workspace updates real Canvas edge membership in 
   } finally { f.restore(); }
 });
 test('UX relationship notes Lines | Nodes: shown only with reified rules; one apply flips display; failure keeps it', async () => {
-  const f = fixture(), buttons = () => f.panel.root.querySelectorAll('button').filter((b: any) => b.textContent === 'Lines' || b.textContent === 'Nodes');
+  const f = fixture(), buttons = () => f.panel.root.querySelectorAll('button').filter((b: any) => b.textContent === 'Lines' || b.textContent === 'Notes');
   let applies = 0, fail = false; const plugin = { settings: f.settings, apply: async (s: any) => { applies++; if (fail) throw new Error('synthetic save failure'); plugin.settings = s; } };
   f.host.relationshipNotes = () => 44123; f.host.setRelationshipDisplay = (nodes: boolean) => setRelationshipDisplay(plugin, nodes);
   f.state.view.query = 'kept'; f.settings.explore.view = f.state.view; f.panel.show('appearance');

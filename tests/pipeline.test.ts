@@ -370,7 +370,7 @@ test('worker position events carry actual cold and warm solver iteration limits'
     await p.request(1, { kind: 'configure', config: { ...config, layout: { ...layout, iterations: 7, relaxIterations: 3 }, streamEveryIterations: 2 } });
     await p.request(1, { kind: 'rows', columns: packRows([{ path: 'a.md', properties: {} }, { path: 'b.md', properties: {} }], declaration), reset: true });
     await p.request(1, { kind: 'project', complete: true }); await p.request(1, { kind: 'layout' });
-    expect(events).toEqual([[0, 7], [2, 7], [4, 7], [6, 7]]);
+    expect(events).toEqual([[2, 7], [4, 7], [6, 7]]);
     events.length = 0;
     await p.request(2, { kind: 'configure', config: { ...config, layout: { ...layout, iterations: 7, relaxIterations: 3 }, streamEveryIterations: 2 } });
     await p.request(2, { kind: 'rows', columns: packRows([{ path: 'c.md', properties: {} }], declaration) });
@@ -408,6 +408,6 @@ test('real edits queued during provisional layout warm-start by identity without
     await p.request(3, { kind: 'configure', config: { ...c, source: 'different-view' } });
     await p.request(3, { kind: 'project', complete: false });
     const isolated = await p.request<LayoutResult>(3, { kind: 'layout' });
-    expect(isolated.reused).toBeUndefined(); expect(streams.some(e => e.revision === 3 && e.iteration === 0)).toBe(true);
+    expect(isolated.reused).toBeUndefined(); expect(streams.some(e => e.revision === 3 && e.iteration === 0)).toBe(false);
   } finally { p.dispose(); }
 });

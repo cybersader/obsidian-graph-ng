@@ -15,8 +15,8 @@ test('CSR solver is deterministic; stream cadence and task budget preserve integ
   expect(hash(first)).toBe(hash(second));
   let yielded = 0; const frames: Float32Array[] = [];
   const streamed = await runLayoutStream(input, { ...options, batchIterations: 2 }, 7, p => frames.push(p), async () => { yielded++; });
-  expect(hash(streamed)).toBe(hash(first)); expect(frames.length).toBe(8); expect(yielded).toBeGreaterThan(20);
-  expect(frames[0]).toEqual(initialPositions(input.count, input.seed ^ options.seed, options.initialRadius));
+  expect(hash(streamed)).toBe(hash(first)); expect(frames.length).toBe(7); expect(yielded).toBeGreaterThan(20);
+  expect(frames[0]).not.toEqual(initialPositions(input.count, input.seed ^ options.seed, options.initialRadius));
   expect(hash(runLayout({ ...input, seed: 18 }, options))).not.toBe(hash(first));
 });
 test('warm-start fixes untouched nodes exactly and never mutates saved input buffers', () => {

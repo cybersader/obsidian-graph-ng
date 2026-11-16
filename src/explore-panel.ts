@@ -284,15 +284,20 @@ export class ExplorePanel {
     chip?.addClass('is-focused'); chip?.querySelector('button')?.focus();
   }
   /** Notes shown and edges drawn; what the view hides is one row leading to the breakdown. The scope is named only inside a selected group. */
+  private summaryKey?: string;
   private summary(external: boolean, r?: ExploreResult) {
-    this.counts.hidden = this.tool === 'information'; this.counts.empty();
+    const progress = this.counts.querySelector<HTMLElement>('.graph-ng-working-status'), loading = this.host.loading?.();
+    const key = JSON.stringify([external, this.host.scoped?.(), this.host.scope?.(), r && sum(r.visible), r?.visibleEdges]);
+    this.counts.hidden = this.tool === 'information';
+    if (progress && loading && this.summaryKey === key) { workingText(progress, loading.stage, true); return; }
+    this.summaryKey = key; progress?.remove(); this.counts.empty();
+    const status = (host: HTMLElement, text: string, busy: boolean) => { const label = progress ?? host.createSpan(); if (progress) host.appendChild(progress); workingText(label, text, busy); };
     if (this.host.scoped?.()) this.counts.createDiv({ cls: 'graph-ng-scope-name', text: `In ${this.host.scope?.()}` });
-    const loading = this.host.loading?.();
-    if (external || !r) { workingText(this.note(this.counts, ''), loading?.stage ?? (external ? 'External aggregate' : 'Waiting for projection…'), !!loading); return; }
+    if (external || !r) { status(this.note(this.counts, ''), loading?.stage ?? (external ? 'External aggregate' : 'Waiting for projection…'), !!loading); return; }
     const stats = this.counts.createDiv({ cls: 'graph-ng-stats' });
     const shown = sum(r.visible), notes = r.nodes - shown, edges = r.edges - r.visibleEdges;
     statRow(stats, 'circle-dot', loading ? 'Notes shown so far' : 'Notes shown', num(shown)); statRow(stats, 'spline', loading ? 'Edges drawn so far' : 'Edges drawn', num(r.visibleEdges));
-    if (loading) { workingText(statRow(stats, 'loader', '', '', 'graph-ng-loading-counts').querySelector<HTMLElement>('.graph-ng-stat-label')!, loading.stage, true); return; }
+    if (loading) { status(statRow(stats, 'loader', '', '', 'graph-ng-loading-counts').querySelector<HTMLElement>('.graph-ng-stat-label')!, loading.stage, true); return; }
     if (notes || edges) statRow(stats, 'eye-off', 'Hidden, see why', `${plural(notes, 'note')}, ${plural(edges, 'edge')}`, '', () => this.show('information'));
   }
   private note(host: HTMLElement, text: string) { return host.createDiv({ cls: 'graph-ng-explore-note', text }); }
@@ -515,6 +520,7 @@ export class ExplorePanel {
     if (visible < total) count.createEl('small', { text: plural(total - visible, `hidden ${noun}`) });
   }
   private edges(host: HTMLElement, r: ExploreResult) {
+    if (this.host.setRelationshipDisplay && hasReified(this.settings.declaration)) this.relationshipDisplay(host);
     const hidden = new Set(this.view.hiddenTypes), list = host.createDiv({ cls: 'graph-ng-legend graph-ng-type-legend', attr: { role: 'list', 'aria-label': 'Relationship types and edges shown' } });
     r.types.forEach((type, i) => {
       const item = list.createDiv({ cls: 'graph-ng-legend-row', attr: { role: 'listitem' } }), eye = item.createEl('input', { attr: { type: 'checkbox', 'aria-label': `Show ${type} relationships` } });
@@ -759,10 +765,10 @@ export class ExplorePanel {
   private relationMessage = '';
   private relationshipDisplay(host: HTMLElement) {
     const nodes = this.settings.declaration.display.reifiedAsNodes, count = this.host.relationshipNotes?.() ?? 0;
-    this.note(host, 'Changing relationship display saves globally and rebuilds the graph.');
+    this.note(host, 'Relationship notes');
     const row = host.createDiv({ cls: 'graph-ng-row graph-ng-segmented', attr: { role: 'group', 'aria-label': 'Relationship notes' } });
-    panelHelp(row, 'Relationship notes', `Lines join the endpoints; Nodes makes each relationship a clickable dot${count ? ` (${plural(count, 'added dot')})` : ''}. Switching saves globally and rebuilds the layout.`);
-    for (const [value, text] of [[false, 'Lines'], [true, 'Nodes']] as const) {
+    panelHelp(row, 'Relationship notes', `Lines join the endpoints; Notes makes each relationship a clickable dot${count ? ` (${plural(count, 'added dot')})` : ''}. Switching saves globally and rebuilds the layout.`);
+    for (const [value, text] of [[false, 'Lines'], [true, 'Notes']] as const) {
       const button = row.createEl('button', { text, attr: { 'aria-pressed': String(nodes === value) } }); button.disabled = this.relationBusy || nodes === value;
       button.onclick = async () => {
         this.relationBusy = true; this.relationMessage = 'Rebuilding graph…'; this.render();
@@ -771,6 +777,7 @@ export class ExplorePanel {
         finally { this.relationBusy = false; if (!this.disposed) this.render(); }
       };
     }
+    this.note(host, 'Saves globally and rebuilds the graph.');
     if (this.relationMessage) workingText(host.createDiv({ cls: 'graph-ng-explore-note', attr: { role: 'status' } }), this.relationMessage, this.relationBusy);
   }
   private viewDefinition(host: HTMLElement, saved: SavedView) {

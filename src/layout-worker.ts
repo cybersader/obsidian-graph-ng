@@ -136,7 +136,7 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       if (revision !== projectionRevision || !positions) throw new Error('Projection generation changed');
       validateLayout(r.options);
       const start = performance.now();
-      const next = await runLayoutStream({ count: projection.paths.length, source: projection.source, target: projection.target, offsets: projection.offsets, targets: projection.targets, up: projection.up, seed: Number.parseInt(meta.key.slice(0, 8), 16), initial: positions.slice() }, r.options, config.streamEveryIterations, () => {}, yieldTask, takeBuffer);
+      const next = await runLayoutStream({ count: projection.paths.length, source: projection.source, target: projection.target, offsets: projection.offsets, targets: projection.targets, up: projection.up, seed: Number.parseInt(meta.key.slice(0, 8), 16), initial: positions.slice() }, r.options, config.streamEveryIterations, (p, iteration, total) => self.postMessage({ kind: 'positions', revision, positions: p, iteration, total }, { transfer: [p.buffer] }), yieldTask, takeBuffer);
       return { positions: next, milliseconds: performance.now() - start, cached: false };
     }
     case 'layout': {

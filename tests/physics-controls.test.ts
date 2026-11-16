@@ -101,6 +101,7 @@ function runtime() {
   const v: any = Object.create(GraphView.prototype), settings = defaults('links'); let saves = 0, calls = 0;
   Object.assign(v, { activeRevision: 7, detailGeneration: 7, renderRevision: 2, projection: {}, positions: new Float32Array([1, 2]), closed: false,
     plugin: Object.assign(new GraphPlugin(null as any, {} as any), { settings, saveData: async () => { saves++; }, pipeline: { request: async (revision: number, request: any) => { calls++; expect(revision).toBe(7); expect(request.kind).toBe('recompute'); return { positions: new Float32Array([3, 4]) }; } } }) });
+  Object.defineProperty(v, 'statusText', { configurable: true, get() { return this.statusMessage ?? ''; }, set(text: string) { this.statusMessage = text; } });
   return { v, saves: () => saves, calls: () => calls };
 }
 test('host runs one layout-only RPC, preserves untouched settings, and commits only successful current generation', async () => {
@@ -125,7 +126,7 @@ test('host rejects invalid stale disposed and worker-failed apply with prior gra
   }
 });
 
-test('real worker recompute is finite, layout-only and non-streaming; stale/invalid requests preserve prior generation', async () => {
+test('real worker recompute is finite, layout-only and streams progressed frames; stale/invalid requests preserve prior generation', async () => {
   const { WorkerPipeline } = await import('../src/pipeline');
   const { packRows } = await import('../src/core/columns');
   const s = defaults('links'), options = { ...s.layout, iterations: 2, relaxIterations: 2 };
@@ -138,7 +139,7 @@ test('real worker recompute is finite, layout-only and non-streaming; stale/inva
     p.onPositions = () => streams++; p.onGroups = () => groups++;
     const result: any = await p.request(1, { kind: 'recompute', options: { ...options, force: { ...options.force, gravity: 0, scalingRatio: 100000 } } });
     expect(result.positions.length).toBe(4); expect(result.positions.every(Number.isFinite)).toBe(true); expect(result.cached).toBe(false);
-    expect(streams).toBe(0); expect(groups).toBe(0);
+    expect(streams).toBe(1); expect(groups).toBe(0);
     // Await real worker delivery before synchronous matcher assertions: Bun's promise
     // rejection matcher can block Worker message delivery in this mixed host fixture.
     const rejected = await Promise.all([0, 2].map(revision => p.request(revision, { kind: 'recompute', options }).then(() => '', error => String(error))));

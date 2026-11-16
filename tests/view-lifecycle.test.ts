@@ -228,7 +228,7 @@ test('fact groups paint before layout, pending links prevent exact caching, and 
     showGroups() { painted++; expect(encoded).toBe(0); } });
   try {
     await view.refreshOnce(); expect(painted).toBe(1); expect(complete).toBe(false); expect(caches).toBe(0); expect(encoded).toBe(0);
-    expect(view.contentEl.dataset.verified).toBe('false'); expect(view.status.textContent).toContain('Waiting for Obsidian links'); expect(view.statusSummary.textContent).not.toContain('1 note0 edges'); expect(view.statusSummary.textContent).toContain('Waiting for Obsidian links');
+    expect(view.contentEl.dataset.verified).toBe('false'); expect(view.status.textContent).toContain('Waiting for Obsidian to finish reading links'); expect(view.statusSummary.textContent).not.toContain('1 note0 edges'); expect(view.statusSummary.textContent).toContain('Waiting for Obsidian to finish reading links');
     links['a.md'] = {}; adapter.invalidate();
     await view.refreshOnce(); expect(complete).toBe(true); expect(encoded).toBe(1); expect(caches).toBe(1); expect(view.contentEl.dataset.verified).toBe('true');
     const request = pipeline.request;
@@ -387,10 +387,11 @@ test('returning to Notes replaces a preview disposed by Groups', async () => {
   await preview.finish(); expect(recycled).toEqual([first, next]);
 });
 
-test('only ready local projections wait for host metadata', async () => {
+test('completed partial projections do not keep layout busy waiting for host metadata', async () => {
   const { GraphView } = await import('../src/main'); const view: any = Object.create(GraphView.prototype);
   Object.assign(view, { contentEl: { dataset: { state: 'ready' } }, provisional: true, plugin: { settings: { projectionFile: '' } }, report: { linksPending: true, pendingProperties: 4 } });
-  expect(view.loading().stage).toContain('4 notes');
+  expect(view.loading()).toBeUndefined();
+  view.layoutWorking = true; view.statusMessage = 'Laying out notes 64%'; expect(view.loading().stage).toBe('Laying out notes 64%'); view.layoutWorking = false;
   view.plugin.settings.projectionFile = 'synthetic-projection'; expect(view.loading()).toBeUndefined();
   view.plugin.settings.projectionFile = ''; view.contentEl.dataset.state = 'error'; expect(view.loading()).toBeUndefined();
 });

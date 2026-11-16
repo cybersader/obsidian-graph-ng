@@ -8,7 +8,11 @@ test('density scalar loop exactly matches point-transform oracle including grid 
   const positions = new Float32Array(4000), visible = new Uint8Array(2000), frame = { minX: -50, minY: -30, width: 100, height: 60 }, fit = miniFit(frame, 160, 120);
   for (let i = 0; i < visible.length; i++) { positions[i * 2] = (i * 31 % 200) - 100; positions[i * 2 + 1] = (i * 43 % 120) - 60; visible[i] = +(i % 3 !== 0); }
   const expected = new Uint32Array(160 * 120);
-  for (let i = 0; i < visible.length; i++) if (visible[i]) { const [x, y] = toMini(frame, fit, positions[i * 2]!, positions[i * 2 + 1]!), cx = Math.floor(x), cy = Math.floor(y); if (cx >= 0 && cy >= 0 && cx < 160 && cy < 120) expected[cy * 160 + cx]!++; }
+  for (let i = 0; i < visible.length; i++) if (visible[i]) {
+    const px = positions[i * 2]!, py = positions[i * 2 + 1]!;
+    if (px < -50 || px > 50 || py < -30 || py > 30) continue;
+    const [x, y] = toMini(frame, fit, px, py); expected[Math.min(119, Math.max(0, Math.floor(y))) * 160 + Math.min(159, Math.max(0, Math.floor(x)))]!++;
+  }
   expect(densityGrid(positions, visible, frame, fit, 160, 120)).toEqual(expected);
 });
 
@@ -43,6 +47,11 @@ test('minimap coordinate mapping keeps aspect, centres the frame and round-trips
   expect(viewRect(f, m, .5, .5, 200, 50)).toEqual({ x: 40, y: 50, w: 80, h: 20 });
 });
 
+test('review: minimap retains both bounds endpoints without admitting out-of-frame notes', () => {
+  const frame = { minX: 100, minY: 100, width: 100, height: 100 }, fit = miniFit(frame, 160, 120);
+  const grid = densityGrid(new Float32Array([100, 100, 200, 200, 201, 200, 200, 201, 99, 100]), new Uint8Array([1, 1, 1, 1, 1]), frame, fit, 160, 120);
+  expect(grid.reduce((a, b) => a + b, 0)).toBe(2); expect(grid[20]).toBe(1); expect(grid[119 * 160 + 140]).toBe(1);
+});
 test('minimap density bins only visible notes inside the frame', () => {
   const f = { minX: 0, minY: 0, width: 4, height: 3 }, m = miniFit(f, 4, 3);
   const positions = new Float32Array([0.5, 0.5, 0.6, 0.4, 3.5, 2.5, 1.5, 1.5, 9, 9]), grid = densityGrid(positions, new Uint8Array([1, 1, 1, 0, 1]), f, m, 4, 3);

@@ -13,6 +13,33 @@ beforeEach(() => {
   Object.assign(globalThis, { document: { get activeElement() { return ControlElement.active; } }, HTMLElement: ControlElement, HTMLInputElement: ControlElement });
 });
 afterEach(() => { for (const [key, value] of old) { if (value === undefined) delete (globalThis as any)[key]; else (globalThis as any)[key] = value; } ControlElement.active = undefined; });
+test('one weighted build never regresses on repeated stages, revised totals or cache skips', async () => {
+  const { BuildProgress } = await import('../src/working');
+  const p = new BuildProgress(); p.start(); const seen: number[] = [];
+  for (const [step, fraction] of [[0, 0], [0, .8], [0, .2], [1, 0], [2, .4], [0, 0], [2, .1], [3, 0], [4, 0]]) { p.text(step!, fraction); seen.push(p.percent); }
+  expect(seen).toEqual([0, 24, 24, 30, 68, 68, 68, 95, 100]);
+  p.start(); expect(p.text(0)).toBe('Build 2: Reading notes 0%');
+  expect(p.text(2, .4)).toBe('Build 2: Laying out notes 68%');
+});
+test('summary retains the same working glyph span through number and step updates', () => {
+  const f = fixture(); let stage = 'Build 1: Reading notes 10%'; f.host.loading = () => ({ stage }); f.panel.show('filters');
+  const span = f.panel.counts.querySelector('.graph-ng-working');
+  f.panel.counts.empty = () => { throw new Error('Progress must stay connected during percentage and step updates'); };
+  stage = 'Build 1: Reading notes 20%'; f.panel.updateSummary(); expect(f.panel.counts.querySelector('.graph-ng-working')).toBe(span);
+  expect(f.panel.counts.querySelector('.graph-ng-status-previous')).toBeUndefined();
+  stage = 'Build 1: Laying out notes 64%'; f.panel.updateSummary(); expect(f.panel.counts.querySelector('.graph-ng-working')).toBe(span);
+  expect(f.panel.counts.querySelector('.graph-ng-status-previous')).toBeDefined(); f.panel.dispose();
+});
+test('Filters relationships exposes the existing Lines and Notes save/rebuild action', async () => {
+  const f = fixture(); const calls: boolean[] = [];
+  f.settings.declaration.edges.push({ kind: 'reified', name: 'relation', sourceProperty: 'source', targetProperty: 'target' });
+  f.host.setRelationshipDisplay = async (nodes: boolean) => { calls.push(nodes); f.settings.declaration.display.reifiedAsNodes = nodes; };
+  f.panel.show('filters'); const section = f.root.querySelector('.graph-ng-explore-edges')!;
+  expect(section.textContent).toContain('Relationship notes'); expect(section.textContent).toContain('Saves globally and rebuilds');
+  const button: any = section.querySelectorAll('button').find(e => e.textContent === 'Notes'); expect(button).toBeDefined(); await button.onclick();
+  expect(calls).toEqual([true]); f.panel.show('appearance');
+  expect(f.root.querySelectorAll('button').find(e => e.textContent === 'Notes')!.getAttribute('aria-pressed')).toBe('true'); f.panel.dispose();
+});
 function fixture() {
   const settings = defaults('links'), root = new ControlElement(), view = emptyView();
   const p = buildProjection([{ path: 'Synthetic/A.md', properties: {} }], settings.declaration);
