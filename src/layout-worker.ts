@@ -78,6 +78,8 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       const value: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(r.bytes)); validateGroupProjection(value, r.limits); return value;
     }
     case 'configure': {
+      // Equal ID strings from different declared properties need not identify the same notes.
+      if (saved && canonical(config.declaration.identity) !== canonical(r.config.declaration.identity)) saved = undefined;
       config = r.config;
       declarationHash = await digest(identityDeclaration(layoutDeclaration(config.declaration))); layoutHash = await digest({ layout: config.layout, streamEveryIterations: config.streamEveryIterations });
       if (saved && !compatible(saved.meta)) saved = undefined;

@@ -849,9 +849,14 @@ export class DetailRenderer {
    * fewer than 8 nodes are framed exactly. Only an empty view falls back to the preserved frame. */
   fitAll(ms?: number) {
     // Frame connected notes when there are enough: unconnected ones settle on a far ring that would shrink the web.
-    const all: [number[], number[]] = [[], []], linked: [number[], number[]] = [[], []], o = this.projection.offsets, step = Math.max(1, Math.floor(this.visible.length / 8192));
-    for (let i = 0; i < this.visible.length; i += step) if (this.visible[i]) for (const list of o[i + 1]! > o[i]! ? [all, linked] : [all]) { list[0].push(this.display[i * 2]!); list[1].push(this.display[i * 2 + 1]!); }
-    const [xs, ys] = linked[0].length < 8 ? all : linked;
+    const xs: number[] = [], ys: number[] = [], connected = new Uint8Array(this.visible.length), p = this.projection;
+    for (let e = 0; e < p.source.length; e++) if (this.edgeDrawn(e)) connected[p.source[e]!] = connected[p.target[e]!] = 1;
+    // Count before sampling: hidden endpoints/types are not connections, and sparse filters must
+    // not miss the eight-note threshold or be mistaken for an empty view.
+    let all = 0, linked = 0, seen = 0;
+    for (let i = 0; i < this.visible.length; i++) if (this.visible[i]) { all++; linked += connected[i]!; }
+    const only = linked >= 8, step = Math.max(1, Math.ceil((only ? linked : all) / 8192));
+    for (let i = 0; i < this.visible.length; i++) if (this.visible[i] && (!only || connected[i]) && seen++ % step === 0) { xs.push(this.display[i * 2]!); ys.push(this.display[i * 2 + 1]!); }
     for (const h of this.hubs) { xs.push(h.x); ys.push(h.y); }
     if (!xs.length) { this.homeRatio = 1; this.flyTo(.5, .5, 1, ms); return; }
     xs.sort((a, b) => a - b); ys.sort((a, b) => a - b);
@@ -998,14 +1003,23 @@ export class DetailRenderer {
     return -1;
   }
   private pickEdge(x: number, y: number) {
-    const w = this.worldPoint(x, y), radius = this.grid.cell, p = this.projection, mode = this.settings.visuals.edgeMode;
+    const w = this.worldPoint(x, y), radius = this.grid.cell, p = this.projection, v = this.settings.visuals, mode = v.edgeMode, focus = v.hoverHighlight ? this.focusLevel : 0;
     let best = -1, distance = this.settings.groupEdgeHitRadius / this.scale, budget = 32768;
-    // Lines hidden by the Edges mode are not pickable.
-    if (mode === 'off' || !this.settings.visuals.edgeOpacity || mode === 'focus' && (!this.settings.visuals.hoverHighlight || !this.focusLevel)) return -1;
+    // Lines hidden by the Edges mode or the WebGL ink budget are not pickable.
+    if (mode === 'off' || !v.edgeOpacity || mode === 'focus' && !focus) return -1;
+    const [ink, reach] = this.gl ? this.edgeQuiet(2 * Math.max(.5, this.settings.edgeSize * zoomFade(v, this.visibleEdges, this.camera.ratio / this.homeRatio, this.width, this.height)), false) : [1, Infinity];
     // Deliberately budgeted incident-edge picking, not an O(m) all-segment scan or GPU readback.
     const visit = (node: number) => {
-      for (let j = this.edges.offsets[node]!; j < this.edges.offsets[node + 1]! && budget-- > 0; j++) { const e = this.edges.edges[j]!, a = p.source[e]!, b = p.target[e]!; if (!this.edgeDrawn(e) || mode === 'focus' && this.edgeTier[e] !== PATH_EDGE && !shownEdgeTier(this.edgeTier[e]!, this.tierMask)) continue;
-        const d = segmentDistance(w.x, w.y, this.renderCoordinate(a, 0), this.renderCoordinate(a, 1), this.renderCoordinate(b, 0), this.renderCoordinate(b, 1)); if (d < distance) { best = e; distance = d; }
+      for (let j = this.edges.offsets[node]!; j < this.edges.offsets[node + 1]! && budget-- > 0; j++) {
+        const e = this.edges.edges[j]!, a = p.source[e]!, b = p.target[e]!, tier = this.edgeTier[e] === PATH_EDGE || shownEdgeTier(this.edgeTier[e]!, this.tierMask);
+        if (!this.edgeDrawn(e) || mode === 'focus' && !tier) continue;
+        const ax = this.renderCoordinate(a, 0), ay = this.renderCoordinate(a, 1), bx = this.renderCoordinate(b, 0), by = this.renderCoordinate(b, 1);
+        if (this.gl && e !== this.hoveredEdge && !(tier && focus)) {
+          // Same unsigned 24-bit rank and long-line threshold as edgeVertex; hovered/focus/path lines stay admitted.
+          let k = Math.imul(e, 2654435769); k ^= k >>> 15; k = Math.imul(k, 2246822519);
+          if (ink! * lengthFade(Math.hypot(bx - ax, by - ay) * this.scale, Math.min(reach!, 1e9)) * 16777216 <= ((k ^ k >>> 13) >>> 8)) continue;
+        }
+        const d = segmentDistance(w.x, w.y, ax, ay, bx, by); if (d < distance) { best = e; distance = d; }
       }
     };
     // Nearby unchanged edges must get their existing budget before a distant lens cloud.

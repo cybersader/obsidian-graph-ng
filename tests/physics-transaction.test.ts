@@ -142,6 +142,30 @@ test('Fit all frames the connected notes, not a far ring of unconnected ones; un
   expect(web.ring.every(i => !onScreen(web.r, [i]))).toBe(true);
   const few = await fit(5); expect(onScreen(few.r, [...Array.from({ length: 5 }, (_, i) => i), ...few.ring])).toBe(true);
 });
+test('Fit all counts connected notes before sampling and ignores filtered endpoints and hidden types', async () => {
+  const { renderer: r } = await fixture();
+  const n = 20000, visible = new Uint8Array(n), positions = new Float32Array(n * 2), k = (name: string) => mangle[name] ?? name;
+  const ids = [101, 103, 105, 107, 109, 111, 113, 114], source = Uint32Array.from(ids.slice(1), () => ids[0]!), target = Uint32Array.from(ids.slice(1));
+  const p: any = { source, target, offsets: new Uint32Array(n + 1) };
+  for (let e = 0; e < source.length; e++) { p.offsets[source[e]! + 1]++; p.offsets[target[e]! + 1]++; }
+  for (let i = 1; i <= n; i++) p.offsets[i] += p.offsets[i - 1];
+  for (const i of ids) { visible[i] = 1; positions[i * 2] = 100 + i; positions[i * 2 + 1] = 50; }
+  visible[19100] = 1; positions[19100 * 2] = 10000; positions[19100 * 2 + 1] = 10000;
+  // Old fitting sampled even absolute indices: one of eight connected notes, so it framed the far ring.
+  let bounds: number[] = [];
+  Object.assign(r, { projection: p, visible }); r[k('display')] = positions;
+  r[k('filterVisible')] = visible; r[k('edgeOn')] = new Uint8Array(source.length).fill(1); r[k('hubs')] = [];
+  r[k('cardInset')] = () => [0, 0]; r[k('clampRatio')] = (v: number) => v;
+  r[k('frame')] = (...args: number[]) => { bounds = args.slice(0, 4); return 1; };
+  r[k('flyTo')] = () => { throw Error('Nonempty view mistaken for empty'); };
+  r.fitAll(0); expect(bounds).toEqual([201, 50, 214, 50]);
+  // Seven currently connected notes: frame the unconnected distant note as well.
+  visible[ids[7]!] = 0; r.fitAll(0); expect(bounds[2]).toBe(10000);
+  // Eight visible notes with a hidden hub endpoint have no current connections.
+  visible[ids[7]!] = 1; visible[ids[0]!] = 0; r.fitAll(0); expect(bounds[2]).toBe(10000);
+  visible[ids[0]!] = 1; r[k('edgeOn')].fill(0); r.fitAll(0); expect(bounds[2]).toBe(10000);
+  visible.fill(0); visible[ids[0]!] = 1; r.fitAll(0); expect(bounds).toEqual([201, 50, 201, 50]);
+});
 const originalFactory = Renderer.create;
 
 test('production same-context upload reuses position/atlas textures, buffers and programs', async () => {
@@ -1336,6 +1360,25 @@ test('review: hidden edges cannot be picked, including legend-hidden focus tiers
   f.settings.visuals.hoverHighlight = true; r[k('focusLevel')] = 0; expect(pick()).toBe(-1);
   r[k('focusLevel')] = 1; f.settings.visuals.edgeMode = 'off'; expect(pick()).toBe(-1);
   f.settings.visuals.edgeMode = 'all'; f.settings.visuals.edgeOpacity = 0; expect(pick()).toBe(-1);
+});
+
+test('WebGL picking follows the ink share and long-line fade without culling hovered, focused or path edges', async () => {
+  const { r, k, settings } = await graduated([[0, 1], [2, 3]], 4, 0, undefined, new Float32Array([0, 0, 10, 0, 0, 10, 10, 10]));
+  const a = r.screenPoint(2), b = r.screenPoint(3), pick = () => r[k('pickEdge')]((a.x + b.x) / 2, (a.y + b.y) / 2), gl = r.gl;
+  let share = 0, reach = Infinity;
+  r[k('edgeQuiet')] = () => [share, reach];
+  try {
+    // Canvas still draws every admitted line, irrespective of the WebGL sampling budget.
+    expect(pick()).toBe(1); r.gl = {};
+    expect(pick()).toBe(-1); share = 1; expect(pick()).toBe(1);
+    reach = 1; expect(pick()).toBe(-1); reach = Infinity; share = 0;
+    r[k('hoveredEdge')] = 1; expect(pick()).toBe(1); r[k('hoveredEdge')] = -1;
+    r[k('edgeTier')][1] = 255; r[k('focusLevel')] = .5; expect(pick()).toBe(1);
+    r[k('tierMask')] = 0; expect(pick()).toBe(-1);
+    r[k('edgeTier')][1] = 253; expect(pick()).toBe(1);
+    settings.visuals.hoverHighlight = false; expect(pick()).toBe(-1);
+    settings.visuals.hoverHighlight = true; r[k('edgeOn')][1] = 0; expect(pick()).toBe(-1);
+  } finally { r.gl = gl; }
 });
 
 test('review: clearing Recent refreshes card navigation and starts the next trip at the open note', async () => {

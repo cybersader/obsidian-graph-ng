@@ -2,6 +2,20 @@
 
 Results belong to an exact invocation, fixture, source revision and hardware class. They do not establish all-scale acceptance. Original slice-1 source is `041e1382` (2026-11-10); release-readiness baseline is `9b8cc07`. Historical tables below remain dated evidence. The slice-2 section records the new worker/browser/native invocations and unmet targets separately. Raw receipts remain ignored and local; publish only scrubbed summaries without hostnames, usernames, real-vault paths or private projections.
 
+## Cache, haze and performance review corrections — 2026-11-15
+
+Source: the review-fix commit carrying this section, against `001e8ff..201266f`. Hardware class: Linux x86-64, CPU-only deterministic fixtures; no native application, physical GPU, visual or latency claim.
+
+Four regressions fail on `201266f` and pass with the fixes: changed identity rules reassigning the same ID strings to different notes, a worker-rejected loaded generation suppressing its replacement write, Fit all counting an absolute-ID sample instead of currently connected notes, and WebGL hit-testing omitted context lines. The layout-cache tests exercise the real worker/view/store over synthetic memory storage; renderer tests execute the built production bundle with synthetic DOM/driver seams. Filter/type visibility, small-set fitting, hovered/focus/path edge exemptions and unchanged Canvas picking are included.
+
+Verification commands, each run separately:
+
+- `flock -w 3000 -E 75 /tmp/openclast-bun.lock timeout --kill-after=5s 1800s ./scripts/run.sh build`
+- `flock -w 3000 -E 75 /tmp/openclast-bun.lock timeout --kill-after=5s 1800s ./scripts/run.sh test --timeout 10000`
+- `flock -w 3000 -E 75 /tmp/openclast-bun.lock timeout --kill-after=5s 1800s ./scripts/run.sh gates`
+
+Result: **548 tests pass**, full six-lane gates pass; **351,761 raw / 117,985 gzip bytes**, under the unchanged **355,000 / 118,000** caps. Raw local receipts: `.workspace/visual-qa/runs/review-{build,tests,gates}.log`, original-source failures in `review-original-regressions.log`; bundle receipt in `.workspace/evidence/bundle-size.json`. Native/performance acceptance remains pending. Deleted/renamed identities still cold-start by policy; a hub edit can still exceed the documented 50% movable threshold, and the non-Barnes-Hut pairwise path still calculates unused fixed-node forces. These limitations are not changed by the review.
+
 ## Layout cache reuse pass — 2026-11-15
 
 Reopening, reloading and small edits now reuse the saved layout in the cases that previously recomputed it. Against `ff6d44f`, an Obsidian reload while links are still resolving drops from a full cold layout (**1.74 s / 5.99 s** to the stable layout at 16,309 / 61,000 notes) to **0.43 s / 0.58 s**; a grouping change from **1.68 s / 6.57 s** to **0.32 s / 0.50 s**; a one-link edit from **0.75 s / 2.20 s** to **0.46 s / 0.85 s**. Cold layout itself is unchanged.

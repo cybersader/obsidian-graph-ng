@@ -147,6 +147,25 @@ test('(e) layout physics and topology changes invalidate: full computation, neve
   } finally { app.dispose(); }
 });
 
+test('changing identity rules cannot move saved positions to other notes that reuse the same ID strings', async () => {
+  const disk = new MemoryAdapter(), links = Object.fromEntries(Array.from({ length: N }, (_, i) => [name(i), {}]));
+  const app = await boot(disk, links, settings(s => { s.declaration.identity = [{ key: 'uid' }]; }));
+  app.plugin.adapter.app.metadataCache.getFileCache = (file: FixtureFile) => {
+    const i = Number(file.path.match(/n(\d+)\.md$/)![1]);
+    return { frontmatter: { uid: `id-${i}`, alternate: `id-${(i + 1) % N}` } };
+  };
+  try {
+    const cold = await app.open();
+    app.apply(settings(s => { s.declaration.identity = [{ key: 'alternate' }]; }));
+    const changed = await app.open();
+    // Every old string is present and there are no changed edges: neither the membership check
+    // nor the >50% heuristic can detect this identity-namespace change.
+    expect(changed.layout.reused).toBeUndefined(); expect(changed.streamed).toBe(60);
+    expect(changed.positions).not.toEqual(cold.positions);
+    expect([...disk.files.keys()].some(p => p.includes('.corrupt-'))).toBe(false);
+  } finally { app.dispose(); }
+});
+
 test('warm starts walk the Barnes-Hut tree only for movable notes, with identical forces for them', async () => {
   const { BarnesHut } = await import('../src/core/barnes-hut');
   const { random } = await import('../src/core/layout');
@@ -168,6 +187,29 @@ test('a failed or skipped cache write keeps the drawn graph and is retried by th
     const second = await app.open(); expect(second.layout.cached).toBe(true); expect(second.streamed).toBe(0); expect(manifests(disk)).toHaveLength(1);
     const third = await app.open(); expect(third.layout.cached).toBe(true); expect(disk.writes).toBe(0);
   } finally { app.dispose(); }
+});
+
+test('a loaded generation rejected by the worker is quarantined and the same key is written again', async () => {
+  const disk = new MemoryAdapter(), links = graph(), first = await boot(disk, links);
+  let key: string, declarationHash: string;
+  try {
+    await first.open();
+    const path = manifests(disk)[0]!, manifest = JSON.parse(await disk.read(path)); key = manifest.meta.key; declarationHash = manifest.meta.declarationHash;
+    const generation = await first.plugin.store.latest(manifest.meta.declarationHash);
+    // Valid checksums and layout, but an invalid group summary: rejection happens only after latest() marks it committed.
+    generation.files.groups = new TextEncoder().encode('{}'); await first.plugin.store.write(generation);
+  } finally { first.dispose(); }
+  const app = await boot(disk, links);
+  try {
+    const rebuilt = await app.open();
+    expect(rebuilt.layout.cached).toBe(false); expect(rebuilt.streamed).toBe(60);
+    expect([...disk.files.keys()].some(p => p.includes('.corrupt-'))).toBe(true);
+    expect(disk.files.has(`plugin/cache/local/${declarationHash!}/${key!}/manifest.json`)).toBe(true);
+    expect(JSON.parse(await disk.read('plugin/cache/local/index.json'))).toEqual([{ declarationHash: declarationHash!, key: key! }]);
+    expect(app.plugin.store.committed).toBe(key!);
+  } finally { app.dispose(); }
+  const reload = await boot(disk, links);
+  try { expect((await reload.open()).layout.cached).toBe(true); } finally { reload.dispose(); }
 });
 
 test('known miss: deleting or renaming a note recomputes from scratch (ADR-0004 removed-identity refusal)', async () => {

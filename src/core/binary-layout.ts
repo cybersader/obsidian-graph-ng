@@ -124,6 +124,8 @@ export class BinaryLayoutStore {
     } catch { await this.quarantine(e); return; }
   }
   async quarantine(e: Entry) {
+    // A quarantined generation is no longer on disk: the next build of the same key must write it again.
+    if (this.committed === e.key) this.committed = undefined;
     const path = this.path(e);
     if (await this.adapter.exists(path)) await this.adapter.rename(path, `${path}.corrupt-${Date.now()}`);
     const entries = (await this.entries()).filter(k => k.key !== e.key || k.declarationHash !== e.declarationHash);

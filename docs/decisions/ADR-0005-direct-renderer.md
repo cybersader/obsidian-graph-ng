@@ -14,6 +14,12 @@ Program linking uses nonblocking `KHR_parallel_shader_compile` completion querie
 
 Paged Canvas2D groups remain the primary overview. Software-only detail is allowed within both validated `canvasMaxDetailNodes` / `canvasMaxDetailEdges` budgets, default 2,000 visible nodes / 10,000 visible edges. Eligible edge indices are prepared once; frame drawing does not scan every hidden edge or truncate excess relationships. Larger views retain groups and member lists with a visible fallback notice. The plan's proposed 20,000-node default is deferred: the native software proof reaches 600/1,400, not 20,000 nodes, and even the conservative refusal boundary is not a measured FPS guarantee.
 
+## Haze and fitting review (2026-11-15)
+
+WebGL edge picking applies the same stable line rank and long-line threshold as the context-line ink budget. Omitted lines cannot acquire hover just because the pointer crosses their invisible geometry; already hovered, focused and path lines retain the shader's exemptions. Canvas keeps its union-stroke behavior. The bounded incident-edge picker remains the only edge hit-test authority; no GPU readback is added.
+
+Fit all counts currently visible connected notes before sampling, respecting filtered endpoints, Only connections and hidden types. At eight or more it frames the connected population; below eight it frames all visible notes. Sampling is by eligible population rather than absolute node IDs, capped at 8,192 sampled positions plus collapsed hubs. Connectivity is scanned only for explicit fitting, not per frame. Synthetic compiled-renderer regressions cover sparse filters, the threshold, hidden types and ink picking; no new native performance or visual acceptance is claimed.
+
 ## Relationship-panel recovery
 
 A native large-literal reproduction on untouched slice-2 `f24c75de` proved an existing race: a metadata refresh advanced the active revision to 2 while the retained detail dictionary still belonged to revision 1. A contribution read was rejected by the worker, the view silently swallowed the error, and the subsequent group redraw erased the selection.
