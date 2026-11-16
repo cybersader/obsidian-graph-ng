@@ -63,7 +63,7 @@ export interface PanelHost {
 }
 type Section = 'filters' | 'groups' | 'colors' | 'edges' | 'display' | 'views' | 'physics';
 type Tool = 'views' | 'filters' | 'appearance' | 'layout' | 'information' | 'members';
-const TOOLS: [Tool, string, string][] = [['views', 'Saved views', 'bookmark'], ['filters', 'Filters', 'list-filter'], ['appearance', 'Appearance', 'palette'], ['layout', 'Layout', 'move'], ['information', 'Graph information', 'info']];
+const TOOLS: [Tool, string, string][] = [['views', 'Saved views', 'bookmark'], ['filters', 'Filters', 'list-filter'], ['appearance', 'Appearance', 'palette'], ['layout', 'Layout', 'move'], ['information', 'Graph information', 'info'], ['members', 'Members', 'list']];
 function toolButton(host: HTMLElement, text: string, icon: string) {
   const button = host.createEl('button', { cls: 'graph-ng-tool', attr: { 'aria-label': text, title: text } });
   setIcon(button, icon); button.createSpan({ cls: 'graph-ng-tool-label', text });
@@ -157,22 +157,19 @@ export class ExplorePanel {
       const button = toolButton(representations, label!, icon!); this.representations.set(mode!, button);
       button.onclick = () => this.host.presentation?.(mode!);
     }
-    const members = toolButton(representations, 'Members', 'list'); this.buttons.set('members', members); members.setAttribute('aria-controls', this.root.id); members.onclick = () => this.show('members', members);
     this.workspaceButton = toolButton(representations, 'Workspace scope', 'expand');
-    this.workspaceButton.title = 'Leave the selected group; keep search and filters';
     this.workspaceButton.onclick = () => this.host.presentation?.('workspace');
+    this.search = this.toolbar.createEl('input', { cls: 'graph-ng-explore-search', attr: { type: 'search', placeholder: 'Search notes…', 'aria-label': 'Search note names and IDs', spellcheck: 'false' } });
+    this.search.maxLength = VIEW_LIMITS.query; this.search.value = view.query;
+    this.search.oninput = () => { clearTimeout(this.searchTimer); if (this.settings.projectionFile) return; this.searchTimer = setTimeout(() => { if (!this.disposed && !this.settings.projectionFile) this.update({ query: this.search.value }); }, 160); };
+    const tools = this.toolbar.createDiv({ cls: 'graph-ng-tools', attr: { role: 'group', 'aria-label': 'Graph panels' } });
     for (const [tool, text, icon] of TOOLS) {
-      const button = toolButton(this.toolbar, text, icon); button.setAttribute('aria-controls', this.root.id); button.setAttribute('aria-expanded', 'false');
+      const button = toolButton(tools, text, icon); button.setAttribute('aria-controls', this.root.id);
       this.buttons.set(tool, button); button.onclick = () => this.root.hidden || this.tool !== tool ? this.show(tool, button) : this.close();
-      if (tool === 'views') {
-        this.search = this.toolbar.createEl('input', { cls: 'graph-ng-explore-search', attr: { type: 'search', placeholder: 'Search notes…', 'aria-label': 'Search note names and IDs', spellcheck: 'false' } });
-        this.search.maxLength = VIEW_LIMITS.query; this.search.value = view.query;
-        this.search.oninput = () => { clearTimeout(this.searchTimer); if (this.settings.projectionFile) return; this.searchTimer = setTimeout(() => { if (!this.disposed && !this.settings.projectionFile) this.update({ query: this.search.value }); }, 160); };
-      }
     }
     if (host.information) this.root.appendChild(host.information);
     if (host.members) this.root.appendChild(host.members);
-    this.root.hidden = !s.explore.panelOpen; this.search = this.search!; this.layout();
+    this.root.hidden = !s.explore.panelOpen; this.layout();
   }
   show(tool: Tool, opener: HTMLElement | undefined = this.buttons.get(tool)) {
     this.saveFocus = false;
@@ -206,7 +203,7 @@ export class ExplorePanel {
     try { validateView(next); } catch (e) { this.invalid.textContent = `Not applied: ${e instanceof Error ? e.message : String(e)}`; return; }
     this.invalid.textContent = ''; this.view = next; this.host.setView(this.view, after); this.render();
   }
-  private toolTitle() { return this.tool === 'members' ? 'Groups & members' : this.tool === 'views' ? 'Saved views' : TOOLS.find(([tool]) => tool === this.tool)![1]; }
+  private toolTitle() { return this.tool === 'members' ? 'Groups & members' : TOOLS.find(([tool]) => tool === this.tool)![1]; }
   private layout() {
     this.title.textContent = this.toolTitle();
     for (const [tool, button] of this.buttons) button.setAttribute('aria-expanded', String(!this.root.hidden && tool === this.tool));
@@ -236,9 +233,10 @@ export class ExplorePanel {
     this.summary(external, r);
     const named = this.settings.explore.savedViews.find(s => canonical(s.view) === canonical(this.settings.explore.view));
     this.buttons.get('views')!.title = named ? `Saved views (requested: ${named.name})` : 'Saved views (requested settings)';
-    this.buttons.get('filters')!.querySelector('.graph-ng-tool-label')!.textContent = `Filters${this.view.filters.length ? ` (${this.view.filters.length})` : ''}`;
+    this.buttons.get('filters')!.dataset.count = this.view.filters.length ? String(this.view.filters.length) : '';
     for (const [mode, button] of this.representations) button.setAttribute('aria-pressed', String(this.host.mode() === mode));
-    this.workspaceButton.disabled = !this.host.scoped?.();
+    this.workspaceButton.hidden = this.workspaceButton.disabled = !this.host.scoped?.();
+    if (this.workspaceButton.hidden && document.activeElement === this.workspaceButton) this.representations.get('nodes')!.focus();
     if (this.body.hidden) return;
     // Re-render rebuilds controls; changing labels use a stable action identity.
     const active = document.activeElement instanceof HTMLElement && this.body.contains(document.activeElement) ? document.activeElement : null;

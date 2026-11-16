@@ -1,7 +1,7 @@
 import { test, expect } from 'bun:test';
 import { zoomStep, ZOOM_OUT_LIMIT } from '../src/zoom-limit';
 import { miniFit, toMini, toCamera, viewRect, densityGrid, miniBounds, viewMarker, MINI_MARKER } from '../src/minimap';
-import { crumbs, trail, crumbFade } from '../src/breadcrumb';
+import { crumbs, trail } from '../src/breadcrumb';
 import { NavHistory } from '../src/connection-card';
 
 test('density scalar loop exactly matches point-transform oracle including grid boundaries', () => {
@@ -92,7 +92,7 @@ test('minimap marker: a tiny viewport keeps a minimum-size marker with a crossha
   const big = viewMarker({ x: -50, y: -50, w: 400, h: 300 }, 160, 120); expect([big.x, big.y, big.w, big.h]).toEqual([1, 1, 158, 118]);
 });
 
-test('trail: hidden under two visits, current emphasised, older visits fade and overflow into the … menu', () => {
+test('trail: hidden under two visits, current emphasised, older visits overflow into the … menu', () => {
   expect(trail([], -1).shown).toEqual([]); expect(trail([5], 0)).toEqual({ shown: [], older: [] });
   expect(trail([5, 6], 1)).toEqual({ shown: [{ index: 0, node: 5, current: false }, { index: 1, node: 6, current: true }], older: [] });
   const items = [10, 11, 12, 13, 14, 15, 16], last = trail(items, 6);
@@ -100,5 +100,4 @@ test('trail: hidden under two visits, current emphasised, older visits fade and 
   // Gone back: the window keeps the current entry with a forward one after it; older still collapse.
   const back = trail(items, 2); expect(back.shown.map(c => [c.node, c.current])).toEqual([[12, true], [13, false], [14, false], [15, false]]); expect(back.older.map(c => c.index)).toEqual([1, 0]);
   expect(trail(Array.from({ length: 40 }, (_, i) => i), 39).older.length).toBe(12);
-  expect(crumbFade(0)).toBe(1); expect(crumbFade(-1)).toBeLessThan(1); expect(crumbFade(-3)).toBeLessThan(crumbFade(-1)); expect(crumbFade(-20)).toBe(.5);
 });

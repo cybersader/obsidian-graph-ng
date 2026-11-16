@@ -207,6 +207,31 @@ test('UX representation buttons, saved views and workspace scope have distinct a
   expect(css).toContain('.graph-ng-toolbar .graph-ng-tool:hover:not(:disabled)'); expect(css).toContain('.graph-ng-toolbar :focus-visible');
   expect(css).toContain('[aria-pressed=true]'); expect(css).toContain('box-shadow:none; border:1px solid transparent'); f.panel.dispose();
 });
+test('UX compact toolbar groups every panel, toggles Members and retains accessible focus', () => {
+  const f = fixture(), group = f.toolbar.querySelector('.graph-ng-tools')!;
+  expect(group.getAttribute('aria-label')).toBe('Graph panels');
+  expect(group.querySelectorAll('button').map(b => b.getAttribute('aria-label'))).toEqual(['Saved views', 'Filters', 'Appearance', 'Layout', 'Graph information', 'Members']);
+  for (const button of group.querySelectorAll('button')) {
+    expect(button.getAttribute('aria-controls')).toBe(f.panel.root.id);
+    if (!f.panel.root.hidden) f.panel.close();
+    button.click(); expect(button.getAttribute('aria-expanded')).toBe('true');
+    expect(ControlElement.active).toBe(f.panel.closeButton);
+    expect(group.querySelectorAll('button').filter(b => b.getAttribute('aria-expanded') === 'true')).toEqual([button]);
+    button.click(); expect(f.panel.root.hidden).toBe(true); expect(ControlElement.active).toBe(button);
+  }
+  const scope = control(f.toolbar, 'Workspace scope'); expect(scope.hidden).toBe(true);
+  f.host.scoped = () => true; f.panel.render(); expect(scope.hidden).toBe(false); expect(scope.disabled).toBe(false);
+  scope.focus(); f.host.scoped = () => false; f.panel.render();
+  expect(scope.hidden).toBe(true); expect(ControlElement.active).toBe(control(f.toolbar, 'Notes'));
+  f.panel.dispose();
+});
+test('UX compact Filters badge follows active filter count without replacing its accessible name', () => {
+  const f = fixture(), filters = control(f.toolbar, 'Filters');
+  expect(filters.dataset.count).toBe('');
+  f.panel.setState({ ...emptyView(), filters: [{ field: 'name', op: 'contains', value: 'sample' }] });
+  expect(filters.dataset.count).toBe('1'); expect(filters.getAttribute('aria-label')).toBe('Filters');
+  f.panel.setState(emptyView()); expect(filters.dataset.count).toBe(''); f.panel.dispose();
+});
 test('UX graph status uses structured phase, coverage and failures rather than English keyword guesses', () => {
   const view: any = Object.create(GraphView.prototype);
   Object.assign(view, { contentEl: { dataset: { state: 'building' } }, status: new ControlElement(), statusSummary: new ControlElement(), plugin: { settings: {} }, provisional: true, gpu: { available: true } });

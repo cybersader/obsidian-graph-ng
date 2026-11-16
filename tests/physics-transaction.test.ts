@@ -1228,8 +1228,9 @@ test('orientation: wheel and pinch zoom-out clamp with a brief Group overview ch
   canvas.listeners.get('pointerdown')({ button: 0, pointerId: 3, clientX: 400, clientY: 300 });
   const [x, y] = toCamera(bounds, fit, 80, 60, frame); expect(r.camera.x).toBeCloseTo(x); expect(r.camera.y).toBeCloseTo(y);
   // Collapse: an icon button hides the map; the choice is the minimap's own state.
-  const toggle = mini.children[1]; expect(toggle.textContent).toBe(''); expect(toggle.getAttribute('aria-label')).toBe('Hide minimap');
-  toggle.onclick(); expect(canvas.hidden).toBe(true); expect(toggle.getAttribute('aria-label')).toBe('Show minimap'); toggle.onclick(); expect(canvas.hidden).toBe(false);
+  const toggle = mini.children[1]; expect(toggle.textContent).toBe(''); expect(toggle.getAttribute('aria-label')).toBe('Hide minimap'); expect(mini.tabIndex).toBe(0);
+  toggle.onclick(); expect(canvas.hidden).toBe(true); expect(toggle.getAttribute('aria-label')).toBe('Show minimap'); expect(mini.tabIndex).toBe(-1);
+  toggle.onclick(); expect(canvas.hidden).toBe(false); expect(mini.tabIndex).toBe(0);
   mini.listeners.get('keydown')({ key: 'ArrowRight', preventDefault() {}, stopPropagation() {} }); expect(r.camera.x).toBeGreaterThan(x);
   r[k('width')] = 400; r[k('placeOverlay')](); expect(mini.hidden).toBe(true);
   r[k('width')] = 800; f.settings.visuals.minimap = false; r[k('placeOverlay')](); expect(mini.hidden).toBe(true);

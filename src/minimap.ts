@@ -81,7 +81,7 @@ export class Minimap {
   private miniTimer?: ReturnType<typeof setTimeout>;
   constructor(parent: HTMLElement, private miniFrame: MiniFrame, private panCamera: (x: number, y: number) => void, private fitCamera: () => void, private miniChanged = () => {}) {
     const make = (tag: string, cls = '') => Object.assign(document.createElement(tag), { className: cls });
-    this.root = parent.appendChild(make('div', 'graph-ng-minimap')); this.root.hidden = true; this.root.tabIndex = 0;
+    this.root = parent.appendChild(make('div', 'graph-ng-minimap')); this.root.hidden = true;
     this.root.setAttribute('role', 'group'); this.root.setAttribute('aria-label', 'Minimap. Arrow keys pan, Home fits all.');
     this.miniCanvas = this.root.appendChild(make('canvas') as HTMLCanvasElement); this.miniCanvas.setAttribute('aria-hidden', 'true');
     this.miniToggle = this.root.appendChild(make('button', 'clickable-icon graph-ng-minimap-toggle'));
@@ -102,7 +102,7 @@ export class Minimap {
   private paintToggle() {
     const label = this.miniFolded ? 'Show minimap' : 'Hide minimap';
     setIcon(this.miniToggle, this.miniFolded ? 'map' : 'minimize-2'); this.miniToggle.setAttribute('aria-label', label); this.miniToggle.title = label;
-    this.miniToggle.setAttribute('aria-expanded', String(!this.miniFolded));
+    this.miniToggle.setAttribute('aria-expanded', String(!this.miniFolded)); this.root.tabIndex = this.miniFolded ? -1 : 0;
     this.root.className = 'graph-ng-minimap' + (this.miniFolded ? ' graph-ng-minimap-folded' : ''); this.miniCanvas.hidden = this.miniFolded;
   }
   private miniKey = (e: KeyboardEvent) => {

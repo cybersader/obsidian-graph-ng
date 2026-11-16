@@ -20,6 +20,22 @@ All **42 steps pass**, with no page/console errors or unhandled rejections, and 
 
 Scope is synthetic browser-native Obsidian with Canvas fallback, not desktop Electron, hardware WebGL, mobile/touch or release acceptance. The harness verdict remains `unknown` (`harness-empty-list`); these are scoped interaction observations, not a trust verdict. Independent merged-wave review remains parent-owned.
 
+## Compact chrome, wave 9 track C — 2026-11-16
+
+Source: the commit carrying this section, based on `aa781eb`. Hardware class: Linux x86-64 desktop, 32 GB RAM. Toolbar construction, overlay styling and minimap keyboard state only; no core, renderer algorithm, connection-card, dependency, setting or budget change.
+
+Build and **613 tests across 36 files pass**, with **162,538 expectations**. Two new tests cover unified accessible panel destinations, Members toggling, opener focus, conditional Workspace scope, focus recovery after leaving scope and the live filter badge. The compiled-renderer orientation regression additionally checks expanded/collapsed minimap tab order. Existing trail lifetime, keyboard travel, camera and filter contracts continue to pass. Full gates pass all six lanes, including secrets, attribution, privacy, frozen-lock/supply-chain, runtime licenses and size.
+
+`main.js`: **369,299 raw / 123,799 gzip bytes**, versus **369,576 / 123,859** at the base: **−277 raw / −60 gzip** (gzip level 9). Limits remain **375,000 / 126,000**. Shared type/spacing variables are consumed with host-compatible fallbacks; this track does not redefine them.
+
+Exact commands, each under `flock -w 3000 -E 75 /tmp/openclast-bun.lock timeout --kill-after=5s 1800s`:
+
+- `./scripts/run.sh build`
+- `./scripts/run.sh test --timeout 10000`
+- `./scripts/run.sh gates`
+
+Ignored receipts and paired plugin assets: `.workspace/wave9-c/`. Native capture **not run**: the pre-capture `free -g` check reported **7 GB available**, below the required 8 GB. The schema-validated `.workspace/wave9-c/steps-chrome.json` contains 26 bounded harness steps covering 1100 px overview, focus, expanded/folded minimap and active panel, plus 360 px and 320 px panes; the harness captures both themes per screenshot. Use the same recipe and synthetic vault with `plugin-before` and `plugin-after`. Narrow browser panes are not native mobile acceptance; coarse-pointer, visual and screen-reader acceptance remain pending. Independent review and the combined visual pass belong to the merged wave before shipping.
+
 ## Merged wave 8 review fixes — 2026-11-16
 
 Source: the commit carrying this section, based on `99ec508`. Hardware class: Linux x86-64 desktop, 32 GB RAM. This is local deterministic evidence, not a release or native-rendering acceptance claim.

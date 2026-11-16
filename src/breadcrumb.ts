@@ -17,8 +17,6 @@ export function trail(items: readonly number[], at: number, max = 4, cap = 12): 
   for (let i = (shown[0]?.index ?? 0) - 1; i >= 0 && older.length < cap; i--) older.push({ index: i, node: items[i]!, current: false });
   return { shown, older };
 }
-/** Chip opacity by distance from the current note: older visits fade, never below half. */
-export const crumbFade = (distance: number) => Math.max(.5, 1 - Math.abs(distance) * .15);
 
 /** Recent notes: one strip (history icon, chips joined by chevrons, a clear button) stacked above the
  * tier legend. Older visits collapse into a "…" menu. Chips travel through the card history. Text only. */
@@ -38,7 +36,7 @@ export class Breadcrumb {
     this.root.hidden = shown.length < 2; this.root.textContent = '';
     if (this.root.hidden) return;
     const make = <K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: HTMLElement = this.root) => parent.appendChild(Object.assign(document.createElement(tag), { className: cls }));
-    const icon = make('span', 'graph-ng-crumbs-icon'); setIcon(icon, 'history'); icon.setAttribute('aria-hidden', 'true'); this.root.title = 'Recent notes';
+    const icon = make('span', 'graph-ng-crumbs-icon'); setIcon(icon, 'history'); icon.setAttribute('aria-hidden', 'true');
     const go = (c: Crumb, el: HTMLElement) => { el.onclick = () => this.travelBy(c.index - at); };
     if (older.length) {
       const more = make('button', 'graph-ng-crumbs-more'), menu = make('div', 'graph-ng-crumbs-menu');
@@ -52,10 +50,10 @@ export class Breadcrumb {
     shown.forEach((c, i) => {
       const li = make('li', '', ol), label = this.crumbName(c.node);
       if (i || older.length) { const chevron = make('span', 'graph-ng-crumbs-sep', li); setIcon(chevron, 'chevron-right'); chevron.setAttribute('aria-hidden', 'true'); }
-      const chip = make('button', 'graph-ng-crumb', li); chip.textContent = label; chip.title = label; chip.style.opacity = String(crumbFade(c.index - at));
+      const chip = make('button', 'graph-ng-crumb', li); chip.textContent = label; chip.title = label;
       if (c.current && c.node === selected) chip.setAttribute('aria-current', 'location');
       else { chip.setAttribute('aria-label', (c.index < at ? 'Back to ' : c.index > at ? 'Forward to ' : 'Return to ') + label); go(c, chip); }
     });
-    const clear = make('button', 'clickable-icon graph-ng-crumbs-clear'); setIcon(clear, 'x'); clear.setAttribute('aria-label', 'Clear recent notes'); clear.title = 'Clear recent notes'; clear.onclick = () => this.clearCrumbs();
+    const clear = make('button', 'clickable-icon graph-ng-crumbs-clear'); setIcon(clear, 'x'); clear.setAttribute('aria-label', 'Clear recent notes'); clear.onclick = () => this.clearCrumbs();
   }
 }
