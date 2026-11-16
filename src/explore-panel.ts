@@ -527,7 +527,7 @@ export class ExplorePanel {
     const draft = this.physicsDraft ??= applied();
     const fill = (values: Required<PhysicsValues>, note: string, name: string) => { this.physicsUndo = { values: { ...draft }, name, applied: false }; for (const [key] of PHYSICS_FIELDS) { const v = values[key]; draft[key] = typeof v === 'boolean' ? v : String(v); } this.physicsError = ''; this.physicsNote = note; this.render(); };
     const size = this.host.result(), recommended = recommendedPhysics(size?.nodes ?? 1000, size?.edges ?? 3000);
-    panelHelp(host, 'Layout drafts', 'Changes stay here until Apply and recompute. Fit graph is separate.');
+    panelHelp(host, 'How changes apply', 'Apply layout saves these changes and recomputes note positions. Fit graph is separate.');
     const presets = settingRow(host, 'Presets', 'graph-ng-presets', 'Groups apart loosens the layout; Fill the screen tightens it. Faster uses fewer steps; presets stay drafts until Apply.').createDiv({ cls: 'graph-ng-setting-line', attr: { role: 'group', 'aria-label': 'Layout presets' } });
     const reset = presets.createEl('button', { text: 'Recommended' });
     reset.disabled = this.physicsBusy;
@@ -540,7 +540,7 @@ export class ExplorePanel {
     if (advice) {
       // Keeps every other draft value; only turns Strong gravity on with a measured pull.
       const fix = presets.createEl('button', { text: PULL_IN }); fix.disabled = this.physicsBusy;
-      fix.onclick = () => fill({ ...draft, strongGravityMode: true, gravity: advice.gravity } as unknown as Required<PhysicsValues>, `${PULL_IN} loaded. Apply and recompute to see it.`, PULL_IN);
+      fix.onclick = () => fill({ ...draft, strongGravityMode: true, gravity: advice.gravity } as unknown as Required<PhysicsValues>, `${PULL_IN} loaded. Apply layout to see it.`, PULL_IN);
       panelHelp(host, 'Why pull them in?', advice.reason);
     }
     const undo = this.physicsUndo, back =presets.createEl('button', { text: 'Undo preset' });
@@ -568,7 +568,7 @@ export class ExplorePanel {
     summarize();
     host.createDiv({ cls: 'graph-ng-explore-error', text: this.physicsError, attr: { role: 'alert' } });
     const actions = host.createDiv({ cls: 'graph-ng-form' });
-    const apply = actions.createEl('button', { text: this.physicsBusy ? 'Recomputing…' : 'Apply and recompute', cls: 'mod-cta' });
+    const apply = actions.createEl('button', { text: this.physicsBusy ? 'Recomputing…' : 'Apply layout', cls: 'mod-cta' });
     apply.disabled = this.physicsBusy;
     apply.onclick = () => run();
     const run = async () => {
@@ -594,7 +594,7 @@ export class ExplorePanel {
     const group = host.createDiv({ cls: 'graph-ng-nodes' }); group.createEl('h4', { text: 'Nodes' });
     const current = sizingValues(this.settings);
     const draft = this.sizingDraft ??= { radius: String(current.radius), prominence: String(current.prominence), compensation: String(current.compensation * 100), floor: String(current.floor * 100), curve: current.curve };
-    panelHelp(group, 'Sizing drafts', 'Preview is temporary; Apply saves predictable sizing. Restore returns to your saved sizes.');
+    panelHelp(group, 'Preview and save', 'Preview is temporary; Apply sizing saves these sizes. Restore returns to your saved sizes.');
     const fields: [Exclude<keyof NodeSizingValues, 'curve'>, string, string, Curve][] = [
       ['radius', 'Node size', 'px', { min: .01, max: 20, k: 3 }], ['prominence', 'Hub size limit', '×', { min: 1, max: 9, k: 2 }],
       ['compensation', 'Shrink crowded dots', '%', { min: 0, max: 100 }], ['floor', 'Smallest dot size', '%', { min: .1, max: 100, k: 2 }],
@@ -642,8 +642,7 @@ export class ExplorePanel {
     };
     for (const item of list) {
       const row = box.createDiv({ cls: 'graph-ng-suggestion-row' }), copy = suggestionCopy(item);
-      const text = row.createDiv({ cls: 'graph-ng-suggestion' }); text.createDiv({ cls: 'graph-ng-suggestion-name', text: item.label });
-      text.createDiv({ text: copy.change }); panelHelp(text, copy.why, item.reason, 'graph-ng-suggestion-why');
+      panelHelp(row.createDiv({ cls: 'graph-ng-suggestion' }), copy.change, item.reason);
       const one = row.createEl('button', { text: 'Apply', attr: { 'aria-label': `Apply ${item.label}` } }); one.disabled = this.suggestBusy || !this.host.applySuggestions; one.onclick = () => apply([item]);
     }
     const actions = box.createDiv({ cls: 'graph-ng-actions' });
@@ -852,6 +851,6 @@ export class ExplorePanel {
     const current = host.createEl('button', { text: 'Save current view…' }); current.disabled = this.viewBusy; current.onclick = () => prepare();
     host.createEl('h4', { text: 'Starting points' });
     panelHelp(host, 'Focus on a folder', 'Explore one folder using the current graph’s relationships. Prepare a view without changing the graph.');
-    const start = host.createEl('button', { text: 'Prepare', attr: { 'aria-label': 'Prepare Focus on a folder' } }); start.disabled = this.viewBusy; start.onclick = () => prepare('');
+    const start = host.createEl('button', { text: 'Set up folder view…' }); start.disabled = this.viewBusy; start.onclick = () => prepare('');
   }
 }

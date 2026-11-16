@@ -36,7 +36,7 @@ function input(panel: any, label: string, value: string) {
   expect(element).toBeDefined(); element.value = value; element.oninput();
 }
 function prepare(panel: any, folder = 'Notes', name = 'Folder focus') {
-  control(panel.body, 'Prepare').click(); input(panel, 'Folder prefix', folder); input(panel, 'Saved view name', name);
+  control(panel.body, 'Set up folder view…').click(); input(panel, 'Folder prefix', folder); input(panel, 'Saved view name', name);
 }
 
 test('scout W1 opened saved folder grouping remains selected without another graph request', async () => {

@@ -59,6 +59,19 @@ function fixture() {
   panel.render = () => { panel.body.empty(); panel.suggested(panel.body); }; panel.render();
   return { plugin, writes, panel, host, preview: () => preview };
 }
+test('suggestions show one change label and keep reasons behind shared help', () => {
+  const f = fixture(), rows = f.panel.body.querySelectorAll('.graph-ng-suggestion-row');
+  expect(rows).toHaveLength(5);
+  for (const row of rows) {
+    const text = row.querySelector('.graph-ng-suggestion');
+    expect(text.children).toHaveLength(1);
+    expect(text.querySelectorAll('.graph-ng-help-trigger')).toHaveLength(1);
+    expect(text.querySelector('.graph-ng-help-popover').hidden).toBe(true);
+    expect(row.querySelectorAll('.graph-ng-suggestion-name')).toHaveLength(0);
+  }
+  f.panel.dispose();
+});
+
 test('card previews without saving, applies one or all through the acknowledged save path', async () => {
   const f = fixture(), before = structuredClone(f.plugin.settings), visuals = f.plugin.settings.visuals;
   expect(f.panel.body.textContent).toContain('Fainter lines'); expect(f.panel.body.textContent).toContain('Straight lines'); expect(f.panel.body.textContent).not.toMatch(/true|false|→/);

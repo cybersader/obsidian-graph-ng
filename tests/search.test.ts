@@ -15,6 +15,7 @@ class El {
   constructor(readonly tagName: string) {}
   get textContent(): string { return this.text + this.children.map(c => c.textContent).join(''); }
   set textContent(v: string) { this.children = []; this.text = v; }
+  empty() { this.textContent = ''; }
   appendChild(c: El) { c.parentElement = this; this.children.push(c); return c; }
   createEl(tag: string, options: any = {}) { const c = this.appendChild(new El(tag)); c.className = options.cls ?? ''; c.textContent = options.text ?? ''; for (const [k, v] of Object.entries(options.attr ?? {})) c.setAttribute(k, String(v)); return c; }
   createSpan(options?: any) { return this.createEl('span', options); }
@@ -106,6 +107,22 @@ test('worker search steps: normalised query, visible mask, one yield per chunk, 
   const n = 10_000, many = worker(Array.from({ length: n }, (_, i) => `note ${i}`), Array.from({ length: n }, String)), run = drain(searchSteps(many, 'note 1', new Uint8Array(n).fill(1), 20, 4096));
   expect(run.yields).toBe(2); expect(run.value.length).toBe(20); expect(run.value[0]!.node).toBe(1);
   expect(drain(searchSteps(many, 'note', new Uint8Array(n).fill(1), 10_000)).value.length).toBe(50);
+});
+
+test('search X is named, keeps focus inside until dismissal, and ignores late ranking replies', async () => {
+  let resolve!: (hits: number[]) => void;
+  const r = rig(render(), worker(), undefined, () => new Promise(done => { resolve = done; }));
+  r.key('/'); const box = r.box(), root = box.findBox as unknown as El;
+  const close = root.find('graph-ng-find-head')[0]!.children[1]!;
+  expect(close.tagName).toBe('button'); expect(close.type).toBe('button');
+  expect(close.getAttribute('aria-label')).toBe('Close search');
+  expect(close.children[0]!.getAttribute('data-icon')).toBe('x'); expect(close.textContent).toBe('');
+  box.findInput.value = 'alpha'; const pending = box.findSearch();
+  close.focus(); root.onfocusout!({ relatedTarget: close }); expect(box.findOpen).toBe(true);
+  close.onclick!(); expect(box.findOpen).toBe(false); expect(r.calls).toEqual(['focus']);
+  expect(El.active).toBe(r.host.canvas as unknown as El);
+  resolve([1]); await pending; expect(box.findHits).toEqual([]); expect(box.findRing.hidden).toBe(true);
+  expect(r.filters).toEqual([]); disposeSearch(r.host.canvas);
 });
 
 test('find-and-fly key flow: / opens, typing ranks after a pause, arrows ring without moving the camera, Enter flies and opens the card', async () => {

@@ -47,7 +47,7 @@ test('numeric drafts survive rerenders; reset restores every recommended value; 
   control(f.panel.body, 'Recommended').click(); expect(f.settings.layout.force.scalingRatio).toBe(100000);
   const d = room;
   for (const [key, label] of PHYSICS_FIELDS) { const e = byLabel(f, label); expect(typeof d[key] === 'boolean' ? e.checked : e.value).toBe(typeof d[key] === 'boolean' ? d[key] : String(d[key])); }
-  const apply: any = control(f.panel.body, 'Apply and recompute'); const pending = apply.onclick(); apply.onclick(); await pending;
+  const apply: any = control(f.panel.body, 'Apply layout'); const pending = apply.onclick(); apply.onclick(); await pending;
   expect(f.applied()).toBe(1); expect(f.settings.layout.force.scalingRatio).toBe(10); expect(f.settings.layout.force.strongGravityMode).toBe(true); f.panel.dispose();
 });
 test('every control has a plain label and an effect hint; advanced controls sit in a collapsed section', () => {
@@ -69,7 +69,7 @@ test('presets and checkboxes only fill drafts; one explicit apply sends every ex
   expect(f.panel.body.textContent).toContain('Groups apart loaded');
   const overlap = byLabel(f, 'Prevent overlap'); overlap.checked = true; overlap.onchange();
   f.panel.render(); expect(byLabel(f, 'Prevent overlap').checked).toBe(true);
-  await (control(f.panel.body, 'Apply and recompute') as any).onclick();
+  await (control(f.panel.body, 'Apply layout') as any).onclick();
   expect(sent).toEqual({ ...presetValues('Groups apart', room), adjustSizes: true });
   expect(f.settings.layout.iterations).toBe(room.iterations); expect(f.settings.layout.force.gravity).toBe(room.gravity / 2);
   expect(f.settings.layout.force.strongGravityMode).toBe(true); expect(f.settings.layout.force.adjustSizes).toBe(true);
@@ -90,11 +90,11 @@ test('presets validate, touch only exposed controls, and older saved settings wi
 });
 test('invalid and disposed panel apply neither saves nor runs; rejected host shows inline error', async () => {
   const f = fixture(), before = structuredClone(f.settings);
-  for (const bad of ['', 'NaN', 'Infinity', '0']) { input(f, 0, bad); await (control(f.panel.body, 'Apply and recompute') as any).onclick(); expect(f.panel.physicsError).toContain('Not applied'); }
+  for (const bad of ['', 'NaN', 'Infinity', '0']) { input(f, 0, bad); await (control(f.panel.body, 'Apply layout') as any).onclick(); expect(f.panel.physicsError).toContain('Not applied'); }
   expect(f.settings).toEqual(before); expect(f.applied()).toBe(0);
   input(f, 0, '2'); f.panel.host.applyLayout = async () => { throw new Error('worker rejected'); };
-  await (control(f.panel.body, 'Apply and recompute') as any).onclick(); expect(f.panel.physicsError).toContain('worker rejected'); expect(f.settings).toEqual(before);
-  f.panel.dispose(); await (control(f.panel.body, 'Apply and recompute') as any).onclick(); expect(f.applied()).toBe(0);
+  await (control(f.panel.body, 'Apply layout') as any).onclick(); expect(f.panel.physicsError).toContain('worker rejected'); expect(f.settings).toEqual(before);
+  f.panel.dispose(); await (control(f.panel.body, 'Apply layout') as any).onclick(); expect(f.applied()).toBe(0);
 });
 function runtime() {
   const v: any = Object.create(GraphView.prototype), settings = defaults('links'); let saves = 0, calls = 0;
@@ -206,7 +206,7 @@ test('undo restores the tuned values before a preset, and re-applies them in one
   undo().click();
   expect(byLabel(f, 'Spread notes').value).toBe('900'); expect(byLabel(f, 'Pull to center').value).toBe('20'); expect(byLabel(f, 'Strong gravity').checked).toBe(false);
   expect(f.applied()).toBe(0); expect(f.settings).toEqual(before); expect(undo().disabled).toBe(true);
-  input(f, 0, '1200'); control(f.panel.body, 'Faster').click(); await (control(f.panel.body, 'Apply and recompute') as any).onclick();
+  input(f, 0, '1200'); control(f.panel.body, 'Faster').click(); await (control(f.panel.body, 'Apply layout') as any).onclick();
   expect(f.applied()).toBe(1); expect(f.settings.layout.iterations).toBe(Math.round(room.iterations / 2));
   undo().click(); await new Promise(r => setTimeout(r, 0));
   expect(f.applied()).toBe(2); expect(f.settings.layout).toEqual(before.layout);
@@ -221,7 +221,7 @@ test('Pull in notes loads only Strong gravity and its pull into the draft; nothi
   expect(f.settings).toEqual(before); expect(f.applied()).toBe(0);
   expect(f.panel.physicsDraft).toMatchObject({ scalingRatio: '23.64', gravity: '0.124', strongGravityMode: true });
   expect(f.panel.body.textContent).toContain('Pull to center0.5 → 0.124'); expect(f.panel.body.textContent).toContain('Strong gravityoff → on');
-  await (control(f.panel.body, 'Apply and recompute') as any).onclick();
+  await (control(f.panel.body, 'Apply layout') as any).onclick();
   expect(f.settings.layout.force).toMatchObject({ scalingRatio: 23.64, gravity: .124, strongGravityMode: true }); f.panel.dispose();
   const plain = fixture(); expect(plain.panel.body.textContent).not.toContain('Pull in notes'); plain.panel.dispose();
 });

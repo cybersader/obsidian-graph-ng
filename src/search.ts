@@ -1,3 +1,4 @@
+import { setIcon } from 'obsidian';
 import { panelHelp } from './panel-help';
 import { registerAction, type RendererControls } from './interaction';
 import { VIEW_LIMITS } from './core/explore';
@@ -43,7 +44,10 @@ export class Omnibox {
   constructor(private host: RendererControls, parent: HTMLElement, private findSource: SearchSource) {
     const make = <T extends HTMLElement>(tag: string, cls: string, into: HTMLElement) => into.appendChild(Object.assign(document.createElement(tag), { className: cls })) as T;
     const root = this.findBox = make('div', 'graph-ng-find', parent); root.hidden = true;
-    const input = this.findInput = make<HTMLInputElement>('input', 'graph-ng-find-input', root);
+    const head = make('div', 'graph-ng-find-head', root);
+    const input = this.findInput = make<HTMLInputElement>('input', 'graph-ng-find-input', head);
+    const close = make<HTMLButtonElement>('button', 'clickable-icon graph-ng-find-close', head);
+    close.type = 'button'; close.setAttribute('aria-label', 'Close search'); setIcon(close, 'x'); close.onclick = () => this.findClose();
     input.type = 'search'; input.placeholder = 'Find a note…'; input.maxLength = VIEW_LIMITS.query; input.spellcheck = false;
     for (const [k, v] of [['role', 'combobox'], ['aria-label', 'Find a note by name or ID'], ['aria-autocomplete', 'list'], ['aria-expanded', 'false'], ['aria-controls', this.findId]]) input.setAttribute(k!, v!);
     this.findList = make('div', 'graph-ng-find-list', root); this.findList.id = this.findId; this.findList.setAttribute('role', 'listbox');

@@ -135,7 +135,7 @@ test('Saved views uses hidden shared help, including draft effects; information 
   for (const tip of f.root.querySelectorAll('.graph-ng-help-popover')) expect(tip.hidden).toBe(true);
   const notes = f.root.querySelectorAll('.graph-ng-explore-note').map(e => e.textContent).join(' ');
   expect(notes).not.toContain('Views save'); expect(notes).not.toContain('Explore one folder');
-  f.root.querySelectorAll('button').find(e => e.textContent === 'Prepare')!.click();
+  f.root.querySelectorAll('button').find(e => e.textContent === 'Set up folder view…')!.click();
   expect(f.root.querySelectorAll('.graph-ng-help-trigger').map(e => e.textContent)).toContain('What opening changes');
   f.panel.show('information'); expect(f.panel.counts.hidden).toBe(true);
   f.panel.show('views'); expect(f.panel.counts.hidden).toBe(false); f.panel.dispose();
