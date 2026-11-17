@@ -1,5 +1,6 @@
 import { DEFAULT_LAYOUT, validateLayout, type LayoutOptions } from './layout-options';
 import { BarnesHut } from './barnes-hut';
+import { scalarLayoutKernel, type ScalarLayoutKernel } from './wasm-kernel';
 export { DEFAULT_LAYOUT, type LayoutOptions } from './layout-options';
 export interface LayoutInput {
   count: number;
@@ -66,7 +67,10 @@ export class LayoutSolver {
   private familyDegree?: Uint32Array;
   private hubMass?: Float32Array;
   private compensation = 1;
-  constructor(private input: LayoutInput, private options: LayoutOptions) {
+  private kernel?: ScalarLayoutKernel;
+  private maxRadius = 0;
+  /** JS override is an internal differential-test seam, not a saved physics setting. */
+  constructor(private input: LayoutInput, private options: LayoutOptions, backend: 'auto' | 'js' = 'auto') {
     validateLayout(options);
     const n = input.count;
     if (!Number.isSafeInteger(n) || n < 0 || input.source.length !== input.target.length || (input.initial && input.initial.length !== n * 2) || (input.movable && input.movable.length !== n)) throw new Error('Invalid layout input');
@@ -108,8 +112,13 @@ export class LayoutSolver {
     }
     if (options.force.outboundAttractionDistribution && n) this.compensation = this.mass.reduce((sum, m) => sum + m, 0) / n;
     this.forces = new Float32Array(n * 2); this.oldForces = new Float32Array(n * 2); this.convergence = new Float32Array(n).fill(1);
-    if (options.force.barnesHutOptimize && n) this.tree = new BarnesHut(n);
+    if (options.force.barnesHutOptimize && n) {
+      this.tree = new BarnesHut(n);
+      if (backend !== 'js') this.kernel = scalarLayoutKernel(this.tree, n, input.source, input.target, this.mass, this.radii, input.movable);
+      if (this.radii) for (const radius of this.radii) this.maxRadius = Math.max(this.maxRadius, radius);
+    }
   }
+  get kernelBackend(): 'wasm-scalar' | 'js' { return this.kernel?.active ? 'wasm-scalar' : 'js'; }
   get settled(): boolean { return !this.input.count || this.quiet >= Math.min(this.limit, this.options.convergenceIterations); }
   get done(): boolean { return !this.input.count || this.iteration >= this.limit || (this.options.convergenceThreshold > 0 && this.settled); }
   step(): void {
@@ -118,7 +127,10 @@ export class LayoutSolver {
     const old = this.oldForces; this.oldForces = this.forces; this.forces = old;
     const forces = this.forces, history = this.oldForces;
     forces.fill(0);
-    if (this.tree) { this.tree.build(p, mass, o.maxTreeDepth); this.tree.repulse(p, mass, forces, f.scalingRatio, f.barnesHutTheta, movable, this.radii); }
+    if (this.tree) {
+      this.tree.build(p, mass, o.maxTreeDepth);
+      if (!this.kernel?.repulse(this.tree, p, forces, f.scalingRatio, f.barnesHutTheta, this.maxRadius)) this.tree.repulse(p, mass, forces, f.scalingRatio, f.barnesHutTheta, movable, this.radii);
+    }
     else {
       for (let i = 0; i < n; i++) for (let j = 0; j < i; j++) {
         const dx = p[2 * i]! - p[2 * j]!, dy = p[2 * i + 1]! - p[2 * j + 1]!;
@@ -138,7 +150,8 @@ export class LayoutSolver {
     let child = 0;
     // Link attraction and optional linear parent pull share the integrator, not degree mass.
     // CSR advances once per child: O(edges + notes + parents), never pairwise siblings.
-    for (let e = 0; e < source.length + (up?.targets.length ?? 0); e++) {
+    const acceleratedLinks = !f.linLogMode && this.kernel?.attract(forces, source.length, this.compensation, f.outboundAttractionDistribution);
+    for (let e = acceleratedLinks ? source.length : 0; e < source.length + (up?.targets.length ?? 0); e++) {
       const family = e >= source.length, h = e - source.length;
       if (family) while (up!.offsets[child + 1]! <= h) child++;
       const a = family ? child : source[e]!, b = family ? up!.targets[h]! : target[e]!, x = p[2 * a]! - p[2 * b]!, y = p[2 * a + 1]! - p[2 * b + 1]!;

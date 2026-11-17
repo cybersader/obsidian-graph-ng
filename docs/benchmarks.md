@@ -1419,3 +1419,52 @@ Speed up selects every suggested change by default, including Fast mode when not
 Verification on a Linux desktop-class host: the existing locked build and `test --timeout 10000` commands above pass with **828 tests passed, one existing skip, zero failures**. `node tests/performance-ui-regressions.cjs` additionally checks collapsed choices, actual trigger title/reason and one-click application of all five suggestions, alongside the prior transaction regressions. `node scripts/bundle-size.mjs` reports **413,058 raw / 140,598 gzip bytes**, **+1,591 / +497** against `d5bed0a`, inside **415,000 / 142,000**. These deterministic checks do not establish hardware speedup or production acceptance.
 
 The synthetic native command `bash .workspace/visual-qa/launch-offer.sh` exits 0, taking `/tmp/graph-ng-harness.lock`, checking at least 8 GiB available and using headless Chromium at 4x CPU throttling. `.workspace/visual-qa/offer-receipt.json` records all five selected changes persisted, no page errors and zero nested scroll regions. Visually inspected captures: `.workspace/visual-qa/performance-collapsed-dark.png`, `.workspace/visual-qa/performance-expanded-light.png` and `.workspace/visual-qa/performance-settings.png`. The captured trigger is app contention: five long tasks totaling about 566 ms. An initial capture caught native focus opening the reason-help popover over the disclosure; explicit primary-action focus corrected it, and the final native run verifies the popover starts closed. These captures are synthetic presentation evidence, not actual low-power hardware acceptance. All six full gates pass; the coordinator's independent review corrections are included.
+
+
+## Exact embedded scalar layout kernel (2026-11-17)
+
+The numerical baseline is frozen commit `3d7096b`, including Morton query ordering and the 50 ms message-friendly yield. The candidate retains JS tree construction and integration, accelerating only repulsion and linear link attraction. Its checked-in module is produced by the dependency-free authored emitter, not a fetched binary or runtime package. `node scripts/wasm-kernel.mjs --check` reproduces the exact checked-in source. No SIMD, extra worker, approximation, setting or producer change is included.
+
+### Actual-worker paired throughput
+
+Command: `flock -w 1800 /tmp/graph-ng-harness.lock timeout --kill-after=5s 1200s node scripts/wasm-kernel-browser.mjs`. `GRAPH_CHROMIUM` may name an already installed browser; this script never downloads one. It checks `free -g` for at least 8 GiB available before launching one headless browser. This run used Chromium 151.0.7922.34 on a hybrid x86 desktop-class Linux host, with other host workloads and no CPU throttling. It is not a mobile, low-power hardware, full-app startup or renderer measurement.
+
+The harness bundles the actual baseline worker from the frozen Git sources and the actual candidate worker, using the same current bridge. Synthetic 16-group fixtures have about 3.1 edges per node. Initial projection/layout and two warmups per size/mode/backend precede six pairs, alternating which backend runs first. Each measured RPC runs 100 iterations from the same Float32 seed, includes solver initialization, linear-memory allocation, the normal streamed buffers every five steps and the worker round trip, but excludes row ingestion/projection and main-realm seed preparation. Workers compute sequentially. Reported medians average the middle two of six times; all raw samples are retained. Compilation is hot during measured pairs. A separate cold allowing-policy worker measured approximately 0.1 ms compilation and 0.1 ms instantiation of the small module, not whole-layout initialization.
+
+| Nodes | Mode | JS median ms | Scalar median ms | Speedup |
+| ---: | --- | ---: | ---: | ---: |
+| 5,000 | Ordinary | 597.15 | 430.00 | 1.389x |
+| 5,000 | Overlap | 1229.00 | 838.90 | 1.465x |
+| 20,000 | Ordinary | 2577.15 | 1850.00 | 1.393x |
+| 20,000 | Overlap | 5403.05 | 3741.00 | 1.444x |
+| 49,000 | Ordinary | 7139.10 | 5127.75 | 1.392x |
+| 49,000 | Overlap | 15755.70 | 10622.00 | 1.483x |
+
+All **36 paired final Float32 buffers are bit-identical**; a mismatch aborts the harness. Gated unit tests additionally compare every step at 5k/20k/49k (three Morton refreshes in the 20k/49k lanes), pinned masks, family pull, LinLog, outbound distribution, strong gravity, self/parallel edges, coincidence, signed zero, small extents and the all-pairs path. Both backends retain nonfinite-force rejection rather than accepting an overflowed result. The reference constructor override changes no saved physics option.
+
+All **24** actual-worker Stop checks pass: 5k/20k/49k, ordinary/overlap, `layout`/`recompute`, and stream cadence 1/1000 with a batch budget of 1000. Sparse-stream Stop is sent after 150 ms rather than waiting for a snapshot. The worst measured response is **63.4 ms**, below the 500 ms gate. Every stopped result remains unsettled. One solver step remains atomic; this is measured evidence, not a universal latency bound.
+
+### Added memory and collection
+
+The following is **extra linear memory**, not total solver heap, virtual address reservation or browser RSS. It duplicates the numeric data needed by the kernel while keeping JS authoritative for fallback. Figures include a pinned mask; overlap additionally includes radii. Memory is rounded to 64 KiB pages and capped at 256 MiB. Layouts that exceed the cap or whose JS tree grows beyond the copied capacity select JS rather than resize in a step.
+
+| Nodes | Mode | Extra linear bytes | Extra MiB |
+| ---: | --- | ---: | ---: |
+| 20,000 | Ordinary | 5,898,240 | 5.62 |
+| 20,000 | Overlap | 5,963,776 | 5.69 |
+| 49,000 | Ordinary | 14,352,384 | 13.69 |
+| 49,000 | Overlap | 14,548,992 | 13.88 |
+
+A dedicated worker probe performs **ten consecutive three-step layouts in each size/mode**. It retains all ten final JS position arrays, but only weak references to the native instances and linear memories. After each layout, task boundaries and explicit full GC leave **zero live previous instances and memories** in every sample. Every layout uses the same byte size, with no mid-step growth. This proves the accelerator state is collectible and is not retained by the compiled-module cache; it does not prove when automatic GC runs or when the browser returns allocator pages to the OS. Keeping the JS copies is intentional: discarding them would weaken exact trap recovery or move authority into WASM to save at most about 14 MiB on this fixture.
+
+### Fallback and evidence boundary
+
+Real cold-worker CSP denial chooses JS and produces exact coordinates. The allowing `wasm-unsafe-eval` policy chooses the scalar kernel with the same coordinates. Unit failure injection covers an absent API, rejected instance construction, denied memory growth, repulsion and attraction traps after partial writes, tree growth and unchanged force buffers on rejection. A trap disables acceleration for the remainder of that layout; no partial forces are published. Linear-memory/view identities remain stable across steps. No plugin policy is weakened and no network module request exists.
+
+Ignored receipts are `.workspace/evidence/wasm-kernel/browser-results.json` and the corresponding frozen/candidate worker artifacts. Browser output and the copied research prototypes are retained separately for integration review. The exact bundle delta and deterministic final-gate receipt are recorded below. The wrapper received independent structural review; full integration, native host fidelity, low-power hardware and publication acceptance remain separate.
+
+### Deterministic final verification
+
+The required wrapper `flock -w 3000 -E 75 /tmp/openclast-bun.lock timeout --kill-after=5s 1800s ./scripts/run.sh build` passes. The same wrapper with `test --timeout 10000` passes **857 tests, one existing skip, zero failures** across 40 files, including the new scalar tests and existing actual-worker Stop regressions. The same wrapper with `gates` passes all six lanes: secrets, attribution including reachable commit identities/messages, private terms, frozen supply chain, runtime licenses and bundle size. Installs used `--frozen-lockfile --ignore-scripts`; runtime dependencies and trusted dependencies remain empty. The reproducibility check is also part of the deterministic suite.
+
+`node scripts/bundle-size.mjs` reports **418,073 raw / 142,971 gzip / 122,488 Brotli bytes**, exactly **+4,125 raw / +1,995 gzip** against the standalone `3d7096b` build (413,948 / 140,976). Raw and gzip are within the unchanged **420,000 / 145,000** ceilings; Brotli remains reporting only. The minified bundle SHA-256 is `053a730ced8c824bf8ddc729dd013d36960806a9b70ddc5b4636479a817869a0`. Exact build/test/gate and size receipts are retained in `.workspace/evidence/wasm-kernel/verification/`; commit association is retained with the integration handoff. No push, hosted CI, room deployment, Obsidian binary, screenshot or real vault is involved in this slice.
