@@ -51,9 +51,11 @@ export interface Visuals {
   /** Edge-note radius relative to a concept node of the same degree. */
   carrierSize: number;
   carrierDensityReference: number;
-  /** Fold edge notes into their edges when zoomed out; fully shown at or below `carrierLodNear`
-   * (camera ratio / home ratio), gone at or above `carrierLodFar`. */
+  /** Legacy fold preference and camera thresholds retained for saved-settings compatibility.
+   * carrierLines now chooses the topology using CSS pixels. */
   carrierLod: boolean;
+  /** Auto folds sub-1.5px relationship dots; through/direct override the topology. */
+  carrierLines: 'auto' | 'through' | 'direct';
   carrierLodNear: number;
   carrierLodFar: number;
   /** Fade crowded edges and shrink hub prominence as the view zooms out; restore zooming in. */
@@ -93,7 +95,7 @@ export const defaultVisuals = (): Visuals => ({
   degreeSizing: 4, degreeCurve: 'sqrt', edgeOpacity: .4, edgeDensityReference: 3000, edgeColorMix: .65, edgeMode: 'all', edgeCompositing: 'blend', edgeDirection: false, glow: .3,
   curvedEdges: true, curvature: .12, curveSegments: 8, hoverHighlight: true, dimOpacity: .12, groupHalos: false, haloOpacity: .05,
   autoPalette: true, labelFade: true, labelStyle: 'anchored', namePriority: 'connected', motion: 'full', clickFraming: 'off', cardPlacement: 'auto', cameraAnimationMs: 450, glowMaxNodes: 250000, curvesMaxEdges: 60000, halosMaxGroups: 48, hubsMaxGroups: 256, softwareEffects: false,
-  carrierTint: true, carrierBridge: 'blend', carrierBridgeAccent: .35, carrierOpacity: .7, carrierSize: .6, carrierDensityReference: 8000, carrierLod: true, carrierLodNear: .3, carrierLodFar: .6, zoomAdapt: true, labelTierScale: 1.2, labelPlates: true,
+  carrierTint: true, carrierBridge: 'blend', carrierBridgeAccent: .35, carrierOpacity: .7, carrierSize: .6, carrierDensityReference: 8000, carrierLod: true, carrierLines: 'auto', carrierLodNear: .3, carrierLodFar: .6, zoomAdapt: true, labelTierScale: 1.2, labelPlates: true,
   emphasis: 'adaptive', tierMinSize: 7, tierRings: true, focusEdges: true, offscreenPips: true, focusRipple: true, tierLegend: true, clickOpens: false, bridgesFirst: true, minimap: true, breadcrumb: true,
 });
 export const defaultExplore = (): ExploreSettings => ({ panelOpen: true, facetValues: 50, legendPageSize: 40, view: emptyView(), savedViews: [], disabledDerived: [] });
@@ -115,7 +117,7 @@ export function validateVisuals(v: unknown): asserts v is Visuals {
   if (o.edgeCompositing !== 'blend' && o.edgeCompositing !== 'density') throw new Error('visuals.edgeCompositing must be blend or density');
   if (o.labelStyle !== 'anchored' && o.labelStyle !== 'ranked') throw new Error('visuals.labelStyle must be anchored or ranked');
   if (!['full', 'reduced', 'off'].includes(o.motion as string)) throw new Error('visuals.motion must be full, reduced or off');
-  for (const [key, values] of [['namePriority', ['connected', 'selection', 'all']], ['clickFraming', ['off', 'center', 'fit-neighbours']], ['cardPlacement', ['auto', 'side', 'sheet']]] as const) if (!(values as readonly unknown[]).includes(o[key])) throw new Error(`visuals.${key} must be ${values.join(', ')}`);
+  for (const [key, values] of [['carrierLines', ['auto', 'through', 'direct']], ['namePriority', ['connected', 'selection', 'all']], ['clickFraming', ['off', 'center', 'fit-neighbours']], ['cardPlacement', ['auto', 'side', 'sheet']]] as const) if (!(values as readonly unknown[]).includes(o[key])) throw new Error(`visuals.${key} must be ${values.join(', ')}`);
   if (o.emphasis !== 'adaptive' && o.emphasis !== 'scale') throw new Error('visuals.emphasis must be adaptive or scale');
   if (o.carrierBridge !== 'blend' && o.carrierBridge !== 'source') throw new Error('visuals.carrierBridge must be blend or source');
   const { carrierSize: z, carrierLodNear: a, carrierLodFar: b } = o as Record<string, number>;
@@ -314,7 +316,7 @@ export function upgradeSettings(input: unknown, producer: string): Settings {
   // Saved settings predating degree curves (with or without a visuals block) keep the earlier log-radius appearance until explicit adoption;
   // fresh installs never reach this migration and use defaults().
   const settings = { ...base, ...old, layout: { ...base.layout, ...old.layout, force: { ...base.layout.force, ...old.layout?.force } }, ingest: { ...base.ingest, ...old.ingest }, cache: { ...base.cache, ...old.cache }, declaration: migrateDeclaration(old.declaration ?? base.declaration),
-    nodeSizing: { ...base.nodeSizing, ...old.nodeSizing }, visuals: { ...base.visuals, degreeSizing: 1.6, degreeCurve: 'legacy' as const, ...old.visuals }, explore: { ...base.explore, ...explore } };
+    nodeSizing: { ...base.nodeSizing, ...old.nodeSizing }, visuals: { ...base.visuals, degreeSizing: 1.6, degreeCurve: 'legacy' as const, ...old.visuals, carrierLines: old.visuals?.carrierLines ?? (old.visuals?.carrierLod === false ? 'through' : 'auto') }, explore: { ...base.explore, ...explore } };
   settings.explore = canonicalExplore(settings.explore);
   if (old.settingsVersion === undefined) for (const key of ['maxProjectionGroups', 'maxProjectionPairs', 'maxProjectionCarriers'] as const) if (settings[key] === 0) settings[key] = base[key];
   validateSettings(settings); return settings;

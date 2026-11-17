@@ -168,3 +168,11 @@ Fit graph reuses the minimap's existing fitAll callback. The corner action remai
 ## Selection-following connection lens (2026-11-16)
 
 Selecting a note retargets an already-enabled lens, including canvas, keyboard and direct-open selections. The existing outgoing/incoming easing still returns the old neighbours before opening the new ring; highlight focus follows the requested target immediately rather than waiting for the outgoing geometry anchor. Turning the lens off retains the original layout coordinates and the idle path has no lens animation or traversal. Motion Off/Reduced and system reduced motion use the existing instant path. Direct-open selections advance the same ConnectionCard history without opening its card. Appearance uses the shared native checkbox row and panel help; the duplicate Fit graph action is removed. No persisted setting, projection, coordinate authority or worker contract changes.
+
+## Exclusive relationship-line topology (2026-11-16)
+
+The renderer caches opposite endpoints for explicitly owned adjacent incidence-leg pairs when a view changes. Auto chooses Through at a nominal relationship radius of at least 1.5 CSS px, independent of home framing. Through uses a 2 CSS px minimum dot radius and shared rank admission for the dot and both legs. Direct draws the incoming row at its true opposite endpoint and suppresses the outgoing row and dot. The exclusive handoff deliberately avoids a crossfade that would show a bridge and legs together. No projection, parser, layout or worker authority changes; no new per-frame edge-wide CPU traversal.
+
+`visuals.carrierLines` defaults to `auto`. Missing new values migrate legacy `carrierLod: false` to `through`, otherwise to `auto`; all old keys and thresholds remain readable. WebGL and bounded Canvas use the same pair mapping. Synthetic local evidence uses 5,000 ordinary notes and 15,000 relationship notes in both themes and three zoom levels; this is not hardware performance or production acceptance.
+
+Known limitation: nested relationship-note endpoints and ordinary links targeting relationship notes still need component-coupled retention; the invariant is not claimed for those cases yet.

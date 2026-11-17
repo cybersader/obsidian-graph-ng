@@ -447,7 +447,7 @@ test('UX relationship notes Lines | Nodes: shown only with reified rules; one ap
   expect(buttons().length).toBe(0);
   f.settings.declaration.edges.push({ kind: 'reified', name: 'crosswalk', sourceProperty: 'from', targetProperty: 'to' }); f.panel.render();
   const [lines, nodes] = buttons() as any[]; expect(lines.getAttribute('aria-pressed')).toBe('true'); expect(lines.disabled).toBe(true); expect(nodes.disabled).toBe(false);
-  const note = f.panel.root.querySelectorAll('.graph-ng-help-popover').find((e: any) => e.textContent.startsWith('Lines join'))!; expect(note.textContent).toContain('44,123 added dots'); expect(note.hidden).toBe(true); expect(note.textContent).not.toContain(' · ');
+  const note = f.panel.root.querySelectorAll('.graph-ng-help-popover').find((e: any) => e.textContent.startsWith('A note that stands'))!; expect(note.textContent).toContain('reified edges'); expect(note.hidden).toBe(true); expect(note.textContent).not.toContain(' · ');
   fail = true; await nodes.onclick(); expect(applies).toBe(0);
   await (f.panel.root.querySelectorAll('button').find((e: any) => e.textContent === 'Switch') as any).onclick(); expect(applies).toBe(1); expect(f.panel.root.textContent).toContain('Not switched: Error: synthetic save failure');
   expect(plugin.settings.declaration.display.reifiedAsNodes).toBe(false);

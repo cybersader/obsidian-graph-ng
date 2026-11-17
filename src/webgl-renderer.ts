@@ -1,3 +1,4 @@
+import { carrierPairs, carrierThrough } from './carrier-lines';
 import { renderPath, type RenderProjection } from './render-projection';
 import type { Settings } from './settings';
 import { adaptiveRadius, PickGrid, positionTexture, incidentEdges, focusTiers, tintedEdge, edgeBucket, tierNode, tierEdge, tierLabel, segmentDistance, shownTier, shownEdgeTier, tierCounts, tierLift, liftRadius, strongEdge, focusAlpha, offscreenPips, TIERS, ALL_TIERS, PIP_DIRECTIONS, canvasDetailEdges, CanvasLimit, resizeDrawingBuffer, LABEL_RATIOS, PATH_EDGE, pathStroke } from './render-data';
@@ -5,7 +6,7 @@ import { readTheme, type GraphTheme } from './render-theme';
 import { baseRadius, sizedRadius, sizingSettings, type NodeSizingValues } from './node-sizing';
 import { buildLabels, rankFocus, type LabelAtlas } from './render-labels';
 import { anchoredLabels, ANCHORED_LABELS, ANCHORED_CANDIDATES, DIRECT_LABELS, LABEL_CHARS, middleTruncate, radialLabels, stickyLevel, tierFont, tierType, type LabelSlot, type LabelItem, labelInView, insetLabel } from './label-layout';
-import { carrierAlpha, carrierColors, carrierVisibility, categorical, degreeSizes, densityScale, edgeAlpha, edgeInk, overdraw, inkShare, edgeRanks, fadeLength, lineAdmitted, type EdgeInk, effectPolicy, prominenceKeep, zoomFade, neutralizeGroups, easeInOut, hoverPulse, groupHalos, isDark, labelFade, nodeColors, type EffectPolicy, type Halo, type RGB } from './render-effects';
+import { carrierAlpha, carrierColors, categorical, degreeSizes, densityScale, edgeAlpha, edgeInk, overdraw, inkShare, edgeRanks, fadeLength, lineAdmitted, type EdgeInk, effectPolicy, prominenceKeep, zoomFade, neutralizeGroups, easeInOut, hoverPulse, groupHalos, isDark, labelFade, nodeColors, type EffectPolicy, type Halo, type RGB } from './render-effects';
 import { yieldTask } from './core/scheduler';
 import { generationCurrent } from './physics-controls';
 import { ConnectionCard, connectionGroups, isolationBar, dockCard, sheetCard, reach, neighbourhood, button, closeButton, el, type CardAction, type CardHost } from './connection-card';
@@ -51,6 +52,7 @@ uniform float scale;
 uniform float nodeSize;
 uniform float pixelRatio;
 uniform int hovered;
+uniform int carrierHovered;
 uniform vec2 pulse;
 uniform int selected;
 uniform int focusNode;
@@ -59,6 +61,8 @@ uniform float dim;
 uniform float carrierAlpha;
 uniform float carrierFold;
 uniform float carrierSize;
+uniform float inkShare;
+uniform float focusOnly;
 uniform int layer;
 uniform int tierMask;
 uniform float minSize;
@@ -85,6 +89,7 @@ float shownTier(float g, bool ego) { int b = int(g * 255. + .5); return ego || b
 `;
 const nodeVertex = common + glsl`
 layout(location=0) in float size;
+layout(location=1) in uint carrierRank;
 uniform float glow;
 out vec2 local;
 out vec4 tint;
@@ -94,11 +99,12 @@ out vec2 bands;
 out vec3 ink;
 void main() {
  int id = layer == 2 ? selected : gl_InstanceID; vec4 st = state(id);
- st.g = shownTier(st.g, id == focusNode);
+ st.g = shownTier(st.g, id == focusNode || focusNode < 0 && st.g > .9);
  bool hot = id == hovered || id == selected, note = st.a > .5;
  // Edge notes (state alpha) draw in their own pass beneath the other nodes.
  // A highlighted edge note keeps its highlight but folds with the level of detail.
- float k = hot ? 1. : note ? carrierAlpha : 1.;
+ float k = note ? (hot ? min(1., carrierAlpha * 2.) : carrierAlpha) : 1.;
+ if (note && (carrierRank == 4294967295u || carrierFold < .5 || focusOnly > 0. && (st.g == 0. || focus <= 0.) || !hot && id != carrierHovered && !(st.g > 0. && focus > 0.) && float(carrierRank & 16777215u) >= inkShare * 16777216.)) k = 0.;
  float radius = nodeSize * size * (note ? carrierSize : 1.) + (hot ? 2. : 0.);
  spread = glow > 0. ? 2.3 : 1.;
  // Graduated tiers: the focus grows 60% with an outer ring, direct notes grow 25%.
@@ -121,11 +127,13 @@ void main() {
  bands = note ? vec2(0.) : focus * vec2(rings > .9 && !ego && st.g > .9 ? 1. : 0., rings > 0. && ego ? 1. : 0.); if (bands.x > 0.) spread = max(spread, 1.32);
  // A physical-pixel radius keeps a core sample at every subpixel pan phase (no MSAA).
  radius = max(radius, 1. / pixelRatio);
+ if (note) radius = max(radius, 2.);
  ink = color(3).rgb;
  local = corners[gl_VertexID] * spread;
  gl_Position = st.r < .5 || st.b > .5 || (layer != 2 && id == selected) || (layer != 2 && note != (layer == 0)) || k < .004 ? offscreen : clip(point(id) + local * radius);
  vec4 c = hot ? color(4) : nodeColor(id);
  tint = vec4(c.rgb, c.a * k * (hot ? 1. : mix(1., dim, focus * (1. - st.g))));
+ if (note && k > 0.) tint.a = max(.25, tint.a);
 }`;
 const nodeFragment = glsl`#version 300 es
 precision highp float;
@@ -148,6 +156,7 @@ layout(location=1) in uint target;
 layout(location=2) in uint typeOn;
 layout(location=3) in uint tierByte;
 layout(location=4) in uint lineRank;
+layout(location=5) in uint foldEnd;
 uniform float edgeSize;
 uniform int edgeHovered;
 uniform int segments;
@@ -155,20 +164,23 @@ uniform float curvature;
 uniform float edgeAlpha;
 uniform float direction;
 uniform float colorMix;
-uniform float inkShare;
 uniform float fadeLength;
-uniform float focusOnly;
 out vec4 tint;
 flat out uint seed;
 void main() {
  int s = int(source), t = int(target); seed = uint(gl_InstanceID);
  if (lineRank >= 16777216u) seed = lineRank; // Faint carrier legs also round as one relationship.
+ int owner = foldEnd == 0u ? -1 : (foldEnd >= 2147483648u ? s : t);
+ bool through = owner >= 0 && carrierFold > .5;
  uint tier = tierByte == 253u ? 255u : tierByte > 200u ? ((tierMask & 1) != 0 ? tierByte : 0u) : tierByte > 0u && (tierMask & 4) != 0 ? tierByte : 0u;
+ if (owner >= 0 && tierByte != 253u) tier = uint(shownTier(state(owner).g, owner == focusNode || focusNode < 0 && state(owner).g > .9) * 255. + .5);
+ bool hot = gl_InstanceID == edgeHovered || owner >= 0 && (owner == selected || owner == hovered || owner == carrierHovered);
+ if (owner >= 0 && !through) { if (foldEnd >= 2147483648u) { gl_Position = offscreen; return; } t = int(foldEnd) - 1; }
  tint = vec4(0.);
  // Density pass 2 takes only context; pass 3 preserves all protected strokes verbatim.
- if (layer > 1 && (layer == 2) == (tier > 0u && focus > 0. || gl_InstanceID == edgeHovered)) { gl_Position = offscreen; return; }
+ if (layer > 1 && (layer == 2) == (tier > 0u && focus > 0. || hot)) { gl_Position = offscreen; return; }
  // The length fade can only reduce this upper bound. Skip texture fetches for most overview rows.
- if (float(lineRank & 16777215u) >= inkShare * 16777216. && (tier == 0u || focus <= 0.) && gl_InstanceID != edgeHovered) { gl_Position = offscreen; return; }
+ if (float(lineRank & 16777215u) >= inkShare * 16777216. && (tier == 0u || focus <= 0.) && !hot) { gl_Position = offscreen; return; }
  vec4 sa = state(s), sb = state(t);
  if (edgeAlpha <= 0. || typeOn == 0u || sa.r < .5 || sb.r < .5 || focusOnly > 0. && tier == 0u) { gl_Position = offscreen; return; }
  int segment = gl_VertexID / 6; vec2 c = corners[gl_VertexID % 6];
@@ -178,8 +190,8 @@ void main() {
  // (fadeLength, CSS px), draw whole; zooming in only adds lines. Dropped (quiet 0) lines are not rasterized.
  // Carrier legs share a rank and cannot be length-faded independently.
  float share = inkShare * (lineRank >= 16777216u ? 1. : min(1., fadeLength / max(len, 1.)));
- float quiet = share * 16777216. > float(lineRank & 16777215u) ? 1. : 0.;
- if (quiet < .5 && (tier == 0u || focus <= 0.) && gl_InstanceID != edgeHovered) { gl_Position = offscreen; return; }
+ float quiet = hot || share * 16777216. > float(lineRank & 16777215u) ? 1. : 0.;
+ if (quiet < .5 && (tier == 0u || focus <= 0.) && !hot) { gl_Position = offscreen; return; }
  vec2 normal = len > 0. ? vec2(-delta.y, delta.x) / len : vec2(0., 1.);
  vec2 q = (a + b) * .5 + normal * len * curvature;
  vec2 tangent = mix(q - a, b - q, u); float tl = length(tangent);
@@ -196,6 +208,7 @@ void main() {
  if (tier == 254u || tier == 127u) rgb = mix(rgb, color(4).rgb, focus * .5);
  if (tierByte == 253u) { rgb = mix(rgb, color(4).rgb, focus); alpha += (1. - alpha) * focus; wide *= 1. + 1.5 * focus; gl_Position = clip(mix(mix(a, q, u), mix(q, b, u), u) + side * c.y * wide); }
  if (gl_InstanceID == edgeHovered) { rgb = color(4).rgb; alpha = min(1., max(alpha, edgeAlpha) * 3.); }
+ if (through && alpha > 0.) alpha = max(.25, alpha);
  tint = vec4(rgb * alpha, alpha);
  if (layer == 2) tint *= .25;
 }`;
@@ -261,7 +274,7 @@ void main() {
  float core = 1. - smoothstep(.92, 1., d), ring = smoothstep(.74, .8, d);
  float a = core * tint.a * mix(.62, 1., ring); outputColor = vec4(tint.rgb * mix(.7, 1.08, ring) * a, a);
 }`;
-const UNIFORMS = ['lensPositions', 'lensBlend', 'lensAnchor', 'positions', 'palette', 'nodeColors', 'nodeState', 'positionWidth', 'center', 'viewport', 'scale', 'nodeSize', 'pixelRatio', 'hovered', 'pulse', 'selected', 'focusNode', 'focus', 'dim', 'glow', 'edgeSize', 'edgeHovered', 'segments', 'curvature', 'edgeAlpha', 'direction', 'colorMix', 'inkShare', 'fadeLength', 'focusOnly', 'labelAlpha', 'labelCut', 'atlas', 'outline', 'plates', 'discAlpha', 'hub', 'carrierAlpha', 'carrierFold', 'carrierSize', 'layer', 'tierMask', 'minSize', 'emphasis', 'rings', 'strong'];
+const UNIFORMS = ['lensPositions', 'lensBlend', 'lensAnchor', 'positions', 'palette', 'nodeColors', 'nodeState', 'positionWidth', 'center', 'viewport', 'scale', 'nodeSize', 'pixelRatio', 'hovered', 'carrierHovered', 'pulse', 'selected', 'focusNode', 'focus', 'dim', 'glow', 'edgeSize', 'edgeHovered', 'segments', 'curvature', 'edgeAlpha', 'direction', 'colorMix', 'inkShare', 'fadeLength', 'focusOnly', 'labelAlpha', 'labelCut', 'atlas', 'outline', 'plates', 'discAlpha', 'hub', 'carrierAlpha', 'carrierFold', 'carrierSize', 'layer', 'tierMask', 'minSize', 'emphasis', 'rings', 'strong'];
 interface Program { handle: WebGLProgram; uniforms: Record<string, WebGLUniformLocation | null> }
 interface Camera { x: number; y: number; ratio: number }
 /** Runtime view masks from the worker's explore result; colors stay worker-computed. */
@@ -367,6 +380,7 @@ export class DetailRenderer {
   private visibleNodes = 0;
   /** Edge notes (reified edges drawn as nodes): total and render-visible. */
   readonly carrierCount: number;
+  private carrierGeometry!: ReturnType<typeof carrierPairs>;
   private visibleCarriers = 0;
   private near: number[] = [];
   private focusNode = -1;
@@ -568,6 +582,7 @@ export class DetailRenderer {
     else if (card && card.node >= 0 && card.node === this.selected) card.render();
     if (this.near.length || this.selected >= 0 && this.ready) this.emphasize(true);
     this.lineRanks = edgeRanks(p.source, p.target, p.offsets, view.groupCodes, p.interest, this.edgeDrawn, p.carrier, p.carrierNodes);
+    this.carrierGeometry = carrierPairs(p, this.edgeOn, filterVisible, this.lineRanks);
     this.recolor(); this.choosePolicy(); this.ink = undefined;
     if (this.lensAnchor >= 0) { if (!render[this.lensAnchor]) this.setLens(-1); this.rebuildLens(); }
     this.updateSizingRange();
@@ -768,11 +783,12 @@ export class DetailRenderer {
     for (let unit = 0; unit < 6; unit++) this.texture(unit);
     this.uploadPalette(); this.uploadLens();
     for (let i = 0; i < 2; i++) { const vao = gl.createVertexArray()!; this.vaos.push(vao); gl.bindVertexArray(vao);
-      if (i === 0) { this.integer(0, this.projection.source); this.integer(1, this.projection.target); this.integer(2, this.edgeOn); this.integer(3, this.edgeTier); }
+      if (i === 0) { this.integer(0, this.projection.source); this.integer(1, this.projection.target); this.integer(2, this.carrierGeometry.enabled); this.integer(3, this.edgeTier); }
       else { this.buffer(this.sizes); gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 1, gl.FLOAT, false, 0, 0); gl.vertexAttribDivisor(0, 1); }
       await yieldTask(); if (this.disposed || this.lost) return;
     }
-    gl.bindVertexArray(this.vaos[0]!); this.integer(4, this.lineRanks);
+    gl.bindVertexArray(this.vaos[0]!); this.integer(4, this.lineRanks); this.integer(5, this.carrierGeometry.ends);
+    gl.bindVertexArray(this.vaos[1]!); this.integer(1, this.carrierGeometry.nodes);
     for (let i = 0; i < 2; i++) { const vao = gl.createVertexArray()!, b = gl.createBuffer()!; this.vaos.push(vao); this.discBuffers[i] = b; gl.bindVertexArray(vao); gl.bindBuffer(gl.ARRAY_BUFFER, b);
       for (let a = 0; a < 2; a++) { gl.enableVertexAttribArray(a); gl.vertexAttribPointer(a, 4, gl.FLOAT, false, 32, a * 16); gl.vertexAttribDivisor(a, 1); } }
     gl.bindVertexArray(null); this.uploadView();
@@ -805,8 +821,10 @@ export class DetailRenderer {
     this.updateSizingRange();
     const gl = this.gl!; this.uploadCoordinates(true);
     this.bytes(3, this.colorBytes); this.uploadTiers();
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.buffers[2]!); gl.bufferData(gl.ARRAY_BUFFER, this.edgeOn, gl.STATIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.buffers[2]!); gl.bufferData(gl.ARRAY_BUFFER, this.carrierGeometry.enabled, gl.STATIC_DRAW);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.buffers[5]!); gl.bufferData(gl.ARRAY_BUFFER, this.lineRanks, gl.STATIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.buffers[6]!); gl.bufferData(gl.ARRAY_BUFFER, this.carrierGeometry.ends, gl.STATIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.buffers[7]!); gl.bufferData(gl.ARRAY_BUFFER, this.carrierGeometry.nodes, gl.STATIC_DRAW);
   }
   private uploadTiers() { const gl = this.gl!; this.bytes(4, this.stateBytes); gl.bindBuffer(gl.ARRAY_BUFFER, this.buffers[3]!); gl.bufferData(gl.ARRAY_BUFFER, this.edgeTier, gl.STATIC_DRAW); }
   private uploadCoordinates(allocate = false) {
@@ -870,8 +888,8 @@ export class DetailRenderer {
     this.sizingTimer = setTimeout(() => { this.sizingTimer = undefined; if (!this.disposed) void this.prepareLabels(() => !this.disposed).catch(() => {}); }, 160);
   }
   private baseNodeRadius() {
-    const notes = this.carrierLevel(), s = this.sizingSettings();
-    const base = baseRadius(s, this.width, this.height, this.visibleNodes - this.visibleCarriers * (1 - notes.visibility), this.camera.ratio / this.homeRatio, !this.gl && !s.visuals.zoomAdapt);
+    const s = this.sizingSettings();
+    const base = baseRadius(s, this.width, this.height, this.visibleNodes, this.camera.ratio / this.homeRatio, !this.gl && !s.visuals.zoomAdapt);
     return s.visuals.zoomAdapt && s.nodeSizing.policy === 'legacy' ? Math.max(Math.min(s.nodeSize, 1.2), base) : base;
   }
   private nodeRadius(node: number, hot = false, base = this.baseNodeRadius()) { return sizedRadius(base, this.sizes[node]!, this.projection.carrierNodes[node] ? this.settings.visuals.carrierSize : 1, hot); }
@@ -1100,23 +1118,33 @@ export class DetailRenderer {
   screenPoint(id: number) { return { x: (this.renderCoordinate(id, 0) - this.centerX) * this.scale + this.width / 2, y: (this.renderCoordinate(id, 1) - this.centerY) * this.scale + this.height / 2 }; }
   private worldPoint(x: number, y: number) { return { x: (x - this.width / 2) / this.scale + this.centerX, y: (y - this.height / 2) / this.scale + this.centerY }; }
   /** Edge-note level of detail at this zoom: LOD visibility and the drawn alpha. */
-  carrierLevel(zoom = this.camera.ratio / this.homeRatio) { const v = this.settings.visuals; return { visibility: carrierVisibility(zoom, v.carrierLodNear, v.carrierLodFar, v.carrierLod), alpha: carrierAlpha(v, this.visibleCarriers, zoom) }; }
+  carrierLevel(zoom = this.camera.ratio / this.homeRatio, radius = this.baseNodeRadius()) { const v = this.settings.visuals; const visibility = +(v.carrierOpacity > 0 && carrierThrough(v.carrierLines, radius * v.carrierSize)); return { visibility, alpha: visibility * Math.max(.35, carrierAlpha({ ...v, carrierLod: false }, this.visibleCarriers, zoom)) }; }
+  /** Shared CPU admission for picking and Canvas; WebGL mirrors it in the vertex shader. */
+  private carrierShown(n: number, ink: number, focus: number, through = this.carrierLevel().visibility) {
+    if (!this.projection.carrierNodes[n]) return true;
+    const v = this.settings.visuals, rank = this.carrierGeometry.nodes[n]!, tier = this.carrierTier(n);
+    return rank !== 0xffffffff && !!through && v.edgeOpacity > 0 && v.edgeMode !== 'off' && (v.edgeMode !== 'focus' || tier > 0 && focus > 0) && (n === this.selected || n === this.hoverFx.n || n === this.lineOwner(this.hoveredEdge) || tier > 0 && focus > 0 || lineAdmitted(rank, ink, 0, Infinity));
+  }
+  private carrierTier(n: number) { const tier = this.stateBytes[n * 4 + 1]!; return shownTier(tier, this.tierMask, n === this.focusNode || this.focusNode < 0 && tier === 255); }
+  private lineOwner(e: number) { const end = this.carrierGeometry.ends[e]!; return e < 0 || !end ? -1 : end >= 0x80000000 ? this.projection.source[e]! : this.projection.target[e]!; }
+  /** No allocations or sizing work per visited edge. A folded outgoing row has no target. */
+  private lineTarget(e: number, through: number) { const end = this.carrierGeometry.ends[e]!; return !through && end ? end >= 0x80000000 ? -1 : end - 1 : this.projection.target[e]!; }
   /** Edge notes folded away by the level of detail are not pickable. */
   pick(x: number, y: number) {
-    const w = this.worldPoint(x, y), s = this.sizingSettings(), adaptive = s.visuals.emphasis === 'adaptive';
+    const w = this.worldPoint(x, y), s = this.sizingSettings(), ink = this.edgeQuiet(2 * Math.max(.5, this.edgeWidth()))[0], adaptive = s.visuals.emphasis === 'adaptive';
     // The graduated focus grows 60% (direct notes 25%): hit targets follow the drawn size.
     const f = s.visuals.hoverHighlight ? this.focusLevel : 0, grow = (n: number) => tierNode(this.stateBytes[n * 4 + 1]! / 255, true, n === this.focusNode, f, 0)[1];
     const lifted = this.pickTiered(x, y, w, f); if (lifted >= 0) return lifted;
     if (this.lensPoints?.size) {
       const legacy = s.nodeSizing.policy === 'legacy' && !adaptive, radius = (legacy ? s.nodeSize * (1 + s.visuals.degreeSizing) * (1 + .6 * f) + 4 : this.baseNodeRadius() * (1 + s.visuals.degreeSizing) * Math.max(1, s.visuals.carrierSize) * (1 + .6 * f) + 6 + (adaptive ? Math.max(7, s.visuals.tierMinSize) : 0)) / this.scale;
       const carriers = this.carrierLevel().visibility >= .25;
-      return pickLens(this.picker, this.lensPoints, w.x, w.y, radius, n => ({ x: this.renderCoordinate(n, 0), y: this.renderCoordinate(n, 1) }), n => legacy ? radius : (this.drawnRadius(n, n === this.selected || n === (adaptive ? this.hoverFx.n : this.hovered), f) + 4) / this.scale, n => !!this.visible[n] && (carriers || !this.projection.carrierNodes[n]));
+      return pickLens(this.picker, this.lensPoints, w.x, w.y, radius, n => ({ x: this.renderCoordinate(n, 0), y: this.renderCoordinate(n, 1) }), n => legacy ? radius : (this.drawnRadius(n, n === this.selected || n === (adaptive ? this.hoverFx.n : this.hovered), f) + 4) / this.scale, n => !!this.visible[n] && (carriers || !this.projection.carrierNodes[n]) && this.carrierShown(n, ink, f));
     }
-    if (s.nodeSizing.policy === 'legacy' && !adaptive) return this.picker.pick(w.x, w.y, (s.nodeSize * (1 + s.visuals.degreeSizing) * (1 + .6 * f) + 4) / this.scale, this.carrierCount && this.carrierLevel().visibility < .25 ? this.projection.carrierNodes : undefined);
+    if (!this.carrierCount && s.nodeSizing.policy === 'legacy' && !adaptive) return this.picker.pick(w.x, w.y, (s.nodeSize * (1 + s.visuals.degreeSizing) * (1 + .6 * f) + 4) / this.scale, this.carrierCount && this.carrierLevel().visibility < .25 ? this.projection.carrierNodes : undefined);
     const base = this.baseNodeRadius(), max = (base * (1 + s.visuals.degreeSizing) * Math.max(1, s.visuals.carrierSize) * (1 + .6 * f) * 1.6 + 6 + (adaptive ? Math.max(7, s.visuals.tierMinSize) : s.visuals.tierMinSize)) / this.scale;
     let picked = -1, distance = Infinity;
     this.picker.visit(w.x, w.y, max, node => {
-      if (!this.visible[node] || (this.projection.carrierNodes[node] && this.carrierLevel().visibility < .25)) return;
+      if (!this.visible[node] || !this.carrierShown(node, ink, f)) return;
       const p = this.screenPoint(node), d = (p.x - x) ** 2 + (p.y - y) ** 2;
       if (d <= ((adaptive ? this.drawnRadius(node, node === this.selected || node === this.hoverFx.n, f) : this.grown(node, this.nodeRadius(node, node === this.selected || node === this.hovered) * grow(node))) + 4) ** 2 && d < distance) { picked = node; distance = d; }
     }); return picked;
@@ -1134,7 +1162,7 @@ export class DetailRenderer {
   private drawnRadius(n: number, hot: boolean, focus: number, base = this.baseNodeRadius(), budget = this.emphasisBudget()) {
     const ego = n === this.focusNode, g = shownTier(this.stateBytes[n * 4 + 1]!, this.tierMask, ego) / 255, radius = this.nodeRadius(n, hot, base);
     const r = radius * tierNode(g, true, ego, focus, 0)[1];
-    return Math.max(n === this.selected ? 5 : 1 / this.dpr, budget ? adaptiveRadius(radius, g, ego, this.projection.carrierNodes[n] && !ego ? 0 : focus, this.settings.visuals.tierMinSize, budget, n === this.hoverFx.n ? (this.fx[0]! - 1) / .6 : 0) : this.grown(n, this.projection.carrierNodes[n] ? r : liftRadius(r, tierLift(g, ego, focus, this.settings.visuals.tierMinSize))));
+    return Math.max(n === this.selected ? 5 : this.projection.carrierNodes[n] ? 2 : 1 / this.dpr, budget ? adaptiveRadius(radius, g, ego, this.projection.carrierNodes[n] && !ego ? 0 : focus, this.settings.visuals.tierMinSize, budget, n === this.hoverFx.n ? (this.fx[0]! - 1) / .6 : 0) : this.grown(n, this.projection.carrierNodes[n] ? r : liftRadius(r, tierLift(g, ego, focus, this.settings.visuals.tierMinSize))));
   }
   /** The hover preview's size (the node shader's pulse term). */
   private grown(n: number, r: number) { const s = this.fx[0]!; return n === this.hoverFx.n ? Math.max(r * s, this.settings.visuals.tierMinSize * (s - 1) / .6) : r; }
@@ -1163,14 +1191,14 @@ export class DetailRenderer {
     let best = -1, distance = this.settings.groupEdgeHitRadius / this.scale, budget = 32768;
     // Lines hidden by Edges mode or the shared ink budget are not pickable.
     if (mode === 'off' || !v.edgeOpacity || mode === 'focus' && !focus) return -1;
-    const [ink, reach] = this.edgeQuiet(2 * Math.max(.5, this.edgeWidth()));
+    const [ink, reach] = this.edgeQuiet(2 * Math.max(.5, this.edgeWidth())), through = this.carrierLevel().visibility, hoveredOwner = this.lineOwner(this.hoveredEdge);
     // Deliberately budgeted incident-edge picking, not an O(m) all-segment scan or GPU readback.
     const visit = (node: number) => {
       for (let j = this.edges.offsets[node]!; j < this.edges.offsets[node + 1]! && budget-- > 0; j++) {
-        const e = this.edges.edges[j]!, a = p.source[e]!, b = p.target[e]!, tier = this.edgeTier[e] === PATH_EDGE || shownEdgeTier(this.edgeTier[e]!, this.tierMask);
-        if (!this.edgeDrawn(e) || mode === 'focus' && !tier) continue;
+        let e = this.edges.edges[j]!, b = this.lineTarget(e, through); if (b < 0) { e--; b = this.lineTarget(e, through); } const a = p.source[e]!, owner = this.lineOwner(e), tier = this.edgeTier[e] === PATH_EDGE || (owner < 0 ? shownEdgeTier(this.edgeTier[e]!, this.tierMask) : this.carrierTier(owner));
+        if (!this.carrierGeometry.enabled[e] || !this.edgeDrawn(e) || mode === 'focus' && !tier) continue;
         const ax = this.renderCoordinate(a, 0), ay = this.renderCoordinate(a, 1), bx = this.renderCoordinate(b, 0), by = this.renderCoordinate(b, 1);
-        if (e !== this.hoveredEdge && !(tier && focus)) {
+        if (!(owner < 0 ? e === this.hoveredEdge : owner === this.selected || owner === this.hoverFx.n || owner === hoveredOwner) && !(tier && focus)) {
           // Same packed rank and whole-relationship threshold as edgeVertex; hovered/focus/path lines stay admitted.
           if (!lineAdmitted(this.lineRanks[e]!, ink!, Math.hypot(bx - ax, by - ay) * this.scale, Math.min(reach!, 1e9))) continue;
         }
@@ -1201,8 +1229,8 @@ export class DetailRenderer {
   private edgeDrawn = (e: number) => !!this.edgeOn[e] && !!this.filterVisible[this.projection.source[e]!] && !!this.filterVisible[this.projection.target[e]!];
   /** Drawn rows between the picked edge's endpoints, either direction, picked edge first (bounded). */
   private edgeParallels(e: number) {
-    const p = this.projection, a = p.source[e]!, b = p.target[e]!, out = [e];
-    for (let j = this.edges.offsets[a]!; j < this.edges.offsets[a + 1]! && out.length < 32; j++) { const f = this.edges.edges[j]!; if ((p.source[f] === a ? p.target[f] : p.source[f]) === b && this.edgeDrawn(f) && !out.includes(f)) out.push(f); }
+    const a = this.projection.source[e]!, through = this.carrierLevel().visibility, b = this.lineTarget(e, through), out = [e];
+    for (let j = this.edges.offsets[a]!; j < this.edges.offsets[a + 1]! && out.length < 32; j++) { const f = this.edges.edges[j]!, target = this.lineTarget(f, through); if (target >= 0 && (this.projection.source[f] === a ? target : this.projection.source[f]) === b && this.edgeDrawn(f) && !out.includes(f)) out.push(f); }
     return out;
   }
   /** Graduated tiers from one CPU authority for WebGL and Canvas, recomputed only when the focus
@@ -1437,9 +1465,10 @@ export class DetailRenderer {
   /** Select a relationship (never opens). The card lists every drawn parallel row between the pair;
    * rule names and relationship-note paths arrive from the worker and fill in when resolved. */
   private selectEdge(edge: number, anchor = -1) {
+    const through = this.carrierLevel().visibility; if (this.lineTarget(edge, through) < 0) edge--;
     const p = this.projection, c = this.noteCard, token = ++this.edgeToken;
     this.card.hide(); this.selected = this.hovered = -1; this.pathView = undefined; this.cue = -1; this.edgeAnchor = anchor; this.selectedEdges = this.edgeParallels(edge); this.emphasize(); this.refresh();
-    const a = p.source[edge]!, b = p.target[edge]!, box = el('div', '', 'graph-ng-relationships'), na = this.name(a), nb = this.name(b);
+    const a = p.source[edge]!, b = this.lineTarget(edge, through), box = el('div', '', 'graph-ng-relationships'), na = this.name(a), nb = this.name(b);
     box.append(el('strong', `${na} → ${nb}`));
     const rows = this.selectedEdges.map(e => { const row = el('div', '', 'graph-ng-relationship'); row.append(el('span', p.types[p.type[e]!]! + (p.source[e] !== a ? ' (reverse)' : ''))); box.append(row); return row; });
     const ends = el('div', '', 'graph-ng-relationship'); ends.append(button('Open source', 'Open source ' + na, () => this.onNode(a)), button('Open target', 'Open target ' + nb, () => this.onNode(b))); box.append(ends);
@@ -1521,9 +1550,9 @@ export class DetailRenderer {
     for (const [i, vaoIndex, hub, layer = 1] of passes) {
       const program = this.programs[i]!, u = program.uniforms;
       gl.useProgram(program.handle); integer(u.lensPositions!, 5); f(u.lensBlend!, this.lensBlend); integer(u.lensAnchor!, this.lensAnchor); integer(u.positions!, 0); integer(u.palette!, 1); integer(u.atlas!, 2); integer(u.nodeColors!, 3); integer(u.nodeState!, 4); integer(u.positionWidth!, this.positionWidth);
-      gl.uniform2f(u.center!, this.centerX, this.centerY); gl.uniform2f(u.viewport!, this.width, this.height); f(u.scale!, this.scale); f(u.nodeSize!, nodeSize); f(u.pixelRatio!, this.dpr); f(u.edgeSize!, edgeWidth); integer(u.hovered!, this.hoverFx.n); gl.uniform2f(u.pulse!, this.fx[0]!, this.fx[1]!); integer(u.selected!, this.selected); integer(u.focusNode!, this.focusNode); integer(u.edgeHovered!, this.hoveredEdge);
+      gl.uniform2f(u.center!, this.centerX, this.centerY); gl.uniform2f(u.viewport!, this.width, this.height); f(u.scale!, this.scale); f(u.nodeSize!, nodeSize); f(u.pixelRatio!, this.dpr); f(u.edgeSize!, edgeWidth); integer(u.hovered!, this.hoverFx.n); gl.uniform2f(u.pulse!, this.fx[0]!, this.fx[1]!); integer(u.selected!, this.selected); integer(u.focusNode!, this.focusNode); integer(u.edgeHovered!, this.hoveredEdge); integer(u.carrierHovered!, this.lineOwner(this.hoveredEdge));
       f(u.focus!, focus); f(u.dim!, this.emphasisDim()); f(u.emphasis!, this.emphasisBudget()); f(u.glow!, layer ? policy.glow : 0);
-      f(u.carrierAlpha!, notes.alpha); f(u.carrierFold!, notes.visibility); f(u.carrierSize!, v.carrierSize); integer(u.layer!, layer);
+      f(u.carrierAlpha!, edgePass ? notes.alpha : 0); f(u.carrierFold!, notes.visibility); f(u.carrierSize!, v.carrierSize); integer(u.layer!, layer);
       integer(u.tierMask!, this.tierMask); f(u.minSize!, v.tierMinSize); f(u.rings!, v.tierRings ? (this.directs.length > DIRECT_LABELS ? .5 : 1) : 0); f(u.strong!, v.focusEdges ? focusAlpha(this.directs.length) : 0);
       integer(u.segments!, policy.segments); f(u.curvature!, policy.curves ? v.curvature : 0); f(u.edgeAlpha!, alpha); f(u.direction!, v.edgeDirection ? 1 : 0); f(u.colorMix!, v.edgeColorMix); f(u.inkShare!, ink); f(u.fadeLength!, Math.min(reach, 1e9)); f(u.focusOnly!, v.edgeMode === 'focus' ? 1 : 0);
       f(u.labelAlpha!, fade.alpha); f(u.labelCut!, fade.cut); gl.uniform3f(u.outline!, p[8]! / 255, p[9]! / 255, p[10]! / 255); f(u.plates!, v.labelPlates ? .92 : 0); f(u.discAlpha!, hub ? 1 : haloAlpha); f(u.hub!, hub);
@@ -1541,9 +1570,9 @@ export class DetailRenderer {
         gl.drawArraysInstanced(gl.TRIANGLES, 0, 6 * policy.segments, this.projection.source.length);
       }
       else if (i === 1) {
-        if (layer === 2) { gl.disableVertexAttribArray(0); gl.vertexAttrib1f(0, this.sizes[this.selected]!); }
+        if (layer === 2) { gl.disableVertexAttribArray(0); gl.vertexAttrib1f(0, this.sizes[this.selected]!); gl.disableVertexAttribArray(1); gl.vertexAttribI4ui(1, this.carrierGeometry.nodes[this.selected]!, 0, 0, 0); }
         gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, layer === 2 ? 1 : this.visible.length);
-        if (layer === 2) gl.enableVertexAttribArray(0);
+        if (layer === 2) { gl.enableVertexAttribArray(0); gl.enableVertexAttribArray(1); }
       }
       else if (i === 2) gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, this.atlas!.levels[lod]!.length / 13);
       else gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, this.discData[hub]!.length / 8);
@@ -1788,14 +1817,15 @@ export class DetailRenderer {
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0); ctx.fillStyle = this.theme.background; ctx.fillRect(0, 0, this.width, this.height); ctx.strokeStyle = this.theme.edge; ctx.lineWidth = s.edgeSize;
     // The edge shader's tier weights: rest, neighbours of neighbours, then direct strokes on top.
     const zoom = this.camera.ratio / this.homeRatio, base = edgeAlpha(s.visuals, s.visuals.zoomAdapt ? 0 : this.visibleEdges, s.visuals.zoomAdapt ? 1 : zoom, this.policy.dark), width = 2 * Math.max(.5, this.edgeWidth(zoom));
-    const mask = this.tierMask, strong = s.visuals.focusEdges ? focusAlpha(this.directs.length) : 0, mode = s.visuals.edgeMode, [ink, reach] = this.edgeQuiet(width);
+    const level = this.carrierLevel(zoom, radius), hoveredOwner = this.lineOwner(this.hoveredEdge), mask = this.tierMask, strong = s.visuals.focusEdges ? focusAlpha(this.directs.length) : 0, mode = s.visuals.edgeMode, [ink, reach] = this.edgeQuiet(width);
     // The same quantile admission and long-line threshold as the shader; focus tiers are never sampled.
     const drawEdges = () => { for (const tier of mode === 'off' ? [] : focus ? mode === 'focus' ? [128, 255] : [0, 128, 255] : mode === 'focus' ? [] : [-1]) {
       let [alpha, wide] = tierEdge(tier, base * (mode === 'focus' ? focus : 1), tier < 0 ? 0 : focus, dim);
       if (strong && tier >= 0) { const [a2, w2] = strongEdge(tier, alpha, focus, strong); alpha = a2; wide *= w2; }
-      ctx.lineWidth = width * wide; const lines: number[] = [], hue: number[] = [], line = (e: number) => { const a = this.projection.source[e]!, b = this.projection.target[e]!; ctx.moveTo(x(a), y(a)); ctx.lineTo(x(b), y(b)); };
-      for (const e of this.canvasEdges) { const a = this.projection.source[e]!, b = this.projection.target[e]!, t = shownEdgeTier(this.edgeTier[e]!, mask); if (!this.edgeDrawn(e) || tier >= 0 && edgeBucket(t) !== tier) continue; if (!(t && focus) && e !== this.hoveredEdge && !lineAdmitted(this.lineRanks[e]!, ink, Math.hypot(x(b) - x(a), y(b) - y(a)), Math.min(reach, 1e9))) continue; if (tier >= 0 && tintedEdge(t)) hue.push(e); lines.push(e); }
+      ctx.lineWidth = width * wide; const lines: number[] = [], legs: number[] = [], hue: number[] = [], line = (e: number) => { const a = this.projection.source[e]!, b = this.lineTarget(e, level.visibility); if (b < 0 || this.carrierGeometry.enabled[e] === 0) return; ctx.moveTo(x(a), y(a)); ctx.lineTo(x(b), y(b)); };
+      for (const e of this.canvasEdges) { const a = this.projection.source[e]!, b = this.lineTarget(e, level.visibility); if (b < 0 || this.carrierGeometry.enabled[e] === 0) continue; const owner = this.lineOwner(e), t = this.edgeTier[e] === PATH_EDGE ? 255 : owner < 0 ? shownEdgeTier(this.edgeTier[e]!, mask) : this.carrierTier(owner), hot = e === this.hoveredEdge || owner >= 0 && (owner === this.selected || owner === this.hoverFx.n || owner === hoveredOwner); if (!this.edgeDrawn(e) || tier >= 0 && edgeBucket(t) !== tier) continue; if (!(t && focus) && !hot && !lineAdmitted(this.lineRanks[e]!, ink, Math.hypot(x(b) - x(a), y(b) - y(a)), Math.min(reach, 1e9))) continue; if (tier >= 0 && tintedEdge(t)) hue.push(e); (owner >= 0 && level.visibility ? legs : lines).push(e); }
       ctx.globalAlpha = alpha; if (s.visuals.edgeOpacity > 0 && lines.length) { ctx.beginPath(); lines.forEach(line); ctx.stroke(); }
+      if (s.visuals.edgeOpacity > 0 && legs.length) { ctx.globalAlpha = Math.max(.25, alpha); ctx.beginPath(); legs.forEach(line); ctx.stroke(); }
       // Tinted relationship layer: the shader mixes the accent by focus / 2 at the same weight.
       if (s.visuals.edgeOpacity > 0 && hue.length) { ctx.strokeStyle = this.theme.accent; ctx.globalAlpha = alpha * focus * .5; ctx.beginPath(); hue.forEach(line); ctx.stroke(); ctx.strokeStyle = this.theme.edge; }
       // Path tier on top, as the shader's 253 branch: accent, pathStroke alpha and width.
@@ -1803,17 +1833,18 @@ export class DetailRenderer {
     }
     };
     const edgesOnTop = !!this.isolation && focus > 0; if (!edgesOnTop) drawEdges();
-    const notes = this.projection.carrierNodes, level = this.carrierLevel();
+    const notes = this.projection.carrierNodes;
     // Edge notes first (beneath), then the other nodes.
     for (const layer of [1, 0, 2]) {
     if (layer === 2 && edgesOnTop) drawEdges();
     for (let n = layer === 2 ? this.selected : 0; n >= 0 && n < (layer === 2 ? this.selected + 1 : this.visible.length); n++) if (this.visible[n] && (layer === 2 || n !== this.selected && +!!notes[n] === layer)) {
-      const hot = n === this.selected || n === this.hoverFx.n, k = n * 4, p = this.theme.palette, coverage = hot ? 1 : layer ? level.alpha : 1;
+      if (!this.carrierShown(n, ink, focus, level.visibility)) continue;
+      const hot = n === this.selected || n === this.hoverFx.n, k = n * 4, p = this.theme.palette, coverage = notes[n] ? level.alpha : 1;
       const a = coverage * (hot ? p[19]! : c[k + 3]!) / 255;
       if (coverage < .004 || a <= 0) continue;
       const ego = n === this.focusNode, shown = shownTier(g[k + 1]!, this.tierMask, ego) / 255, [fade, , tr] = tierNode(shown, hot, ego, focus, dim), r = this.drawnRadius(n, hot, focus, radius, budget);
       const ring = Math.max(n === this.selected ? 1 : tr, n === this.hoverFx.n ? this.fx[1]! : 0);
-      ctx.globalAlpha = a * fade; ctx.fillStyle = ctx.strokeStyle = hot ? `rgb(${p[16]},${p[17]},${p[18]})` : `rgb(${c[k]},${c[k + 1]},${c[k + 2]})`; ctx.beginPath(); ctx.arc(x(n), y(n), r, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = notes[n] ? Math.max(.25, a * fade) : a * fade; ctx.fillStyle = ctx.strokeStyle = hot ? `rgb(${p[16]},${p[17]},${p[18]})` : `rgb(${c[k]},${c[k + 1]},${c[k + 2]})`; ctx.beginPath(); ctx.arc(x(n), y(n), r, 0, Math.PI * 2); ctx.fill();
       // The shader's outer ring band (1.1–1.34 radii) as one stroke.
       if (ring) { ctx.globalAlpha = a * ring; ctx.lineWidth = r * .2; ctx.beginPath(); ctx.arc(x(n), y(n), r * 1.22, 0, Math.PI * 2); ctx.stroke(); }
       // Contrast rings in the text colour: direct band 1.07–1.25, focus outer band 1.49–1.65 radii.

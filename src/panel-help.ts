@@ -1,5 +1,6 @@
 import { setIcon } from 'obsidian';
 let helpId = 0;
+export const RELATIONSHIP_HELP = 'A note that stands for a connection between two notes.\nAlso called: edge notes, junction notes, reified edges, join notes.\nLines shows one edge. Notes shows its own dot (an incidence graph).';
 /** Shared native setting row; checkbox labels keep their activation semantics. */
 export function settingRow(host: HTMLElement, label: string, cls = '', desc?: string) {
   const toggle = cls.includes('graph-ng-toggle'), row = host.createEl(toggle ? 'label' : 'div', { cls: `setting-item graph-ng-setting ${cls}` }), [, name = label, a, b] = (toggle && !desc && /^(.+?)(?: \((.+)\)|: (.+))$/.exec(label)) || [];
@@ -27,6 +28,7 @@ export function iconButton(host: HTMLElement, label: string, icon: string, cls =
 /** Dotted labels reveal text on hover, focus or tap. Native popovers escape panel clipping,
  * dismiss on outside tap, and need no document listeners to clean up on panel rebuild. */
 export function panelHelp(host: HTMLElement, label: string, text?: string, cls = '') {
+  if (label.toLowerCase() === 'relationship notes') text = RELATIONSHIP_HELP;
   const wrap = host.createSpan({ cls });
   if (!text) { wrap.textContent = label; return wrap; }
   const id = `graph-ng-panel-help-${++helpId}`;
