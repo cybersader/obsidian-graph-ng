@@ -42,5 +42,5 @@ export const MANGLED_PROPS = ['onViewStateChange', 'tuneViewState', 'showViewGro
   // Startup-cache lifecycle only; on-disk fields and deviceNamespace stay literal.
   'attachFactCache', 'cacheScope', 'cacheTurn', 'factVersion', 'savedVersion',
   'restoreFacts', 'saveFacts', 'clearFacts', 'savedFacts', 'retireSaved', 'savedCopy',
-  'rejectSaved', 'purgeFacts', 'cacheStatus', 'factError', 'namespaceWrite', 'factDirectory', 'factStore', 'ensureDeviceNamespace', 'deadlineMs', 'cacheKey'];
+  'rejectSaved', 'purgeFacts', 'cacheStatus', 'factError', 'factDirectory', 'factStore', 'deadlineMs', 'cacheKey'];
 export const mangleProps = new RegExp(`^(?:${MANGLED_PROPS.join('|')})$`);
