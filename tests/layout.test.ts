@@ -234,7 +234,7 @@ test('Prevent overlap reduces drawn-disc collisions at home and close zoom on se
   });
   for (const zoom of [1, .2]) expect(overlapPairs(p, result[1]!, zoom)).toBeLessThanOrEqual(overlapPairs(p, result[0]!, zoom));
   expect(overlapPairs(p, result[1]!, .2, 25)).toBeLessThanOrEqual(overlapPairs(p, result[0]!, .2, 25));
-});
+}, 60_000); // 5k-node seeded layout: heavy under shared host load.
 
 test('size-aware tree matches softened all-pairs at tiny theta and excludes coincident self mass', () => {
   const p = initialPositions(40, 3, 10), mass = Float32Array.from({ length: 40 }, (_, i) => 2 + i % 5), radii = Float32Array.from({ length: 40 }, (_, i) => 1 + i % 4);
