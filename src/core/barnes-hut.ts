@@ -1,4 +1,11 @@
 import { MortonOrder } from './morton';
+/** Borrowed numeric columns for the optional scalar kernel; never insertion authority. */
+export interface KernelTree {
+  owner: Int32Array; child: Int32Array; head: Int32Array; next: Int32Array;
+  cx: Float64Array; cy: Float64Array; half: Float64Array;
+  mass: Float64Array; mx: Float64Array; my: Float64Array;
+  order?: Uint32Array;
+}
 /** Flat, reusable, threaded quadtree. No JS node/edge/cell objects.
  * Leaves at the precision/depth limit are mass buckets: coincident nodes cannot
  * cause unbounded subdivision (or an all-pairs walk through a giant bucket).
@@ -26,6 +33,11 @@ export class BarnesHut {
     this.cx = new Float64Array(this.capacity); this.cy = new Float64Array(this.capacity); this.half = new Float64Array(this.capacity);
     this.mass = new Float64Array(this.capacity); this.mx = new Float64Array(this.capacity); this.my = new Float64Array(this.capacity);
   }
+  kernelStorage(): KernelTree {
+    const { owner, child, head, next, cx, cy, half, mass, mx, my } = this;
+    return { owner, child, head, next, cx, cy, half, mass, mx, my, ...(this.queryOrder ? { order: this.queryOrder.indices } : {}) };
+  }
+  matchesKernelStorage(storage: KernelTree): boolean { return storage.child === this.child && storage.order === this.queryOrder?.indices; }
   private allocate(cx: number, cy: number, half: number, next: number): number {
     const c = this.used++;
     if (c === this.capacity) {
