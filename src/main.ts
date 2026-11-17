@@ -1,3 +1,5 @@
+import { devicePerformance, performanceRecords, type PerformanceRecord } from './performance';
+import { lighterChoices, lighterSettings, type LighterChoice, performanceControls, showPerformanceSuggestions } from './performance-ui';
 import { stateChip } from './view-state';
 import { disclosure, disclosureBody, panelHelp, iconButton } from './panel-help';
 import { BuildProgress, workingText } from './working';
@@ -39,6 +41,24 @@ interface Data { settings: Settings; generations: Record<string, Generation> }
 const adopt = <T extends object>(live: T, next: T, was: T, keys: (keyof T)[]) => keys.filter(k => JSON.stringify(live[k]) === JSON.stringify(was[k]) ? (live[k] = next[k], false) : true).length;
 export default class GraphPlugin extends Plugin {
   settings!: Settings;
+  performanceLog: PerformanceRecord[] = [];
+  performanceModalOpen = false;
+  override saveData(data: { settings: { performanceDiagnostics?: boolean } }) {
+    return super.saveData({ ...data, ...(data.settings.performanceDiagnostics ? { performanceLog: performanceRecords(this.performanceLog) } : {}) });
+  }
+  refreshPerformance() { for (const leaf of this.app.workspace.getLeavesOfType(VIEW)) (leaf.view as GraphView).performanceChanged(); }
+  recordPerformance(sample: Partial<PerformanceRecord>) {
+    try {
+      const heap = (performance as Performance & { memory?: { usedJSHeapSize: number } }).memory?.usedJSHeapSize;
+      if (this.settings.performanceDiagnostics) {
+        this.performanceLog = performanceRecords([...this.performanceLog, { ...sample, tier: devicePerformance.tier, mode: this.settings.performance, frameMs: devicePerformance.frameMs, longTasks: devicePerformance.longTasks, longTaskMs: devicePerformance.longTaskMs, heapBytes: heap }]);
+        this.saveSoon();
+      }
+      if (!this.settings.performancePrompted && !this.performanceModalOpen && this.settings.performanceSuggestions && (devicePerformance.tier === 'low' || (sample.notes ?? 0) >= 10000 || (sample.edges ?? 0) >= 50000 || (heap ?? 0) >= 1e9) && lighterChoices(this.settings).length) {
+        showPerformanceSuggestions(this);
+      }
+    } catch { /* Optional observations and suggestions must never fail a graph operation. */ }
+  }
   adapter!: LocalAdapter;
   generations: Record<string, Generation> = Object.create(null);
   private listeners = new Set<() => void | Promise<void>>();
@@ -69,6 +89,8 @@ export default class GraphPlugin extends Plugin {
     const dataPath = `${this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`}/data.json`;
     const loaded = await loadSettings(this.app.vault.adapter, dataPath, this.linkProducer, message => { new Notice(message); });
     this.settings = loaded.settings;
+    this.register(devicePerformance.observe());
+    this.performanceLog = this.settings.performanceDiagnostics ? performanceRecords(loaded.data?.performanceLog) : [];
     const data = loaded.data as Data | undefined;
     if (data?.generations && typeof data.generations === 'object' && data.settings?.declaration) { const oldHash = await digest(layoutDeclaration(data.settings.declaration)), currentHash = await digest(layoutDeclaration(this.settings.declaration)); const old = data.generations[oldHash]; if (old) this.generations[currentHash] = old; }
     const url = URL.createObjectURL(new Blob([expressionPrelude(), __LAYOUT_WORKER_SOURCE__], { type: 'text/javascript' }));
@@ -170,6 +192,14 @@ export default class GraphPlugin extends Plugin {
         throw error;
       }
     }); return this.writes;
+  }
+  async commitPerformance(selected: ReadonlySet<LighterChoice>, never: boolean, current: () => boolean) {
+    selected = new Set(selected);
+    await this.serialize(async () => {
+      await this.commitCandidate('Performance', () => ({ ...lighterSettings(this.settings, selected), performanceSuggestions: never ? false : this.settings.performanceSuggestions }),
+        (next, was) => adopt(this.settings.visuals, next.visuals, was.visuals, ['labelStyle', 'curvedEdges', 'motion']) + adopt(this.settings.declaration.display, next.declaration.display, was.declaration.display, ['reifiedAsNodes']) + adopt(this.settings, next, was, ['performanceSuggestions']), current);
+      if (selected.size) { this.adapter.configure(this.settings.declaration); this.resetStore(); }
+    }); if (selected.size) await this.notify();
   }
   commitSizing(values: NodeSizingValues, current: () => boolean) {
     return this.commitCandidate('Sizing', () => sizingSettings(this.settings, values), (next, was) => adopt(this.settings, next, was, ['nodeSize', 'nodeSizing']) + adopt(this.settings.visuals, next.visuals, was.visuals, ['degreeSizing', 'degreeCurve']), current);
@@ -390,6 +420,7 @@ export class GraphView extends ItemView {
     this.panel = this.body.createDiv({ cls: 'graph-ng-panel' });
     this.explorePanel = new ExplorePanel(this.body, {
       information: this.status, members: this.panel,
+      performanceControls: host => performanceControls(host, this.plugin),
       memberGroups: () => this.groupGraph?.groups, openGroup: id => { void this.drill(id, true); },
       scope: () => this.detailScope ? this.scopeName : 'Workspace', scoped: () => Boolean(this.detailScope),
       presentation: mode => {
@@ -462,6 +493,7 @@ export class GraphView extends ItemView {
       this.refreshing = false; if (!this.closed) this.explorePanel?.render();
     });
   }
+  performanceChanged() { this.detailRenderer?.refreshVisuals(true); this.explorePanel?.render(); }
   private async refreshOnce() {
     const scope = JSON.stringify([this.plugin.sourceIdentity, this.plugin.settings.projectionFile, this.plugin.settings.groupLevel, this.plugin.settings.declaration.groups, this.view?.group ?? null]);
     if (scope !== this.contributionScope) this.contributionPage.clear();
@@ -511,13 +543,14 @@ export class GraphView extends ItemView {
           } catch { await this.plugin.store.quarantine(saved.meta); }
         }
       }
-      const reset = this.plugin.ingestedHash !== hashes.ingestHash;
+      const reset = this.plugin.ingestedHash !== hashes.ingestHash, ingestStart = performance.now();
       for await (const batch of this.plugin.adapter.columns(reset, settings.ingest)) {
         if (!current()) return;
         await this.plugin.pipeline.request(revision, { kind: 'rows', ...batch });
         const c = this.plugin.adapter.coverage(); this.readProgress = { indexed: c.indexed, listed: c.listed };
         this.progressText(this.buildProgress.text(0, c.indexed / Math.max(1, c.listed)));
       }
+      const ingestMs = performance.now() - ingestStart;
       this.plugin.ingestedHash = hashes.ingestHash;
       this.plugin.pipeline.onGroups = event => {
         if (event.revision !== revision || !current()) return;
@@ -530,9 +563,10 @@ export class GraphView extends ItemView {
         this.contentEl.dataset.refreshGroupMs = String(firstGroupMs);
       };
       this.statusText = this.buildProgress.text(1);
-      const complete = this.plugin.adapter.factsComplete(); this.provisional = !complete;
+      const projectStart = performance.now(), complete = this.plugin.adapter.factsComplete(); this.provisional = !complete;
       const result = await this.plugin.pipeline.request<ProjectResult>(revision, { kind: 'project', complete: !this.provisional });
       if (!current()) return;
+      const projectMs = performance.now() - projectStart;
       if (result.invalidSaved) await this.plugin.store.quarantine(result.invalidSaved);
       const coverage = this.plugin.adapter.coverage(); this.provisional = !this.plugin.adapter.factsComplete();
       this.contentEl.dataset.verified = String(!this.provisional);
@@ -561,8 +595,8 @@ export class GraphView extends ItemView {
       this.plugin.pipeline.onPositions = event => {
         if (event.revision === revision && current()) {
           report.progress = { iteration: event.iteration, total: event.total }; this.progressText(this.buildProgress.text(2, event.iteration / Math.max(1, event.total)));
-          // Two progressed batches, never the seed. Labels and picking wait; camera input stays live.
-          if (event.iteration >= 2 * settings.streamEveryIterations) { preview!.push(event.positions); return; }
+          // One progressed batch in Fast, otherwise two; never the seed. Labels and picking wait; camera stays live.
+          if (event.iteration >= (devicePerformance.fast(settings.performance) ? 1 : 2) * settings.streamEveryIterations) { preview!.push(event.positions); return; }
         }
         recycle(event.positions);
       };
@@ -581,6 +615,7 @@ export class GraphView extends ItemView {
       this.buildProgress.text(4); this.contentEl.dataset.state = 'ready'; this.statusText = this.provisional ? pendingText(report) : this.layoutSettled ? '' : 'Layout not settled';
       this.contentEl.dataset.layoutMs = String(layout.milliseconds); this.contentEl.dataset.cached = String(layout.cached);
       if (this.presentation === 'nodes') await this.showDetails();
+      if (current() && !this.provisional) this.plugin.recordPerformance?.({ notes: result.nodes, edges: result.edges, ingestMs, projectMs, groupsMs: Number(this.contentEl.dataset.refreshGroupMs), layoutMs: layout.milliseconds, totalMs: performance.now() - start });
       if (layout.settled !== false && settings.persistLayout && this.plugin.store.committed !== result.meta.key && complete && !this.provisional && (!settings.declaration.edges.some(e => e.kind === 'producer') || this.plugin.adapter.linksResolved)) {
         const generation = await this.plugin.pipeline.request<BinaryGeneration>(revision, { kind: 'encode' });
         if (!current()) return;
@@ -1046,6 +1081,7 @@ export class GraphView extends ItemView {
       }, this.renderView());
       const moved = preview && this.detailRenderer.adoptCamera(preview);
       preview?.dispose();
+      this.plugin.recordPerformance?.({ notes: projection.nodeCount, edges: projection.source.length, labelsMs: this.detailRenderer.timings.labels, labelUploadMs: this.detailRenderer.timings.labelUpload });
       this.renderer = this.detailRenderer; this.contentEl.dataset.mode = 'nodes'; this.detailFallback = ''; this.statusText = this.statusText;
       const detailGeneration = this.detailGeneration;
       this.detailRenderer.describeEdges = edges => this.plugin.pipeline.request(detailGeneration, { kind: 'relationships', edges });
@@ -1079,6 +1115,8 @@ class GraphSettings extends PluginSettingTab {
   constructor(private plugin: GraphPlugin) { super(plugin.app, plugin); }
   display() {
     this.containerEl.empty();
+    const controls = this.containerEl.createDiv();
+    const redraw = () => { controls.empty(); performanceControls(controls, this.plugin, redraw); }; redraw();
     new Setting(this.containerEl).setName('Graph declaration').setHeading();
     this.containerEl.createEl('p', { text: 'All meaning is declared here. Edit JSON, validate, then save. Settings are local to this vault. Optional projectionFile accepts producer-supplied aggregate JSON. Changing debounceMs takes effect after reloading the plugin.' });
     const declaration = this.containerEl.createEl('textarea', { cls: 'graph-ng-json', attr: { 'aria-label': 'Graph declaration JSON' } }); declaration.value = JSON.stringify(this.plugin.settings.declaration, null, 2);

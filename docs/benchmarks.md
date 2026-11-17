@@ -1297,3 +1297,91 @@ Final deterministic verification used `flock -w 3000 -E 75 /tmp/openclast-bun.lo
 Browser-native captures are `.workspace/overlap/runs/overlap-before-retry*` and `overlap-after-reviewed*`. Both runs completed all 21 reported scripted steps with no console/page errors; all before/final light and dark captures were visually inspected. The overview remains dense but now forms local clusters, while close zoom preserves separated small relationship-note dots. The harness global verdict remains `unknown` (`harness-empty-list`), so these are scripted visual observations, not full native acceptance. The test uses the browser-native Obsidian UI and a synthetic WebGL availability seam; desktop Electron fidelity and hardware-GPU acceptance remain unproven.
 
 Independent review identified two integration defects, both reproduced as failing regressions before correction: a temporarily balanced note could acquire permanent zero convergence, and damping fed back into convergence, compounding the coefficient and causing false settlement. Overlap mode now restarts zero convergence and applies the 0.3 coefficient only to displacement, after updating convergence. Both regressions pass; ordinary-mode parity, topology-only radii, conditional identity migration, conservative aggregate bounds and fixed-node behavior are preserved. The table above uses these reviewed corrections; earlier private measurements and captures remain historical, not final-source evidence.
+
+## Adaptive performance and anchored-label memory
+
+2026-11-17 local candidate against baseline `a2b2877`, Linux x86-64 workstation class, 32 GiB RAM, headless Chromium with SwiftShader and CDP 4x/6x CPU throttling. These are synthetic browser-native observations, not private-vault, hardware-GPU, mobile or tab-RSS acceptance. Each lane runs once. Single-run differences are not a statistical speedup. The matrix freezes the performance candidate before modal review-only fixes and integration with the later Stop scheduler correction; it does not measure that merged scheduler. Frozen bundle SHA-256 values are `54636c3c8be2b9fc6f64593245157b7d6563ff16456d80c11ac0eb70e9bde1fc` (before) and `3889fbee587714b2371645371a57799591233d0e5edcebcb475b37ce0013148e` (after).
+
+The 5k fixture has 4,000 ordinary and 1,000 relationship notes; 20k has 16,000 and 4,000; the relationship-heavy 49k fixture has 16,000 and 33,000. Lines removes relationship-note dots, not source files. Notes renders the incidence graph. Default solver accuracy, seed, convergence and cache identity are unchanged. The graph waits for verified native metadata before timing the plugin. The harness-only existing SwiftShader admission seam does not change shipped GPU policy. Automatic suggestions are suppressed in timing lanes; the native UI lane opens them explicitly.
+
+### Matched load observations
+
+Cells are before / after, in milliseconds. Ingestion includes bounded column streaming and worker transfer. Project is the worker request duration. First Groups is the existing first-page readiness measure, not a promise of complete Notes layout. Settled here means the layout request completed, not necessarily solver convergence. The first Notes-ready diagnostic contains a fixed 1.5-second wait and GC overhead and is deliberately excluded from latency claims.
+
+| Source notes | Mode | Throttle | Ingest | Project | First Groups | Layout request complete | Label build | Label upload |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 5k | Lines | 4x | 126 / 123 | 83 / 95 | 197 / 200 | 765 / 776 | 64 / 44 | 68 / 0 |
+| 5k | Lines | 6x | 203 / 198 | 131 / 119 | 312 / 298 | 969 / 926 | 124 / 58 | 94 / 1 |
+| 5k | Notes | 4x | 117 / 137 | 86 / 97 | 198 / 226 | 869 / 947 | 78 / 44 | 67 / 1 |
+| 20k | Lines | 4x | 482 / 484 | 134 / 152 | 605 / 622 | 2747 / 2847 | 77 / 54 | 82 / 0 |
+| 20k | Lines | 6x | 700 / 690 | 178 / 186 | 855 / 849 | 3070 / 3092 | 157 / 119 | 106 / 1 |
+| 20k | Notes | 4x | 458 / 412 | 142 / 136 | 592 / 538 | 3260 / 3177 | 101 / 48 | 66 / 1 |
+| 49k | Lines | 4x | 1043 / 1047 | 264 / 226 | 1254 / 1216 | 3752 / 3744 | 107 / 51 | 71 / 0 |
+| 49k | Lines | 6x | 1780 / 1685 | 241 / 256 | 1995 / 1918 | 5099 / 5091 | 146 / 119 | 99 / 1 |
+| 49k | Notes | 4x | 964 / 910 | 268 / 273 | 1186 / 1126 | 9892 / 9871 | 110 / 94 | 66 / 2 |
+
+| Source notes | Mode | Throttle | Remaining host hydration | Main long-task total, load window | Mean camera-frame interval |
+| ---: | --- | ---: | ---: | ---: | ---: |
+| 5k | Lines | 4x | 5023 / 6030 | 582 / 509 | 120 / 123 |
+| 5k | Lines | 6x | 8071 / 7044 | 702 / 634 | 122 / 121 |
+| 5k | Notes | 4x | 5026 / 6032 | 734 / 712 | 132 / 136 |
+| 20k | Lines | 4x | 21301 / 21171 | 1792 / 1814 | 405 / 411 |
+| 20k | Lines | 6x | 32350 / 30289 | 2108 / 1942 | 407 / 409 |
+| 20k | Notes | 4x | 20237 / 18131 | 2124 / 1967 | 495 / 480 |
+| 49k | Lines | 4x | 38501 / 44536 | 2746 / 2613 | 552 / 551 |
+| 49k | Lines | 6x | 84290 / 76504 | 3205 / 3135 | 551 / 549 |
+| 49k | Notes | 4x | 42443 / 40507 | 5071 / 4697 | 1103 / 1097 |
+
+Remaining host hydration starts only after the harness's native UI-ready callback, so it excludes browser startup, fixture import and earlier indexing. Initial property auditing overlaps that hydration and was not separately captured: no zero-cost audit claim is made. The later adapter audit hook saw no independently timed initial audit. Long tasks include shared host work and use the full detail-observation window, including the settling wait; they are not Graph NG-only CPU. Camera intervals describe 30 moved frames on software rendering, not hardware FPS. Dedicated workers may not inherit page CPU throttling identically.
+
+### Retained allocations
+
+4x lanes, decimal MB, before / after. Main JS is post-GC; phase peak is the maximum of two phase-boundary snapshots, not a continuous true peak. Typed arrays deduplicate backing buffers reachable through the measured graph view. Explicit GPU allocation counts bufferData/texImage2D sizes, not browser surfaces or GPU-driver residency. These columns overlap and must not be added into a tab-memory total.
+
+| Source notes | Mode | Main JS steady | Main JS sampled phase peak | Graph render typed arrays | Explicit GPU buffers + textures |
+| ---: | --- | ---: | ---: | ---: | ---: |
+| 5k | Lines | 26.24 / 26.26 | 51.58 / 52.32 | 0.70 / 0.52 | 17.18 / 0.23 |
+| 5k | Notes | 26.19 / 26.24 | 47.14 / 51.93 | 0.84 / 0.69 | 17.26 / 0.33 |
+| 20k | Lines | 68.75 / 69.03 | 97.96 / 117.75 | 2.15 / 2.01 | 17.81 / 0.89 |
+| 20k | Notes | 69.84 / 69.39 | 98.64 / 108.78 | 2.67 / 2.58 | 18.03 / 1.15 |
+| 49k | Lines | 161.16 / 161.56 | 207.67 / 210.44 | 3.38 / 3.35 | 18.39 / 1.59 |
+| 49k | Notes | 158.63 / 161.94 | 198.50 / 209.21 | 8.07 / 8.04 | 20.50 / 3.69 |
+
+Anchored labels previously allocated an unused 2048-square RGBA canvas, its texture and ranked glyph arrays. They now keep identical candidate ranking, text metrics, placement widths and LOD nodes but a 1-square placeholder and no raster/glyph geometry. This removes 16 MiB of explicit texture allocation, approximately 16 MiB of canvas backing and a small geometry tail; only the explicit allocation reduction is directly counted above. Ranked labels retain their full raster and texture-reuse behavior. Main JS heap has not shown a comparable broad reduction. No source facts, validation, identity maps, duplicate quarantine or rollback coordinates were removed speculatively.
+
+### Policy, controls and evidence
+
+Auto uses cheap CPU/memory/context hints and bounded measured-cost correction. Fast/low Auto cap DPR at one and suppress camera/focus motion; Quality retains original resolution and motion behavior. Fast admits the first progressed worker batch, never a seed-only frame; normal mode still waits for two. Existing background refinement, Stop, deferred labels/picking and zero idle drawing are retained. The lighter-graph modal lists only enabled costly options, freezes checked choices during its acknowledged save, and leaves live settings unchanged on rejected writes. The offered flag persists across reloads, manual reopening remains available, and an open/applying guard prevents duplicate offers. Performance-only redraw preserves unsaved declaration/tuning drafts. Diagnostics default off; the allowlist retains at most 16 numeric samples and coarse enums, never names, paths or content. Disabling or Clear removes saved samples on the next successful save.
+
+Ignored raw receipts and synthetic captures are under `.workspace/visual-qa/`: `before-*.json`, `after-*.json`, `performance-settings.png`, `performance-suggestions.png` and `performance-fast-preview.png`. Bounded runner: `bash .workspace/visual-qa/matrix.sh before` and the matching `after` invocation; each fixed nine-lane matrix takes `/tmp/graph-ng-harness.lock` and checks at least 8 GiB available before each browser. Exact single lane: `bash .workspace/visual-qa/launch-profile.sh after 49k 4 nodes`. The native harness global verdict is not an overall acceptance verdict; these receipts cover the stated scripts and measurements only.
+
+Build/tests use `flock -w 3000 -E 75 /tmp/openclast-bun.lock timeout --kill-after=5s 1800s ./scripts/run.sh build`, followed by the same wrapper with `test --timeout 10000` and `gates`; the production-host regression is `node tests/performance-ui-regressions.cjs`. Five independent-review defects were reproduced before correction: stale controls after settings replacement, repeated offers, rejected Apply mutating live state, mutable selections during a pending save, and full-tab redraw discarding drafts. The standalone production regression covers their fixes, plus suppression-only no-rebuild behavior. Size limits remain unchanged; exact final verification and heap ownership evidence follow below.
+
+### Heap ownership: captured small probe, explicit large-probe gap
+
+The 49k Notes timing and allocation receipt was saved before requesting a full main-realm snapshot. That snapshot did not produce usable data within the native harness's 12-minute session deadline. The harness aborted the session and killed its owned Chromium child after graceful close exceeded 10 seconds; cleanup was confirmed. The after-matrix process therefore exits 1 for the snapshot stage, despite all nine after timing receipts being present, verified and page-error-free. Its paired before matrix exits 0. No successful 49k main/worker retained-owner split is claimed, and the failed capture was not retried. The snapshot process temporarily reached approximately 2.4 GB renderer RSS while profiling; this is profiling overhead, not a measured unprofiled-tab baseline or reproduction of the reported 2.5 GB.
+
+A separate 5k synthetic capture successfully collected the main realm and three dedicated workers. The Graph NG worker was identified by its worker-source protocol, not inferred from a blob URL. Post-GC main JS was 26.91 MB; the Graph NG worker JS was 2.75 MB with 0.43 MB separately reported backing storage. Its strong-edge snapshot total was 3.28 MB; the two host workers had 1.85 MB and 0.28 MB JS heaps. The main snapshot's strong-edge total, including native snapshot nodes, was 45.12 MB. An offline dominator traversal excluded weak edges and was checked against known 1 MB/2 MB synthetic buffer owners. This is local strong-edge attribution, not browser RSS or a complete DevTools ephemeron model.
+
+| 5k snapshot owner | Retained MB | Ownership |
+| --- | ---: | --- |
+| Host app script and source | 7.54 | Host |
+| Metadata cache dictionary | 4.83 | Host, shared root rather than exclusive wrapper retention |
+| File-storage closure map | 1.95 | Host |
+| Worker fact-row map | 1.36 | Graph NG worker |
+| Adapter sent-input digest map | 0.41 | Graph NG main |
+| Render projection | 0.22 | Graph NG main |
+| Anchored label atlas metadata | 0.10 | Graph NG main |
+| One retained renderer float buffer | 0.07 | Graph NG main |
+
+These nested/shared rows must not be summed. Removing the four marked Graph NG main-owner anchors made 1.13 MB unreachable in that strong-edge graph; this is an exclusive lower bound, not the complete plugin cost. Worker fact rows remain authoritative and the main adapter keeps digest strings, not duplicate source rows. The small fixture supports a host-heavy allocation picture but cannot establish ownership at 49k or explain the reported tab. At 49k, the directly measured render backing buffers are 3.35 MB in Lines / 8.04 MB in Notes; worker, host-retainer and browser-driver attribution remains open. No hundreds-of-MB Graph NG holder was established, and no speculative authority/cache deletion was made.
+
+Ignored snapshots and analyzer output are `heap-5k-probe-*.heapsnapshot` and their `.summary.json` files under `.workspace/visual-qa/`. The empty `heap-49k-notes-main.heapsnapshot` and `after-49k-4-nodes.log` preserve the failed large-capture boundary. The successful small-probe command was `bash .workspace/visual-qa/launch-profile.sh final 5k 4 lines`; its capture hook has since been disabled for the final UI-only run. Offline analysis: `node .workspace/visual-qa/heap-analyze.mjs .workspace/visual-qa/heap-5k-probe-main.heapsnapshot`.
+
+### Final merged verification
+
+The performance implementation was committed as `b4f2224`, then integrated with `e49107d` as `9c2a382`, retaining the progress capsule and responsive worker Stop. The follow-up filters out a motion suggestion already neutralized by Fast/low Auto and prevents a suppression-only save from rebuilding the graph. Build passes; **827 tests pass, one optional skip, zero failures**, plus seven production-host regression groups. The five non-size gate lanes pass. Final bundle is **411,467 raw / 140,101 gzip bytes**, **+8,906 / +3,236** versus baseline. This worktree retains 405,000 / 138,000 caps, so its full gates fail solely on size by **6,467 / 2,101**; cap integration is parent-owned, not changed here.
+
+The final native UI command is `bash .workspace/visual-qa/launch-profile.sh final 5k 4 lines`. It exits 0 with no page errors, exercises actual Make lighter Apply, persisted numeric diagnostics with an injected synthetic path excluded, live Fast preview and Stop, and all three final PNGs were visually inspected. The preview includes the merged progress capsule. The final narrow suppression-only no-rebuild guard was verified deterministically after that UI artifact was prepared; it does not alter the captured appearance. Main/worker heap inspection, like these screenshots, is synthetic-only. Initial audit attribution, true peak/process memory, hardware-GPU, mobile, Electron fidelity and screen-reader acceptance remain unproven.
+
+<!-- adaptive-performance-end -->

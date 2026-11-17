@@ -34,7 +34,9 @@ export function rankFocus(focus: number, near: readonly number[], state: Uint8Ar
 }
 /** Rasterize codepoints once, then place bounded lists at each LOD. No per-frame text work. */
 export async function buildLabels(p: RenderProjection, grid: Pick<PickGrid, 'positions' | 'visible' | 'minX' | 'minY' | 'width' | 'height'>, s: Settings, width: number, height: number, font: string, current: () => boolean, visible = grid.visible): Promise<LabelAtlas> {
-  const canvas = document.createElement('canvas'); canvas.width = canvas.height = 2048;
+  // Anchored names use DOM text. Keep the identical ranking/metrics, not an unused raster or GPU quads.
+  const raster = s.visuals.labelStyle === 'ranked';
+  const canvas = document.createElement('canvas'); canvas.width = canvas.height = raster ? 2048 : 1;
   const ctx = canvas.getContext('2d')!;
   // Rasterize at the largest degree-weighted size so hub labels stay crisp.
   const tier = s.visuals.labelTierScale, fontSize = Math.min(48, s.labelSize * tier * tier), line = Math.ceil(fontSize * 1.5) + 4, scale = s.labelSize / fontSize;
@@ -45,7 +47,7 @@ export async function buildLabels(p: RenderProjection, grid: Pick<PickGrid, 'pos
     const advance = Math.max(1, ctx.measureText(c).width), w = Math.min(2048, Math.ceil(advance) + 4);
     if (x + w > 2048) { x = 0; y += line; }
     if (y + line > 2048) return glyphs.get('?')!;
-    const g = { x, y, w, advance }; glyphs.set(c, g); ctx.fillText(c, x + 2, y + 2); x += w; return g;
+    const g = { x, y, w, advance }; glyphs.set(c, g); if (raster) ctx.fillText(c, x + 2, y + 2); x += w; return g;
   };
   glyph('?');
   const budget = Math.max(1, Math.min(s.labelsMaxPerViewport, Math.floor(width * height / (s.labelGridCellSize ** 2) * s.labelDensity)));
@@ -70,7 +72,7 @@ export async function buildLabels(p: RenderProjection, grid: Pick<PickGrid, 'pos
     const boxes: LabelBox[] = candidates.map(node => { const z = grow.get(node)!; return { node, x: (grid.positions[node * 2]! - grid.minX) * fit / ratio + (predictable ? s.nodeSize * multiplier(node) : s.nodeSize) + 4, y: (grid.positions[node * 2 + 1]! - grid.minY) * fit / ratio - s.labelSize * z / 2, w: widths.get(node)! * z + 4, h: s.labelSize * z * 1.5 + 4 }; });
     const placed = placeLabels(boxes, s.labelGridCellSize, budget), data: number[] = [];
     // Importance is degree rank among placed labels; the shader fades the least important first.
-    placed.forEach((box, rank) => {
+    if (raster) placed.forEach((box, rank) => {
       const z = grow.get(box.node)!, k = scale * z, left = (predictable ? 0 : s.nodeSize) + 2, width = widths.get(box.node)! * z + 5 * k; let offset = left; const importance = 1 - rank / Math.max(1, placed.length);
       // One plate per label (atlas v = 2, the shader's plate flag) under its glyphs: overlapping padded glyph quads never cover a neighbour or double its alpha.
       data.push(box.node, offset, (-s.labelSize / 2 - 2) * z, width, line * k, 0, 2, 0, 0, importance, multiplier(box.node), left, width);

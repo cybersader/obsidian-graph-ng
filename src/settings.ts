@@ -1,3 +1,4 @@
+import { PERFORMANCE_MODES, type PerformanceMode } from './performance';
 import { MAX_NODE_RADIUS, legacySizing, validateNodeSizing, validateNodeRadius, type NodeSizingPolicy } from './node-sizing';
 import { DEFAULT_LAYOUT, validateLayout, type LayoutOptions } from './core/layout-options';
 import { defaultDeclaration, migrateDeclaration, validateDeclaration, type GraphDeclaration } from './core/declaration';
@@ -187,6 +188,10 @@ export function settingsForSave(s: Settings) {
   return stored;
 }
 export interface Settings {
+  performance: PerformanceMode;
+  performanceDiagnostics: boolean;
+  performanceSuggestions: boolean;
+  performancePrompted: boolean;
   settingsVersion: 2;
   ingest: { chunkRows: number; budgetMs: number };
   cache: { directory: string; chunkBytes: number; maxGenerationBytes: number; retainedArtifacts: number; maxRetainedBytes: number };
@@ -244,6 +249,7 @@ export function defaults(producer: string): Settings {
     labelCandidateMultiplier: 32, frameBackstopMs: 32, shaderPollMs: 8, contextRestoreTimeoutMs: 5000, cameraMinRatio: .02, cameraMaxRatio: 8,
     ingest: { chunkRows: 2000, budgetMs: 8 }, cache: { directory: '', chunkBytes: 1048576, maxGenerationBytes: 268435456, retainedArtifacts: 8, maxRetainedBytes: 268435456 }, maxProjectionBytes: 67108864, maxSettingsBytes: 16777216,
     declaration: defaultDeclaration(producer), layout: structuredClone(DEFAULT_LAYOUT), debounceMs: 5000,
+    performance: 'auto', performanceDiagnostics: false, performanceSuggestions: true, performancePrompted: false,
     workerTimeoutMs: 120000, workerRestarts: 2, streamEveryIterations: 5, groupLevel: 0, nodeSize: 3, nodeSizing: legacySizing(), edgeSize: 0.5, labelSize: 13,
     groupRadius: 26, groupCurveDivisor: 5, groupEdgeHitRadius: 6, groupCurveSamples: 32, groupLoopScale: 1.5, groupRingPadding: 56, labelDensity: 1, labelGridCellSize: 100, labelRenderedSizeThreshold: 6, edgeWidthScale: 0.8, listPageSize: 100,
     backgroundColor: '#141b26', nodeColor: '#7fc8e7', edgeColor: '#43566e', groupColor: '#7fc8e7', textColor: '#edf4ff',
@@ -260,6 +266,7 @@ export function validateSettings(v: unknown): asserts v is Settings {
   for (const k of Object.keys(s)) if (!keys.includes(k)) throw new Error(`Unknown setting: ${k}`);
   if (s.settingsVersion !== 2) throw new Error('Unsupported settings version');
   if (!Number.isSafeInteger(s.workerRestarts) || s.workerRestarts < 0) throw new Error('workerRestarts must be a nonnegative integer');
+  if (!PERFORMANCE_MODES.includes(s.performance) || typeof s.performanceDiagnostics !== 'boolean' || typeof s.performanceSuggestions !== 'boolean' || typeof s.performancePrompted !== 'boolean') throw new Error('Invalid performance settings');
   validateDeclaration(s.declaration);
   if (!s.ingest || !Number.isSafeInteger(s.ingest.chunkRows) || s.ingest.chunkRows < 1 || !Number.isFinite(s.ingest.budgetMs) || s.ingest.budgetMs <= 0) throw new Error('Invalid ingestion budget');
   if (!s.cache || typeof s.cache.directory !== 'string' || (s.cache.directory !== '' && (!s.cache.directory.startsWith('cache/') || s.cache.directory.split('/').some(p => !p || p === '..' || p === '.') || /[\\:]/.test(s.cache.directory)))) throw new Error('Cache directory must be empty or a plugin-owned cache/ subdirectory');

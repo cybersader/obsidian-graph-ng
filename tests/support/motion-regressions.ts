@@ -20,7 +20,7 @@ test('compiled WebGL and Canvas motion settles to zero queued frames, interrupts
   const d = defaultDeclaration('fixture'); d.edges = [{ name: 'link', kind: 'inline', key: 'to', type: 'link' }];
   const p = renderProjection(buildProjection([{ path: 'A.md', properties: { to: 'B.md' } }, { path: 'B.md', properties: {} }, { path: 'C.md', properties: {} }], d));
   for (const gpu of [false, true]) {
-    let now = 1000; const h = performanceRenderer(gpu, { now: () => now, reduced: false }), k = h.key, settings = defaults('fixture'); let r: any;
+    let now = 1000; const h = performanceRenderer(gpu, { now: () => now, reduced: false }), k = h.key, settings = defaults('fixture'); settings.performance = 'quality'; let r: any;
     try {
       r = await h.Renderer.create(h.stage, p, new Float32Array([0, 0, 100, 0, 0, 100]), new Uint8Array(3).fill(1), settings, () => {}, () => {}, new Uint32Array(3), () => true, !gpu);
       expect(r.canvas.style.visibility).toBe(''); expect(h.calls()).toBeGreaterThan(0);
