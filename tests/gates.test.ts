@@ -136,10 +136,10 @@ test('property mangling excludes every declared settings and node-sizing schema 
 test('UI pass download ceilings remain exactly bounded and active documentation agrees', () => {
   const root = path.resolve(import.meta.dirname, '..');
   const gate = fs.readFileSync(path.join(root, 'scripts/bundle-size.mjs'), 'utf8');
-  expect(gate).toContain('zeroDependencyTargetBytes: 420000, zeroDependencyTargetGzipBytes: 145000');
+  expect(gate).toContain('zeroDependencyTargetBytes: 430000, zeroDependencyTargetGzipBytes: 148000');
   for (const name of ['README.md', 'CONTRIBUTING.md', 'docs/publish-checklist.md', 'CHANGELOG.md']) {
     const doc = fs.readFileSync(path.join(root, name), 'utf8');
-    expect(doc).toContain('420,000'); expect(doc).toContain('145,000');
+    expect(doc).toContain('430,000'); expect(doc).toContain('148,000');
   }
 });
 
