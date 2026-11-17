@@ -68,7 +68,7 @@ const outcome = (p: Promise<unknown>) => p.then(() => 'success', e => String(e))
 function deferred() { let resolve!: () => void; const promise = new Promise<void>(r => { resolve = r; }); return { promise, resolve }; }
 function projection(n = 3) { return { nodeCount: n, paths: encodeStrings(Array.from({ length: n }, (_, i) => `${i}.md`)), offsets: new Uint32Array(n + 1), source: new Uint32Array(), target: new Uint32Array(), type: new Uint32Array(), types: [], quarantined: [], carrierNodes: new Uint8Array(n), carrier: new Uint32Array(), groups: [] }; }
 async function fixture(renderView: any = {}) {
-  const plugin: any = new GraphPlugin(); plugin.settings = defaults('links');
+  const plugin: any = new GraphPlugin(); plugin.settings = defaults('links'); plugin.settings.visuals.labelStyle = 'ranked';
   const writes: any[] = []; plugin.saveData = async (data: any) => { writes.push(structuredClone(data)); };
   let requests = 0;
   const next = new Float32Array([80, 90, 82, 92, 300, 400]);
@@ -1204,7 +1204,7 @@ test('review: Focus action frames effective lens coordinates, not hidden layout 
 });
 
 test('review: Open reuses only unpinned notes and reveals the destination; explicit tab and split still create leaves', async () => {
-  const plugin: any = new GraphPlugin(); plugin.settings = defaults('links');
+  const plugin: any = new GraphPlugin(); plugin.settings = defaults('links'); plugin.settings.visuals.labelStyle = 'ranked';
   const view = new GraphView(null, plugin), file = new obsidian.TFile(), opened: string[] = [], revealed: any[] = [], requested: any[][] = [];
   const leaf = (name: string, pinned = false) => ({ getViewState: () => ({ pinned }), openFile: async (f: unknown) => { expect(f).toBe(file); opened.push(name); } });
   const pinned = leaf('pinned', true), reusable = leaf('reuse'), created = leaf('created'); let leaves = [pinned, reusable];

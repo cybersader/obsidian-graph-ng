@@ -21,6 +21,7 @@ import { recommendedPhysics, suggestionCopy, type Suggestion } from './recommend
 /** The view owns the worker, renderer and persistence; the panel only edits state. */
 export interface PanelHost {
   settings(): Settings;
+  performanceControls?(host: HTMLElement): void;
   loading?(): { stage: string; indexed?: number; listed?: number } | undefined;
   information?: HTMLElement;
   members?: HTMLElement;
@@ -744,6 +745,7 @@ export class ExplorePanel {
       panelHelp(body, 'About this state', STATE_HELP[i]);
     }
     const everywhere = this.appearanceSection(host, 'Everywhere');
+    this.host.performanceControls?.(everywhere);
     panelHelp(everywhere, 'Shared appearance', 'These controls apply across states and save immediately. Sizing has its own Apply. Closing Appearance ends previews.');
     for (const name of ['Suggested for this graph', 'Note size', 'Labels', 'Edges', 'Groups and colors', 'Navigation and motion', 'Relationship notes']) sections.set(name, this.appearanceSection(everywhere, name));
     const selected = sections.get('Selected note')!, find = selected, labels = sections.get('Labels')!, edges = sections.get('Edges')!, colors = sections.get('Groups and colors')!, navigation = sections.get('Navigation and motion')!, relationships = sections.get('Relationship notes')!;

@@ -1280,3 +1280,64 @@ Final deterministic verification used `flock -w 3000 -E 75 /tmp/openclast-bun.lo
 Browser-native captures are `.workspace/overlap/runs/overlap-before-retry*` and `overlap-after-reviewed*`. Both runs completed all 21 reported scripted steps with no console/page errors; all before/final light and dark captures were visually inspected. The overview remains dense but now forms local clusters, while close zoom preserves separated small relationship-note dots. The harness global verdict remains `unknown` (`harness-empty-list`), so these are scripted visual observations, not full native acceptance. The test uses the browser-native Obsidian UI and a synthetic WebGL availability seam; desktop Electron fidelity and hardware-GPU acceptance remain unproven.
 
 Independent review identified two integration defects, both reproduced as failing regressions before correction: a temporarily balanced note could acquire permanent zero convergence, and damping fed back into convergence, compounding the coefficient and causing false settlement. Overlap mode now restarts zero convergence and applies the 0.3 coefficient only to displacement, after updating convergence. Both regressions pass; ordinary-mode parity, topology-only radii, conditional identity migration, conservative aggregate bounds and fixed-node behavior are preserved. The table above uses these reviewed corrections; earlier private measurements and captures remain historical, not final-source evidence.
+
+## Adaptive performance and anchored-label memory
+
+2026-11-17 local candidate against baseline `a2b2877`, Linux x86-64 workstation class, 32 GiB RAM, headless Chromium with SwiftShader and CDP 4x/6x CPU throttling. These are synthetic browser-native observations, not private-vault, hardware-GPU, mobile or tab-RSS acceptance. Each lane runs once. Single-run differences are not a statistical speedup.
+
+The 5k fixture has 4,000 ordinary and 1,000 relationship notes; 20k has 16,000 and 4,000; the relationship-heavy 49k fixture has 16,000 and 33,000. Lines removes relationship-note dots, not source files. Notes renders the incidence graph. Default solver accuracy, seed, convergence and cache identity are unchanged. The graph waits for verified native metadata before timing the plugin. The harness-only existing SwiftShader admission seam does not change shipped GPU policy. Automatic suggestions are suppressed in timing lanes; the native UI lane opens them explicitly.
+
+### Matched load observations
+
+Cells are before / after, in milliseconds. Ingestion includes bounded column streaming and worker transfer. Project is the worker request duration. First Groups is the existing first-page readiness measure, not a promise of complete Notes layout. Settled here means the layout request completed, not necessarily solver convergence. The first Notes-ready diagnostic contains a fixed 1.5-second wait and GC overhead and is deliberately excluded from latency claims.
+
+| Source notes | Mode | Throttle | Ingest | Project | First Groups | Layout request complete | Label build | Label upload |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 5k | Lines | 4x | 126 / 123 | 83 / 95 | 197 / 200 | 765 / 776 | 64 / 44 | 68 / 0 |
+| 5k | Lines | 6x | 203 / 198 | 131 / 119 | 312 / 298 | 969 / 926 | 124 / 58 | 94 / 1 |
+| 5k | Notes | 4x | 117 / 137 | 86 / 97 | 198 / 226 | 869 / 947 | 78 / 44 | 67 / 1 |
+| 20k | Lines | 4x | 482 / 484 | 134 / 152 | 605 / 622 | 2747 / 2847 | 77 / 54 | 82 / 0 |
+| 20k | Lines | 6x | 700 / 690 | 178 / 186 | 855 / 849 | 3070 / 3092 | 157 / 119 | 106 / 1 |
+| 20k | Notes | 4x | 458 / 412 | 142 / 136 | 592 / 538 | 3260 / 3177 | 101 / 48 | 66 / 1 |
+| 49k | Lines | 4x | 1043 / pending | 264 / pending | 1254 / pending | 3752 / pending | 107 / pending | 71 / pending |
+| 49k | Lines | 6x | 1780 / pending | 241 / pending | 1995 / pending | 5099 / pending | 146 / pending | 99 / pending |
+| 49k | Notes | 4x | 964 / pending | 268 / pending | 1186 / pending | 9892 / pending | 110 / pending | 66 / pending |
+
+| Source notes | Mode | Throttle | Remaining host hydration | Main long-task total, load window | Mean camera-frame interval |
+| ---: | --- | ---: | ---: | ---: | ---: |
+| 5k | Lines | 4x | 5023 / 6030 | 582 / 509 | 120 / 123 |
+| 5k | Lines | 6x | 8071 / 7044 | 702 / 634 | 122 / 121 |
+| 5k | Notes | 4x | 5026 / 6032 | 734 / 712 | 132 / 136 |
+| 20k | Lines | 4x | 21301 / 21171 | 1792 / 1814 | 405 / 411 |
+| 20k | Lines | 6x | 32350 / 30289 | 2108 / 1942 | 407 / 409 |
+| 20k | Notes | 4x | 20237 / 18131 | 2124 / 1967 | 495 / 480 |
+| 49k | Lines | 4x | 38501 / pending | 2746 / pending | 552 / pending |
+| 49k | Lines | 6x | 84290 / pending | 3205 / pending | 551 / pending |
+| 49k | Notes | 4x | 42443 / pending | 5071 / pending | 1103 / pending |
+
+Remaining host hydration starts only after the harness's native UI-ready callback, so it excludes browser startup, fixture import and earlier indexing. Initial property auditing overlaps that hydration and was not separately captured: no zero-cost audit claim is made. The later adapter audit hook saw no independently timed initial audit. Long tasks include shared host work and use the full detail-observation window, including the settling wait; they are not Graph NG-only CPU. Camera intervals describe 30 moved frames on software rendering, not hardware FPS. Dedicated workers may not inherit page CPU throttling identically.
+
+### Retained allocations
+
+4x lanes, decimal MB, before / after. Main JS is post-GC; phase peak is the maximum of two phase-boundary snapshots, not a continuous true peak. Typed arrays deduplicate backing buffers reachable through the measured graph view. Explicit GPU allocation counts bufferData/texImage2D sizes, not browser surfaces or GPU-driver residency. These columns overlap and must not be added into a tab-memory total.
+
+| Source notes | Mode | Main JS steady | Main JS sampled phase peak | Graph render typed arrays | Explicit GPU buffers + textures |
+| ---: | --- | ---: | ---: | ---: | ---: |
+| 5k | Lines | 26.24 / 26.26 | 51.58 / 52.32 | 0.70 / 0.52 | 17.18 / 0.23 |
+| 5k | Notes | 26.19 / 26.24 | 47.14 / 51.93 | 0.84 / 0.69 | 17.26 / 0.33 |
+| 20k | Lines | 68.75 / 69.03 | 97.96 / 117.75 | 2.15 / 2.01 | 17.81 / 0.89 |
+| 20k | Notes | 69.84 / 69.39 | 98.64 / 108.78 | 2.67 / 2.58 | 18.03 / 1.15 |
+| 49k | Lines | 161.16 / pending | 207.67 / pending | 3.38 / pending | 18.39 / pending |
+| 49k | Notes | 158.63 / pending | 198.50 / pending | 8.07 / pending | 20.50 / pending |
+
+Anchored labels previously allocated an unused 2048-square RGBA canvas, its texture and ranked glyph arrays. They now keep identical candidate ranking, text metrics, placement widths and LOD nodes but a 1-square placeholder and no raster/glyph geometry. This removes 16 MiB of explicit texture allocation, approximately 16 MiB of canvas backing and a small geometry tail; only the explicit allocation reduction is directly counted above. Ranked labels retain their full raster and texture-reuse behavior. Main JS heap has not shown a comparable broad reduction. No source facts, validation, identity maps, duplicate quarantine or rollback coordinates were removed speculatively.
+
+### Policy, controls and evidence
+
+Auto uses cheap CPU/memory/context hints and bounded measured-cost correction. Fast/low Auto cap DPR at one and suppress camera/focus motion; Quality retains original resolution and motion behavior. Fast admits the first progressed worker batch, never a seed-only frame; normal mode still waits for two. Existing background refinement, Stop, deferred labels/picking and zero idle drawing are retained. The lighter-graph modal lists only enabled costly options, freezes checked choices during its acknowledged save, and leaves live settings unchanged on rejected writes. The offered flag persists across reloads, manual reopening remains available, and an open/applying guard prevents duplicate offers. Performance-only redraw preserves unsaved declaration/tuning drafts. Diagnostics default off; the allowlist retains at most 16 numeric samples and coarse enums, never names, paths or content. Disabling or Clear removes saved samples on the next successful save.
+
+Ignored raw receipts and synthetic captures are under `.workspace/visual-qa/`: `before-*.json`, `after-*.json`, `performance-settings.png`, `performance-suggestions.png` and `performance-fast-preview.png`. Bounded runner: `bash .workspace/visual-qa/matrix.sh before` and the matching `after` invocation; each fixed nine-lane matrix takes `/tmp/graph-ng-harness.lock` and checks at least 8 GiB available before each browser. Exact single lane: `bash .workspace/visual-qa/launch-profile.sh after 49k 4 nodes`. The native harness global verdict is not an overall acceptance verdict; these receipts cover the stated scripts and measurements only.
+
+Build/tests use `flock -w 3000 -E 75 /tmp/openclast-bun.lock timeout --kill-after=5s 1800s ./scripts/run.sh build`, followed by the same wrapper with `test --timeout 10000` and `gates`; the production-host regression is `node tests/performance-ui-regressions.cjs`. Five independent-review defects were reproduced before correction: stale controls after settings replacement, repeated offers, rejected Apply mutating live state, mutable selections during a pending save, and full-tab redraw discarding drafts. The standalone production regression covers their fixes. Size limits remain unchanged; exact final verification and heap ownership evidence follow below.
+
+<!-- adaptive-performance-end -->

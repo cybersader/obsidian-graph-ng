@@ -1,3 +1,4 @@
+import { devicePerformance, deviceTier } from './performance';
 import { namedViewState, stateChip, type ViewState } from './view-state';
 import { plural } from './graph-information';
 import { carrierPairs, carrierThrough, carrierFocus, carrierAdmitted } from './carrier-lines';
@@ -336,7 +337,7 @@ export class DetailRenderer {
   private moreTotal = 0;
   private media = matchMedia('(prefers-color-scheme: dark)');
   private motionMedia = matchMedia('(prefers-reduced-motion: reduce)');
-  private still() { return this.settings.visuals.motion !== 'full' || this.motionMedia.matches; }
+  private still() { return devicePerformance.fast(this.settings.performance) || this.settings.visuals.motion !== 'full' || this.motionMedia.matches; }
   private motionChanged = () => this.refresh();
   private programs: Program[] = [];
   private vaos: WebGLVertexArrayObject[] = [];
@@ -346,6 +347,7 @@ export class DetailRenderer {
   private densitySize = [0, 0];
   private densityReady = false;
   private labelBuffers: WebGLBuffer[] = [];
+  private atlasWidth = 0;
   private labelVaos: WebGLVertexArrayObject[] = [];
   private discBuffers: (WebGLBuffer | null)[] = [null, null];
   private atlas?: LabelAtlas;
@@ -854,7 +856,7 @@ export class DetailRenderer {
     gl.bindVertexArray(null); this.uploadView();
     this.timings.upload = performance.now() - uploadStart;
     gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-    await this.waitForResize(); this.resize(true); this.ready = true; if (this.atlas) this.uploadLabels(); this.refresh();
+    await this.waitForResize(); this.resize(true); this.ready = true; if (this.gl && deviceTier(undefined, undefined, this.gl.getParameter(this.gl.MAX_TEXTURE_SIZE), /swiftshader|llvmpipe|software/i.test(String(this.gl.getParameter(this.gl.RENDERER)))) === 'low') devicePerformance.tier = 'low'; if (this.atlas) this.uploadLabels(); this.refresh();
   }
   /** Lazy, at most 2048² RGBA8 pixels (16 MiB). CSS resolution avoids multiplying
    * memory by DPR². Reallocate once per size; failed sizes use Blend until resize/restore. */
@@ -910,7 +912,7 @@ export class DetailRenderer {
   }
   private uploadLabels() {
     const started = performance.now(), gl = this.gl!;
-    const reuse = this.labelBuffers.length > 0;
+    const reuse = this.labelBuffers.length > 0 && this.atlasWidth === this.atlas!.canvas.width; this.atlasWidth = this.atlas!.canvas.width;
     this.textureUnit(2); gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false); if (reuse) gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, this.atlas!.canvas); else gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, this.atlas!.canvas);
     this.textureFilter(gl.LINEAR);
     for (let level = 0; level < this.atlas!.levels.length; level++) {
@@ -1018,10 +1020,11 @@ export class DetailRenderer {
       }
     } finally { gl.deleteSync(fence); }
   }
+  private renderScale() { return Math.min(window.devicePixelRatio || 1, devicePerformance.fast(this.settings.performance) ? 1 : Infinity); }
   private resize(allowGpuResize = false) {
-    const changed = this.width !== Math.max(1, this.container.clientWidth) || this.height !== Math.max(1, this.container.clientHeight) || this.dpr !== (window.devicePixelRatio || 1);
+    const changed = this.width !== Math.max(1, this.container.clientWidth) || this.height !== Math.max(1, this.container.clientHeight) || this.dpr !== this.renderScale();
     if (!changed && this.canvas.width === Math.round(this.width * this.dpr) && this.canvas.height === Math.round(this.height * this.dpr)) return false;
-    this.width = Math.max(1, this.container.clientWidth); this.height = Math.max(1, this.container.clientHeight); this.dpr = window.devicePixelRatio || 1;
+    this.width = Math.max(1, this.container.clientWidth); this.height = Math.max(1, this.container.clientHeight); this.dpr = this.renderScale();
     if (this.card) this.card.size = undefined;
     const started = performance.now(), width = Math.round(this.width * this.dpr), height = Math.round(this.height * this.dpr);
     // Even assigning the existing size resets the drawing buffer and can wait on
@@ -1607,11 +1610,11 @@ export class DetailRenderer {
     cancelAnimationFrame(this.frameId); clearTimeout(this.frameTimer); this.frameTimer = undefined;
     this.frameId = 0; if (this.disposed || this.lost || !this.ready) return;
     // DPR can change without a CSS-size observer notification; reconcile on the next paint.
-    if (this.dpr !== (window.devicePixelRatio || 1)) this.resize();
+    if (this.dpr !== this.renderScale()) this.resize();
     const drawStart = performance.now(), more = this.animate(drawStart);
     const gl = this.gl, p = this.theme.palette, zoom = this.camera.ratio / this.homeRatio, v = this.settings.visuals;
     this.adaptSizes(zoom); this.layoutLens();
-    if (!gl) { this.drawCanvas(); this.placeOverlay(); if (more) this.refresh(); return; }
+    if (!gl) { this.drawCanvas(); this.placeOverlay(); devicePerformance.frame(performance.now() - drawStart); if (more) this.refresh(); return; }
     gl.viewport(0, 0, this.canvas.width, this.canvas.height); gl.clearColor(p[8]! / 255, p[9]! / 255, p[10]! / 255, 1); gl.clear(gl.COLOR_BUFFER_BIT);
     const lod = this.lodLevel(), policy = this.policy, fade = labelFade(this.settings.nodeSize, this.settings.labelRenderedSizeThreshold, this.camera.ratio, LABEL_RATIOS, v.labelFade && v.namePriority !== 'all', lod);
     const notes = this.carrierLevel(zoom), edgeWidth = this.edgeWidth(zoom), alpha = edgeAlpha(v, v.zoomAdapt ? 0 : this.visibleEdges, v.zoomAdapt ? 1 : zoom, policy.dark);
@@ -1661,7 +1664,7 @@ export class DetailRenderer {
       else if (i === 2) gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, this.atlas!.levels[lod]!.length / 13);
       else gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, this.discData[hub]!.length / 8);
     }
-    gl.bindVertexArray(null); this.placeOverlay(); this.timings.maxDraw = Math.max(this.timings.maxDraw || 0, performance.now() - drawStart);
+    gl.bindVertexArray(null); this.placeOverlay(); const cost = performance.now() - drawStart; this.timings.maxDraw = Math.max(this.timings.maxDraw || 0, cost); devicePerformance.frame(cost);
     if (more) this.refresh();
   };
   /** Current label level with hysteresis; idempotent for an unchanged camera ratio. */

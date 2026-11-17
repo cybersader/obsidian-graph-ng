@@ -1,5 +1,9 @@
 {
   "settingsVersion": 2,
+  "performance": "auto",
+  "performanceDiagnostics": false,
+  "performanceSuggestions": true,
+  "performancePrompted": false,
   "canvasMaxDetailNodes": 2000,
   "canvasMaxDetailEdges": 10000,
   "labelsMaxPerViewport": 400,
