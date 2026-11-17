@@ -4,6 +4,8 @@ The owner-approved bounded download ceilings for this UI pass are **400,000 raw 
 
 ## Unreleased named view states
 
+- Keep equivalent state chrome in Groups after the detail renderer is disposed: Groups opens its Appearance section, the caret offers Notes, and X returns to Notes through the existing guarded transition. Group-page redraws retain those controls.
+
 - Disable selection-dependent chip actions when their target is no longer visible, and revalidate visibility when an action executes. Filtering out a selected note cannot reopen its card through a current or stale menu action.
 
 - Match chip precedence and subject to rendered emphasis when Connection rings opens over a path. Its X exits the rings and restores the underlying path state; a compiled regression exercises hover, ring entry and both scoped exits.

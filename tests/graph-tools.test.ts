@@ -710,7 +710,7 @@ test('state chip has named layer exits, text-only subjects, disabled unavailable
     const root = new ControlElement(); let left = 0, tuned = '', switched = '';
     stateChip(root as any, state, '<synthetic>', () => left++, s => { tuned = s; }, s => { switched = s; });
     control(root, `${state} appearance`).click(); expect(tuned).toBe(state);
-    if (state === 'Notes' || state === 'Groups') expect(root.querySelectorAll('button').some(b => b.getAttribute('aria-label')?.startsWith('Leave'))).toBe(false);
+    if (state === 'Notes') expect(root.querySelectorAll('button').some(b => b.getAttribute('aria-label')?.startsWith('Leave'))).toBe(false);
     else { control(root, `Leave ${state}`).click(); expect(left).toBe(1); }
     expect(root.querySelectorAll('summary').map(b => b.getAttribute('aria-label'))).toContain('View state menu');
     control(root, 'Connection rings').click(); expect(switched).toBe('');

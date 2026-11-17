@@ -586,8 +586,8 @@ button.graph-ng-help-trigger:hover { color:var(--text-accent); }
 
 .graph-ng-saved-record > .graph-ng-row > :last-child { width:var(--gng-row-h); display:flex; justify-content:center; }
 
-.graph-ng-stage:has(.graph-ng-groups-heading) > .graph-ng-back-chip { top:44px; }
-.graph-ng-groups-heading button { max-width:60%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; vertical-align:middle; }
+.graph-ng-stage:has(.graph-ng-groups-heading) > .graph-ng-back-chip { top:84px; }
+.graph-ng-groups-heading > button { max-width:60%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; vertical-align:middle; }
 
 .graph-ng-layout-stop { flex:none; width:32px; height:32px; }
 /* Named view layers and their single-owner Appearance sections. */
@@ -608,3 +608,5 @@ button.graph-ng-help-trigger:hover { color:var(--text-accent); }
 .graph-ng-state-current { margin-left:auto; color:var(--text-accent); font-size:var(--gng-text-xs); }
 .graph-ng-state-current[hidden] { display:none; }
 .graph-ng-appearance-link { display:block; width:100%; margin-block:6px; text-align:left; }
+
+.graph-ng-groups-heading > .graph-ng-state-strip { margin-bottom:var(--gng-space-2); }

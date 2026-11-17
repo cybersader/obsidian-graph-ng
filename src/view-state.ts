@@ -12,7 +12,7 @@ export const STATE_HELP = [
   'Only the chosen note and its nearby connections. Its X restores surrounding notes and keeps filters.',
   'Temporary rings around a note. Its X or L restores positions, keeping any Only connections scope.',
   'Select a note, then Shift-click another to find a path. Its X dismisses the path, keeping filters.',
-  'Groups replace individual notes. Open Notes or a group to leave.',
+  'Groups replace individual notes. Its X, Notes or opening a group returns to notes.',
 ];
 /** Native disclosure menu keeps Tab/Enter/Space behavior, with no document listeners. */
 export function stateChip(host: HTMLElement, state: ViewState, subject: string, leave: () => void, tune: (state: ViewState) => void, switchTo?: (state: ViewState) => void, available = false) {
@@ -34,6 +34,6 @@ export function stateChip(host: HTMLElement, state: ViewState, subject: string, 
     menu.onkeydown = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); menu.open = false; trigger.focus(); } };
     menu.addEventListener?.('focusout', e => { if (!menu.contains(e.relatedTarget as Node | null)) menu.open = false; });
   }
-  if (state !== 'Notes' && state !== 'Groups') iconButton(chip, `Leave ${state}`, 'x').onclick = leave;
+  if (state !== 'Notes') iconButton(chip, `Leave ${state}`, 'x').onclick = leave;
   return chip;
 }

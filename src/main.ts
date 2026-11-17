@@ -1,3 +1,4 @@
+import { stateChip } from './view-state';
 import { disclosure, disclosureBody, panelHelp, iconButton } from './panel-help';
 import { BuildProgress, workingText } from './working';
 import { LayoutPreview } from './layout-preview';
@@ -606,6 +607,8 @@ export class GraphView extends ItemView {
       if (this.detailFallback) this.stage.createEl('button', { cls: 'graph-ng-back-chip', text: 'Narrow filters to see notes' }).onclick = () => this.explorePanel?.show('filters');
       if (back) this.stage.createEl('button', { cls: 'graph-ng-back-chip', text: 'Back to ' + back.name }).onclick = () => { this.pendingCamera = back.camera; this.pendingFocus = back; void this.showDetails(); };
       const head = this.stage.createDiv({ cls: 'graph-ng-groups-heading' });
+      const notes = () => { void this.showDetails(); };
+      stateChip(head.createDiv({ cls: 'graph-ng-state-strip' }), 'Groups', '', notes, state => this.explorePanel?.showAppearance(state), state => { if (state === 'Notes') notes(); });
       head.createSpan({ text: `${plural(projection.groups.length, 'group')} by ` });
       const group = this.appliedView?.group ?? settings.declaration.groups[settings.groupLevel];
       const choice = head.createEl('button', { text: settings.projectionFile ? 'declared groups' : group ? groupLabel(group) : 'all notes', cls: 'graph-ng-help-trigger' });

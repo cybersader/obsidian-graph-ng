@@ -2550,3 +2550,19 @@ test('review2: filtered-out targets disable state transitions and stale actions 
   r.setView(new Uint8Array([1, 1, 1]), {});
   expect(control(r[k('stateStrip')], 'Only connections').disabled).toBe(false);
 });
+
+test('review3: Groups owns its chip, appearance link, caret menu and Notes exit across redraws', async () => {
+  const f = await groupCanvasFixture(25, 12); let notes = 0, tuned = '';
+  f.view[compiled('showDetails')] = () => { notes++; };
+  f.view[compiled('explorePanel')] = { [compiled('showAppearance')]: (state: string) => { tuned = state; } };
+  try {
+    expect(f.view.detailRenderer).toBeUndefined();
+    control(f.stage, 'Groups appearance').click(); expect(tuned).toBe('Groups');
+    expect(control(f.stage, 'View state menu').tagName).toBe('SUMMARY');
+    for (const name of ['Selected note', 'Only connections', 'Connection rings']) expect(control(f.stage, name).disabled).toBe(true);
+    control(f.stage, 'Notes').click(); expect(notes).toBe(1);
+    control(f.stage, 'Leave Groups').click(); expect(notes).toBe(2);
+    control(f.pager(), 'Next groups').click();
+    control(f.stage, 'Leave Groups').click(); expect(notes).toBe(3);
+  } finally { f.view.renderer.dispose(); }
+});
