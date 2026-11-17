@@ -82,16 +82,15 @@ function rig(p = render(), w = worker(), visible = Uint8Array.from({ length: p.n
 }
 const names = (hits: SearchHit[]) => hits.map(h => NAMES[h.node]);
 
-test('working text preserves progress sweep, cross-fades stages and stops on completion', () => {
+test('working text preserves one progress sweep across stages and stops on completion', () => {
   const el = new El('div'), status = el as unknown as HTMLElement;
   workingText(status, 'Reading notes 40%', true);
   const first = el.lastElementChild;
   workingText(status, 'Reading notes 60%', true);
   expect(el.lastElementChild).toBe(first); expect(el.textContent).toBe('Reading notes 60%');
   workingText(status, 'Laying out 60/100', true);
-  expect(el.children).toHaveLength(2);
-  expect(el.children[0]!.getAttribute('aria-hidden')).toBe('true');
-  expect(el.children[0]!.getAttribute('data-text')).toBe('Reading notes 60%');
+  expect(el.children).toHaveLength(1); expect(el.lastElementChild).toBe(first);
+  expect(el.children[0]!.getAttribute('aria-hidden')).toBeNull();
   expect(el.textContent).toBe('Laying out 60/100');
   workingText(status, 'Ready');
   expect(el.lastElementChild!.className).toBe('graph-ng-status-current');
@@ -116,7 +115,7 @@ test('search working status belongs to the current request and clears on close o
 test('working status treats labels as text and bounds retained transition nodes', () => {
   const el = new El('div');
   for (const text of ['<img onerror=alert(1)>', 'Saving…', 'Applying…', 'Done']) workingText(el as unknown as HTMLElement, text, text !== 'Done');
-  expect(el.children).toHaveLength(2); expect(el.textContent).toBe('Done');
+  expect(el.children).toHaveLength(1); expect(el.textContent).toBe('Done');
   expect(el.children.every(c => c.tagName === 'span')).toBe(true);
   expect(el.children.every(c => !c.className.split(' ').includes('graph-ng-working'))).toBe(true);
 });

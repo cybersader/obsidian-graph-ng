@@ -4,7 +4,7 @@ import { IncrementalIndex } from './index';
 import { hashEdge } from '../core/edge-hash';
 import { folderPath, type GraphDeclaration } from '../core/declaration';
 import { declaredKeys, packRows, type RowColumns } from '../core/columns';
-import { yieldTask, type IngestOptions } from '../core/scheduler';
+import { yieldTask, sliced, type IngestOptions } from '../core/scheduler';
 export interface PropertySource {
   get(path: string): { source?: string; state?: string; verified?: boolean; frontmatter?: Record<string, unknown>; parseError?: unknown; truncated?: unknown } | undefined;
   load?(): Promise<unknown>;
@@ -23,7 +23,12 @@ export class LocalAdapter {
   private seedComplete = false;
   private paths = new Set<string>();
   private indexed = new Set<string>();
-  private propertyVerified = new Set<string>();
+  private pendingPropertyPaths = new Set<string>();
+  private propertyAudit?: Promise<boolean>;
+  private propertyAuditAgain = false;
+  private propertyAuditRefresh = false;
+  private propertyAuditImmediate = false;
+  private propertyAuditWake?: () => void;
   private epoch = 0;
   linksResolved = false;
   private dirty = new Map<string, number>();
@@ -35,12 +40,12 @@ export class LocalAdapter {
   private ingesting = false;
   private stamp(row: FactRow | undefined) {
     if (!row) return;
-    const text = JSON.stringify([row, this.indexed.has(row.path), this.propertyVerified.has(row.path)]);
+    const text = JSON.stringify([row, this.indexed.has(row.path), !this.pendingPropertyPaths.has(row.path)]);
     // Two hash lanes plus length make accidental equality unlikely without retaining JSON rows.
     // Not an authenticity check: collisions can delay a notification, never change source facts.
     return `${text.length}:${hashEdge(text).join(':')}`;
   }
-  invalidate() { this.epoch++; this.reloadRequired = true; this.seedComplete = false; this.indexed.clear(); this.propertyVerified.clear(); this.sent.clear(); this.sentComplete = false; this.linksResolved = false; }
+  invalidate() { this.epoch++; this.propertyAuditWake?.(); this.reloadRequired = true; this.seedComplete = false; this.indexed.clear(); this.pendingPropertyPaths = new Set(this.paths); this.sent.clear(); this.sentComplete = false; this.linksResolved = false; }
   setPropertySource(source?: PropertySource) { this.propertySource = source; this.invalidate(); }
   private declaration?: GraphDeclaration;
   private excluded: string[] = [];
@@ -48,7 +53,7 @@ export class LocalAdapter {
   private kept = (path: string) => !this.excluded.some(f => path.startsWith(f + '/'));
   private markdown() { return this.app.vault.getMarkdownFiles().filter(f => this.kept(f.path)); }
   private keys?: string[];
-  constructor(readonly app: App, plugin: Plugin, readonly producer: string, debounceMs: number, onChange: (changed: Set<string>) => void, private streaming = false, declaration?: GraphDeclaration, private propertySource?: PropertySource) {
+  constructor(readonly app: App, plugin: Plugin, readonly producer: string, private debounceMs: number, private onChange: (changed: Set<string>) => void, private streaming = false, declaration?: GraphDeclaration, private propertySource?: PropertySource) {
     this.declaration = declaration; this.keys = declaration ? declaredKeys(declaration) : undefined; this.excluded = (declaration?.exclude ?? []).map(folderPath);
     this.index = new IncrementalIndex(path => this.streaming ? undefined : this.read(path), changed => {
       // Native resolution can report the same facts repeatedly while a large vault hydrates.
@@ -58,39 +63,39 @@ export class LocalAdapter {
       if (this.streaming && !this.ingesting) changed = new Set([...changed].filter(path => {
         try { return this.stamp(this.read(path)) !== this.sent.get(path); } catch { return true; }
       }));
-      for (const path of changed) { this.dirty.set(path, ++this.changeVersion); if (this.streaming) { this.indexed.delete(path); this.propertyVerified.delete(path); } }
-      if (!this.streaming || changed.size || (!this.ingesting && this.factsComplete() !== this.sentComplete)) onChange(changed);
+      for (const path of changed) { this.dirty.set(path, ++this.changeVersion); if (this.streaming) { this.indexed.delete(path); if (this.paths.has(path)) this.pendingPropertyPaths.add(path); } }
+      if (!this.ingesting && (!this.streaming || changed.size || this.factsComplete() !== this.sentComplete)) onChange(changed);
     }, debounceMs);
     const files = this.markdown();
-    this.paths = new Set(files.map(f => f.path));
+    this.paths = new Set(files.map(f => f.path)); this.pendingPropertyPaths = new Set(this.paths);
     if (!this.streaming) this.index.seed([...this.paths]);
     this.seedComplete = files.length > 0 && this.indexed.size === files.length;
     this.linksResolved = files.every(f => Object.hasOwn(app.metadataCache.resolvedLinks, f.path));
-    const change = (file: TFile) => { if (file.extension === 'md' && this.kept(file.path)) { this.paths.add(file.path); this.linksResolved = false; this.index.change(file.path); } };
+    const change = (file: TFile) => { if (file.extension === 'md' && this.kept(file.path)) { this.paths.add(file.path); this.pendingPropertyPaths.add(file.path); this.linksResolved = false; this.index.change(file.path); } };
     plugin.registerEvent(app.metadataCache.on('changed', change));
     plugin.registerEvent(app.metadataCache.on('resolve', file => { if (file.extension === 'md' && this.kept(file.path)) this.index.change(file.path); }));
     // Property coverage cannot substitute for the native resolver's per-source readiness.
-    plugin.registerEvent(app.metadataCache.on('resolved', () => { const wasReady = this.linksResolved; this.linksResolved = !this.streaming || (this.indexed.size === this.paths.size && (!this.propertySource || [...this.paths].every(path => Object.hasOwn(app.metadataCache.resolvedLinks, path)))); if (!wasReady && this.linksResolved) this.index.notify(); }));
+    plugin.registerEvent(app.metadataCache.on('resolved', () => { const wasReady = this.linksResolved; this.linksResolved ||= !this.streaming || (this.indexed.size === this.paths.size && (!this.propertySource || [...this.paths].every(path => Object.hasOwn(app.metadataCache.resolvedLinks, path)))); if (!wasReady && this.linksResolved) this.index.notify(); return this.verifyProperties({ chunkRows: 256, budgetMs: 8 }, true); }));
     plugin.registerEvent(app.vault.on('create', file => { for (const child of markdownFiles(file)) change(child); }));
     plugin.registerEvent(app.vault.on('modify', file => { if (file instanceof TFile) change(file); }));
     plugin.registerEvent(app.vault.on('delete', file => {
       this.linksResolved = false;
-      for (const child of markdownFiles(file)) { this.paths.delete(child.path); this.indexed.delete(child.path); this.propertyVerified.delete(child.path); this.index.remove(child.path); }
+      for (const child of markdownFiles(file)) { this.paths.delete(child.path); this.indexed.delete(child.path); this.pendingPropertyPaths.delete(child.path); this.index.remove(child.path); }
     }));
     plugin.registerEvent(app.vault.on('rename', (file, old) => {
       this.linksResolved = false;
       if (file instanceof TFile) {
-        this.paths.delete(old); this.indexed.delete(old); this.propertyVerified.delete(old); this.index.remove(old);
-        if (file.extension === 'md' && this.kept(file.path)) { this.paths.add(file.path); this.index.change(file.path); }
+        this.paths.delete(old); this.indexed.delete(old); this.pendingPropertyPaths.delete(old); this.index.remove(old);
+        if (file.extension === 'md' && this.kept(file.path)) { this.paths.add(file.path); this.pendingPropertyPaths.add(file.path); this.index.change(file.path); }
         return;
       }
       for (const child of markdownFiles(file)) {
         const previous = old + child.path.slice(file.path.length);
-        this.paths.delete(previous); this.indexed.delete(previous); this.propertyVerified.delete(previous);
-        if (this.kept(child.path)) { this.paths.add(child.path); this.index.rename(previous, child.path); } else this.index.remove(previous);
+        this.paths.delete(previous); this.indexed.delete(previous); this.pendingPropertyPaths.delete(previous);
+        if (this.kept(child.path)) { this.paths.add(child.path); this.pendingPropertyPaths.add(child.path); this.index.rename(previous, child.path); } else this.index.remove(previous);
       }
     }));
-    plugin.register(() => this.index.dispose());
+    plugin.register(() => { this.epoch++; this.propertyAuditWake?.(); this.index.dispose(); });
   }
   snapshot(): FactRow[] {
     // One startup reconciliation, not a vault rescan on every edit/resolver batch.
@@ -98,7 +103,7 @@ export class LocalAdapter {
     if (!this.seedComplete) {
       const files = this.markdown();
       if (files.length > 0 && files.every(f => this.app.metadataCache.getFileCache(f) !== null)) {
-        this.paths = new Set(files.map(f => f.path)); this.indexed.clear(); this.propertyVerified.clear(); this.index.seed([...this.paths]); this.seedComplete = true;
+        this.paths = new Set(files.map(f => f.path)); this.indexed.clear(); this.pendingPropertyPaths = new Set(this.paths); this.index.seed([...this.paths]); this.seedComplete = true;
       }
     }
     return this.index.snapshot();
@@ -113,7 +118,7 @@ export class LocalAdapter {
     if (!this.declaration) throw new Error('Declared columns required');
     // A cancelled generator can have partially changed the worker; its next pass resets it.
     reset ||= this.reloadRequired;
-    if (reset) { this.paths = new Set(this.markdown().map(f => f.path)); this.indexed.clear(); this.propertyVerified.clear(); for (const path of this.sent.keys()) if (!this.paths.has(path)) this.sent.delete(path); }
+    if (reset) { this.paths = new Set(this.markdown().map(f => f.path)); this.indexed.clear(); this.pendingPropertyPaths = new Set(this.paths); for (const path of this.sent.keys()) if (!this.paths.has(path)) this.sent.delete(path); }
     const turn = this.epoch, source = this.propertySource;
     const current = () => { if (turn !== this.epoch || source !== this.propertySource) throw new Error('Property source changed'); };
     const pending = new Map(this.dirty), paths = reset ? [...this.paths] : [...pending.keys()];
@@ -139,35 +144,71 @@ export class LocalAdapter {
         }
       }
       if (batch.length || removed.length || first) { yield { columns: packRows(batch, this.declaration), removed, reset: first }; acknowledge(); await yieldTask(); }
-      current();
-      this.reloadRequired = false;
+      // Compare only acknowledged rows: a mid-batch revert must not be lost.
+      // Bound this audit too, so hydration cannot block camera input.
+      await sliced([...this.dirty.keys()], options, path => {
+        current(); if (this.stamp(this.read(path)) === this.sent.get(path)) this.dirty.delete(path);
+      });
+      current(); this.reloadRequired = false;
       this.seedComplete = this.indexed.size === this.paths.size;
       if (this.seedComplete && [...this.paths].every(path => Object.hasOwn(this.app.metadataCache.resolvedLinks, path))) this.linksResolved = true;
       this.sentComplete = this.factsComplete(); finished = true;
-    } finally { this.ingesting = false; if (!finished) this.invalidate(); }
-  }
-  /** Coverage-only audit: verification cannot change worker rows or their generation. */
-  async verifyProperties(options: IngestOptions) {
-    const turn = this.epoch; let count = 0, start = performance.now();
-    for (const path of this.indexed) {
-      if (turn !== this.epoch) return false;
-      if (!this.propertyVerified.has(path)) this.read(path);
-      if (++count >= options.chunkRows || performance.now() - start >= options.budgetMs) { await yieldTask(); count = 0; start = performance.now(); }
+    } finally {
+      this.ingesting = false;
+      if (!finished) this.invalidate();
+      else if (this.dirty.size) this.onChange(new Set(this.dirty.keys()));
     }
-    return turn === this.epoch;
+  }
+  /** Native resolver bursts share a paced, epoch-bound pending-path audit.
+   * A task yield alone can starve host indexing; explicit verification bypasses
+   * the debounce wait. New facts still take ordinary acknowledged ingestion. */
+  verifyProperties(options: IngestOptions, refresh = false): Promise<boolean> {
+    this.propertyAuditAgain = true; this.propertyAuditRefresh ||= refresh;
+    if (!refresh) { this.propertyAuditImmediate = true; this.propertyAuditWake?.(); }
+    if (this.propertyAudit) return this.propertyAudit;
+    const turn = this.epoch;
+    return this.propertyAudit = Promise.resolve().then(async () => {
+      do {
+        if (turn !== this.epoch) break;
+        if (this.propertyAuditRefresh && !this.propertyAuditImmediate) await new Promise<void>(resolve => {
+          const done = () => { clearTimeout(timer); this.propertyAuditWake = undefined; resolve(); };
+          const timer = setTimeout(done, Math.min(this.debounceMs, 1000)); this.propertyAuditWake = done;
+        });
+        if (turn !== this.epoch) break;
+        const refresh = this.propertyAuditRefresh; this.propertyAuditRefresh = this.propertyAuditAgain = this.propertyAuditImmediate = false;
+        await sliced([...this.pendingPropertyPaths], options, path => {
+          // Native events own their pending debounce slot before the adapter sees
+          // a dirty version. Do not reread or reschedule those same worker updates.
+          if (turn !== this.epoch || !this.pendingPropertyPaths.has(path) || this.dirty.has(path) || this.index.hasPending(path)) return;
+          // Native-only misses need no row allocation, serialization or hashing.
+          // A selected property source keeps its existing read/verification rules.
+          if (refresh && !this.propertySource) {
+            const file = this.app.vault.getAbstractFileByPath(path);
+            if (file instanceof TFile && this.app.metadataCache.getFileCache(file) == null) return;
+          }
+          if (refresh || !this.indexed.has(path)) {
+            if (this.ingesting || this.stamp(this.read(path)) !== this.sent.get(path)) {
+              this.dirty.set(path, ++this.changeVersion);
+              this.pendingPropertyPaths.add(path); this.indexed.delete(path); this.index.change(path);
+            }
+          } else this.read(path);
+        });
+      } while (this.propertyAuditAgain && turn === this.epoch);
+      return turn === this.epoch;
+    }).finally(() => { this.propertyAudit = undefined; });
   }
   coverage() { return { indexed: this.indexed.size, listed: this.paths.size }; }
   linksPending() { return this.declaration?.edges.some(e => e.kind === 'producer' && (e.producer !== this.producer || !this.linksResolved)) ?? false; }
-  pendingProperties() { return this.paths.size - this.propertyVerified.size; }
-  factsComplete() { return this.propertyVerified.size === this.paths.size && !this.linksPending(); }
+  pendingProperties() { return this.pendingPropertyPaths.size; }
+  factsComplete() { return this.pendingPropertyPaths.size === 0 && !this.linksPending(); }
   private read(path: string): FactRow | undefined {
     const file = this.app.vault.getAbstractFileByPath(path);
-    if (!(file instanceof TFile) || file.extension !== 'md' || !this.kept(path)) { this.indexed.delete(path); this.propertyVerified.delete(path); return undefined; }
+    if (!(file instanceof TFile) || file.extension !== 'md' || !this.kept(path)) { this.indexed.delete(path); if (this.paths.has(path)) this.pendingPropertyPaths.add(path); else this.pendingPropertyPaths.delete(path); return undefined; }
     const fact = this.propertySource?.get(path);
     const usable = fact?.source === 'derived' && fact.state === 'current' && !fact.parseError && !fact.truncated;
     const cache = usable ? null : this.app.metadataCache.getFileCache(file);
     if (usable || cache != null) this.indexed.add(path); else this.indexed.delete(path);
-    if (usable ? fact.verified === true : cache != null) this.propertyVerified.add(path); else this.propertyVerified.delete(path);
+    if (usable ? fact.verified === true : cache != null) this.pendingPropertyPaths.delete(path); else this.pendingPropertyPaths.add(path);
     const fm = (usable ? fact.frontmatter : cache?.frontmatter) ?? {}, properties = Object.create(null) as Record<string, unknown>;
     for (const key of this.keys ?? Object.keys(fm)) if (key !== 'position' && Object.hasOwn(fm, key)) properties[key] = fm[key];
     // Derived properties never invent the declared native producer's targets.

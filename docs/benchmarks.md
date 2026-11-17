@@ -2,6 +2,67 @@
 
 Results belong to an exact invocation, fixture, source revision and hardware class. They do not establish all-scale acceptance. Original slice-1 source is `041e1382` (2026-11-10); release-readiness baseline is `9b8cc07`. Historical tables below remain dated evidence. The slice-2 section records the new worker/browser/native invocations and unmet targets separately. Raw receipts remain ignored and local; publish only scrubbed summaries without hostnames, usernames, real-vault paths or private projections.
 
+## Relationship Notes switching and finite progress (2026-11-16)
+
+Source: the commit carrying this section, compared with `1e4889b`. Hardware class: Linux x86-64 desktop, 32 GB RAM, shared local load. The synthetic fixture contains 16,000 ordinary notes, 45,000 relationship notes with source/target/type properties, 80 ordinary-note groups and 8,028 wikilinks. Lines projects 16,000 nodes; Notes projects 61,000 nodes and 127,634 edges. Both versions finish the configured 100-iteration budget with finite positions; completion is **not** convergence and these samples report `settled:false`.
+
+Three Notes switches per version, alternating Lines/Notes, use the same generated fixture and worker/adapter protocol. Matching isolated test subsets, milliseconds:
+
+| Stage | Baseline median | After median |
+| --- | ---: | ---: |
+| Declared row ingestion | 286.56 | 2.94 |
+| Projection | 430.63 | 480.83 |
+| Layout | 7,897.01 | 8,434.81 |
+| Entire switch | 8,617.57 | 8,908.89 |
+
+Total ranges are 8,599.22–8,759.61 ms before and 8,881.04–9,129.00 ms after. This does not establish a meaningful end-to-end speedup under shared load. It does establish removal of all **61,000 repeated row reads/transfers** per display-only switch (baseline 31–33 batches, after zero), and completion of every 61k computation. All clean-fixture samples had zero adapter change notifications, so they do not reproduce or prove the exact cause of the owner's repeated refreshes. Deterministic regressions separately reproduce identical events during unacknowledged ingestion and preserve genuine changes/mid-batch reverts.
+
+Opt-in preparation uses the ignored synthetic QA generator: `node .workspace/visual-qa/gen-vault.mjs .workspace/visual-qa/vault-61k 16000 45000 80`, baseline plugin settings at `.workspace/visual-qa/plugin-before/data.json`, and the `src/` tree from `git archive 1e4889b src` extracted under `.workspace/baseline-source/`. The benchmark reads only this fixed generated fixture; it never accepts an arbitrary vault. The private generator/settings are local evidence inputs, not a clean-clone fixture distribution.
+
+Exact baseline/after subset is `./scripts/run.sh test --timeout 10000 --test-name-pattern 'synthetic 61000 note switch timing' ./tests/notes-switch-benchmark.test.ts`, with `PERF_BENCH=1` for both and `BENCH_BASELINE=1` only for baseline. Every Bun invocation uses `flock -w 3000 -E 75 /tmp/openclast-bun.lock timeout --kill-after=5s 1800s`. Receipts: `.workspace/before-paired-only.log`, `.workspace/after-reviewed-benchmark.log`, and `.workspace/{before,after}-paired-timing.json`. An earlier benchmark concurrent with the full suite caused one 10-second centering-test timeout; its single isolated rerun passed in 5.32 seconds. These measurements use the worker and public-metadata adapter, not native host indexing, app startup or GPU rendering.
+
+Build and the full regular suite pass **765 tests, one existing skip**, with **983,681 assertions across 37 files**. Independent review identified and the candidate corrects queued Stop intent, immediate Stop returning a seed, and overlapping whole-vault verification scans; each has a regression. Added regressions cover ingest identity, acknowledged hydration, stop/resume and encode refusal, monotonic measured phases, one retained shimmer span, loading-preview input/camera, stop-button accessibility/stable slot, and permanently unverified/missing metadata with later recovery. Exact commands are `./scripts/run.sh build`, `./scripts/run.sh test --timeout 10000`, and `./scripts/run.sh gates`, each with the lock/timeout prefix above. The full ordered gates pass. Bundle: **393,214 raw / 132,856 gzip bytes**, a **+1,852 / +624-byte** delta from `1e4889b`; 395,000 / 134,000 ceilings are unchanged. The queued-path hydration correction below adds **61 raw / 21 gzip bytes** over the inherited paced-audit candidate. These are standalone worktree measurements, not a merged-main size result.
+
+The host's `derived/current` property facts remain unverified until their explicit `verified` flag is true; a non-null native cache does not override that selected source. Missing native cache rows are the other reproduced incomplete state. Both remain usable and honestly labelled, without a ready-state waiting animation. Resolver completion now queues unverified paths for rereading; verification-only events include never-indexed paths and route newly available rows through ingestion. No real vault was inspected, so the precise cause of any particular owner's remaining count is not established. The native-only cheap cache-availability guard does not apply to a selected derived property source. While native resolved events continue, every unqueued, unverified derived-source path can still be read and stamped once per paced pass. That remains a known large-vault cost, not covered by the native-only hydration acceptance below; selected-source verification rules were not weakened to avoid it.
+
+### Synthetic native interaction evidence
+
+The native harness refuses more than 50,000 input files. That cap was not bypassed: 61k completion above is deterministic worker/adapter evidence, not native rendering acceptance. The native software renderer also retains its unchanged 2,000-note/10,000-edge detail cap. Large native fixtures therefore use Groups, not a claimed 49k detail render.
+
+The reviewed 1,800-note fixture (1,000 ordinary notes plus 800 relationship notes) passes all **24 native steps**, with zero page/console errors. A 1,000-iteration synthetic request stays active long enough to exercise real canvas wheel/pointer handlers, Stop, and Keep refining. Pan and zoom both change the loading camera; Stop preserves world center/scale across the preview/final normalized-frame replacement, returns unsettled coordinates, and removes busy status. Keep refining resumes; a second Stop again remains unsettled. The two early-stop computations took 2,173.3 and 2,175.3 ms. These are stop observations, not full-budget completion timings. A first native assertion compared raw normalized camera fields incorrectly; its corrected world-coordinate comparison passes.
+
+Invocation: `bash .workspace/visual-qa/run.sh notes-small-reviewed plugin-reviewed vault-small steps-small-after.json 12`. The runner serializes on the shared native harness lock and checks at least 8 GB available immediately before launch; it never kills unrelated processes. Synthetic light/dark captures were visually inspected. Key relative evidence: `.workspace/visual-qa/runs/notes-small-reviewed.step-13-notes-progress.dark.png`, `notes-small-reviewed.step-15-notes-camera.dark.png`, and `notes-small-reviewed.step-24-refined-stopped.dark.png` in the same directory. Raw report: `notes-small-reviewed.json`. No real vault, GPU/mobile proof, publication or remote deployment is implied.
+
+### Matched 49k hydration audit (2026-11-17)
+
+The fixed synthetic fixture contains 16,000 ordinary notes and 33,000 relationship notes, with 80 groups and 8,026 wikilinks. Its verified Lines projection has 16,000 nodes and 51,863 edges. Settings, fixture, `run.sh`, and the 31 ten-second samples in `steps-hydration-fast.json` are unchanged from the earlier `hydration49-cheap-baseline.json` / `hydration49-paced-cheap.json` pair. That earlier pair reported 18,272.7 / 23,372.7 ms to verified-ready and 141,628 / 187,175 adapter reads. Timing starts at the existing observer before Open, not process launch; host indexing has already begun. All tests remain Groups-only under the unchanged 50,000-file native cap and software detail limits.
+
+Each ablation removes just the named component from the inherited candidate and follows a fresh `1e4889b` baseline. Equal QA-only wrappers count configure/layout generations and row batches in the sampled dataset; they do not change the runner or sampling steps. Exact sequence: `bash .workspace/hydration-bisect/run-pairs.sh`. Its individual invocation is `bash .workspace/visual-qa/run.sh bisect-<component>-<variant> plugin-bisect-<variant> vault-49k steps-hydration-fast.json 12`, with baseline followed by the named component. These ignored scripts/plugin copies are local evidence inputs, not clean-clone benchmark tooling.
+
+| Disabled component | Baseline ready ms | Ablation ready ms | Baseline reads | Ablation reads |
+| --- | ---: | ---: | ---: | ---: |
+| Resolved-handler property audit | 18,281.9 | 17,162.3 | 142,528 | 141,275 |
+| Post-ingest dirty-stamp audit | 18,120.1 | 17,937.2 | 141,253 | 184,938 |
+| Index callback stamp filter | 15,920.7 | 18,951.2 | 140,800 | 141,803 |
+| Loading input/camera attachment | 16,696.6 | 19,262.5 | 140,583 | 186,572 |
+| Worker Stop plumbing | 18,574.6 | 19,096.8 | 141,856 | 185,700 |
+
+Every run completed 34 steps without page/console errors, with **two rebuild/layout generations and one index flush**. These are single-run paired ablations, not additive per-component CPU costs: baseline timing itself ranges from 15.92 to 18.57 seconds, and the loading-camera path is not entered in Groups. Disabling the resolved audit eliminates its extra row reads; disabling the callback filter instead removes a different read pass. The five-second historical slowdown cannot honestly be assigned solely to one component from these timings.
+
+The correction retains both audits, callback deduplication, camera input and Stop. A resolver audit now skips paths already queued in `IncrementalIndex`, before allocating/stamping rows or resetting their debounce slot. Previously the adapter's dirty map did not see those native events until the index flushed, so the audit repeated their pending work. A new regression fails before correction with **260 duplicate reads for 260 queued paths**; after correction the audit performs **zero reads and zero extra change enqueues**, and ordinary ingestion verifies every row in the existing cycle. Late-cache-only resolution, explicit verification, single-flight/epoch checks and selected-source trust rules remain tested and unchanged.
+
+The final sequence, `bash .workspace/hydration-bisect/final-pair.sh`, repeats the unchanged candidate, then runs baseline/fixed back to back using the same individual invocation with names `bisect-final-{original,baseline,fixed}` and plugins `plugin-bisect-{original,baseline,fixed}`:
+
+| Final control or pair | Verified-ready ms | Total adapter reads | Native caches at 10 s | Rebuilds | Index flushes |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Unchanged candidate control | 17,985.4 | 185,406 | 49,000 | 2 | 1 |
+| Baseline `1e4889b` | 18,963.8 | 142,072 | 44,969 | 2 | 1 |
+| Fixed candidate | **16,934.0** | **141,362** | **49,000** | **2** | **1** |
+
+The fixed candidate is 2,029.8 ms earlier than its adjacent baseline with 0.995 times its reads, meeting the requested no-more-than-about-two-seconds-behind bar. It removes 44,044 reads versus the fresh unchanged-candidate control. The control itself no longer reproduces the historical 23.37-second delay, so this establishes removal of redundant work and this pair's acceptance, not a general two-second speedup or proof that the entire earlier delay belonged to the audit. All three runs finish 34 steps with no page/console errors and the expected final 16,000-node/51,863-edge projection. Both fixed final themes were visually inspected and contain only the synthetic fixture.
+
+Evidence: `.workspace/visual-qa/runs/bisect-*.json`, particularly `bisect-final-baseline.json` and `bisect-final-fixed.json`; final captures are `bisect-final-fixed.step-34-hydration-final.{light,dark}.png` in that directory. Regression/build/full-test/gate receipts are `.workspace/hydration-bisect/{regression-before,build-fixed,fixed-targeted,fixed-full-tests,fixed-gates,final-gates}.log`. The wrappers retain `flock -w 1800 /tmp/graph-ng-harness.lock` and the immediate 8-GB availability check. Bun build/tests/gates use the exact lock/timeout prefix above; tests and gates were also kept outside native measurements with the harness lock. No real-vault, hardware-GPU, mobile, publication or deployment acceptance is added.
+
 ## Click intent, continuous hubs and traversed isolation, wave 12 track H (2026-11-16)
 
 Source: the commit carrying this section, based on `2bfcf8e`. Hardware class: Linux x86-64 desktop, 32 GB RAM. Core projection, layout physics and camera implementation are unchanged. Build and **721 tests pass, one existing skip**, with **961,262 expectations across 37 files**. Added regressions cover traversed-edge isolation, explicit carrier legs, filters, expansion, continuous sizing through 25x, precision validation, migration of every click-boolean combination, Appearance choices, bounded label priorities, and the final selected-node size attribute/restoration.

@@ -267,3 +267,26 @@ test('overlap migration changes only active layout identity; pinned coordinates 
   expect(expected.slice(2)).toEqual(saved.slice(2)); expect(initial).toEqual(saved);
   expect(await runLayoutStream(warm, on, 3, () => {}, async () => {})).toEqual(expected);
 });
+
+test('Stop during the initial yield returns one computed step, never the cold seed', async () => {
+  const { runLayoutStream, runLayout, LayoutSolver, DEFAULT_LAYOUT } = await import('../src/core/layout');
+  const input = { count: 2, source: Uint32Array.of(0), target: Uint32Array.of(1), seed: 17 };
+  const options = { ...DEFAULT_LAYOUT, iterations: 100, batchIterations: 5 };
+  let stopped = false, settled = true;
+  const frames: number[] = [];
+  const result = await runLayoutStream(input, options, 5, (_p, iteration) => frames.push(iteration), async () => { stopped = true; }, undefined, s => { settled = s; }, () => stopped);
+  expect(result).not.toEqual(new LayoutSolver(input, options).positions);
+  expect(result).toEqual(runLayout(input, { ...options, iterations: 1 }));
+  expect(frames).toEqual([]); expect(settled).toBe(false); expect(result.every(Number.isFinite)).toBe(true);
+});
+
+test('cooperative stop keeps the last computed frame exactly and never marks it settled', async () => {
+  const { runLayoutStream, runLayout, DEFAULT_LAYOUT } = await import('../src/core/layout');
+  const input = { count: 2, source: Uint32Array.of(0), target: Uint32Array.of(1), seed: 17 };
+  const options = { ...DEFAULT_LAYOUT, iterations: 100, batchIterations: 1 };
+  let stopped = false, settled = true, last: Float32Array | undefined;
+  const result = await runLayoutStream(input, options, 1, p => { last = p; stopped = true; }, async () => {}, undefined, s => { settled = s; }, () => stopped);
+  expect(result).toEqual(last!); expect(settled).toBe(false);
+  const resumed = await runLayoutStream({ ...input, initial: result }, { ...options, iterations: 1 }, 1, () => {}, async () => {});
+  expect(resumed).toEqual(runLayout({ ...input, initial: result }, { ...options, iterations: 1 })); expect(resumed).not.toEqual(result);
+});

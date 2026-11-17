@@ -10,17 +10,18 @@ import { buildProjection } from '../src/core/projection';
 import { contractGroups } from '../src/core/group-projection';
 import { explore, emptyView } from '../src/core/explore';
 
-async function propertyFixture(source?: PropertySource, edges = false) {
+async function propertyFixture(source?: PropertySource, edges = false, onChange = () => {}, count = 2, debounceMs = 1) {
   const { LocalAdapter } = await import('../src/adapter/local');
-  const files = ['a.md', 'b.md'].map(p => new FixtureFile(p));
+  const files = Array.from({ length: count }, (_, i) => new FixtureFile(['a.md', 'b.md'][i] ?? `note-${i}.md`));
   const caches = new Map<string, any>(), links: Record<string, Record<string, number>> = {};
-  const events = new Map<string, (...args: any[]) => void>();
+  const events = new Map<string, (...args: any[]) => any>();
   const declaration = { ...defaultDeclaration('native@1'), columns: ['id', 'category'], identity: [{ key: 'id' }], groups: [{ from: 'key' as const, key: 'category' }], ...(edges ? {} : { edges: [] }) };
   const app = { vault: { getMarkdownFiles: () => files, getAbstractFileByPath: (p: string) => files.find(f => f.path === p), on() {}, read() { throw new Error('body read forbidden'); } },
     metadataCache: { getFileCache: (f: FixtureFile) => caches.get(f.path) ?? null, resolvedLinks: links, on: (name: string, fn: (...args: any[]) => void) => events.set(name, fn) } } as unknown as App;
-  const adapter = new LocalAdapter(app, { register() {}, registerEvent() {} } as unknown as Plugin, 'native@1', 1, () => {}, true, declaration, source);
+  const cleanup: (() => void)[] = [];
+  const adapter = new LocalAdapter(app, { register(fn: () => void) { cleanup.push(fn); }, registerEvent() {} } as unknown as Plugin, 'native@1', debounceMs, onChange, true, declaration, source);
   const rows = async (reset = true) => { const all: FactRow[] = []; for await (const b of adapter.columns(reset, { chunkRows: 1, budgetMs: 8 })) all.push(...unpackRows(b.columns)); return all; };
-  return { adapter, rows, files, caches, links, events, declaration };
+  return { adapter, rows, files, caches, links, events, declaration, dispose: () => cleanup.forEach(fn => fn()) };
 }
 const fact = (id: string, extra = {}) => ({ source: 'derived', state: 'current', verified: false, frontmatter: { id, category: 'Category A' }, ...extra });
 
@@ -50,6 +51,183 @@ test('empty/absent YAML is valid; parse errors, truncation and absent facts use 
       const rows = await f.rows();
       expect(rows[0]!.properties).toEqual(usable ? {} : { id: 'native-a' });
       expect(f.adapter.factsComplete()).toBe(!usable);
+    } finally { f.adapter.index.dispose(); }
+  }
+});
+
+test('resolved bursts share one audit and visit only maintained unresolved paths', async () => {
+  const reads: string[] = []; let during: (() => void) | undefined;
+  const f = await propertyFixture({ get: p => { reads.push(p); const next = during; during = undefined; next?.(); return fact(p, { verified: p !== 'a.md' }); } }, false, () => {}, 260);
+  try {
+    await f.rows(); expect(f.adapter.pendingProperties()).toBe(1); reads.length = 0;
+    const scan = f.events.get('resolved')!();
+    for (let i = 0; i < 50; i++) expect(f.events.get('resolved')!()).toBe(scan);
+    during = () => { for (let i = 0; i < 50; i++) expect(f.events.get('resolved')!()).toBe(scan); };
+    await scan; f.adapter.index.flush();
+    expect(reads).toEqual(['a.md', 'a.md']); expect(f.adapter.pendingProperties()).toBe(1);
+    const stale = f.adapter.verifyProperties({ chunkRows: 1, budgetMs: 8 });
+    f.adapter.invalidate(); expect(await stale).toBe(false);
+  } finally { f.adapter.index.dispose(); }
+});
+
+test('native audit passes yield a debounce interval, while explicit verification and disposal wake them', async () => {
+  let during: (() => void) | undefined;
+  const reads: number[] = [];
+  const f = await propertyFixture({ get: p => { reads.push(performance.now()); const next = during; during = undefined; next?.(); return fact(p); } }, false, () => {}, 2, 25);
+  try {
+    await f.rows(); reads.length = 0;
+    const start = performance.now(), scan = f.events.get('resolved')!();
+    await Promise.resolve(); expect(reads).toEqual([]);
+    during = () => { expect(f.events.get('resolved')!()).toBe(scan); };
+    await scan;
+    expect(reads.length).toBe(4);
+    expect(reads[0]! - start).toBeGreaterThanOrEqual(20);
+    expect(reads[2]! - reads[1]!).toBeGreaterThanOrEqual(20);
+    reads.length = 0;
+    const waiting = f.events.get('resolved')!(); await Promise.resolve();
+    expect(reads).toEqual([]);
+    expect(f.adapter.verifyProperties({ chunkRows: 2, budgetMs: 8 })).toBe(waiting);
+    await waiting; expect(reads.length).toBe(2);
+    const disposed = f.events.get('resolved')!(); await Promise.resolve();
+    f.dispose(); expect(await disposed).toBe(false); expect(reads.length).toBe(2);
+  } finally { f.dispose(); }
+});
+
+test('late-cache resolver bursts cost a small multiple of rows, not rows times events', async () => {
+  const count = 260, f = await propertyFixture(undefined, false, () => {}, count, 25);
+  let reads = 0;
+  const native = f.adapter.app.metadataCache.getFileCache;
+  f.adapter.app.metadataCache.getFileCache = file => { reads++; return native(file); };
+  try {
+    await f.rows(); reads = 0;
+    const scans = [];
+    for (const file of f.files) {
+      f.caches.set(file.path, { frontmatter: { id: file.path } });
+      f.events.get('changed')!(file);
+      for (let i = 0; i < 4; i++) scans.push(f.events.get('resolved')!());
+    }
+    expect(new Set(scans).size).toBe(1);
+    await scans[0];
+    const queuedReads = reads;
+    for (let i = 0; i < 100; i++) scans.push(f.events.get('resolved')!());
+    await scans.at(-1);
+    // One debounced index flush may read the queued rows, but another audit
+    // must not stamp or enqueue the same pending worker updates again.
+    expect(reads - queuedReads).toBeLessThanOrEqual(count);
+    f.adapter.index.flush();
+    expect((await f.rows(false)).length).toBe(count);
+    expect(f.adapter.pendingProperties()).toBe(0);
+    expect(reads).toBeLessThanOrEqual(count * 4);
+    const completedReads = reads;
+    for (let i = 0; i < 100; i++) scans.push(f.events.get('resolved')!());
+    await scans.at(-1); f.adapter.index.flush();
+    expect(reads).toBe(completedReads);
+  } finally { f.dispose(); }
+});
+
+test('resolver audits leave queued native changes to their existing ingestion batch', async () => {
+  const count = 260, f = await propertyFixture(undefined, false, () => {}, count, 5000);
+  try {
+    await f.rows();
+    let reads = 0, changes = 0;
+    const read = (f.adapter as any).read.bind(f.adapter), change = f.adapter.index.change.bind(f.adapter.index);
+    (f.adapter as any).read = (path: string) => { reads++; return read(path); };
+    f.adapter.index.change = path => { changes++; change(path); };
+    for (const file of f.files) {
+      f.caches.set(file.path, { frontmatter: { id: file.path } });
+      f.events.get('changed')!(file);
+    }
+    const scan = f.events.get('resolved')!();
+    for (let i = 0; i < 100; i++) expect(f.events.get('resolved')!()).toBe(scan);
+    await scan;
+    // The native event already owns the debounce slot. An audit must neither
+    // duplicate its row read/stamp nor reschedule that same pending update.
+    expect(reads).toBe(0); expect(changes).toBe(count);
+    expect(f.adapter.pendingProperties()).toBe(count);
+    f.adapter.index.flush();
+    expect((await f.rows(false)).length).toBe(count);
+    expect(reads).toBe(count * 2); expect(f.adapter.pendingProperties()).toBe(0);
+    expect(f.adapter.factsComplete()).toBe(true);
+  } finally { f.dispose(); }
+});
+
+test('native resolver audits do not construct rows for caches that are still missing', async () => {
+  const f = await propertyFixture(undefined, false, () => {}, 260, 25);
+  try {
+    await f.rows();
+    const paths: string[] = [], original = (f.adapter as any).read.bind(f.adapter);
+    (f.adapter as any).read = (path: string) => { paths.push(path); return original(path); };
+    const scan = f.events.get('resolved')!();
+    for (let i = 0; i < 100; i++) f.events.get('resolved')!();
+    await scan; expect(paths).toEqual([]);
+    f.caches.set('a.md', { frontmatter: {} });
+    await f.events.get('resolved')!(); f.adapter.index.flush(); await f.rows(false);
+    expect(paths).toEqual(['a.md', 'a.md', 'a.md']);
+    expect(f.adapter.pendingProperties()).toBe(259);
+    paths.length = 0;
+    await f.events.get('resolved')!(); expect(paths).toEqual([]);
+  } finally { f.dispose(); }
+});
+
+test('unverified derived facts stay provisional even when native metadata exists, then promote on verification', async () => {
+  let verified = false;
+  const f = await propertyFixture({ get: p => fact(p, { verified }) });
+  try {
+    f.caches.set('a.md', { frontmatter: {} }); f.caches.set('b.md', { frontmatter: {} });
+    await f.rows();
+    await f.events.get('resolved')!(); f.adapter.index.flush();
+    expect(f.adapter.pendingProperties()).toBe(2); expect(f.adapter.factsComplete()).toBe(false);
+    expect(await f.rows(false)).toEqual([]);
+    verified = true;
+    await f.adapter.verifyProperties({ chunkRows: 1, budgetMs: 8 });
+    expect(f.adapter.pendingProperties()).toBe(0); expect(f.adapter.factsComplete()).toBe(true);
+  } finally { f.adapter.index.dispose(); }
+});
+
+test('resolved or verification events recover never-indexed properties through ingestion, not coverage promotion', async () => {
+  for (const resolved of [true, false]) {
+    let notifications = 0;
+    const f = await propertyFixture(undefined, false, () => notifications++);
+    try {
+      await f.rows(); expect(f.adapter.coverage().indexed).toBe(0);
+      await f.events.get('resolved')!(); f.adapter.index.flush();
+      expect(f.adapter.pendingProperties()).toBe(2); expect(notifications).toBe(0);
+      f.caches.set('a.md', { frontmatter: { id: 'later-a' } });
+      if (resolved) await f.events.get('resolved')!();
+      else await f.adapter.verifyProperties({ chunkRows: 1, budgetMs: 8 });
+      expect(f.adapter.pendingProperties()).toBe(2);
+      f.adapter.index.flush(); expect(notifications).toBe(1);
+      const rows = await f.rows(false);
+      expect(rows.map(r => [r.path, r.properties.id])).toEqual([['a.md', 'later-a']]);
+      expect(f.adapter.pendingProperties()).toBe(1);
+      f.caches.set('b.md', { frontmatter: { id: 'later-b' } });
+      f.events.get('changed')!(f.files[1]); f.adapter.index.flush(); await f.rows(false);
+      expect(f.adapter.pendingProperties()).toBe(0); expect(f.adapter.factsComplete()).toBe(true);
+    } finally { f.adapter.index.dispose(); }
+  }
+});
+
+test('a cache appearing after an unchanged audit is ingested within one changed or resolved cycle', async () => {
+  for (const event of ['changed', 'resolved']) for (const frontmatter of [{}, { id: 'late-a' }]) {
+    let notifications = 0;
+    const f = await propertyFixture(undefined, false, () => notifications++);
+    try {
+      await f.rows();
+      // A no-cache event is equal to the acknowledged provisional row. It must
+      // not discard the path from future verification, including empty YAML.
+      f.events.get('changed')!(f.files[0]); f.adapter.index.flush();
+      await f.events.get('resolved')!(); f.adapter.index.flush();
+      expect(notifications).toBe(0); expect(f.adapter.pendingProperties()).toBe(2);
+      f.caches.set('a.md', { frontmatter });
+      if (event === 'changed') f.events.get(event)!(f.files[0]);
+      else await f.events.get(event)!();
+      f.adapter.index.flush(); expect(notifications).toBe(1);
+      expect((await f.rows(false)).map(r => [r.path, r.properties])).toEqual([['a.md', frontmatter]]);
+      expect(f.adapter.coverage()).toEqual({ indexed: 1, listed: 2 });
+      expect(f.adapter.pendingProperties()).toBe(1);
+      expect(await f.rows(false)).toEqual([]);
+      await f.events.get('resolved')!(); f.adapter.index.flush();
+      expect(f.adapter.pendingProperties()).toBe(1); expect(notifications).toBe(1);
     } finally { f.adapter.index.dispose(); }
   }
 });
@@ -257,5 +435,36 @@ test('review: acknowledged input stamps stay compact and distinguish equal-lengt
     f.events.get('resolve')!(f.files[0]); f.adapter.index.flush();
     expect((await f.rows(false))[0]!.properties.category).toBe(value); expect(stamps.get('a.md')).not.toBe(changed);
     f.adapter.invalidate(); expect(stamps.size).toBe(0);
+  } finally { f.adapter.index.dispose(); }
+});
+
+test('identical hydration during an unacknowledged batch does not restart the switch', async () => {
+  let notified = 0;
+  const f = await propertyFixture(undefined, false, () => notified++);
+  f.caches.set('a.md', { frontmatter: { id: 'a' } }); f.caches.set('b.md', { frontmatter: { id: 'b' } });
+  try {
+    await f.rows();
+    const batches = f.adapter.columns(true, { chunkRows: 1, budgetMs: 8 });
+    await batches.next(); f.events.get('changed')!(f.files[0]); f.adapter.index.flush();
+    expect(notified).toBe(0);
+    while (!(await batches.next()).done) {}
+    expect(notified).toBe(0); expect(f.adapter.factsComplete()).toBe(true);
+    expect(await f.rows(false)).toEqual([]);
+  } finally { f.adapter.index.dispose(); }
+});
+
+test('a mid-batch revert is compared with acknowledged input, not an old stamp', async () => {
+  let notified = 0;
+  const f = await propertyFixture(undefined, false, () => notified++);
+  f.caches.set('a.md', { frontmatter: { id: 'old' } }); f.caches.set('b.md', { frontmatter: { id: 'b' } });
+  try {
+    await f.rows(); f.caches.set('a.md', { frontmatter: { id: 'new' } });
+    const batches = f.adapter.columns(true, { chunkRows: 1, budgetMs: 8 });
+    expect(unpackRows((await batches.next()).value!.columns)[0]!.properties.id).toBe('new');
+    f.caches.set('a.md', { frontmatter: { id: 'old' } }); f.events.get('changed')!(f.files[0]); f.adapter.index.flush();
+    expect(notified).toBe(0);
+    while (!(await batches.next()).done) {}
+    expect(notified).toBe(1);
+    expect((await f.rows(false))[0]!.properties.id).toBe('old');
   } finally { f.adapter.index.dispose(); }
 });

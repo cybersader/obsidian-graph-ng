@@ -192,18 +192,18 @@ export function runLayout(input: LayoutInput, options: LayoutOptions): Float32Ar
  * Iteration budgets (rather than wall-clock early exits) preserve determinism.
  * The worker remains terminable by the host deadline even within one iteration.
  */
-export async function runLayoutStream(input: LayoutInput, options: LayoutOptions, every: number, emit: (p: Float32Array, iteration: number, total: number) => void, yieldNow: () => Promise<void>, buffer = (length: number) => new Float32Array(length), finished = (_settled: boolean) => {}): Promise<Float32Array> {
+export async function runLayoutStream(input: LayoutInput, options: LayoutOptions, every: number, emit: (p: Float32Array, iteration: number, total: number) => void, yieldNow: () => Promise<void>, buffer = (length: number) => new Float32Array(length), finished = (_settled: boolean) => {}, stopped = () => false): Promise<Float32Array> {
   if (!Number.isSafeInteger(every) || every < 1) throw new Error('Invalid layout stream cadence');
   const solver = new LayoutSolver(input, options);
   const send = () => { const p = buffer(solver.positions.length); p.set(solver.positions); emit(p, solver.iteration, solver.limit); };
   if (!input.count) { finished(true); return solver.positions; }
-  // A seed is not a layout. Every published frame has completed at least one batch.
+  // A seed is not a layout. Even an immediate Stop completes one bounded step.
   await yieldNow();
-  while (!solver.done) {
+  while (!solver.done && (!solver.iteration || !stopped())) {
     solver.step();
     if (!solver.done && solver.iteration % every === 0) send();
     if (!solver.done && (solver.iteration % options.batchIterations === 0 || solver.iteration % every === 0)) await yieldNow();
   }
-  finished(solver.settled);
+  finished(!stopped() && solver.settled);
   return solver.positions;
 }
