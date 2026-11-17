@@ -2535,3 +2535,18 @@ test('review1: rings entered over a path own the chip subject and scoped exit', 
   control(r[k('stateStrip')], 'Leave Path between notes').click();
   expect(r[k('pathView')]).toBeUndefined(); expect(r[k('namedViewState')]).toBe('Notes');
 });
+
+test('review2: filtered-out targets disable state transitions and stale actions cannot reopen cards', async () => {
+  const { renderer: r } = await fixture(), k = compiled;
+  r[k('selectNote')](0, true);
+  const stale = control(r[k('stateStrip')], 'Only connections');
+  r.setView(new Uint8Array([0, 1, 1]), {});
+  expect(r[k('namedViewState')]).toBe('Notes'); expect(r.card.node).toBe(-1);
+  for (const name of ['Selected note', 'Only connections', 'Connection rings']) {
+    const button = control(r[k('stateStrip')], name); expect(button.disabled).toBe(true); button.click();
+    expect(r.card.node).toBe(-1); expect(r.isolation).toBeUndefined(); expect(r[k('lensNode')]).toBe(-1);
+  }
+  stale.click(); expect(r.card.node).toBe(-1); expect(r.isolation).toBeUndefined();
+  r.setView(new Uint8Array([1, 1, 1]), {});
+  expect(control(r[k('stateStrip')], 'Only connections').disabled).toBe(false);
+});

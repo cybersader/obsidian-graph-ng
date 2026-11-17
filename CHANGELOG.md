@@ -4,6 +4,8 @@ The owner-approved bounded download ceilings for this UI pass are **400,000 raw 
 
 ## Unreleased named view states
 
+- Disable selection-dependent chip actions when their target is no longer visible, and revalidate visibility when an action executes. Filtering out a selected note cannot reopen its card through a current or stale menu action.
+
 - Match chip precedence and subject to rendered emphasis when Connection rings opens over a path. Its X exits the rings and restores the underlying path state; a compiled regression exercises hover, ring entry and both scoped exits.
 
 - Name the current graph view Notes, Selected note, Only connections, Connection rings, Path between notes or Groups. A compact canvas chip opens the matching Appearance section; its caret switches available states and links directly to Click a note. Each temporary X exits only its named layer, preserving filters and independent scopes. Hover never changes the state label.

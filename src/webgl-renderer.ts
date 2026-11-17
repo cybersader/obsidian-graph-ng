@@ -419,7 +419,7 @@ export class DetailRenderer {
     const n = this.lensWanted >= 0 ? this.lensWanted : this.pathView?.from ?? this.isolation?.node ?? this.selected;
     if (state === 'Groups') return this.showViewGroups?.();
     if (state === 'Notes') { this.setLens(-1); this.selectNote(-1); this.isolate(-1); }
-    else if (n >= 0) {
+    else if (n >= 0 && this.visible[n]) {
       this.setLens(-1); this.selectNote(n, true);
       if (state === 'Only connections') this.isolate(n);
       else if (state === 'Connection rings') this.setLens(n);
@@ -430,11 +430,12 @@ export class DetailRenderer {
   private syncViewState() {
     if (!this.stateStrip) return;
     const state = this.namedViewState, n = this.lensWanted >= 0 ? this.lensWanted : this.pathView?.from ?? this.isolation?.node ?? this.selected;
-    const stamp = `${state}|${n}|${this.pathView?.to}|${this.isolation?.node}`;
+    const available = n >= 0 && !!this.visible[n];
+    const stamp = `${state}|${n}|${this.pathView?.to}|${this.isolation?.node}|${available}`;
     if (stamp === this.stateStamp) return;
     this.stateStamp = stamp; this.stateStrip.textContent = '';
     const tune = (s: ViewState) => this.tuneViewState?.(s);
-    stateChip(this.stateStrip, state, state !== 'Notes' && n >= 0 ? this.name(n) + (state === 'Path between notes' ? ' → ' + this.name(this.pathView!.to) : '') : '', () => this.leaveViewState(state), tune, s => this.switchViewState(s), n >= 0);
+    stateChip(this.stateStrip, state, state !== 'Notes' && n >= 0 ? this.name(n) + (state === 'Path between notes' ? ' → ' + this.name(this.pathView!.to) : '') : '', () => this.leaveViewState(state), tune, s => this.switchViewState(s), available);
     if (this.isolation && state !== 'Only connections') stateChip(this.stateStrip, 'Only connections', '', () => this.leaveViewState('Only connections'), tune);
     this.onViewStateChange?.();
   }
