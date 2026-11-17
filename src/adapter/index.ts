@@ -14,6 +14,7 @@ export class IncrementalIndex {
   snapshot(): FactRow[] { return [...this.rows.values()]; }
   values(): IterableIterator<FactRow> { return this.rows.values(); }
   notify() { this.notification = true; this.schedule(); }
+  hasPending(path: string) { return this.dirty.has(path); }
   flush() {
     if (this.timer) clearTimeout(this.timer); this.timer = undefined;
     for (const path of this.pending) { const row = this.read(path); if (row) this.rows.set(path, row); else this.rows.delete(path); }

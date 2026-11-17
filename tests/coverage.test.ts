@@ -49,7 +49,7 @@ test('coverage accounts for every markdown note once, every category non-zero, a
   expect(a.parts.reduce((s, x) => s + x.count, 0)).toBe(total); expect(total).toBe(28);
   expect(a.complete).toBe(false); expect(a.dots).toBe(e.visible.reduce((s, v) => s + v, 0)); expect(a.lines).toBe(e.visibleEdges);
   const host: any = new ControlElement(); renderInformation(host, '', 'ready', r, e);
-  expect(host.querySelector('.graph-ng-coverage-state').textContent).toBe('Ready, still reading properties');
+  expect(host.querySelector('.graph-ng-coverage-state').textContent).toBe('Ready, source checks incomplete');
   expect(host.querySelector('.graph-ng-stat-total')).toBeUndefined();
   // Removed notes are a signed part so the sum still matches.
   const shrunk = accounting({ ...r, vault: total - 3 }, e);
@@ -242,16 +242,16 @@ test('loading information suppresses unsettled counts, preserves configured mode
     relationshipNodes: false, ruleNotes: { relation: 44572 }, pendingProperties: 40, progress: { iteration: 60, total: 100 } };
   const host: any = new ControlElement();
   renderInformation(host, '', 'building', report);
-  expect(host.textContent).toContain('Ready, still reading 40 notes');
+  expect(host.textContent).toContain('40 notes with unverified properties');
   expect(host.textContent).toContain('Step 60 (100 steps planned)'); expect(host.textContent).not.toContain('%');
   expect(host.textContent).toContain('Relationship notesLines');
   for (const misleading of ['44,572', '61,077', '189,505', 'drawn as dots', 'Edges drawn', 'No issues found', 'Save as']) expect(host.textContent).not.toContain(misleading);
   expect(readingProgress({ indexed: 40, listed: 100 })).toBe('Reading notes 40%');
   expect(layoutProgress({ iteration: 3, total: 6 })).toBe('Laying out 50% (step 3, 6 steps)');
-  expect(pendingText({ linksPending: true, pendingProperties: 0 })).toBe('Ready, still reading links');
+  expect(pendingText({ linksPending: true, pendingProperties: 0 })).toBe('Ready, source checks incomplete');
   // Completed layout does not turn unresolved host metadata into final-looking accounting.
   renderInformation(host, '', 'ready', { ...report, pendingProperties: 0, layout: { cached: true, ms: 0, totalMs: 1 } });
-  expect(host.textContent).toContain('Ready, still reading links'); expect(host.textContent).toContain('Reused saved layout');
+  expect(host.textContent).toContain('Ready, source checks incomplete'); expect(host.textContent).toContain('Reused saved layout');
   expect(host.textContent).not.toContain('Edges drawn');
 });
 

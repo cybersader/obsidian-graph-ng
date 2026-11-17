@@ -172,6 +172,23 @@ function fakeTransport() {
   const emit = (message: object) => transport.onmessage?.({ data: message } as MessageEvent);
   return { transport, sent, emit };
 }
+test('Stop survives a queued recompute and targets only its acknowledged request', async () => {
+  const fake = fakeTransport(), p = new WorkerPipeline(fake.transport, () => 10000);
+  try {
+    const search = p.request(7, { kind: 'search', query: 'a', visible: new Uint8Array() });
+    const next = p.request(7, { kind: 'recompute', options: layout });
+    p.stopLayout(8); p.stopLayout(7);
+    expect(fake.sent.map(m => m.kind)).toEqual(['search']);
+    fake.emit({ id: 1, revision: 7, result: [] }); await search;
+    expect(fake.sent.map(m => m.kind)).toEqual(['search', 'recompute']);
+    fake.emit({ kind: 'started', id: 2, revision: 7 });
+    expect(fake.sent.at(-1)).toEqual({ kind: 'stop-layout', id: 2 });
+    fake.emit({ id: 2, revision: 7, result: 'stopped' }); expect(await next).toBe('stopped');
+    const fresh = p.request(7, { kind: 'layout' }); fake.emit({ kind: 'started', id: 3, revision: 7 });
+    expect(fake.sent.at(-1).kind).toBe('layout');
+    fake.emit({ id: 3, revision: 7, result: 'fresh' }); await fresh;
+  } finally { p.dispose(); }
+});
 test('queued RPCs consume no processing timeout and begin their own budget on acknowledgement', async () => {
   const fake = fakeTransport(), p = new WorkerPipeline(fake.transport, () => 200);
   try {
@@ -442,5 +459,45 @@ test('unsettled generations never encode; hydration continues from prior coordin
     await p.request(2, { kind: 'explore', view: { ...(await import('../src/core/explore')).emptyView(), query: 'b' }, facetValues: 10 });
     expect((await p.request<DetailResult>(2, { kind: 'detail' })).projection.source).toEqual(detail.projection.source);
     expect((await p.request<LayoutResult>(2, { kind: 'recompute', options: c.layout, initial: verified.positions.slice() })).positions).toEqual(twice.positions);
+  } finally { p.dispose(); }
+});
+
+test('Lines to Notes reuses declared input while changed keys and producers invalidate it', async () => {
+  const p = pipeline(), d = { ...declaration, identity: [{ key: 'uid' }], edges: [{ name: 'relation', kind: 'reified' as const, sourceProperty: 'source', targetProperty: 'target' }] };
+  try {
+    const first: any = await p.request(1, { kind: 'configure', config: { ...config, declaration: d } });
+    await p.request(1, { kind: 'rows', reset: true, columns: packRows([{ path: 'a.md', properties: { uid: 'a' } }, { path: 'b.md', properties: { uid: 'b' } }, { path: 'r.md', properties: { source: 'a', target: 'b' } }], d) });
+    expect((await p.request<ProjectResult>(1, { kind: 'project' })).nodes).toBe(2);
+    const notes = { ...d, display: { reifiedAsNodes: true } };
+    const next: any = await p.request(2, { kind: 'configure', config: { ...config, declaration: notes } });
+    expect(next.ingestHash).toBe(first.ingestHash); expect(next.declarationHash).not.toBe(first.declarationHash);
+    expect((await p.request<ProjectResult>(2, { kind: 'project' })).nodes).toBe(3);
+    for (const changed of [{ ...notes, columns: ['another'] }, { ...notes, edges: [...notes.edges, { name: 'native', kind: 'producer' as const, producer: 'native@1', type: 'link' }] }]) {
+      expect((await p.request<any>(3, { kind: 'configure', config: { ...config, declaration: changed } })).ingestHash).not.toBe(first.ingestHash);
+    }
+  } finally { p.dispose(); }
+});
+
+test('stop layout keeps an unsettled result and refinement resumes its adopted positions', async () => {
+  const p = pipeline(), options = { ...layout, iterations: 1000, batchIterations: 1, convergenceThreshold: 0 };
+  const rows = Array.from({ length: 200 }, (_, i) => ({ path: `${i}.md`, properties: {}, links: { 'fixture@1': [`${(i + 1) % 200}.md`] } }));
+  try {
+    await p.request(1, { kind: 'configure', config: { ...config, layout: options } });
+    await p.request(1, { kind: 'rows', reset: true, columns: packRows(rows, declaration) }); await p.request(1, { kind: 'project' });
+    let frames = 0;
+    p.onPositions = e => { frames++; p.stopLayout(e.revision); p.recycle(e.positions.buffer as ArrayBuffer); };
+    const stopped = await p.request<LayoutResult>(1, { kind: 'layout' });
+    expect(frames).toBeGreaterThan(0); expect(frames).toBeLessThan(999); expect(stopped.settled).toBe(false); expect(stopped.positions.every(Number.isFinite)).toBe(true);
+    expect(await p.request(1, { kind: 'encode' }).catch(String)).toContain('not settled');
+    p.onPositions = e => p.recycle(e.positions.buffer as ArrayBuffer);
+    const one = { ...options, iterations: 1 };
+    const resumed = await p.request<LayoutResult>(1, { kind: 'recompute', options: one });
+    const explicit = await p.request<LayoutResult>(1, { kind: 'recompute', options: one, initial: stopped.positions.slice() });
+    expect(resumed.positions).toEqual(explicit.positions); expect(resumed.positions).not.toEqual(stopped.positions);
+    await p.request(1, { kind: 'adoptLayout' });
+    const again = await p.request<LayoutResult>(1, { kind: 'recompute', options: one });
+    const expected = await p.request<LayoutResult>(1, { kind: 'recompute', options: one, initial: resumed.positions.slice() });
+    expect(again.positions).toEqual(expected.positions);
+    expect(await p.request(1, { kind: 'encode' }).catch(String)).toContain('not settled');
   } finally { p.dispose(); }
 });

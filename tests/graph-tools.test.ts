@@ -306,7 +306,7 @@ test('UX graph status uses structured phase, coverage and failures rather than E
   const view: any = Object.create(GraphView.prototype);
   Object.assign(view, { contentEl: { dataset: { state: 'building' } }, status: new ControlElement(), statusSummary: new ControlElement(), plugin: { settings: {} }, provisional: true, gpu: { available: true } });
   view.statusText = 'partial, provisional, pending'; expect(view.statusSummary.textContent).toBe('partial, provisional, pending');
-  view.contentEl.dataset.state = 'ready'; view.statusText = '0 unresolved'; expect(view.statusSummary.textContent).toBe('Ready, still reading properties');
+  view.contentEl.dataset.state = 'ready'; view.statusText = '0 unresolved'; expect(view.statusSummary.textContent).toBe('Ready, source checks incomplete');
   view.provisional = false; view.statusText = 'error is a note name, not a health signal'; expect(view.statusSummary.hidden).toBe(true);
   view.report = { nodes: 4, edges: 2, indexed: 4, listed: 4, linksPending: false, provisional: false, unresolved: 3, duplicates: 0 }; view.statusText = 'details'; expect(view.statusSummary.textContent).toBe('4 notes2 edges'); expect(view.statusSummary.hidden).toBe(false); view.report = undefined;
   view.contentEl.dataset.state = 'error'; view.statusText = 'Projection refresh failed: synthetic missing file'; expect(view.statusSummary.textContent).toContain('synthetic missing file'); expect(view.statusSummary.textContent).not.toContain('Retry');

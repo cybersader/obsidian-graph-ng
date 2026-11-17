@@ -264,6 +264,12 @@ export class GraphView extends ItemView {
   private readProgress?: { indexed: number; listed: number };
   private buildProgress = new BuildProgress();
   private layoutWorking = false;
+  private layoutStop?: HTMLButtonElement;
+  private layoutControl(active: boolean) {
+    const button = this.layoutStop ??= iconButton(this.statusSummary, 'Stop layout', 'square', 'clickable-icon graph-ng-layout-stop');
+    button.style.visibility = active ? 'visible' : 'hidden'; button.disabled = !active;
+    button.onclick = () => { this.plugin.pipeline.stopLayout(this.activeRevision); button.disabled = true; };
+  }
   private loading() { return this.layoutWorking || this.contentEl.dataset.state === 'building' ? { stage: this.statusMessage, ...this.readProgress } : undefined; }
   private progressAt = 0;
   private progressText(text: string) { const now = performance.now(); if (now - (this.progressAt ?? 0) >= 100) { this.progressAt = now; this.statusText = text; } }
@@ -529,8 +535,10 @@ export class GraphView extends ItemView {
         if (this.gpu.reason === 'Not probed') this.gpu = gpuStatus();
         const bits = this.detailVisible()!, renderRevision = ++this.renderRevision;
         if (!this.admitDetail(bits)) throw new Error(this.detailFallback);
+        const previous = this.renderer instanceof DetailRenderer ? this.renderer : undefined;
         this.renderer?.dispose(); this.stage.empty(); this.contentEl.dataset.mode = 'nodes-building';
         const renderer = await DetailRenderer.create(this.stage, this.projection!, positions, bits, settings, () => {}, () => {}, this.colors!, () => active() && renderRevision === this.renderRevision, !this.gpu.available, () => {}, { loading: true, typeHidden: this.renderView().typeHidden });
+        if (previous) renderer.adoptCamera(previous);
         this.renderer = renderer; return renderer;
       }, recycle, () => current() && this.presentation === 'nodes', error => {
         this.detailFallback ||= `Layout preview unavailable: ${String(error)}. Showing Groups.`;
@@ -539,14 +547,16 @@ export class GraphView extends ItemView {
       this.plugin.pipeline.onPositions = event => {
         if (event.revision === revision && current()) {
           report.progress = { iteration: event.iteration, total: event.total }; this.progressText(this.buildProgress.text(2, event.iteration / Math.max(1, event.total)));
-          // Two progressed batches, never the iteration-zero random square. A fixed-frame preview has no labels or input.
+          // Two progressed batches, never the seed. Labels and picking wait; camera input stays live.
           if (event.iteration >= 2 * settings.streamEveryIterations) { preview!.push(event.positions); return; }
         }
         recycle(event.positions);
       };
       let layout: LayoutResult;
+      this.layoutControl(true);
       try { layout = await this.plugin.pipeline.request<LayoutResult>(revision, { kind: 'layout' }); }
       catch (error) { if (String(error).includes('Saved identities')) { await this.plugin.store.quarantine(result.meta); } throw error; }
+      finally { this.layoutControl(false); }
       if (!current()) return;
       await preview.finish(true);
       if (!current()) return;
@@ -795,6 +805,7 @@ export class GraphView extends ItemView {
           if (event.iteration > 0 && finish) { try { old!.streamPositions(event.positions); } catch (e) { streamError = e; } }
           else this.plugin.pipeline.recycle(event.positions.buffer as ArrayBuffer);
         };
+        this.layoutControl(true);
         const result = await this.plugin.pipeline.request<LayoutResult>(revision, { kind: 'recompute', options: next.layout, initial: this.positions!.slice() });
         this.plugin.pipeline.onPositions = previousStream;
         requireLayout(current); if (streamError) throw streamError;
@@ -815,7 +826,7 @@ export class GraphView extends ItemView {
           }
         }
       } finally {
-        this.plugin.pipeline.onPositions = previousStream; token?.discard();
+        this.layoutControl(false); this.plugin.pipeline.onPositions = previousStream; token?.discard();
         try { finish?.(committed); }
         finally { if (working) { this.layoutWorking = false; this.statusText = this.provisional ? pendingText(this.report) : this.layoutSettled ? '' : 'Layout not settled'; } }
       }

@@ -76,11 +76,32 @@ async function fixture(renderView: any = {}) {
   const view: any = new GraphView(null, plugin), stage = new Element(), p = projection(), visible = new Uint8Array([1, 1, 1]), positions = new Float32Array([0, 0, 2, 2, 100, 100]);
   const renderer = await Renderer.create(stage, p, positions, visible, plugin.settings, () => {}, () => {}, new Uint32Array(3), () => true, true, () => {}, renderView);
   renderers.push(renderer);
-  Object.assign(view, { activeRevision: 7, detailGeneration: 7, projection: p, positions, visible, colors: new Uint32Array(3), contentEl: { dataset: { mode: 'nodes' } }, stage, detailRenderer: renderer, renderer });
+  Object.assign(view, { [compiled('statusSummary')]: new ControlElement(), activeRevision: 7, detailGeneration: 7, projection: p, positions, visible, colors: new Uint32Array(3), contentEl: { dataset: { mode: 'nodes' } }, stage, detailRenderer: renderer, renderer });
   Object.defineProperty(view, 'statusText', { configurable: true, get() { return this.statusMessage ?? ''; }, set(text: string) { this.statusMessage = text; } });
   renderer.camera = { x: .25, y: .4, ratio: 2 }; renderer.selected = 2;
   return { plugin, view, stage, renderer, writes, next, positions, requests: () => requests };
 }
+test('loading preview attaches pan and zoom while suppressing picking and retains the user camera', async () => {
+  const f = await fixture({ loading: true }), r = f.renderer;
+  expect(r.canvas.listeners.has('pointerdown')).toBe(true); expect(r.canvas.listeners.has('wheel')).toBe(true);
+  const before = { ...r.camera }, input = r.controls();
+  input[compiled('panBy')](30, 10); input[compiled('zoomAt')](1.2, 0, 0);
+  expect(r.camera).not.toEqual(before); const moved = { ...r.camera };
+  expect(input.pick(0, 0)).toBe(-1); expect(input[compiled('pickHub')](0, 0)).toBe(-1); expect(input[compiled('pickEdge')](0, 0)).toBe(-1);
+  r[compiled('streamPositions')](f.next); expect(r.camera).toEqual(moved); expect(r.overlay.hidden).toBe(true);
+});
+
+test('Stop layout remains beside status, sends one active revision and hides without removing its slot', async () => {
+  const f = await fixture(), summary = f.view[compiled('statusSummary')]; let stopped = -1;
+  const label = summary.createSpan({ text: 'Laying out notes 60%' });
+  f.plugin.pipeline.stopLayout = (revision: number) => { stopped = revision; };
+  f.view[compiled('layoutControl')](true); const button = control(summary, 'Stop layout');
+  expect(button.style.visibility).toBe('visible'); expect(button.disabled).toBe(false);
+  button.click(); expect(stopped).toBe(7); expect(button.disabled).toBe(true);
+  f.view[compiled('layoutControl')](false); expect(button.style.visibility).toBe('hidden'); expect(summary.children).toEqual([label, button]);
+  f.view[compiled('layoutControl')](true); expect(control(summary, 'Stop layout')).toBe(button); expect(button.disabled).toBe(false);
+});
+
 test('compiled Canvas computes base radius once and preserves radii across zoom and preview', async () => {
   const { renderer: r } = await fixture(), baseKey = compiled('baseNodeRadius'), original = r[baseKey], oldArc = ctx.arc;
   let calls = 0; const arcs: number[][] = [];
@@ -124,7 +145,7 @@ test('Apply rejects seed frames, streams on the same renderer and keeps pan/zoom
   expect(input.pick(0, 0)).toBe(-1); expect(f.view.statusMessage).toContain('Laying out notes');
   release.resolve(); await work;
   expect(f.renderer.positions).toBe(f.next); expect(f.renderer.camera).toEqual(camera); expect(f.renderer.overlay.hidden).toBe(false);
-  expect(f.view.layoutWorking).toBe(false); expect(f.view.statusMessage).toContain('691 notes'); expect(f.view.statusMessage).toContain('Ready');
+  expect(f.view.layoutWorking).toBe(false); expect(f.view.statusMessage).toBe('691 notes with unverified properties'); expect(f.view[compiled('statusSummary')].querySelector('.graph-ng-working')).toBeFalsy();
 });
 test('failed streamed Apply restores last-good geometry without undoing pan/zoom', async () => {
   const f = await fixture(), display = f.renderer.display;

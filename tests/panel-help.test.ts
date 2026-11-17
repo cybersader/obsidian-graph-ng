@@ -18,7 +18,7 @@ test('one weighted build never regresses on repeated stages, revised totals or c
   const p = new BuildProgress(); p.start(); const seen: number[] = [];
   for (const [step, fraction] of [[0, 0], [0, .8], [0, .2], [1, 0], [2, .4], [0, 0], [2, .1], [3, 0], [4, 0]]) { p.text(step!, fraction); seen.push(p.percent); }
   expect(seen).toEqual([0, 24, 24, 30, 68, 68, 68, 95, 100]);
-  p.start(); expect(p.text(0)).toBe('Reading notes 0%');
+  p.start(); expect(p.text(0)).toBe('Reading notes');
   expect(p.text(2, .4)).toBe('Laying out notes 68%');
 });
 test('summary retains the same working glyph span through number and step updates', () => {
@@ -28,7 +28,7 @@ test('summary retains the same working glyph span through number and step update
   stage = 'Reading notes 20%'; f.panel.updateSummary(); expect(f.panel.counts.querySelector('.graph-ng-working')).toBe(span);
   expect(f.panel.counts.querySelector('.graph-ng-status-previous')).toBeUndefined();
   stage = 'Laying out notes 64%'; f.panel.updateSummary(); expect(f.panel.counts.querySelector('.graph-ng-working')).toBe(span);
-  expect(f.panel.counts.querySelector('.graph-ng-status-previous')).toBeDefined(); f.panel.dispose();
+  expect(f.panel.counts.querySelector('.graph-ng-status-previous')).toBeUndefined(); f.panel.dispose();
 });
 test('Filters relationships exposes the existing Lines and Notes save/rebuild action', async () => {
   const f = fixture(); const calls: boolean[] = [];
@@ -255,4 +255,12 @@ test('appearance choices keep their original save and label-refresh paths', () =
     }
   }
   expect(updates).toHaveLength(9); f.panel.dispose();
+});
+
+test('unmeasured phases shimmer without invented percentages and measured phases never go backwards', async () => {
+  const { BuildProgress } = await import('../src/working'); const p = new BuildProgress();
+  for (const fraction of [0, .03, 0, .7, .2]) expect(p.text(0, fraction)).toBe('Reading notes');
+  expect(p.text(1)).toBe('Building');
+  const seen = [[2, 0], [2, .3], [2, .1], [3, 0], [4, 0]].map(([phase, fraction]) => Number(p.text(phase!, fraction).match(/(\d+)%/)![1]));
+  expect(seen).toEqual([50, 63, 63, 95, 100]);
 });

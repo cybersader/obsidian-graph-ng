@@ -525,7 +525,7 @@ export class DetailRenderer {
     this.packState(); this.setView(visible, view, false); if (!view.loading) this.fitAll(0);
     this.overlay.hidden = !!view.loading;
     this.canvas.addEventListener('webglcontextlost', this.contextLost); this.canvas.addEventListener('webglcontextrestored', this.contextRestored);
-    if (!view.loading) input.attach(this.container);
+    this.layoutActive = !!view.loading; input.attach(this.container);
     this.media.addEventListener('change', this.refreshTheme);
     this.motionMedia.addEventListener('change', this.motionChanged);
     this.observer = new ResizeObserver(() => { const changed = this.resize(); this.syncTools(); if (changed && this.ready) void this.prepareLabels(() => !this.disposed).catch(() => {}); }); this.observer.observe(container);

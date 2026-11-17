@@ -74,12 +74,12 @@ function groupSummary(p: GroupProjection): GroupProjection {
   // Carrier/contribution objects remain worker-owned and are read a page at a time.
   return { ...p, groupEdges: p.groupEdges.map(e => ({ ...e, carriers: { kind: e.carriers.kind, ids: [] } })) };
 }
-async function solve(input: LayoutInput, options: PipelineConfig['layout'], revision: number) {
+async function solve(input: LayoutInput, options: PipelineConfig['layout'], revision: number, stopped: () => boolean) {
   let settled = false;
   const arrange = isolateRing(input);
   const positions = await runLayoutStream(input, options, config.streamEveryIterations, (p, iteration, total) => {
     arrange(p); self.postMessage({ kind: 'positions', revision, positions: p, iteration, total }, { transfer: [p.buffer] });
-  }, yieldTask, takeBuffer, value => { settled = value; });
+  }, yieldTask, takeBuffer, value => { settled = value; }, stopped);
   arrange(positions);
   return { positions, settled };
 }
@@ -99,7 +99,7 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       if (saved && !compatible(saved.meta)) saved = undefined;
       if (interim && !matches(interim.meta)) interim = undefined;
       // held: this worker already has compatible coordinates, so the view can skip the disk read.
-      return { declarationHash, layoutHash, held: Boolean(interim || saved && matches(saved.meta)), ingestHash: await digest({ declarationHash, keys: declaredKeys(config.declaration) }) };
+      return { declarationHash, layoutHash, held: Boolean(interim || saved && matches(saved.meta)), ingestHash: await digest({ source: config.source, keys: declaredKeys(config.declaration), producers: config.declaration.edges.flatMap(e => e.kind === 'producer' ? [e.producer] : []).sort() }) };
     }
     case 'rows':
       if (r.reset) rows.clear();
@@ -149,7 +149,7 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       if (revision !== projectionRevision || !positions) throw new Error('Projection generation changed');
       validateLayout(r.options);
       const start = performance.now();
-      const next = await solve({ count: projection.paths.length, source: projection.source, target: projection.target, offsets: projection.offsets, targets: projection.targets, up: projection.up, seed: Number.parseInt(meta.key.slice(0, 8), 16), initial: r.initial ?? positions.slice() }, r.options, revision);
+      const next = await solve({ count: projection.paths.length, source: projection.source, target: projection.target, offsets: projection.offsets, targets: projection.targets, up: projection.up, seed: Number.parseInt(meta.key.slice(0, 8), 16), initial: r.initial ?? positions.slice() }, r.options, revision, control.cancelled);
       preparedLayout = { ...next, options: r.options, revision };
       return { ...next, positions: next.positions.slice(), milliseconds: performance.now() - start, cached: false };
     }
@@ -200,7 +200,7 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
         // every note, rather than incorrectly treating all existing notes as pinned.
         if (prior === interim || config.layout.force.familyPull && projection.up) input.movable = undefined;
         if (input.movable && !input.movable.some(Boolean)) { positions = input.initial!; settled = fromSaved; reused = fromSaved ? 'all' : 'interim'; }
-        else { if (input.movable && input.initial) reused = fromSaved ? 'some' : 'interim-some'; const result = await solve(input, config.layout, revision); positions = result.positions; settled = result.settled; }
+        else { if (input.movable && input.initial) reused = fromSaved ? 'some' : 'interim-some'; const result = await solve(input, config.layout, revision, control.cancelled); positions = result.positions; settled = result.settled; }
       }
       const milliseconds = performance.now() - start;
       // An exact hit already holds this generation; skip re-contracting its group summary.
@@ -256,8 +256,10 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
 let queue = Promise.resolve();
 const evaluations = new Map<string, number>();
 const cancelled = new Set<number>();
+let layoutRequest = -1;
 self.onmessage = (event: MessageEvent<PipelineRequest & { id: number; revision: number; input?: LayoutInput; options?: any }>) => {
   const recycle = event.data as unknown as { kind: string; buffer?: ArrayBuffer; id: number };
+  if (recycle.kind === 'stop-layout') { if (recycle.id === layoutRequest) cancelled.add(recycle.id); return; }
   if (recycle.kind === 'cancel-evaluation') { if ([...evaluations.values()].includes(recycle.id)) cancelled.add(recycle.id); return; }
   if (recycle.kind === 'recycle') { if (recycle.buffer && recycled.length < 2) recycled.push(recycle.buffer); return; }
   // Backwards-compatible deterministic layout protocol used by existing harness consumers.
@@ -265,9 +267,10 @@ self.onmessage = (event: MessageEvent<PipelineRequest & { id: number; revision: 
   const r = event.data;
   if (evaluation(r)) { const old = evaluations.get(r.kind); if (old !== undefined) cancelled.add(old); evaluations.set(r.kind, r.id); }
   queue = queue.then(async () => {
+    if (r.kind === 'layout' || r.kind === 'recompute') layoutRequest = r.id;
     self.postMessage({ kind: 'started', id: r.id, revision: r.revision });
     try { const result = await handle(r, r.revision, { cancelled: () => cancelled.has(r.id), budgetMs: evaluation(r) ? r.budgetMs ?? 120000 : 120000 }); self.postMessage({ id: r.id, revision: r.revision, result }, { transfer: transferables(result) }); }
     catch (error) { self.postMessage({ id: r.id, revision: r.revision, error: String(error) }); }
-    finally { cancelled.delete(r.id); if (evaluations.get(r.kind) === r.id) evaluations.delete(r.kind); }
+    finally { if (layoutRequest === r.id) layoutRequest = -1; cancelled.delete(r.id); if (evaluations.get(r.kind) === r.id) evaluations.delete(r.kind); }
   });
 };

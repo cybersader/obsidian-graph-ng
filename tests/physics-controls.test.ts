@@ -99,7 +99,7 @@ test('invalid and disposed panel apply neither saves nor runs; rejected host sho
 });
 function runtime() {
   const v: any = Object.create(GraphView.prototype), settings = defaults('links'); let saves = 0, calls = 0;
-  Object.assign(v, { activeRevision: 7, detailGeneration: 7, renderRevision: 2, projection: {}, positions: new Float32Array([1, 2]), closed: false,
+  Object.assign(v, { statusSummary: new ControlElement(), activeRevision: 7, detailGeneration: 7, renderRevision: 2, projection: {}, positions: new Float32Array([1, 2]), closed: false,
     plugin: Object.assign(new GraphPlugin(null as any, {} as any), { settings, saveData: async () => { saves++; }, pipeline: { request: async (revision: number, request: any) => { calls++; expect(revision).toBe(7); expect(request.kind).toBe('recompute'); return { positions: new Float32Array([3, 4]) }; } } }) });
   Object.defineProperty(v, 'statusText', { configurable: true, get() { return this.statusMessage ?? ''; }, set(text: string) { this.statusMessage = text; } });
   return { v, saves: () => saves, calls: () => calls };
