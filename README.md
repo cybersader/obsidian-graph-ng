@@ -72,7 +72,7 @@ Each temporary chip has an X with a scoped action. **Selected note** clears sele
 
 The active section is marked **Current** and opens when Appearance opens or the stable state changes. State updates do not remount controls, move focus or scroll while editing; manually opened sections remain open. The panel retains one scroll area and visible counts/status.
 
-Synthetic browser-native evidence is in `.workspace/evidence/named-states.json` and the accompanying `test-screenshots/named-states*.png` light/dark captures. The Obsidian 1.12.7 harness on a Linux desktop-class host passes all 24 planned steps and checks chip transitions and scoped exits, overlapping rings/isolation, path dismissal, Appearance navigation and retained editor focus. The installed 1.13.7 harness did not enable the plugin and is not accepted by this evidence. No real vault, mobile, native Electron or hardware-performance acceptance is claimed; independent review remains separate.
+Synthetic browser-native evidence is in `.workspace/evidence/named-states.json` and the accompanying `test-screenshots/named-states*.png` light/dark captures. The Obsidian 1.12.7 harness on a Linux desktop-class host passes all 26 planned steps and checks chip transitions and scoped exits, overlapping rings/isolation, path dismissal, Appearance navigation and retained editor focus. The installed 1.13.7 harness did not enable the plugin and is not accepted by this evidence. No real vault, mobile, native Electron or hardware-performance acceptance is claimed; independent review remains separate.
 
 ### Panel help and disclosures (unreleased)
 

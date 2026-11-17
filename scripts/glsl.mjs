@@ -8,7 +8,7 @@ export const shaderNames = Object.fromEntries([
   'note', 'point', 'state', 'cell', 'clip', 'core', 'delta', 'quiet', 'shownTier',
   'normal', 'wide', 'lift', 'origin', 'segment', 'hover', 'base', 'seed', 'hot',
   'inside', 'lens', 'side', 'shade', 'share', 'halo', 'rim', 'ink', 'len', 'box',
-  'owner', 'through',
+  'retained', 'owner', 'through', 'pinned',
 ].map((name, i) => [name, i < 26 ? String.fromCharCode(65 + i) : 'A' + String.fromCharCode(65 + i - 26)]));
 const token = /\b[A-Za-z_]\w*\b/g;
 const uncomment = body => body.split('\n').map(line => line.replace(/\/\/.*$/, '').trim()).filter(Boolean);

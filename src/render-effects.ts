@@ -155,7 +155,7 @@ export function edgeRanks(source: Uint32Array, target: Uint32Array, offsets: Uin
   return ranks;
 }
 /** Same packed rank and whole-relationship admission as the vertex shader. */
-export const lineAdmitted = (rank: number, share: number, length: number, fade: number) => (rank & 16777215) < share * (rank & 16777216 ? 1 : lengthFade(length, fade)) * 16777216;
+export const lineAdmitted = (rank: number, share: number, length: number, fade: number) => (rank & 16777215) + 1 <= share * (rank & 16777216 ? 1 : lengthFade(length, fade)) * 16777216;
 /** Historical union-alpha reference for the earlier haze receipts, not used by either renderer. */
 export const unionAlpha = (v: Pick<Visuals, 'zoomAdapt' | 'edgeOpacity'>, layers: number) => v.zoomAdapt && layers > 0 ? Math.min(1, (1 - Math.exp(-INK * v.edgeOpacity)) / (1 - Math.exp(-layers))) : 1;
 /** Screen length (CSS px) above which context lines fade as fadeLength / length. Grows without
@@ -231,8 +231,12 @@ export function carrierVisibility(zoom: number, near: number, far: number, enabl
 /** Edge-note opacity: configured opacity, thinned by visible edge-note density and raised
  * when zoomed in (like edges), times the level-of-detail visibility. */
 export function carrierAlpha(v: Visuals, visibleCarriers: number, zoom: number): number {
+  return carrierVisibility(zoom, v.carrierLodNear, v.carrierLodFar, v.carrierLod) * carrierCoverage(v, visibleCarriers, zoom);
+}
+/** Coverage without historical zoom folding; legacy helpers remain available for migration tests. */
+export function carrierCoverage(v: Visuals, visibleCarriers: number, zoom: number): number {
   const density = thinning(v.carrierDensityReference, visibleCarriers), boost = Math.min(3, Math.max(1, 1 / Math.sqrt(Math.max(zoom, 1e-6))));
-  return carrierVisibility(zoom, v.carrierLodNear, v.carrierLodFar, v.carrierLod) * Math.min(1, Math.max(.1, v.carrierOpacity * density * boost));
+  return Math.min(1, Math.max(.1, v.carrierOpacity * density * boost));
 }
 /** Hover only: 150 ms ease-out, two gentle one-second breaths, then a static ring.
  * Leave over 120 ms. Reduced/off is instant. Returns [scale, ring, another frame]. */
