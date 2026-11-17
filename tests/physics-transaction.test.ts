@@ -482,7 +482,7 @@ test('Edges mode in production Canvas: Off draws no lines, Focus only draws none
 test('UX production WebGL scheduling omits edges at zero even with hover/focus, preserves context', async () => {
   const f = await fixture(), r = f.renderer, key = (name: string) => typeof mangle[name] === 'string' ? mangle[name] : name;
   let current = -1; const draws: number[] = [], alphas: number[] = [];
-  const gl: any = new Proxy({ useProgram: (handle: number) => { current = handle; }, uniform1f: (name: string, value: number) => { if (name === 'edgeAlpha') alphas.push(value); }, drawArraysInstanced: () => draws.push(current) }, { get: (o: any, k: string) => k in o ? o[k] : k.toUpperCase() === k ? 1 : () => {} });
+  const gl: any = new Proxy({ useProgram: (handle: number) => { current = handle; }, uniform1f: (name: string, value: number) => { if (name === 'edgeAlpha') alphas.push(value); }, drawArraysInstanced: () => draws.push(current), drawElementsInstanced: () => draws.push(current) }, { get: (o: any, k: string) => k in o ? o[k] : k.toUpperCase() === k ? 1 : () => {} });
   r.gl = gl; r[key('programs')] = [0, 1, 2, 3].map(handle => ({ handle, uniforms: new Proxy({}, { get: (_o, key) => key }) })); r.atlas = undefined; r[key('hoveredEdge')] = 0; r[key('focusLevel')] = 1; r[key('focusTarget')] = 1;
   for (const opacity of [0, .00001]) { draws.length = alphas.length = 0; f.plugin.settings.visuals.edgeOpacity = opacity; r[key('draw')](); expect(draws.includes(0)).toBe(opacity > 0); expect(r.gl).toBe(gl); expect(alphas.every(a => a >= 0 && a <= opacity * 3.75)).toBe(true); }
 });
@@ -1805,7 +1805,7 @@ test('WebGL frames reuse edge ranks without endpoint scans or another edge pass 
   const d = driver(r), calls: number[] = []; let program = -1;
   r[k('programs')] = [0, 1, 2, 3].map(handle => ({ handle, uniforms: {} }));
   d.gl.useProgram = (handle: number) => { program = handle; };
-  d.gl.drawArraysInstanced = () => calls.push(program);
+  d.gl.drawArraysInstanced = d.gl.drawElementsInstanced = () => calls.push(program);
   r[k('draw')](); const ranks = r[compiled('lineRanks')], ink = r[k('ink')], columns = [r.projection.source, r.projection.target, r.projection.offsets];
   const guard = (column: Uint32Array) => new Proxy(column, { get(target, key) { if (typeof key === 'string' && /^\d+$/.test(key)) throw new Error('per-frame edge/degree scan'); return Reflect.get(target, key, target); } });
   [r.projection.source, r.projection.target, r.projection.offsets] = columns.map(guard);
@@ -1827,7 +1827,7 @@ test('density production passes are bounded, reuse target, restore blend/viewpor
   d.gl.checkFramebufferStatus = () => d.gl.FRAMEBUFFER_COMPLETE;
   d.gl.useProgram = (p: number) => { program = p; };
   d.gl.uniform1i = (u: string, x: number) => { if (u === 'layer') layer = x; };
-  d.gl.drawArraysInstanced = () => events.push(['draw', program, layer]);
+  d.gl.drawArraysInstanced = d.gl.drawElementsInstanced = () => events.push(['draw', program, layer]);
   d.gl.drawArrays = () => events.push(['quad', program]);
   d.gl.blendFunc = (...args: number[]) => events.push(['blend', ...args]);
   d.gl.viewport = (...args: number[]) => events.push(['viewport', ...args]);
@@ -2165,6 +2165,11 @@ test('selected WebGL dot is one final instance with its own size and restored ve
   d.gl.vertexAttrib1f = (index: number, value: number) => events.push(['size', index, value]);
   d.gl.enableVertexAttribArray = (index: number) => events.push(['enable', index]);
   d.gl.drawArraysInstanced = (_: number, __: number, ___: number, count: number) => events.push(['draw', program, layer, count]);
+  d.gl.drawElementsInstanced = (_: number, indices: number, type: number, offset: number, count: number) => {
+    expect(type).toBe(d.gl.UNSIGNED_SHORT); expect(offset).toBe(0);
+    if (program === 1) expect(indices).toBe(6);
+    events.push(['draw', program, layer, count]);
+  };
   r[k('draw')]();
   const last = events.findIndex(e => e[0] === 'disable');
   expect(events.slice(last, last + 6)).toEqual([['disable', 0], ['size', 0, r[k('sizes')][2]], ['disable', 1], ['draw', 1, 2, 1], ['enable', 0], ['enable', 1]]);

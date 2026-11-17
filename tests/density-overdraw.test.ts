@@ -108,7 +108,11 @@ test('density correction leaves node radius and edge geometry/direction/focus eq
     .replace('hot))', 'gl_InstanceID == edgeHovered))').replace('!hot)', 'gl_InstanceID != edgeHovered)')
     .replace(' || (layer != 2 && id == selected)', '')
     .replace('(layer != 2 && note != (layer == 0))', 'note != (layer == 0)')
-    .replace(/\n if \(id == selected\).*?\n/, '\n');
+    .replace(/\n if \(id == selected\).*?\n/, '\n')
+    // Indexed triangles preserve the old corner/parameter sequence; renderer tests
+    // separately expand every index through the validated segment ceiling.
+    .replace('corners[int[4](0,1,2,5)[gl_VertexID]]', 'corners[gl_VertexID]')
+    .replace('int segment = gl_VertexID / 2; vec2 c = vec2(-1., (gl_VertexID % 2) == 0 ? -1. : 1.);', 'int segment = gl_VertexID / 6; vec2 c = corners[gl_VertexID % 6];');
   expect(focusFree(shader('nodeVertex'))).toBe(focusFree(before.nodeVertex)); expect(shader('nodeVertex')).not.toBe(before.nodeVertex);
   const geometry = (code: string) => focusFree(code.slice(0, code.lastIndexOf('tint = vec4(rgb * alpha,'))).replace(/vec4 sa = state\(s\), sb = state\(t\);/g, '').split('\n').map(s => s.trim()).filter(Boolean).join('\n'); expect(geometry(shader('edgeVertex'))).toBe(geometry(before.edge));
   const s = defaults('links'); s.nodeSizing = { policy: 'predictable', compensation: 1, floor: .3 };

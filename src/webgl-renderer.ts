@@ -134,7 +134,7 @@ void main() {
  radius = max(radius, 1. / pixelRatio);
  if (note) radius = max(radius, 2.);
  ink = color(3).rgb;
- local = corners[gl_VertexID] * spread;
+ local = corners[int[4](0,1,2,5)[gl_VertexID]] * spread;
  gl_Position = st.r < .5 || st.b > .5 || (layer != 2 && id == selected) || (layer != 2 && note != (layer == 0)) || k < .004 ? offscreen : clip(point(id) + local * radius);
  vec4 c = hot ? color(4) : nodeColor(id);
  tint = vec4(c.rgb, c.a * k * (hot ? 1. : mix(1., dim, focus * (1. - st.g))));
@@ -191,7 +191,8 @@ void main() {
  if (!retained && float((lineRank & 16777215u) + 1u) > inkShare * 16777216. && (tier == 0u || focus <= 0.) && !hot) { gl_Position = offscreen; return; }
  vec4 sa = state(s), sb = state(t);
  if (edgeAlpha <= 0. || typeOn == 0u || sa.r < .5 || sb.r < .5 || focusOnly > 0. && !pinned && tier == 0u) { gl_Position = offscreen; return; }
- int segment = gl_VertexID / 6; vec2 c = corners[gl_VertexID % 6];
+ // Adjacent triangles share both endpoints; retain the original u arithmetic.
+ int segment = gl_VertexID / 2; vec2 c = vec2(-1., (gl_VertexID % 2) == 0 ? -1. : 1.);
  float u = (float(segment) + (c.x + 1.) * .5) / float(segments);
  vec2 a = point(s), b = point(t), delta = b - a; float len = length(delta);
  // Ink budget: inkShare of the context lines, kept while their stable rank is under inkShare × the long-line fade
@@ -853,6 +854,16 @@ export class DetailRenderer {
     gl.bindVertexArray(this.vaos[1]!); this.integer(1, this.carrierGeometry.nodes);
     for (let i = 0; i < 2; i++) { const vao = gl.createVertexArray()!, b = gl.createBuffer()!; this.vaos.push(vao); this.discBuffers[i] = b; gl.bindVertexArray(vao); gl.bindBuffer(gl.ARRAY_BUFFER, b);
       for (let a = 0; a < 2; a++) this.floatAttribute(a, 4, 32, a * 16); }
+    // Append after the fixed-index instance buffers used by uploads. Element bindings
+    // belong to their VAOs; labels, discs and the fullscreen density quad stay unindexed.
+    // 32 segments is the validated settings ceiling (straight edges use the first six).
+    for (let v = 0; v < 2; v++) {
+      gl.bindVertexArray(this.vaos[v]!); const b = gl.createBuffer()!; this.buffers.push(b); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, b);
+      const indices: number[] = [];
+      if (v === 0) for (let s = 0; s < 32; s++) indices.push(2 * s, 2 * s + 2, 2 * s + 1, 2 * s + 1, 2 * s + 2, 2 * s + 3);
+      else indices.push(0, 1, 2, 2, 1, 3);
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(indices), gl.STATIC_DRAW);
+    }
     gl.bindVertexArray(null); this.uploadView();
     this.timings.upload = performance.now() - uploadStart;
     gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
@@ -1648,17 +1659,17 @@ export class DetailRenderer {
         if (density) {
           gl.bindFramebuffer(gl.FRAMEBUFFER, this.densityBuffer); gl.viewport(0, 0, this.densitySize[0]!, this.densitySize[1]!);
           gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT); gl.blendFunc(gl.ONE, gl.ONE);
-          gl.uniform1i(u.layer!, 2); gl.drawArraysInstanced(gl.TRIANGLES, 0, 6 * policy.segments, this.projection.source.length);
+          gl.uniform1i(u.layer!, 2); gl.drawElementsInstanced(gl.TRIANGLES, 6 * policy.segments, gl.UNSIGNED_SHORT, 0, this.projection.source.length);
           gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, this.canvas.width, this.canvas.height); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
           const tone = this.programs[4]!; gl.useProgram(tone.handle); gl.uniform1i(tone.uniforms.atlas!, 6); gl.uniform3f(tone.uniforms.outline!, p[4]! / 255, p[5]! / 255, p[6]! / 255);
           gl.bindVertexArray(null); gl.drawArrays(gl.TRIANGLES, 0, 6);
           gl.useProgram(program.handle); gl.bindVertexArray(this.vaos[0]!); gl.uniform1i(u.layer!, 3);
         }
-        gl.drawArraysInstanced(gl.TRIANGLES, 0, 6 * policy.segments, this.projection.source.length);
+        gl.drawElementsInstanced(gl.TRIANGLES, 6 * policy.segments, gl.UNSIGNED_SHORT, 0, this.projection.source.length);
       }
       else if (i === 1) {
         if (layer === 2) { gl.disableVertexAttribArray(0); gl.vertexAttrib1f(0, this.sizes[this.selected]!); gl.disableVertexAttribArray(1); gl.vertexAttribI4ui(1, this.carrierGeometry.nodes[this.selected]!, 0, 0, 0); }
-        gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, layer === 2 ? 1 : this.visible.length);
+        gl.drawElementsInstanced(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0, layer === 2 ? 1 : this.visible.length);
         if (layer === 2) { gl.enableVertexAttribArray(0); gl.enableVertexAttribArray(1); }
       }
       else if (i === 2) gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, this.atlas!.levels[lod]!.length / 13);
