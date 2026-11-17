@@ -356,3 +356,76 @@ test('mismatched generation purge is deadline bounded and deletion failures are 
     await new FactCache(disk, directory).clear(); expect(disk.files.size).toBe(0);
   }
 });
+
+test('concurrent purges are independent across vault adapters and cache directories', async () => {
+  for (const sameAdapter of [false, true]) {
+    const a = new MemoryAdapter(), b = sameAdapter ? a : new MemoryAdapter();
+    const aDir = 'plugin/cache/startup-facts', bDir = sameAdapter ? 'other/cache/startup-facts' : aDir;
+    const A = new FactCache(a, aDir), B = new FactCache(b, bDir);
+    await A.save('a', [{ path: 'a.md', properties: { id: 'a' } }], () => true);
+    await B.save('b', [{ path: 'b.md', properties: { id: 'b' } }], () => true);
+    await Promise.all([A.clear(), B.clear()]);
+    expect(await a.exists(`${aDir}/0.bin`)).toBe(false); expect(await b.exists(`${bDir}/0.bin`)).toBe(false);
+    expect(a.files.size).toBe(0); expect(b.files.size).toBe(0);
+  }
+});
+
+test('uncancellable IO in one storage target does not block another target purge', async () => {
+  for (const sameAdapter of [false, true]) {
+    const a = new MemoryAdapter(), b = sameAdapter ? a : new MemoryAdapter();
+    const aDir = 'plugin/cache/startup-facts', bDir = sameAdapter ? 'other/cache/startup-facts' : aDir;
+    const A = new FactCache(a, aDir), B = new FactCache(b, bDir, async () => {}, 100);
+    await B.save('b', [{ path: 'b.md', properties: { id: 'plaintext' } }], () => true);
+    let started!: () => void, release!: () => void;
+    const waiting = new Promise<void>(r => started = r), held = new Promise<void>(r => release = r), exists = a.exists.bind(a);
+    a.exists = async path => { if (path.startsWith(aDir + '/')) { started(); await held; } return exists(path); };
+    const loading = A.load('a', () => true); await waiting;
+    try { await B.clear(); expect(b.files.size).toBe(0); }
+    finally { release(); await loading; }
+  }
+});
+
+test('value-aware chunks roundtrip moderate arrays that exceed one chunk value budget', async () => {
+  const disk = new MemoryAdapter(), directory = 'plugin/cache/startup-facts', store = new FactCache(disk, directory);
+  const rows = Array.from({ length: 256 }, (_, i) => ({ path: `synthetic-${i}.md`, properties: { id: String(i), values: Array.from({ length: 260 }, (_, j) => j) } }));
+  await store.save('key', rows, () => true);
+  const manifest = JSON.parse(await disk.read(`${directory}/manifest.json`)); expect(manifest.parts.length).toBe(2);
+  for (let i = 0; i < manifest.parts.length; i++) {
+    const batch = JSON.parse(new TextDecoder().decode(await disk.readBinary(`${directory}/${i}.bin`)));
+    expect(batch.length).toBeLessThanOrEqual(256); expect(manifest.parts[i].bytes).toBeLessThanOrEqual(1024 * 1024);
+    const pending: unknown[] = [batch]; let count = 0;
+    while (pending.length) { const value = pending.pop(); if (value && typeof value === 'object') { const children = Object.values(value); count += children.length; pending.push(...children); } }
+    expect(count).toBeLessThanOrEqual(65536);
+  }
+  expect([...(await store.load('key', () => true))!.values()]).toEqual(rows);
+});
+
+test('save and replay agree at exact child-value and depth boundaries', async () => {
+  const disk = new MemoryAdapter(), directory = 'plugin/cache/startup-facts', store = new FactCache(disk, directory);
+  const row = { path: 'boundary.md', properties: { id: 'boundary', values: Array(65531).fill(0) } };
+  await store.save('key', [row], () => true); expect((await store.load('key', () => true))!.get(row.path)).toEqual(row);
+  row.properties.values.push(0);
+  await expect(store.save('key', [row], () => true)).rejects.toThrow('over limit'); expect(await disk.exists(`${directory}/manifest.json`)).toBe(false);
+  let value: unknown = 0; for (let i = 0; i < 61; i++) value = [value];
+  await store.save('depth', [{ path: 'depth.md', properties: { id: value } }], () => true);
+  expect((await store.load('depth', () => true))!.size).toBe(1);
+  await expect(store.save('depth', [{ path: 'depth.md', properties: { id: [value] } }], () => true)).rejects.toThrow('over limit');
+  expect(await disk.exists(`${directory}/manifest.json`)).toBe(false);
+});
+
+test('save rejects nonfinite and cyclic rows before committing a manifest', async () => {
+  const disk = new MemoryAdapter(), directory = 'plugin/cache/startup-facts', store = new FactCache(disk, directory);
+  const cycle: unknown[] = []; cycle.push(cycle);
+  for (const value of [NaN, Infinity, -Infinity, cycle, Array(65537).fill(0)]) {
+    await expect(store.save('key', [{ path: 'invalid.md', properties: { id: value } }], () => true)).rejects.toThrow('over limit');
+    expect(await disk.exists(`${directory}/manifest.json`)).toBe(false);
+  }
+});
+
+test('value batching counts sparse arrays as their persisted null entries', async () => {
+  const disk = new MemoryAdapter(), directory = 'plugin/cache/startup-facts', store = new FactCache(disk, directory);
+  const rows = ['a.md', 'b.md'].map(path => ({ path, properties: { id: path, values: new Array(40000) } }));
+  await store.save('key', rows, () => true);
+  expect(JSON.parse(await disk.read(`${directory}/manifest.json`)).parts.length).toBe(2);
+  expect([...(await store.load('key', () => true))!.values()]).toEqual(JSON.parse(JSON.stringify(rows)));
+});

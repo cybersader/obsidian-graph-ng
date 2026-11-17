@@ -4,16 +4,17 @@ import { digest } from '../core/declaration';
 import { yieldTask } from '../core/scheduler';
 
 export const FACT_FORMAT = 1, FACT_BYTES = 32 * 1024 * 1024;
+const FACT_VALUES = 65536;
 const invalid = (): never => { throw Error('Saved facts invalid or over limit'); };
 type CacheKey = string | ((check: () => void) => Promise<string>);
 interface Part { bytes: number; hash: string }
 interface Manifest { format: number; key: string; parts: Part[] }
 // Retain only a void-valued queue across plugin module reloads, never loaded facts.
 interface Queue { work: Promise<void>; epoch: number }
-const queueKey = Symbol.for('graph-ng.startup-facts.queue');
-const queue = (globalThis as unknown as Record<symbol, Queue>)[queueKey] ??= { work: Promise.resolve(), epoch: 0 };
-function bounded(value: unknown) {
-  const pending: [unknown, number][] = [[value, 0]]; let left = 65536;
+const queueKey = Symbol.for('graph-ng.startup-facts.queues');
+const queues = (globalThis as unknown as Record<symbol, WeakMap<BinaryAdapter, Map<string, Queue>>>)[queueKey] ??= new WeakMap();
+function bounded(value: unknown, depth = 0) {
+  const pending: [unknown, number][] = [[value, depth]]; let left = FACT_VALUES;
   while (pending.length) {
     const [v, depth] = pending.pop()!;
     if (typeof v === 'number' && !Number.isFinite(v)) invalid();
@@ -22,21 +23,28 @@ function bounded(value: unknown) {
     const children = Object.values(v); if ((left -= children.length) < 0) invalid();
     for (const child of children) pending.push([child, depth + 1]);
   }
+  return FACT_VALUES - left;
 }
 /** Disposable plaintext facts. One operation/IO at a time, including after a timeout.
  * A timed-out host operation cannot be cancelled; keep its queue slot until it settles. */
 export class FactCache {
   paused = false;
-  constructor(private disk: BinaryAdapter, private readonly factDirectory: string, private yieldNow = yieldTask, private deadlineMs = 15000) {}
+  private queue: Queue;
+  constructor(private disk: BinaryAdapter, private readonly factDirectory: string, private yieldNow = yieldTask, private deadlineMs = 15000) {
+    let targets = queues.get(disk); if (!targets) queues.set(disk, targets = new Map());
+    let queue = targets.get(factDirectory);
+    if (!queue) targets.set(factDirectory, queue = { work: Promise.resolve(), epoch: 0 });
+    this.queue = queue;
+  }
   private run<T>(current: () => boolean, action: (check: () => void) => Promise<T>): Promise<T> {
-    const epoch = queue.epoch, until = performance.now() + this.deadlineMs; let expired = false, timer: ReturnType<typeof setTimeout>;
+    const queue = this.queue, epoch = queue.epoch, until = performance.now() + this.deadlineMs; let expired = false, timer: ReturnType<typeof setTimeout>;
     const check = () => { if (expired || performance.now() >= until) throw Error('Saved facts deadline exceeded'); if (epoch !== queue.epoch || !current()) throw Error('Saved facts cancelled'); };
     const next = queue.work.then(() => { check(); return action(check); });
     queue.work = next.then(() => {}, () => {});
     return Promise.race([next, new Promise<never>((_, reject) => { timer = setTimeout(() => { expired = true; reject(Error('Saved facts deadline exceeded')); }, this.deadlineMs); })]).finally(() => clearTimeout(timer));
   }
   clear(pause = false) {
-    this.paused ||= pause; queue.epoch++;
+    this.paused ||= pause; this.queue.epoch++;
     return this.run(() => true, async check => { check(); if (await this.disk.exists(this.factDirectory)) { check(); await this.disk.rmdir(this.factDirectory, true); } });
   }
   load(key: CacheKey, current: () => boolean): Promise<Map<string, FactRow> | undefined> {
@@ -77,21 +85,25 @@ export class FactCache {
       check(); if (await this.disk.exists(this.factDirectory)) { check(); await this.disk.rmdir(this.factDirectory, true); }
       const pieces = this.factDirectory.split('/');
       for (let i = 1; i <= pieces.length; i++) { check(); const p = pieces.slice(0, i).join('/'); if (!await this.disk.exists(p)) { check(); await this.disk.mkdir(p); } }
-      const parts: Part[] = []; let batch: string[] = [], size = 2, total = 0, count = 0;
+      const parts: Part[] = []; let batch: string[] = [], size = 2, values = 0, total = 0, count = 0;
       const flush = async () => {
         check(); const bytes = new TextEncoder().encode(`[${batch.join(',')}]`);
         if (bytes.length > FACT_CHUNK || (total += bytes.length) > FACT_BYTES || parts.length >= 4096) invalid();
         const hash = await sha(bytes); check();
         const part = parts.length;
         await this.disk.writeBinary(`${this.factDirectory}/${part}.bin`, bytes.buffer);
-        parts.push({ bytes: bytes.length, hash }); batch = []; size = 2; await this.yieldNow();
+        parts.push({ bytes: bytes.length, hash }); batch = []; size = 2; values = 0; await this.yieldNow();
       };
       for (const row of rows) {
         check(); if (++count > 100000) invalid();
+        bounded(row, 1); // Reject cycles, excessive depth and nonfinite values before JSON can normalize them.
         const text = JSON.stringify(row), bytes = new TextEncoder().encode(text).length;
         if (bytes + 2 > FACT_CHUNK) invalid();
-        if (size + bytes + (batch.length ? 1 : 0) > FACT_CHUNK) await flush();
-        size += bytes + (batch.length ? 1 : 0); batch.push(text);
+        // Count the exact JSON representation, including sparse-array nulls and the batch row slot.
+        const children = bounded(JSON.parse(text), 1) + 1;
+        if (children > FACT_VALUES) invalid();
+        if (size + bytes + (batch.length ? 1 : 0) > FACT_CHUNK || values + children > FACT_VALUES) await flush();
+        size += bytes + (batch.length ? 1 : 0); values += children; batch.push(text);
         if (batch.length === 256) await flush();
       }
       if (batch.length) await flush();
