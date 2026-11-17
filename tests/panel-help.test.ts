@@ -256,3 +256,17 @@ test('appearance choices keep their original save and label-refresh paths', () =
   }
   expect(updates).toHaveLength(9); f.panel.dispose();
 });
+
+test('Appearance names relationship notes once and keeps global rebuild scope in help', () => {
+  const f = fixture();
+  f.settings.declaration.edges.push({ kind: 'reified', name: 'relation', sourceProperty: 'source', targetProperty: 'target' });
+  f.host.setRelationshipDisplay = async () => {};
+  f.panel.show('appearance');
+  const visibleText = (e: ControlElement): string => e.hidden ? '' : e.children.length ? e.children.map(visibleText).join('') : e.textContent;
+  expect(visibleText(f.root).match(/Relationship notes/g)).toHaveLength(1);
+  const help = f.root.querySelectorAll('.graph-ng-help-popover').find(e => e.textContent.includes('Switching saves globally'));
+  expect(help).toBeDefined(); expect(help!.hidden).toBe(true);
+  expect(f.root.textContent).not.toContain('Saves globally and rebuilds the graph.');
+  expect(f.root.querySelectorAll('button').some(e => e.textContent === 'Fit graph')).toBe(false);
+  f.panel.dispose();
+});

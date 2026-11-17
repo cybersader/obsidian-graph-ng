@@ -1233,7 +1233,10 @@ export class DetailRenderer {
   private selectNote(node: number, card?: boolean, keepLens = false, framing = true) {
     if (node < 0 && this.lensAnchor >= 0 && !keepLens) this.setLens(-1);
     if (node < 0) { this.input?.clearHover(); this.hoverFx.n = -1; this.fx = [1, 0]; }
-    this.selected = node; this.selectedEdges = []; this.pathView = undefined; this.edgeAnchor = -1; this.edgeToken++; this.cue = -1; if (card || node < 0) this.hovered = -1; this.emphasize(); this.startRipple(node); this.refresh();
+    this.selected = node;
+    if (node >= 0 && this.lensWanted >= 0 && !keepLens) this.setLens(node);
+    if (node >= 0 && !card) this.card.history.visit(node);
+    this.selectedEdges = []; this.pathView = undefined; this.edgeAnchor = -1; this.edgeToken++; this.cue = -1; if (card || node < 0) this.hovered = -1; this.emphasize(); this.startRipple(node); this.refresh();
     if (card && node >= 0) { this.card.show(node); this.placeCard(); if (framing) this.frameSelection(this.settings.visuals.clickFraming); } else this.card.hide();
   }
   /** The navigator's view of the graph: every lookup is O(degree) over the incident-edge CSR. Rows
@@ -1384,9 +1387,10 @@ export class DetailRenderer {
     }
     if (this.frontier.size > 6) this.isolationBar.append(el('small', `${this.frontier.size - 6} more expandable notes. Select a note to expand.`));
   }
-  /** The lens, else the selection, is the focus: hover never moves it (hover is only a ring and a name).
+  /** The requested lens, else the selection, is the focus, even while the old ring returns.
+   * Hover never moves it (hover is only a ring and a name).
    * The graduated-highlight switch turns it off. */
-  private emphasize(immediate?: boolean) { const v = this.lensAnchor >= 0 ? this.lensAnchor : this.selected, on = this.settings.visuals.hoverHighlight, path = this.lensAnchor < 0 ? this.pathView?.edges : undefined; this.setFocus(on && !path ? v : -1, immediate, on ? path ?? (v < 0 && this.selectedEdges?.length ? this.selectedEdges : undefined) : undefined); }
+  private emphasize(immediate?: boolean) { const v = this.lensWanted >= 0 ? this.lensWanted : this.selected, on = this.settings.visuals.hoverHighlight, path = this.lensWanted < 0 ? this.pathView?.edges : undefined; this.setFocus(on && !path ? v : -1, immediate, on ? path ?? (v < 0 && this.selectedEdges?.length ? this.selectedEdges : undefined) : undefined); }
   /** Path mode from `from` to `to`: the shortest path over drawn notes and relationships becomes its
    * own top tier, the camera frames it and the card lists its hops. Bounded by MAX_HOPS and MAX_SCAN. */
   private findPath(from: number, to: number) {

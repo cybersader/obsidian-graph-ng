@@ -175,3 +175,25 @@ test('review: new isolate never occupies a pinned isolate slot', async () => {
   isolateRing({ count: 4, source, target, seed: 1, movable: Uint8Array.of(0, 0, 0, 1) })(p);
   expect(p.slice(4, 6)).toEqual(pinned); expect(Math.hypot(p[6]! - p[4]!, p[7]! - p[5]!)).toBeGreaterThan(.1);
 });
+
+test('15k-note isolate presentation forms complete evenly spaced rings, never flattened edge patches', async () => {
+  const { isolateRing } = await import('../src/core/layout');
+  const count = 15000, linked = 10000;
+  const source = Uint32Array.from({ length: linked - 1 }, (_, i) => i), target = Uint32Array.from(source, i => i + 1);
+  const p = initialPositions(count, 18, 100), before = p.slice(0, linked * 2);
+  let radius = 1; for (let i = 0; i < linked; i++) radius = Math.max(radius, Math.hypot(p[2 * i]!, p[2 * i + 1]!));
+  isolateRing({ count, source, target, seed: 18 })(p);
+  expect(p.slice(0, linked * 2)).toEqual(before);
+  const capacity = Math.ceil(Math.sqrt(count) * 6);
+  for (let first = linked; first < count; first += capacity) {
+    const size = Math.min(capacity, count - first), expectedRadius = radius * (1.08 + Math.floor((first - linked) / capacity) * .04);
+    let cx = 0, cy = 0;
+    for (let i = 0; i < size; i++) {
+      const n = first + i, next = first + (i + 1) % size, x = p[2 * n]!, y = p[2 * n + 1]!;
+      expect(Math.abs(Math.hypot(x, y) - expectedRadius)).toBeLessThan(.002);
+      expect(Math.abs(Math.hypot(x - p[2 * next]!, y - p[2 * next + 1]!) - 2 * expectedRadius * Math.sin(Math.PI / size))).toBeLessThan(.003);
+      cx += x / size; cy += y / size;
+    }
+    expect(Math.hypot(cx, cy)).toBeLessThan(.001);
+  }
+});

@@ -102,7 +102,7 @@ export class ExplorePanel {
   private sizingDraft?: Record<keyof NodeSizingValues, string>;
   private sizingMessage = '';
   private sizingBusy = false;
-  private lensButton?: HTMLButtonElement;
+  private lensButton?: HTMLInputElement;
   private physicsError = '';
   private physicsBusy = false;
   /** Draft before the last preset or reset; `applied` once Apply ran with the preset values. */
@@ -620,8 +620,7 @@ export class ExplorePanel {
   updateLensControl() {
     if (!this.lensButton) return;
     const state = this.host.lens?.();
-    this.lensButton.disabled = !state?.available; this.lensButton.setAttribute('aria-pressed', String(!!state?.active));
-    this.lensButton.textContent = state?.active ? 'Connection lens: on' : 'Connection lens: off';
+    this.lensButton.disabled = !state?.available; this.lensButton.checked = !!state?.active;
   }
   updateSizingReadout() {
     const readout = this.body.querySelector('.graph-ng-sizing-readout');
@@ -720,9 +719,9 @@ export class ExplorePanel {
     this.guard(host, 'halos');
     this.flag(host, 'autoPalette', 'Group colors (when no rule matches)');
     if (this.host.toggleLens) {
-      this.lensButton = host.createEl('button', { cls: 'graph-ng-lens-toggle', attr: { 'aria-label': 'Connection lens', 'aria-pressed': 'false' } });
-      this.lensButton.onclick = () => { this.host.toggleLens?.(); this.updateLensControl(); };
-      this.updateLensControl(); panelHelp(host, 'About the lens', 'Brings the selected note’s direct connections into rings temporarily. L toggles it; Escape closes it.');
+      this.lensButton = settingRow(host, 'Connection lens', 'graph-ng-toggle', 'Brings the selected note’s direct connections into rings temporarily. Follows selection. L toggles it; Escape closes it.').querySelector('input')!;
+      this.lensButton.onchange = () => { this.host.toggleLens?.(); this.updateLensControl(); };
+      this.updateLensControl();
     }
     choice(host, 'cardPlacement', 'Card placement', 'Side uses a sheet when space is tight. Auto switches earlier.', [['auto', 'Auto (default)'], ['side', 'Side'], ['sheet', 'Bottom sheet']]);
     choice(host, 'clickFraming', 'Click framing (experimental)', 'Move only when needed. Off only uncovers the selected note. Respects Motion.', [['off', 'Off (default)'], ['center', 'Center when hidden'], ['fit-neighbours', 'Fit connections']]);
@@ -756,7 +755,6 @@ export class ExplorePanel {
       this.flag(host, 'carrierTint', 'Endpoint colors (for relationship notes)');
       this.flag(host, 'carrierLod', 'Fold into edges (relationship notes when zoomed out)');
     }
-    panelButton(host, 'Fit graph', () => this.host.fit());
   }
   /** Edges: All / Focus only / Off. Live, saved with plugin settings. */
   private edgeMode(host: HTMLElement) {

@@ -2244,3 +2244,32 @@ test('wave12: one-page group canvas hides its entire pager', async () => {
     finally { f.view.renderer.dispose(); }
   }
 });
+
+test('clicking a new note retargets an active lens to only its direct connections', async () => {
+  const f = await graduated([[0, 1], [0, 2], [0, 3], [1, 4]]), { r, k } = f;
+  f.settings.visuals.motion = 'off'; f.tap(1); r[compiled('setLens')](1);
+  f.tap(0);
+  expect(r.selected).toBe(0); expect(r[compiled('lensNode')]).toBe(0);
+  expect([...r[k('lensPoints')].keys()].sort()).toEqual([1, 2, 3]);
+  expect(r[k('lensBytes')][4 * 4 + 2]).toBe(0);
+  r[compiled('setLens')](-1); expect(r[k('lensPoints')].size).toBe(0);
+});
+test('highlight and visit history follow clicks immediately during a lens retarget', async () => {
+  const f = await graduated([[0, 1], [0, 2], [0, 3], [1, 4]]), { r, k } = f;
+  f.tap(1); r[compiled('setLens')](1); r[k('animate')](r[k('lensMotion')].start + 220);
+  f.tap(0);
+  expect(r.selected).toBe(0); expect(r[k('focusNode')]).toBe(0);
+  expect(r.card.node).toBe(0); expect(r.card.history.items[r.card.history.at]).toBe(0);
+  expect(r[k('lensAnchor')]).toBe(1); // Old geometry returns smoothly before the new ring opens.
+  r[k('animate')](r[k('lensMotion')].start + 220);
+  r[k('animate')](r[k('lensMotion')].start + 220);
+  expect(r[k('lensAnchor')]).toBe(0); expect(r[k('focusNode')]).toBe(0);
+});
+
+test('direct-open clicks advance the same visit history as card selections', async () => {
+  const f = await graduated([[0, 1], [0, 2]]), { r, k } = f;
+  f.tap(0); f.settings.visuals.clickOpens = true; f.tap(1); r[k('placeOverlay')]();
+  expect(f.opened).toEqual([1]); expect(r.selected).toBe(1); expect(r[k('focusNode')]).toBe(1);
+  expect(r.card.node).toBe(-1); expect(r.card.history.items).toEqual([0, 1]);
+  expect(r.card.history.items[r.card.history.at]).toBe(1);
+});

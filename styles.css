@@ -372,8 +372,6 @@ button.graph-ng-stat > .graph-ng-stat-label { text-align:start; }
 .graph-ng-ripple { position:absolute; left:0; top:0; pointer-events:none; border-radius:50%; border:2px solid var(--interactive-accent); box-sizing:border-box; }
 @media (prefers-reduced-motion: reduce) { .graph-ng-ripple { display:none; } }
 
-.graph-ng-lens-toggle { min-height:var(--gng-row-h); min-width:var(--gng-row-h); }
-.graph-ng-lens-toggle[aria-pressed="true"] { background: var(--interactive-accent); color: var(--text-on-accent); }
 /* Find a note (/ or Ctrl/Cmd+K): ranked matches over the graph; the ring previews without moving the camera. */
 .graph-ng-find { position:absolute; top:8px; left:50%; transform:translateX(-50%); z-index:3; width:min(420px, calc(100% - 16px)); display:flex; flex-direction:column; gap:var(--gng-space-2); padding:var(--gng-space-3); box-sizing:border-box; font-size:var(--gng-text-sm); color:var(--text-normal); background:var(--background-primary); border:1px solid var(--background-modifier-border); border-radius:var(--gng-chrome-radius); box-shadow:var(--shadow-s); }
 .graph-ng-find[hidden], .graph-ng-find-ring[hidden] { display:none; }

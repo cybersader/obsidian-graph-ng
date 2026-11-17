@@ -68,7 +68,7 @@ test('lens picking has deterministic ties and works outside the original grid bo
   expect(pickLens(grid, points, -1000, -1000, 3, n => points.get(n) ?? { x: 0, y: 0 }, () => 3, () => true)).toBe(1);
 });
 
-test('lens Appearance control exposes temporary pressed/disabled state and calls the host without saving', async () => {
+test('lens Appearance is a native toggle with help, no duplicate fit or relationship copy', async () => {
   const { ExplorePanel } = await import('../src/explore-panel');
   const { defaults } = await import('../src/settings');
   const { ControlElement } = await import('./support/controls-dom');
@@ -77,11 +77,13 @@ test('lens Appearance control exposes temporary pressed/disabled state and calls
   panel.host = { settings: () => settings, lens: () => state, toggleLens: () => { toggles++; state.active = !state.active; }, carriers: () => 0, fit() {} };
   // Other Appearance sections have their own tests; run the actual lens control construction.
   for (const name of ['suggested', 'nodes', 'slider', 'flag', 'guard', 'note']) panel[name] = () => {};
-  panel.display(root); const button = root.querySelectorAll('button').find(b => b.getAttribute('aria-label') === 'Connection lens')!;
+  panel.display(root); const button: any = root.querySelectorAll('input').find(b => b.getAttribute('aria-label') === 'Connection lens')!;
   expect(button).toBeDefined(); expect(button.disabled).toBe(true); button.click(); expect(toggles).toBe(0);
-  state.available = true; panel.updateLensControl(); expect(button.getAttribute('aria-pressed')).toBe('false');
-  button.click(); expect(toggles).toBe(1); expect(button.getAttribute('aria-pressed')).toBe('true');
-  state.active = false; panel.updateLensControl(); expect(button.getAttribute('aria-pressed')).toBe('false');
+  state.available = true; panel.updateLensControl(); expect(button.checked).toBe(false);
+  button.onchange(); expect(toggles).toBe(1); expect(button.checked).toBe(true);
+  state.active = false; panel.updateLensControl(); expect(button.checked).toBe(false);
   expect(JSON.stringify(settings)).toBe(saved);
-  expect(readFileSync(new URL('../styles.css', import.meta.url), 'utf8')).toContain('.graph-ng-lens-toggle { min-height:var(--gng-row-h); min-width:var(--gng-row-h); }');
+  expect(root.querySelectorAll('button').some(b => b.textContent === 'Fit graph')).toBe(false);
+  expect(root.textContent).not.toContain('Connection lens:');
+  expect(root.querySelectorAll('.graph-ng-help-popover').some(p => p.textContent.includes('direct connections') && p.hidden)).toBe(true);
 });
