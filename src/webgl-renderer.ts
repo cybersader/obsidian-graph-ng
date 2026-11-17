@@ -1,3 +1,4 @@
+import { namedViewState, stateChip, type ViewState } from './view-state';
 import { plural } from './graph-information';
 import { carrierPairs, carrierThrough } from './carrier-lines';
 import { renderPath, type RenderProjection } from './render-projection';
@@ -397,6 +398,41 @@ export class DetailRenderer {
   private lensLabelWidth = 0;
   private lensRevision = 0;
   onLensChange?: () => void;
+  onViewStateChange?: () => void;
+  tuneViewState?: (state: ViewState) => void;
+  showViewGroups?: () => void;
+  private stateStrip?: HTMLElement;
+  private stateStamp = '';
+  get namedViewState(): ViewState { return namedViewState(false, !!this.pathView, this.lensWanted >= 0, !!this.isolation, this.selected >= 0 && !!this.filterVisible[this.selected]); }
+  leaveViewState(state: ViewState) {
+    if (state === 'Only connections') this.isolate(-1);
+    else if (state === 'Connection rings') this.setLens(-1);
+    else this.selectNote(-1, false, true);
+    this.canvas.focus();
+  }
+  private switchViewState(state: ViewState) {
+    const n = this.pathView?.from ?? (this.lensWanted >= 0 ? this.lensWanted : this.isolation?.node ?? this.selected);
+    if (state === 'Groups') return this.showViewGroups?.();
+    if (state === 'Notes') { this.setLens(-1); this.selectNote(-1); this.isolate(-1); }
+    else if (n >= 0) {
+      this.setLens(-1); this.selectNote(n, true);
+      if (state === 'Only connections') this.isolate(n);
+      else if (state === 'Connection rings') this.setLens(n);
+      else this.isolate(-1);
+    }
+    this.canvas.focus();
+  }
+  private syncViewState() {
+    if (!this.stateStrip) return;
+    const state = this.namedViewState, n = this.pathView?.from ?? (this.lensWanted >= 0 ? this.lensWanted : this.isolation?.node ?? this.selected);
+    const stamp = `${state}|${n}|${this.pathView?.to}|${this.isolation?.node}`;
+    if (stamp === this.stateStamp) return;
+    this.stateStamp = stamp; this.stateStrip.textContent = '';
+    const tune = (s: ViewState) => this.tuneViewState?.(s);
+    stateChip(this.stateStrip, state, state !== 'Notes' && n >= 0 ? this.name(n) + (this.pathView ? ' → ' + this.name(this.pathView.to) : '') : '', () => this.leaveViewState(state), tune, s => this.switchViewState(s), n >= 0);
+    if (this.isolation && state !== 'Only connections') stateChip(this.stateStrip, 'Only connections', '', () => this.leaveViewState('Only connections'), tune);
+    this.onViewStateChange?.();
+  }
   private tierSource: number | number[] = -1;
   private focusLevel = 0;
   private focusTarget = 0;
@@ -507,7 +543,7 @@ export class DetailRenderer {
     this.timings.theme = performance.now() - started; started = performance.now();
     this.canvas = document.createElement('canvas'); this.canvas.className = 'graph-ng-detail'; this.canvas.tabIndex = 0; this.canvas.style.touchAction = 'none'; container.append(this.canvas);
     this.overlay = container.createDiv ? container.createDiv({ cls: 'graph-ng-overlay' }) : container.appendChild(el('div', '', 'graph-ng-overlay'));
-    const help = this.overlay.appendChild(el('span', 'Graph notes. Arrows select, Enter opens, R cycles relationships, L toggles connection lens, Shift+F10 opens the menu, Alt+Left goes back, Escape clears.', 'graph-ng-screen-reader'));
+    const help = this.overlay.appendChild(el('span', 'Graph notes. Arrows select, Enter opens, R cycles relationships, L toggles connection rings, Shift+F10 opens the menu, Alt+Left goes back, Escape clears.', 'graph-ng-screen-reader'));
     help.id = `graph-ng-help-${++descriptionId}`; this.canvas.setAttribute('aria-describedby', help.id);
     this.hoverLabel = this.overlay.appendChild(el('div', '', 'graph-ng-hover-label'));
     const div = (className: string) => this.overlay.appendChild(el('div', '', className));
@@ -520,6 +556,7 @@ export class DetailRenderer {
     this.noteCard.onkeydown = input.cardKeyDown;
     let stack: HTMLElement;
     ({ ripple: this.rippleEl, stack, legend: this.legend, rows: this.legendRows, counts: this.legendCounts, pips: this.pipEls, parts: this.pipParts } = highlightOverlay(this.overlay, i => { this.tierMask ^= 1 << i; this.updateLegend(); this.rankedKey = []; this.anchorKey = []; this.refresh(); }, i => this.panTo(this.pipTargets[i] ?? -1)));
+    this.stateStrip = stack.createDiv({ cls: 'graph-ng-state-strip' });
     stack.appendChild(this.isolationBar);
     this.crumbTrail = new Breadcrumb(stack, n => this.path(n).split('/').pop()!.replace(/\.md$/, ''), by => this.card.step(by), () => { this.clearTrail(); this.canvas.focus(); }, (index, newer) => {
       const h = this.card.history;
@@ -1046,7 +1083,7 @@ export class DetailRenderer {
   private name(n: number) { const path = this.path(n); return path.slice(path.lastIndexOf('/') + 1).replace(/\.md$/, '').slice(0, 128); }
   /** Temporary view state, deliberately not saved to named views or physics/layout state. */
   get lensNode() { return this.lensWanted; }
-  private lensChanged() { this.card.syncLens(); this.onLensChange?.(); }
+  private lensChanged() { this.syncViewState(); this.card.syncLens(); this.onLensChange?.(); }
   /** Host seam for "+N more": open the declared-group navigator and focus its filter, without moving the camera. */
   showConnections(n: number) {
     if (!(n >= 0 && n < this.visible.length && this.filterVisible[n])) return;
@@ -1417,8 +1454,10 @@ export class DetailRenderer {
   }
   private showIsolation() {
     if (!this.isolationBar) return;
+    this.syncViewState();
     const s = this.isolation; this.isolationBar.dataset.motion = this.still() ? 'off' : 'full';
-    isolationBar(this.isolationBar, s ? this.name(s.node) : '', s?.hops ?? 1, this.filterVisible.reduce((a, b) => a + b, 0), s ? s.expanded.size + s.shown.length : 0, this.neighbourhoodPartial, this.frontier.size, h => { this.isolate(s!.node, h); this.isolationBar.querySelectorAll('button')[h + 2]?.focus(); }, () => { this.isolate(-1); this.canvas.focus(); });
+    isolationBar(this.isolationBar, s ? this.name(s.node) : '', s?.hops ?? 1, this.filterVisible.reduce((a, b) => a + b, 0), s ? s.expanded.size + s.shown.length : 0, this.neighbourhoodPartial, this.frontier.size, h => { this.isolate(s!.node, h); this.isolationBar.querySelectorAll('button')[h + 1]?.focus(); }, () => { this.isolate(-1); this.canvas.focus(); });
+    this.isolationBar.querySelector('.graph-ng-card-head')?.remove();
     for (const b of this.frontierBadges) b.el.remove(); this.frontierBadges = [];
     // Most hidden neighbours first (ties to the lower id); badges precede the minimap and card in Tab order.
     for (const node of s ? [...this.frontier.keys()].sort((a, b) => this.frontier.get(b)! - this.frontier.get(a)! || a - b).slice(0, 6) : []) {
@@ -1432,7 +1471,7 @@ export class DetailRenderer {
   /** The requested lens, else the selection, is the focus, even while the old ring returns.
    * Hover never moves it (hover is only a ring and a name).
    * The graduated-highlight switch turns it off. */
-  private emphasize(immediate?: boolean) { const v = this.lensWanted >= 0 ? this.lensWanted : this.selected, on = this.settings.visuals.hoverHighlight, path = this.lensWanted < 0 ? this.pathView?.edges : undefined; this.setFocus(on && !path ? v : -1, immediate, on ? path ?? (v < 0 && this.selectedEdges?.length ? this.selectedEdges : undefined) : undefined); }
+  private emphasize(immediate?: boolean) { this.syncViewState(); const v = this.lensWanted >= 0 ? this.lensWanted : this.selected, on = this.settings.visuals.hoverHighlight, path = this.lensWanted < 0 ? this.pathView?.edges : undefined; this.setFocus(on && !path ? v : -1, immediate, on ? path ?? (v < 0 && this.selectedEdges?.length ? this.selectedEdges : undefined) : undefined); }
   /** Path mode from `from` to `to`: the shortest path over drawn notes and relationships becomes its
    * own top tier, the camera frames it and the card lists its hops. Bounded by MAX_HOPS and MAX_SCAN. */
   private findPath(from: number, to: number) {

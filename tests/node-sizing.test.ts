@@ -74,7 +74,7 @@ test('a live edit made while a candidate save is pending wins over the stale can
 function panelFixture() {
   const f = runtime(), root = new ControlElement(); const render = ExplorePanel.prototype.render; ExplorePanel.prototype.render = function () {};
   let panel: any, preview: any = null;
-  const host: any = { settings: () => f.plugin.settings, previewSizing: (v: any) => { preview = v; }, applySizing: (v: any) => f.plugin.commitSizing(v, () => true), sizingReadout: () => 'synthetic readout' };
+  const host: any = { mode: () => 'nodes', result: () => undefined, settings: () => f.plugin.settings, previewSizing: (v: any) => { preview = v; }, applySizing: (v: any) => f.plugin.commitSizing(v, () => true), sizingReadout: () => 'synthetic readout' };
   try { panel = new ExplorePanel(root as any, host, emptyView()); } finally { ExplorePanel.prototype.render = render; }
   panel.render = () => { panel.body.empty(); panel.nodes(panel.body); }; panel.render();
   const input = (label: string, value: string) => { const e: any = panel.body.querySelectorAll('input').find((e: any) => e.getAttribute('aria-label') === label); e.value = value; e.oninput(); };
@@ -196,7 +196,7 @@ test('Repair R1 wide label spans use bounded exact overlap fallback, no spatial 
 test('Repair R2 existing Relationship-note size slider dispatches the covered live refresh path', () => {
   const f = panelFixture(), calls: boolean[] = [];
   f.host.carriers = () => 1; f.host.policy = () => []; f.host.visualsChanged = (labels: boolean) => calls.push(labels);
-  f.panel.body.empty(); f.panel.display(f.panel.body);
+  f.panel.updateViewState = () => {}; f.panel.body.empty(); f.panel.display(f.panel.body);
   const row = f.panel.body.querySelectorAll('.graph-ng-slider').find((row: any) => row.children.some((child: any) => child.textContent === 'Relationship-note size'));
   expect(row).toBeDefined(); const input: any = row.querySelectorAll('input').find((e: any) => e.type === 'number'); input.value = '2'; input.oninput();
   expect(f.plugin.settings.visuals.carrierSize).toBe(2); expect(calls).toEqual([false]); f.panel.dispose();

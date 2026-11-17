@@ -132,7 +132,7 @@ export interface CardHost {
   groups(n: number): { groups: ConnectionGroup[]; direct: number };
   isolated(): boolean;
   frontier?(n: number): number;
-  /** Whether the connection lens is open on this note; hosts without a lens omit it (no Lens action). */
+  /** Whether the connection rings is open on this note; hosts without a lens omit it (no Lens action). */
   lensed?(n: number): boolean;
   act(action: CardAction, n: number): void;
   /** Check before mutating history while the host suppresses semantic navigation. */
@@ -258,7 +258,7 @@ export class ConnectionCard {
     more.ontoggle = () => { this.size = undefined; h.cue(-1); };
     const actions = disclosureBody(more).appendChild(el('div', '', 'graph-ng-card-actions')), tool = (text: string, a: CardAction) => actions.appendChild(button(text, text + ': ' + name, act(a)));
     tool('New tab', 'tab'); tool('Open to the right', 'split'); tool('Focus here', 'focus');
-    this.lensToggle = h.lensed ? tool('Connection lens', 'lens') : undefined; this.syncLens();
+    this.lensToggle = h.lensed ? tool('Connection rings', 'lens') : undefined; this.syncLens();
     tool('Copy link', 'copy');
     const nav = c.appendChild(el('div', '', 'graph-ng-navigator'));
     this.navStatus = nav.appendChild(el('div', '', 'graph-ng-nav-status')); this.navStatus.setAttribute('role', 'status');

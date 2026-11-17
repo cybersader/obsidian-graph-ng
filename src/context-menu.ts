@@ -48,7 +48,7 @@ export const MENU_ACTIONS: Action[] = ([
   ['menu-tab', 'Open in new tab', openable, go('tab')],
   ['menu-right', 'Open to the right', openable, go('split')],
   ['menu-focus', 'Focus here', note, c => { c.host.selectNote(c.node, true); c.host.act('focus', c.node); }],
-  ['menu-lens', 'Connection lens', note, c => c.host.setLens(c.host.lensNode === c.node ? -1 : c.node)],
+  ['menu-lens', 'Connection rings', note, c => c.host.setLens(c.host.lensNode === c.node ? -1 : c.node)],
   ['menu-only', 'Show only connections', note, c => c.host.isolate(c.node)],
   ['menu-copy', 'Copy link', note, go('copy')],
   ['menu-note', 'Open relationship note', c => !!relation(c)?.note, c => relation(c)!.note!()],

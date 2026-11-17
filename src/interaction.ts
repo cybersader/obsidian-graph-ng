@@ -139,11 +139,11 @@ const ARROWS = ['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp'];
 // Hover holds no focus, so there is no hover layer.
 for (const action of [
   { id: 'close-card', label: 'Close card', key: 'Escape', order: 10, when: ({ host }) => host.cardNode >= 0 || host.edgeCard, run: ({ host }) => { host.selectNote(-1, false, true); host.focusCanvas(); } },
-  { id: 'close-lens', label: 'Close connection lens', key: 'Escape', order: 20, when: ({ host }) => host.lensNode >= 0, run: ({ host }) => { host.setLens(-1); host.focusCanvas(); } },
+  { id: 'close-lens', label: 'Close connection rings', key: 'Escape', order: 20, when: ({ host }) => host.lensNode >= 0, run: ({ host }) => { host.setLens(-1); host.focusCanvas(); } },
   { id: 'clear-selection', label: 'Clear selection', key: 'Escape', order: 30, when: ({ host }) => host.selected >= 0, run: ({ host }) => { host.selectNote(-1); host.focusCanvas(); } },
   { id: 'show-all', label: 'Show all notes', key: 'Escape', order: 50, when: ({ host }) => host.isolated, run: ({ host }) => host.isolate(-1) },
   { id: 'history-step', label: 'Back or forward', key: ['ArrowLeft', 'ArrowRight'], order: 60, when: ({ event }) => !!event?.altKey, run: ({ host, event }) => host.cardStep(event!.key === 'ArrowLeft' ? -1 : 1) },
-  { id: 'toggle-lens', label: 'Toggle connection lens', key: ['l', 'L'], order: 70, when: ({ event: e }) => !e || !e.altKey && !e.ctrlKey && !e.metaKey && !e.repeat, run: ({ host }) => host.toggleLens() },
+  { id: 'toggle-lens', label: 'Toggle connection rings', key: ['l', 'L'], order: 70, when: ({ event: e }) => !e || !e.altKey && !e.ctrlKey && !e.metaKey && !e.repeat, run: ({ host }) => host.toggleLens() },
   { id: 'cycle-relationships', label: 'Next relationship', key: ['r', 'R'], order: 80, run: ({ host, event }) => host.cycleEdge(event?.shiftKey ? -1 : 1) },
   { id: 'open-note', label: 'Open note', key: 'Enter', canvasOnly: true, order: 90, when: ({ host }) => host.openable(host.selected), run: ({ host }) => host.open(host.selected) },
   {

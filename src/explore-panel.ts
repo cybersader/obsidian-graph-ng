@@ -1,6 +1,7 @@
+import { VIEW_STATES, STATE_HELP, type ViewState } from './view-state';
 import { setIcon } from 'obsidian';
 import { workingText } from './working';
-import { panelHelp, disclosure, disclosureBody, settingRow, settingSelect, panelButton, iconButton } from './panel-help';
+import { RELATIONSHIP_HELP, panelHelp, disclosure, disclosureBody, settingRow, settingSelect, panelButton, iconButton } from './panel-help';
 import { everythingView, folderPredicate, folderView } from './saved-views';
 import { sizingValues, sizingSettings, MAX_NODE_RADIUS, type NodeSizingValues } from './node-sizing';
 import { physicsSettings, presetValues, PHYSICS_FIELDS, PHYSICS_PRESETS, type PhysicsKey, type PhysicsValues } from './physics-controls';
@@ -45,6 +46,7 @@ export interface PanelHost {
   openSavedView?(saved: SavedView): Promise<void>;
   setColors(colors: GraphDeclaration['colors']): Promise<void>;
   visualsChanged(labels: boolean): void;
+  namedViewState?(): ViewState;
   lens?(): { active: boolean; available: boolean };
   /** The panel opened, closed or switched tool: the graph re-measures the room it leaves. */
   toolsChanged?(): void;
@@ -74,7 +76,7 @@ function toolButton(host: HTMLElement, text: string, icon: string) {
   button.createSpan({ cls: 'graph-ng-tool-label', text });
   return button;
 }
-const SECTIONS: Record<string, [Section, string][]> = { views: [['views', 'Saved views']], filters: [['filters', 'Filters'], ['groups', 'Grouping'], ['edges', 'Relationships']], appearance: [['display', 'Appearance'], ['colors', 'Color rules']], layout: [['physics', 'Layout']] };
+const SECTIONS: Record<string, [Section, string][]> = { views: [['views', 'Saved views']], filters: [['filters', 'Filters'], ['groups', 'Grouping'], ['edges', 'Relationships']], appearance: [['display', 'Appearance']], layout: [['physics', 'Layout']] };
 const PULL_IN = 'Pull in notes';
 /** Reified rules make relationship notes; only then is Lines/Nodes a choice. */
 export const hasReified = (d: GraphDeclaration) => d.edges.some(e => e.kind === 'reified');
@@ -103,6 +105,36 @@ export class ExplorePanel {
   private sizingMessage = '';
   private sizingBusy = false;
   private lensButton?: HTMLInputElement;
+  private appearanceSections = new Map<string, HTMLDetailsElement>();
+  private appearanceOpen = new Set<string>();
+  private appearanceState?: ViewState;
+  private currentViewState() { return this.host.namedViewState?.() ?? (this.host.mode() === 'groups' ? 'Groups' : 'Notes'); }
+  /** Expand on stable state changes, never replace controls or steal an editor's focus. */
+  updateViewState() {
+    const state = this.currentViewState();
+    for (const [name, section] of this.appearanceSections) {
+      section.toggleClass('is-current', name === state);
+      const badge = section.querySelector<HTMLElement>('.graph-ng-state-current');
+      if (badge) badge.hidden = name !== state;
+    }
+    if (state === this.appearanceState || this.body.contains(document.activeElement)) return;
+    this.appearanceState = state;
+    const section = this.appearanceSections.get(state);
+    if (section) section.open = true;
+  }
+  showAppearance(state: ViewState) { this.show('appearance'); this.focusAppearance(state); }
+  private focusAppearance(name: string) {
+    const section = this.appearanceSections.get(name); if (!section) return;
+    for (let node: HTMLElement | null = section; node && node !== this.body; node = node.parentElement) if (node.tagName === 'DETAILS') (node as HTMLDetailsElement).open = true;
+    const summary = section.querySelector('summary'); summary?.focus({ preventScroll: true }); summary?.scrollIntoView({ block: 'nearest' });
+  }
+  private appearanceSection(host: HTMLElement, name: string) {
+    const section = host.createEl('details', { cls: 'graph-ng-appearance-state' });
+    this.appearanceSections.set(name, section); section.open = this.appearanceOpen.has(name);
+    const summary = disclosure(section, name);
+    if (VIEW_STATES.includes(name as ViewState)) summary.createSpan({ cls: 'graph-ng-state-current', text: 'Current' });
+    return disclosureBody(section);
+  }
   private physicsError = '';
   private physicsBusy = false;
   /** Draft before the last preset or reset; `applied` once Apply ran with the preset values. */
@@ -149,6 +181,7 @@ export class ExplorePanel {
     // Panel validation and view-operation feedback are separate messages; neither erases the other.
     this.invalid = this.alert.createDiv(); this.feedback = this.alert.createDiv();
     this.body = this.root.createDiv({ cls: 'graph-ng-explore-body' });
+    this.body.addEventListener?.('focusout', () => queueMicrotask(() => { if (!this.disposed) this.updateViewState(); }));
     const representations = this.toolbar.createDiv({ cls: 'graph-ng-representations', attr: { role: 'group', 'aria-label': 'Graph representation and scope' } });
     for (const [mode, label, icon] of [['nodes', 'Notes', 'file-text'], ['groups', 'Groups', 'network']]) {
       const button = toolButton(representations, label!, icon!); this.representations.set(mode!, button);
@@ -174,6 +207,7 @@ export class ExplorePanel {
     if (this.tool === 'views' && tool !== this.tool && !this.viewBusy) { this.viewDraft = undefined; this.viewCollision = undefined; }
     this.tool = tool; this.opener = opener ?? this.buttons.get('views'); this.root.hidden = false;
     this.settings.explore.panelOpen = true; this.host.persist(); this.layout(); this.closeButton.focus({ preventScroll: true });
+    if (tool === 'appearance') { this.appearanceState = undefined; this.updateViewState(); }
   }
   close() {
     this.saveFocus = false;
@@ -269,6 +303,8 @@ export class ExplorePanel {
     const selection = active instanceof HTMLInputElement ? [active.selectionStart, active.selectionEnd] as const : undefined;
     const name = (e: HTMLElement) => `${e.tagName}|${e.getAttribute('aria-label') ?? e.textContent}`, focusName = active ? name(active) : '', focusKey = active?.getAttribute('data-focus-key');
     this.expressionTimers.forEach(clearTimeout); this.expressionTimers.clear();
+    for (const [name, section] of this.appearanceSections) { if (section.open) this.appearanceOpen.add(name); else this.appearanceOpen.delete(name); }
+    this.appearanceSections.clear();
     const scroll = this.body.scrollTop; this.body.empty(); this.guards = [];
     for (const [id, title] of SECTIONS[this.tool] ?? []) {
       const section = this.body.createEl('section', { cls: `graph-ng-explore-section graph-ng-explore-${id}` });
@@ -627,7 +663,7 @@ export class ExplorePanel {
     if (readout) readout.textContent = this.host.sizingReadout?.() ?? '';
   }
   private nodes(host: HTMLElement) {
-    const group = host.createDiv({ cls: 'graph-ng-nodes' }); group.createEl('h4', { text: 'Nodes' });
+    const group = host.createDiv({ cls: 'graph-ng-nodes' });
     const current = sizingValues(this.settings);
     const draft = this.sizingDraft ??= { radius: String(current.radius), prominence: String(current.prominence), compensation: String(current.compensation * 100), floor: String(current.floor * 100), curve: current.curve };
     const sync: (() => void)[] = [];
@@ -673,7 +709,7 @@ export class ExplorePanel {
   /** Opinionated defaults for the loaded graph's shape. Preview is unsaved; only Apply writes. */
   private suggested(host: HTMLElement) {
     const list = this.host.suggestions?.(); if (list === undefined) return;
-    const box = host.createDiv({ cls: 'graph-ng-nodes' }); box.createEl('h4', { text: 'Suggested for this graph' });
+    const box = host.createDiv({ cls: 'graph-ng-nodes' });
     const message = box.createDiv({ cls: 'graph-ng-explore-note', attr: { role: 'status', 'aria-live': 'polite' } }); message.textContent = this.suggestMessage;
     if (!list) return void this.note(box, 'Open Notes first.');
     if (!list.length) return void this.note(box, 'Settings already match.');
@@ -698,63 +734,81 @@ export class ExplorePanel {
   private display(host: HTMLElement) {
     const s = this.settings, v = s.visuals;
     type NumericVisual = { [K in keyof Visuals]: Visuals[K] extends number ? K : never }[keyof Visuals];
-    const initial = defaultVisuals(), slider = (key: NumericVisual, label: string, curve: Curve, desc?: string, labels = false, parent = host) =>
+    const initial = defaultVisuals(), slider = (key: NumericVisual, label: string, curve: Curve, desc?: string, labels = false, parent = edges) =>
       this.slider(parent, label, curve, () => v[key], value => { v[key] = value; }, labels, { def: initial[key], desc });
     const choice = <K extends 'edgeCompositing' | 'emphasis' | 'labelStyle' | 'namePriority' | 'motion' | 'clickFraming' | 'cardPlacement'>(parent: HTMLElement, key: K, label: string, desc: string, options: [Visuals[K], string][], labels = false) =>
       settingSelect(parent, label, desc, options, v[key] ?? 'anchored', value => { v[key] = value as Visuals[K]; this.host.visualsChanged(labels); if (labels) this.render(); });
-    this.suggested(host);
-    this.nodes(host);
-    panelHelp(host.createEl('h4'), 'Live appearance', 'These controls save immediately in plugin settings, not saved views. Closing the panel ends any preview.');
-    this.slider(host, 'Label density', { min: .25, max: 3, log: true }, () => s.labelDensity, x => { s.labelDensity = x; }, true, { def: 1 });
-    this.edgeMode(host);
-    choice(host, 'edgeCompositing', 'Edge compositing', 'Density reduces faint overlap; Blend keeps the original strokes. Canvas uses Blend.', [['blend', 'Blend (default)'], ['density', 'Density']]);
+    const sections = new Map<string, HTMLElement>();
+    for (const [i, state] of VIEW_STATES.entries()) {
+      const body = this.appearanceSection(host, state); sections.set(state, body);
+      panelHelp(body, 'About this state', STATE_HELP[i]);
+    }
+    const everywhere = this.appearanceSection(host, 'Everywhere');
+    panelHelp(everywhere, 'Shared appearance', 'These controls apply across states and save immediately. Sizing has its own Apply. Closing Appearance ends previews.');
+    for (const name of ['Suggested for this graph', 'Note size', 'Labels', 'Edges', 'Groups and colors', 'Navigation and motion', 'Relationship notes']) sections.set(name, this.appearanceSection(everywhere, name));
+    const selected = sections.get('Selected note')!, find = selected, labels = sections.get('Labels')!, edges = sections.get('Edges')!, colors = sections.get('Groups and colors')!, navigation = sections.get('Navigation and motion')!, relationships = sections.get('Relationship notes')!;
+    for (const [state, targets] of [
+      ['Notes', ['Note size', 'Labels', 'Edges']],
+      ['Only connections', ['Selected note', 'Labels', 'Edges']],
+      ['Connection rings', ['Selected note', 'Navigation and motion']],
+      ['Path between notes', ['Edges', 'Navigation and motion']],
+      ['Groups', ['Groups and colors']],
+    ] as const) for (const target of targets) panelButton(sections.get(state)!, target, () => this.focusAppearance(target), false, 'graph-ng-appearance-link');
+    this.suggested(sections.get('Suggested for this graph')!);
+    this.nodes(sections.get('Note size')!);
+    this.slider(labels, 'Label density', { min: .25, max: 3, log: true }, () => s.labelDensity, x => { s.labelDensity = x; }, true, { def: 1 });
+    this.edgeMode(edges);
+    choice(edges, 'edgeCompositing', 'Edge compositing', 'Density reduces faint overlap; Blend keeps the original strokes. Canvas uses Blend.', [['blend', 'Blend (default)'], ['density', 'Density']]);
     slider('edgeOpacity', 'Edge opacity', { min: 0, max: 1, k: 2.5 }, '0 hides every edge, including highlights; 1 is fully opaque. Relationships remain available in Filters.');
     slider('edgeColorMix', 'Edge color blend', { min: 0, max: 1 });
     slider('glow', 'Glow', { min: 0, max: 1, k: 2 });
-    this.guard(host, 'glow');
+    this.guard(edges, 'glow');
     slider('curvature', 'Curvature', { min: 0, max: .5, k: 1.5 });
-    this.flag(host, 'curvedEdges', 'Curved edges');
-    this.guard(host, 'curves');
-    this.flag(host, 'groupHalos', 'Group halos (faint tint behind groups at mid zoom)');
-    this.guard(host, 'halos');
-    this.flag(host, 'autoPalette', 'Group colors (when no rule matches)');
+    this.flag(edges, 'curvedEdges', 'Curved edges');
+    this.guard(edges, 'curves');
+    this.flag(colors, 'groupHalos', 'Group halos (faint tint behind groups at mid zoom)');
+    this.guard(colors, 'halos');
+    this.flag(colors, 'autoPalette', 'Group colors (when no rule matches)');
     if (this.host.toggleLens) {
-      this.lensButton = settingRow(host, 'Connection lens', 'graph-ng-toggle', 'Brings the selected note’s direct connections into rings temporarily. Follows selection. L toggles it; Escape closes it.').querySelector('input')!;
+      this.lensButton = settingRow(sections.get('Connection rings')!, 'Connection rings', 'graph-ng-toggle', 'Brings the selected note’s direct connections into rings temporarily. Follows selection. L toggles it; Escape closes it.').querySelector('input')!;
       this.lensButton.onchange = () => { this.host.toggleLens?.(); this.updateLensControl(); };
       this.updateLensControl();
     }
-    choice(host, 'cardPlacement', 'Card placement', 'Side uses a sheet when space is tight. Auto switches earlier.', [['auto', 'Auto (default)'], ['side', 'Side'], ['sheet', 'Bottom sheet']]);
-    choice(host, 'clickFraming', 'Click framing (experimental)', 'Move only when needed. Off only uncovers the selected note. Respects Motion.', [['off', 'Off (default)'], ['center', 'Center when hidden'], ['fit-neighbours', 'Fit connections']]);
-    settingSelect(host, 'Click a note', 'Highlight shows direct connections, neighbours of neighbours and dimmed context. Relationship notes count with their endpoints. Ctrl/Cmd-click opens a note; touch shows its card.', [['highlight', 'Highlight connections (default)'], ['card', 'Open the card only'], ['open', 'Open the note']], v.clickOpens ? 'open' : v.hoverHighlight ? 'highlight' : 'card', value => { v.clickOpens = value === 'open'; if (value !== 'open') v.hoverHighlight = value === 'highlight'; this.host.visualsChanged(false); });
-    const details = host.createEl('details', { cls: 'graph-ng-highlight-options' }); disclosure(details, 'Finding connections'); const find = disclosureBody(details);
+    choice(navigation, 'cardPlacement', 'Card placement', 'Side uses a sheet when space is tight. Auto switches earlier.', [['auto', 'Auto (default)'], ['side', 'Side'], ['sheet', 'Bottom sheet']]);
+    settingSelect(selected, 'Click a note', 'Highlight connections is the default. Highlight shows direct connections, neighbours of neighbours and dimmed context. Relationship notes count with their endpoints. Ctrl/Cmd-click opens a note; touch shows its card.', [['highlight', 'Highlight connections'], ['card', 'Open the card only'], ['open', 'Open the note']], v.clickOpens ? 'open' : v.hoverHighlight ? 'highlight' : 'card', value => { v.clickOpens = value === 'open'; if (value !== 'open') v.hoverHighlight = value === 'highlight'; this.host.visualsChanged(false); });
+    choice(selected, 'clickFraming', 'Click framing', 'Experimental. Move only when needed. Off only uncovers the selected note. Respects Motion.', [['off', 'Off (default)'], ['center', 'Center when hidden'], ['fit-neighbours', 'Fit connections']]);
     choice(find, 'emphasis', 'Highlight emphasis', 'Adaptive (default) limits growth in large neighbourhoods. Scale keeps the original magnification.', [['adaptive', 'Adaptive'], ['scale', 'Scale']]);
     slider('tierMinSize', 'Highlighted size target (px)', { min: 0, max: 16, k: 1.5 }, 'Adaptive reduces this target for large neighbourhoods; Scale uses it as a minimum. 0 disables neighbour size targets.', false, find);
     for (const [key, label] of [
-      ['tierRings', 'Connection rings (around the focus and direct connections)'],
+      ['tierRings', 'Highlight outlines (around the focus and direct connections)'],
       ['focusEdges', 'Strong focus edges (fade the rest)'],
       ['offscreenPips', 'Off-screen arrows (point to direct connections)'],
       ['tierLegend', 'Connection counts (show a legend for each tier)'],
-      ['focusRipple', 'Selection ripple'],
-      ['bridgesFirst', 'Bridges first: rank connections to other groups higher'],
-      ['breadcrumb', 'Visited notes (show a trail along the top)'],
-      ['minimap', 'Minimap (hidden under 500 px wide)'],
     ] as const) this.flag(find, key, label);
-    choice(host, 'labelStyle', 'Label style', 'Names show the most connected notes that fit without overlapping. Zoom in for more. Anchored names stay one size; Ranked names grow with connection count.', [['anchored', 'Anchored'], ['ranked', 'Ranked']], true);
-    choice(host, 'namePriority', 'Name which notes', 'Selection always names direct connections before unrelated hubs. All that fit uses the existing bounded candidate pool, not every note at once.', [['connected', 'Most connected (default)'], ['selection', 'Selection and its connections'], ['all', 'All that fit']], true);
+    const more = this.appearanceSection(find, 'More selection settings');
+    this.flag(more, 'focusRipple', 'Selection ripple');
+    this.flag(more, 'bridgesFirst', 'Bridges first: rank connections to other groups higher');
+    this.flag(navigation, 'breadcrumb', 'Visited notes (show a trail along the top)');
+    this.flag(navigation, 'minimap', 'Minimap (hidden under 500 px wide)');
+    choice(labels, 'labelStyle', 'Label style', 'Names show the most connected notes that fit without overlapping. Zoom in for more. Anchored names stay one size; Ranked names grow with connection count.', [['anchored', 'Anchored'], ['ranked', 'Ranked']], true);
+    choice(labels, 'namePriority', 'Name which notes', 'Selection always names direct connections before unrelated hubs. All that fit uses the existing bounded candidate pool, not every note at once.', [['connected', 'Most connected (default)'], ['selection', 'Selection and its connections'], ['all', 'All that fit']], true);
     if ((v.labelStyle ?? 'anchored') === 'ranked') {
-      this.flag(host, 'labelFade', 'Fade labels (by zoom and importance)', true);
-      slider('labelTierScale', 'Label size range', { min: 1, max: 1.6, k: 1.5 }, 'Focus and well-connected notes get larger names. 1 keeps names one size.', true);
+      this.flag(labels, 'labelFade', 'Fade labels (by zoom and importance)', true);
+      slider('labelTierScale', 'Label size range', { min: 1, max: 1.6, k: 1.5 }, 'Focus and well-connected notes get larger names. 1 keeps names one size.', true, labels);
     }
-    choice(host, 'motion', 'Motion', 'All modes respect your system’s reduced-motion setting. Reduced and Off settle immediately.', [['full', 'Full (default)'], ['reduced', 'Reduced'], ['off', 'Off']]);
-    this.flag(host, 'labelPlates', 'Label backgrounds');
-    this.flag(host, 'zoomAdapt', 'Adapt to zoom: fade crowded edges and shrink hubs when zoomed out');
-    if (this.host.setRelationshipDisplay && hasReified(s.declaration)) this.relationshipDisplay(host);
+    choice(navigation, 'motion', 'Motion', 'All modes respect your system’s reduced-motion setting. Reduced and Off settle immediately.', [['full', 'Full (default)'], ['reduced', 'Reduced'], ['off', 'Off']]);
+    this.flag(labels, 'labelPlates', 'Label backgrounds');
+    this.flag(navigation, 'zoomAdapt', 'Adapt to zoom: fade crowded edges and shrink hubs when zoomed out');
+    if (this.host.setRelationshipDisplay && hasReified(s.declaration)) this.relationshipDisplay(relationships);
     if (this.host.carriers()) {
-      slider('carrierOpacity', 'Relationship-note opacity', { min: 0, max: 1, k: 2 });
-      slider('carrierSize', 'Relationship-note size', { min: .001, max: 4, k: 2 });
-      this.flag(host, 'carrierTint', 'Endpoint colors (for relationship notes)');
+      slider('carrierOpacity', 'Relationship-note opacity', { min: 0, max: 1, k: 2 }, undefined, false, relationships);
+      slider('carrierSize', 'Relationship-note size', { min: .001, max: 4, k: 2 }, undefined, false, relationships);
+      this.flag(relationships, 'carrierTint', 'Endpoint colors (for relationship notes)');
 
     }
+    const result = this.host.result();
+    if (result) this.colors(colors, result); else this.note(colors, 'Awaiting projection.');
+    this.updateViewState();
   }
   /** Edges: All / Focus only / Off. Live, saved with plugin settings. */
   private edgeMode(host: HTMLElement) {
@@ -767,14 +821,14 @@ export class ExplorePanel {
       return button;
     });
   }
-  confirmRelationshipDisplay(nodes: boolean) { this.relationPending = nodes; this.show('appearance'); this.body.querySelector('.graph-ng-relation-confirm')?.scrollIntoView({ block: 'nearest' }); }
+  confirmRelationshipDisplay(nodes: boolean) { this.relationPending = nodes; this.show('appearance'); this.focusAppearance('Relationship notes'); this.body.querySelector('.graph-ng-relation-confirm')?.scrollIntoView({ block: 'nearest' }); }
   private relationBusy = false;
   private relationMessage = '';
   private relationPending?: boolean;
   private relationshipDisplay(host: HTMLElement) {
     const nodes = this.settings.declaration.display.reifiedAsNodes, count = this.host.relationshipNotes?.() ?? 0;
     const row = host.createDiv({ cls: 'graph-ng-row graph-ng-segmented', attr: { role: 'group', 'aria-label': 'Relationship notes' } });
-    panelHelp(row, 'Relationship notes');
+    panelHelp(row, this.tool === 'appearance' ? 'Draw as' : 'Relationship notes', RELATIONSHIP_HELP);
     for (const [value, text] of [[false, 'Lines'], [true, 'Notes']] as const) {
       const button = row.createEl('button', { text, attr: { 'aria-pressed': String(nodes === value) } }); button.disabled = this.relationBusy || nodes === value;
       button.onclick = () => { this.relationPending = value; this.render(); };

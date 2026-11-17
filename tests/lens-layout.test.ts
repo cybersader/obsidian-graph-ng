@@ -74,16 +74,17 @@ test('lens Appearance is a native toggle with help, no duplicate fit or relation
   const { ControlElement } = await import('./support/controls-dom');
   const panel: any = Object.create(ExplorePanel.prototype), root = new ControlElement(), settings = defaults('links'), saved = JSON.stringify(settings);
   const state = { active: false, available: false }; let toggles = 0;
-  panel.host = { settings: () => settings, lens: () => state, toggleLens: () => { toggles++; state.active = !state.active; }, carriers: () => 0, fit() {} };
+  panel.appearanceSections = new Map(); panel.appearanceOpen = new Set(); panel.body = root; panel.updateViewState = () => {};
+  panel.host = { result: () => undefined, mode: () => 'nodes', settings: () => settings, lens: () => state, toggleLens: () => { toggles++; state.active = !state.active; }, carriers: () => 0, fit() {} };
   // Other Appearance sections have their own tests; run the actual lens control construction.
   for (const name of ['suggested', 'nodes', 'slider', 'flag', 'guard', 'note']) panel[name] = () => {};
-  panel.display(root); const button: any = root.querySelectorAll('input').find(b => b.getAttribute('aria-label') === 'Connection lens')!;
+  panel.display(root); const button: any = root.querySelectorAll('input').find(b => b.getAttribute('aria-label') === 'Connection rings')!;
   expect(button).toBeDefined(); expect(button.disabled).toBe(true); button.click(); expect(toggles).toBe(0);
   state.available = true; panel.updateLensControl(); expect(button.checked).toBe(false);
   button.onchange(); expect(toggles).toBe(1); expect(button.checked).toBe(true);
   state.active = false; panel.updateLensControl(); expect(button.checked).toBe(false);
   expect(JSON.stringify(settings)).toBe(saved);
   expect(root.querySelectorAll('button').some(b => b.textContent === 'Fit graph')).toBe(false);
-  expect(root.textContent).not.toContain('Connection lens:');
+  expect(root.textContent).not.toContain('Connection rings:');
   expect(root.querySelectorAll('.graph-ng-help-popover').some(p => p.textContent.includes('direct connections') && p.hidden)).toBe(true);
 });

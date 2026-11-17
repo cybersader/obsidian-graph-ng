@@ -590,3 +590,21 @@ button.graph-ng-help-trigger:hover { color:var(--text-accent); }
 .graph-ng-groups-heading button { max-width:60%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; vertical-align:middle; }
 
 .graph-ng-layout-stop { flex:none; width:32px; height:32px; }
+/* Named view layers and their single-owner Appearance sections. */
+.graph-ng-state-strip { order:-3; display:flex; flex-wrap:wrap; gap:var(--gng-space-2); pointer-events:auto; max-width:100%; }
+.graph-ng-state-chip { position:relative; display:flex; align-items:center; gap:var(--gng-space-1); max-width:100%; border:1px solid var(--background-modifier-border); border-radius:var(--radius-m); background:var(--background-primary); font-size:var(--gng-text-sm); padding:2px; }
+.graph-ng-state-chip button { box-shadow:none; background:transparent; }
+.graph-ng-state-subject { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:130px; color:var(--text-muted); }
+.graph-ng-state-menu { position:static; }
+.graph-ng-state-menu > summary { display:flex; align-items:center; justify-content:center; min-width:28px; min-height:28px; cursor:pointer; list-style:none; }
+.graph-ng-state-menu > summary::-webkit-details-marker { display:none; }
+.graph-ng-state-menu > summary .graph-ng-chevron { transform:rotate(90deg); }
+.graph-ng-state-menu[open] > summary .graph-ng-chevron { transform:rotate(270deg); }
+.graph-ng-state-menu > .graph-ng-disclosure-body { position:absolute; top:100%; left:0; z-index:5; width:230px; max-width:calc(100vw - 32px); margin:4px 0; padding:8px; border:1px solid var(--background-modifier-border); border-radius:var(--radius-m); background:var(--background-primary); box-shadow:var(--shadow-s); }
+.graph-ng-state-menu .graph-ng-disclosure-body > button { display:block; width:100%; text-align:left; }
+.graph-ng-state-menu .graph-ng-disclosure-body > span { display:block; margin:6px; color:var(--text-muted); }
+.graph-ng-appearance-state { border-top:1px solid var(--background-modifier-border); padding-block:4px; }
+.graph-ng-appearance-state.is-current { border-radius:var(--radius-m); background:var(--background-modifier-hover); }
+.graph-ng-state-current { margin-left:auto; color:var(--text-accent); font-size:var(--gng-text-xs); }
+.graph-ng-state-current[hidden] { display:none; }
+.graph-ng-appearance-link { display:block; width:100%; margin-block:6px; text-align:left; }

@@ -285,9 +285,10 @@ test('side-panel disclosures contain their contents in one shared non-scrolling 
   }
   expect(seen).toBeGreaterThan(5);
   f.panel.show('appearance');
-  const find = f.root.querySelector('.graph-ng-highlight-options')!;
+  const find = f.panel.appearanceSections.get('Selected note')!;
   expect(find.children[1]!.textContent).toContain('Highlight emphasis');
-  expect(find.children[1]!.textContent).toContain('Minimap');
+  expect(find.children[1]!.textContent).not.toContain('Minimap');
+  expect(f.panel.appearanceSections.get('Navigation and motion').textContent).toContain('Minimap');
   expect(find.children[1]!.textContent).not.toContain('Label style');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const guide = css.match(/^\.graph-ng-disclosure-body \{([^}]+)\}/m)![1]!;
@@ -308,7 +309,7 @@ test('relationship line choices persist live in Appearance and Filters; shared t
     const select: any = f.root.querySelectorAll('select').find(e => e.getAttribute('aria-label') === 'Relationship lines');
     expect(select).toBeDefined(); expect(select.children.map((e: any) => e.textContent)).toEqual(['Auto (default)', 'Through the note', 'Direct']);
     for (const mode of ['direct', 'through', 'auto'] as const) { select.value = mode; select.onchange(); expect(f.settings.visuals.carrierLines).toBe(mode); expect(f.settings.visuals.carrierLod).toBe(mode !== 'through'); }
-    const term = f.root.querySelectorAll('.graph-ng-help-trigger').find(e => e.textContent === 'Relationship notes')!;
+    const term = f.root.querySelectorAll('.graph-ng-help-trigger').find(e => e.textContent === (panel === 'appearance' ? 'Draw as' : 'Relationship notes'))!;
     expect(term).toBeDefined(); expect(f.root.querySelectorAll('.graph-ng-help-popover').some(e => e.textContent === RELATIONSHIP_HELP)).toBe(true);
   }
   expect(calls).toEqual(Array(6).fill(false));

@@ -1,3 +1,4 @@
+import { VIEW_STATES, namedViewState, stateChip } from '../src/view-state';
 import { test, expect, beforeEach, afterEach } from 'bun:test';
 import './support/obsidian-fixture';
 import { ControlElement, control } from './support/controls-dom';
@@ -465,7 +466,7 @@ test('settings rows: Edges and layout Presets use the name, description and cont
   const row = (name: string) => f.panel.root.querySelectorAll('.graph-ng-setting').find((r: any) => (r.children[0]?.querySelector('.graph-ng-help-trigger')?.textContent ?? r.children[0]?.textContent) === name) as any;
   const parts = (r: any) => r.children.map((c: any) => [...c.classes].find((n: string) => n.startsWith('graph-ng-setting-')));
   f.panel.show('appearance');
-  expect(headings().filter(t => t === 'Appearance')).toHaveLength(1); expect(headings()).toContain('Color rules');
+  expect(headings().filter(t => t === 'Appearance')).toHaveLength(1); expect(f.panel.root.querySelectorAll('summary').map((e: any) => e.textContent)).toContain('Groups and colors');
   const edges = row('Edges'); expect(edges.tagName).toBe('DIV'); expect(parts(edges)).toEqual(['graph-ng-setting-name', 'graph-ng-setting-line']);
   const modes = edges.children[1]; expect(modes.getAttribute('role')).toBe('group'); expect(modes.getAttribute('aria-label')).toBe('Edges');
   expect(modes.children.map((b: any) => b.textContent)).toEqual(['All', 'Focus only', 'Off']);
@@ -696,4 +697,63 @@ test('UX click intent and note-name priority are explicit Appearance choices', (
   names.value = 'selection'; names.onchange(); expect(f.settings.visuals.namePriority).toBe('selection');
   names.value = 'all'; names.onchange(); expect(f.settings.visuals.namePriority).toBe('all');
   expect(f.state.fit + f.state.layout + f.state.viewCalls).toBe(0); f.panel.dispose();
+});
+
+
+test('named states derive from existing layers in priority order, never hover or loading', () => {
+  const active = [false, false, false, false, false];
+  expect(namedViewState(...active as [boolean, boolean, boolean, boolean, boolean])).toBe('Notes');
+  for (let i = 4; i >= 0; i--) { active[i] = true; expect(namedViewState(...active as [boolean, boolean, boolean, boolean, boolean])).toBe(VIEW_STATES[5 - i]!); }
+});
+test('state chip has named layer exits, text-only subjects, disabled unavailable transitions and accessible menu', () => {
+  for (const state of VIEW_STATES) {
+    const root = new ControlElement(); let left = 0, tuned = '', switched = '';
+    stateChip(root as any, state, '<synthetic>', () => left++, s => { tuned = s; }, s => { switched = s; });
+    control(root, `${state} appearance`).click(); expect(tuned).toBe(state);
+    if (state === 'Notes' || state === 'Groups') expect(root.querySelectorAll('button').some(b => b.getAttribute('aria-label')?.startsWith('Leave'))).toBe(false);
+    else { control(root, `Leave ${state}`).click(); expect(left).toBe(1); }
+    expect(root.querySelectorAll('summary').map(b => b.getAttribute('aria-label'))).toContain('View state menu');
+    control(root, 'Connection rings').click(); expect(switched).toBe('');
+    expect(root.querySelector('.graph-ng-state-subject')!.textContent).toBe('<synthetic>');
+  }
+});
+test('Appearance keeps every setting once under its owning state or shared category', () => {
+  const f = fixture(); f.host.toggleLens = () => {}; f.host.carriers = () => 1;
+  f.settings.visuals.labelStyle = 'ranked'; f.settings.declaration.display.reifiedAsNodes = true;
+  f.settings.declaration.edges.push({ kind: 'reified', name: 'relation', sourceProperty: 'source', targetProperty: 'target' });
+  const p = buildProjection([{ path: 'Synthetic/A.md', properties: {} }], f.settings.declaration);
+  const result = explore(p, f.settings.declaration, emptyView(), colorGroups(p, f.settings.declaration), 0, { facetValues: 10 });
+  f.host.result = () => result; f.host.groupColor = () => '#4477aa'; f.host.setRelationshipDisplay = async () => {};
+  f.panel.show('appearance');
+  const inventory: Record<string, string[]> = {
+    'Note size': ['Hub size', 'Node size', 'Shrink crowded dots', 'Retain base size', 'Size by connections'],
+    'Labels': ['Label density', 'Label style', 'Name which notes', 'Fade labels', 'Label size range', 'Label backgrounds'],
+    'Edges': ['Edge compositing', 'Edge opacity', 'Edge color blend', 'Glow', 'Curvature', 'Curved edges'],
+    'Groups and colors': ['Group halos', 'Group colors', 'Show notes matching no rule', 'Rule name', 'Rule color'],
+    'Navigation and motion': ['Card placement', 'Motion', 'Visited notes', 'Minimap', 'Adapt to zoom'],
+    'Relationship notes': ['Relationship lines', 'Relationship-note opacity', 'Relationship-note size', 'Endpoint colors'],
+    'Selected note': ['Click a note', 'Click framing', 'Highlight emphasis', 'Highlighted size target (px)', 'Highlight outlines', 'Strong focus edges', 'Off-screen arrows', 'Connection counts', 'Selection ripple', 'Bridges first'],
+    'Connection rings': ['Connection rings'],
+  };
+  for (const [section, names] of Object.entries(inventory)) for (const name of names) {
+    const named = (root: ControlElement) => root.querySelectorAll('input,select').filter(e => e.getAttribute('aria-label') === name);
+    expect(named(f.panel.root)).toHaveLength(1); expect(named(f.panel.appearanceSections.get(section))).toHaveLength(1);
+  }
+  for (const name of ['All', 'Focus only', 'Off']) expect(f.panel.appearanceSections.get('Edges').querySelectorAll('button').filter((b: any) => b.textContent === name)).toHaveLength(1);
+  for (const name of ['Preview sizing', 'Apply sizing', 'Restore sizing', 'None', 'Balanced', 'Strong']) expect(f.panel.appearanceSections.get('Note size').querySelectorAll('button').filter((b: any) => b.textContent === name)).toHaveLength(1);
+  expect(f.panel.root.querySelectorAll('input').some((e: any) => e.getAttribute('aria-label') === 'Show direction')).toBe(false);
+  f.panel.dispose();
+});
+test('Appearance follows stable states without remounting editors, and shared links open the real owner', () => {
+  const f = fixture(); let state: typeof VIEW_STATES[number] = 'Selected note'; f.host.namedViewState = () => state; f.panel.show('appearance');
+  const selected = f.panel.appearanceSections.get('Selected note'), labels = f.panel.appearanceSections.get('Labels');
+  expect(selected.open).toBe(true); labels.open = true;
+  const editor = input(f.panel.root, 'Node size'); editor.focus(); editor.value = '12.5';
+  state = 'Connection rings'; f.panel.updateViewState();
+  expect(ControlElement.active).toBe(editor); expect(input(f.panel.root, 'Node size')).toBe(editor); expect(f.panel.appearanceSections.get(state).open).toBe(false);
+  ControlElement.active = undefined; f.panel.updateViewState(); expect(f.panel.appearanceSections.get(state).open).toBe(true); expect(labels.open).toBe(true);
+  f.panel.render(); expect(f.panel.appearanceSections.get('Labels').open).toBe(true);
+  control(f.panel.appearanceSections.get('Notes'), 'Edges').click();
+  expect(f.panel.appearanceSections.get('Everywhere').open).toBe(true); expect(f.panel.appearanceSections.get('Edges').open).toBe(true);
+  expect(ControlElement.active).toBe(f.panel.appearanceSections.get('Edges').querySelector('summary')); f.panel.dispose();
 });

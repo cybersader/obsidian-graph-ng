@@ -1083,8 +1083,8 @@ test('wiring: card Lens action, lens-displaced picking/arrows/cue/labels, and Es
   const before = r.screenPoint(1);
   try {
     fixtureReducedMotion = true;
-    f.tap(0); const lens = control(card(), 'Connection lens'); expect(lens.attributes['aria-pressed']).toBe('false'); expect(lens.attributes['aria-label']).toBe('Connection lens: 0');
-    lens.click(); expect(r[compiled('lensNode')]).toBe(0); expect(control(card(), 'Connection lens').attributes['aria-pressed']).toBe('true');
+    f.tap(0); const lens = control(card(), 'Connection rings'); expect(lens.attributes['aria-pressed']).toBe('false'); expect(lens.attributes['aria-label']).toBe('Connection rings: 0');
+    lens.click(); expect(r[compiled('lensNode')]).toBe(0); expect(control(card(), 'Connection rings').attributes['aria-pressed']).toBe('true');
     const pulled = r.screenPoint(1); expect(pulled).not.toEqual(before);
     // Tier-lifted picking (min size) finds the displaced note at its drawn position, not its grid cell.
     r[k('focusLevel')] = 1; expect(r.pick(pulled.x, pulled.y)).toBe(1); expect(r.pick(before.x, before.y)).not.toBe(1);
@@ -1096,17 +1096,17 @@ test('wiring: card Lens action, lens-displaced picking/arrows/cue/labels, and Es
     const row = rows().find((b: any) => b.attributes['aria-labelledby']?.endsWith('-note-1')); row.onmouseenter(); r[k('placeOverlay')]();
     expect(r[k('cueRing')].style.transform).toContain(`translate(${Math.round(pulled.x)}px, ${Math.round(pulled.y)}px)`);
     // Travel moves the lens with the card; Alt+Left in the card goes back (and the lens follows).
-    row.click(); expect(r.selected).toBe(1); expect(r[compiled('lensNode')]).toBe(1); expect(r[k('lensAnchor')]).toBe(1); expect(control(card(), 'Connection lens').attributes['aria-pressed']).toBe('true');
+    row.click(); expect(r.selected).toBe(1); expect(r[compiled('lensNode')]).toBe(1); expect(r[k('lensAnchor')]).toBe(1); expect(control(card(), 'Connection rings').attributes['aria-pressed']).toBe('true');
     cardKey('ArrowLeft', card(), true); expect(r.selected).toBe(0); expect(r[compiled('lensNode')]).toBe(0);
     // L from inside the card toggles exactly once (card keys do not swallow it, nothing fires twice).
-    cardKey('l', rows()[0]); expect(r[compiled('lensNode')]).toBe(-1); expect(control(card(), 'Connection lens').attributes['aria-pressed']).toBe('false');
+    cardKey('l', rows()[0]); expect(r[compiled('lensNode')]).toBe(-1); expect(control(card(), 'Connection rings').attributes['aria-pressed']).toBe('false');
     cardKey('L', rows()[0]); expect(r[compiled('lensNode')]).toBe(0);
     // Escape layers: the card first (lens stays), then the lens, then nothing left to clear.
     expect(canvasKey('Escape')).toBe(true); expect(card().textContent).toBe(''); expect(r.selected).toBe(-1); expect(r[compiled('lensNode')]).toBe(0);
     expect(canvasKey('Escape')).toBe(true); expect(r[compiled('lensNode')]).toBe(-1); expect(r[k('lensPoints')].size).toBe(0);
     { const d = r[k('display')]; expect(r.screenPoint(1)).toEqual({ x: (d[2] - r[compiled('centerX')]) * r.scale + r[k('width')] / 2, y: (d[3] - r[compiled('centerY')]) * r.scale + r[k('height')] / 2 }); }
     // The card's own Escape also closes only the card.
-    f.tap(0); control(card(), 'Connection lens').click(); expect(r[compiled('lensNode')]).toBe(0); cardKey('Escape', rows()[0]); expect(card().textContent).toBe(''); expect(r[compiled('lensNode')]).toBe(0);
+    f.tap(0); control(card(), 'Connection rings').click(); expect(r[compiled('lensNode')]).toBe(0); cardKey('Escape', rows()[0]); expect(card().textContent).toBe(''); expect(r[compiled('lensNode')]).toBe(0);
     // A click on empty canvas still clears both.
     f.tap(EMPTY); expect(r[compiled('lensNode')]).toBe(-1);
   } finally { fixtureReducedMotion = false; }
@@ -1249,7 +1249,7 @@ test('docked card: a fixed right-edge panel that never moves with the camera; la
   // Primary rows remain visible; secondary actions share a closed disclosure.
   const open = root.children.find((c: any) => c.className === 'graph-ng-card-primary'); expect(open.children.map((b: any) => b.textContent)).toEqual(['Open note', 'Show only connections']);
   expect(root.children.find((c: any) => c.className === 'graph-ng-card-more').open).not.toBe(true);
-  expect(root.querySelectorAll('div').find((c: any) => c.className === 'graph-ng-card-actions').children.map((b: any) => b.textContent)).toEqual(['New tab', 'Open to the right', 'Focus here', 'Connection lens', 'Copy link']);
+  expect(root.querySelectorAll('div').find((c: any) => c.className === 'graph-ng-card-actions').children.map((b: any) => b.textContent)).toEqual(['New tab', 'Open to the right', 'Focus here', 'Connection rings', 'Copy link']);
   // Panning and zooming never move the card.
   r[k('pointerDown')]({ pointerId: 1, button: 0, clientX: 300, clientY: 300 }); r[k('pointerMove')]({ pointerId: 1, clientX: 120, clientY: 210 }); r[k('pointerUp')]({ pointerId: 1, clientX: 120, clientY: 210 });
   r.setCamera(r.camera.x + .2, r.camera.y - .1, r.camera.ratio * .5); r[k('placeOverlay')]();
@@ -1311,7 +1311,7 @@ test('docked card: Only connections, Lens and path cards share the dock; labels 
   control(root, 'Show only connections').click(); expect(r[k('isolation')]).toBeDefined(); expect(dock()).toBe(at);
   // The anchor has no hidden neighbours at reach 1: no Expand at all, never a disabled "+0".
   expect(root.querySelectorAll('button').some((b: any) => b.textContent.startsWith('Expand'))).toBe(false);
-  control(root, 'Connection lens').click(); expect(r[compiled('lensNode')]).toBe(0); expect(dock()).toBe(at);
+  control(root, 'Connection rings').click(); expect(r[compiled('lensNode')]).toBe(0); expect(dock()).toBe(at);
   r.isolate(-1); r[compiled('setLens')](-1);
   const shift = (n: number) => { const { x, y } = r.screenPoint(n), e = { pointerId: 1, clientX: x, clientY: y, pointerType: 'mouse', shiftKey: true }; r[k('pointerDown')](e); r[k('pointerUp')](e); };
   f.tap(0); shift(3); expect(root.textContent).toContain('Path: 0 → 3'); expect(dock()).toBe(at);
@@ -2351,4 +2351,33 @@ test('review: production edge picking computes topology once and visits numeric 
   r[k('picker')].visit = (_x: number, _y: number, _r: number, visit: (n: number) => void) => { for (let i = 0; i < 5000; i++) visit(0); };
   r[k('edgeQuiet')] = () => [1, Infinity]; const a = r.screenPoint(0), b = r.screenPoint(2);
   expect(r[k('pickEdge')]((a.x + b.x) / 2, (a.y + b.y) / 2)).toBe(0); expect(levels).toBe(1); expect(targets).toBe(5000); expect(numeric).toBe(true);
+});
+
+
+test('named chip X exits only its layer with scopes, selection and filters retained', async () => {
+  const f = await fixture(), r = f.renderer, key = compiled, base = r[key('baseVisible')];
+  const state = () => r[key('namedViewState')], strip = () => r[key('stateStrip')];
+  r[key('selectNote')](0, true); expect(state()).toBe('Selected note');
+  control(strip(), 'Leave Selected note').click(); expect(r.selected).toBe(-1); expect(state()).toBe('Notes');
+  r[key('selectNote')](0, true); r.isolate(0); expect(state()).toBe('Only connections');
+  control(strip(), 'Leave Only connections').click(); expect(r.selected).toBe(0); expect(r.isolation).toBeUndefined(); expect(r[key('baseVisible')]).toBe(base);
+  r.isolate(0); r[key('setLens')](0); expect(state()).toBe('Connection rings');
+  expect(strip().querySelectorAll('button').filter((b: any) => b.getAttribute('aria-label')?.startsWith('Leave')).map((b: any) => b.getAttribute('aria-label'))).toEqual(['Leave Connection rings', 'Leave Only connections']);
+  control(strip(), 'Leave Only connections').click(); expect(r[key('lensNode')]).toBe(0); expect(r.selected).toBe(0);
+  r.isolate(0); control(strip(), 'Leave Connection rings').click(); expect(r[key('lensNode')]).toBe(-1); expect(r.isolation.node).toBe(0); expect(state()).toBe('Only connections');
+  // Even a no-route path owns a dismissal; its underlying neighbourhood stays.
+  r[key('pathView')] = { from: 0, to: 0, found: [], hops: [], edges: [], note: 'No path' }; r[key('syncViewState')]();
+  expect(state()).toBe('Path between notes'); control(strip(), 'Leave Path between notes').click();
+  expect(r[key('pathView')]).toBeUndefined(); expect(r.isolation.node).toBe(0); expect(r[key('baseVisible')]).toBe(base);
+});
+test('state chip survives dismissed cards and ignores hover; menu switches use existing actions', async () => {
+  const f = await fixture(), r = f.renderer, key = compiled;
+  r[key('selectNote')](0, true); r[key('setLens')](0); r[key('selectNote')](-1, false, true);
+  const strip = r[key('stateStrip')], chip = strip.children[0];
+  expect(chip.textContent).toContain('0'); expect(r[key('namedViewState')]).toBe('Connection rings');
+  r.hovered = 2; r[key('syncViewState')](); expect(strip.children[0]).toBe(chip);
+  let tuned = ''; r[key('tuneViewState')] = (state: string) => { tuned = state; };
+  control(strip, 'Tune this view').click(); expect(tuned).toBe('Connection rings');
+  control(strip, 'Only connections').click(); expect(r[key('lensNode')]).toBe(-1); expect(r.isolation.node).toBe(0);
+  control(strip, 'Notes').click(); expect(r[key('namedViewState')]).toBe('Notes'); expect(r.isolation).toBeUndefined(); expect(r.selected).toBe(-1);
 });
