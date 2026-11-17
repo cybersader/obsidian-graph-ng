@@ -198,8 +198,8 @@ export default class GraphPlugin extends Plugin {
     await this.serialize(async () => {
       await this.commitCandidate('Performance', () => ({ ...lighterSettings(this.settings, selected), performanceSuggestions: never ? false : this.settings.performanceSuggestions }),
         (next, was) => adopt(this.settings.visuals, next.visuals, was.visuals, ['labelStyle', 'curvedEdges', 'motion']) + adopt(this.settings.declaration.display, next.declaration.display, was.declaration.display, ['reifiedAsNodes']) + adopt(this.settings, next, was, ['performanceSuggestions']), current);
-      this.adapter.configure(this.settings.declaration); this.resetStore();
-    }); await this.notify();
+      if (selected.size) { this.adapter.configure(this.settings.declaration); this.resetStore(); }
+    }); if (selected.size) await this.notify();
   }
   commitSizing(values: NodeSizingValues, current: () => boolean) {
     return this.commitCandidate('Sizing', () => sizingSettings(this.settings, values), (next, was) => adopt(this.settings, next, was, ['nodeSize', 'nodeSizing']) + adopt(this.settings.visuals, next.visuals, was.visuals, ['degreeSizing', 'degreeCurve']), current);

@@ -8,7 +8,7 @@ export function lighterChoices(s: Settings): [LighterChoice, string, string][] {
   const rows: [LighterChoice, string, string][] = [];
   if (s.visuals.labelStyle === 'ranked') rows.push(['labels', 'Use anchored labels', 'Avoid the ranked glyph texture. Names remain available.']);
   if (s.visuals.curvedEdges && s.visuals.edgeMode !== 'off' && s.visuals.edgeOpacity > 0) rows.push(['curves', 'Use straight edges', 'Draw one segment per edge instead of several.']);
-  if (s.visuals.motion === 'full') rows.push(['motion', 'Turn off motion', 'Camera and focus changes become instant instead of drawing repeated frames.']);
+  if (s.visuals.motion === 'full' && !devicePerformance.fast(s.performance)) rows.push(['motion', 'Turn off motion', 'Camera and focus changes become instant instead of drawing repeated frames.']);
   if (s.declaration.display.reifiedAsNodes) rows.push(['relationships', 'Show relationship notes as lines', 'Remove extra dots and incidence edges. Connection notes remain inspectable.']);
   return rows;
 }

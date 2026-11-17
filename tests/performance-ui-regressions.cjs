@@ -68,5 +68,8 @@ function control(host,label){return host.all().find(e=>e.options.attr?.['aria-la
   tab.containerEl.all().find(e=>e.textContent==='Make lighter').onclick();await button(modals.at(-1),'Apply').click();
   assert.equal(control(tab.containerEl,'Graph declaration JSON'),draft);assert.equal(draft.value,'{"syntheticDraft":true}');assert.equal(control(tab.containerEl,'Tuning settings JSON'),knobs);assert.equal(knobs.value,'{"syntheticTuningDraft":true}');
   console.log('PASS performance-only redraw preserves both JSON drafts');
+  const quiet=plugin();let rebuilds=0;quiet.notify=async()=>{rebuilds++;};quiet.adapter.configure=()=>{rebuilds++;};
+  await quiet.commitPerformance(new Set(),true,()=>true);assert.equal(rebuilds,0);assert.equal(quiet.disk.settings.performanceSuggestions,false);
+  console.log('PASS suppression-only save does not rebuild the graph');
 
 })().catch(e=>{console.error(e);process.exitCode=1;});

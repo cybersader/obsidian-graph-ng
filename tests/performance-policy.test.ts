@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import './support/obsidian-fixture';
-import { deviceTier, PerformanceState, performanceRecords } from '../src/performance';
+import { deviceTier, devicePerformance, PerformanceState, performanceRecords } from '../src/performance';
 import { defaults, upgradeSettings, validateSettings } from '../src/settings';
 import { lighterChoices, lighterSettings } from '../src/performance-ui';
 import { buildLabels } from '../src/render-labels';
@@ -41,7 +41,7 @@ test('diagnostics allowlist strips note names, paths, content, strings and nonfi
   expect(performanceRecords([{ tier: privateText, mode: 'auto' }, null, { tier: 'low', mode: privateText }])).toEqual([]);
 });
 test('lighter suggestions list only enabled work and change only checked choices', () => {
-  const s = defaults('links'); s.visuals.labelStyle = 'ranked'; s.visuals.curvedEdges = true; s.declaration.display.reifiedAsNodes = true;
+  const s = defaults('links'); s.performance = 'quality'; s.visuals.labelStyle = 'ranked'; s.visuals.curvedEdges = true; s.declaration.display.reifiedAsNodes = true;
   expect(lighterChoices(s).map(r => r[0])).toEqual(['labels', 'curves', 'motion', 'relationships']);
   const next = lighterSettings(s, new Set(['labels', 'relationships']));
   expect(next.visuals.labelStyle).toBe('anchored'); expect(next.declaration.display.reifiedAsNodes).toBe(false);
@@ -62,4 +62,13 @@ test('anchored labels keep ranked placement and widths without raster or glyph g
     expect(a.nodes).toEqual(b.nodes); expect(a.scales).toEqual(b.scales); expect(a.widths).toEqual(b.widths);
     expect(b.levels.some(l => l.length > 0)).toBe(true);
   } finally { (globalThis as any).document = previous; }
+});
+
+test('lighter checklist omits motion already suppressed by effective performance mode', () => {
+  const s = defaults('links'), tier = devicePerformance.tier;
+  try {
+    s.performance = 'fast'; expect(lighterChoices(s).some(row => row[0] === 'motion')).toBe(false);
+    s.performance = 'auto'; devicePerformance.tier = 'low'; expect(lighterChoices(s).some(row => row[0] === 'motion')).toBe(false);
+    s.performance = 'quality'; expect(lighterChoices(s).some(row => row[0] === 'motion')).toBe(true);
+  } finally { devicePerformance.tier = tier; }
 });

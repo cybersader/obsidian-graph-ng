@@ -7,6 +7,7 @@ The owner-approved bounded download ceilings for this UI pass are **405,000 raw 
 - Remove the unused 2048-square glyph raster, texture and ranked geometry from Anchored labels while preserving candidate ranking, measured widths and placements. Ranked labels still build their normal atlas, with same-size texture reuse.
 - Add Auto, Fast and Quality performance modes, a dotted-help detected tier, bounded measured-cost correction, a once-only automatic lighter-graph checklist with persistent suppression and manual reopening, and an opt-in 16-sample numeric-only local performance log with Clear. No telemetry or note names/paths enter the log.
 - Fast and low-tier Auto limit device-pixel resolution and disable motion without changing settled layout accuracy. Their first progressed worker batch may paint sooner. Existing Stop, deferred captions, camera interaction and zero idle drawing are retained.
+- Exclude motion already suppressed by effective Fast/Auto policy from the lighter checklist. Saving only automatic-offer suppression does not rebuild the graph.
 - CPU-throttled synthetic native and memory evidence, remaining gaps and unchanged size-cap failures are recorded in the benchmark section. This does not explain the reported 2.5 GB tab or establish hardware/mobile acceptance.
 
 ## Unreleased responsive layout cancellation
