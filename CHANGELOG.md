@@ -4,6 +4,8 @@ The owner-approved bounded download ceilings for this UI pass are **400,000 raw 
 
 ## Unreleased named view states
 
+- Verify the four independent-review fixes with **814 passing tests**, one skip, and **42/42** synthetic Obsidian 1.12.7 browser-native steps. Inspect all 22 light/dark captures, including Groups chip/menu and path-to-rings restoration. Final code bundle is **402,561 raw / 136,865 gzip bytes**, **+329 / +159** versus `bf02883` and **+9,082 / +3,229** versus `6747495`. Build and policy lanes pass; size alone fails unchanged caps by **2,561 raw / 865 gzip bytes**. Screen-reader speech, mobile, Electron fidelity and hardware-performance acceptance are not established by these checks.
+
 - Restore a text-only status announcement for Only connections in the chip strip, including when rings overlap the scope. Changing the scope updates its announced note; leaving isolation removes the announcement.
 
 - Keep equivalent state chrome in Groups after the detail renderer is disposed: Groups opens its Appearance section, the caret offers Notes, and X returns to Notes through the existing guarded transition. Group-page redraws retain those controls.
