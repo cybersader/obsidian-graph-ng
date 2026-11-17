@@ -94,7 +94,7 @@ test('density correction leaves node radius and edge geometry/direction/focus eq
     // Finding aids (optional, setting-gated): tier floor (lift), contrast ring bands/ink, legend mask (shownTier/tierByte), strong focus edges.
     .replace(/\n.*\b(lift|bands|ink|shownTier|tierByte|strong)\b.*/g, '').replace('\nout float ring;', '').replace(/\n float wide = .*;/, '').replace('* wide)', '* max(.5, edgeSize))')
     // Screen-space ink budget, long-line fade, "Focus only" and the dither seed change alpha and visibility only, never geometry.
-    .replace(' || focusOnly > 0. && tier == 0u', '').replace(' seed = uint(gl_InstanceID);', '').replace('\nflat out uint seed;', '').replace('max(alpha, edgeAlpha)', 'alpha').replace(/\n.*\b(inkShare|fadeLength|focusOnly|quiet|lineRank)\b.*/g, '')
+    .replace(' || focusOnly > 0. && !pinned && tier == 0u', '').replace(' || focusOnly > 0. && tier == 0u', '').replace(' seed = uint(gl_InstanceID);', '').replace('\nflat out uint seed;', '').replace('max(alpha, edgeAlpha)', 'alpha').replace(/\n.*\b(inkShare|fadeLength|focusOnly|quiet|lineRank)\b.*/g, '')
     // Ignore only the two new density branches, not the existing node-layer geometry.
     .replace(/\n if \(layer (?:>|==)[^\n]*/g, '')
     // Tiny nodes now have a device-pixel floor; the pan-phase regression covers it separately.
@@ -103,7 +103,7 @@ test('density correction leaves node radius and edge geometry/direction/focus eq
     .replace('layer == 2 ? selected : gl_InstanceID', 'gl_InstanceID')
     .replace('hot ? 1. : note ? carrierAlpha : 1.', 'note ? (hot ? carrierFold : carrierAlpha) : 1.')
     .replace('note ? (hot ? min(1., carrierAlpha * 2.) : carrierAlpha) : 1.', 'note ? (hot ? carrierFold : carrierAlpha) : 1.')
-    .replace(/\n if \(note(?: && k > 0\.)?\).*?;/g, '')
+    .replace(/\n if \(note(?: && k > 0\.)?\).*?;/g, '').replace(/\n if \(\(note \|\| pinned\) && k > 0\.\).*?;/g, '')
     .replace(/\n.*\b(carrierRank|foldEnd|through|owner)\b.*/g, '')
     .replace('hot))', 'gl_InstanceID == edgeHovered))').replace('!hot)', 'gl_InstanceID != edgeHovered)')
     .replace(' || (layer != 2 && id == selected)', '')

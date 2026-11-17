@@ -60,9 +60,9 @@ test('length fade: a long line adds no more ink than a typical one, and only whi
 // The shader's stable line rank, evaluated in 32-bit unsigned arithmetic like GLSL.
 const rankOf = (id: number) => { let k = Math.imul(id, 2654435769) >>> 0; k = (k ^ k >>> 15) >>> 0; k = Math.imul(k, 2246822519) >>> 0; return ((k ^ k >>> 13) >>> 0) >>> 8; };
 test('edge shader keeps a stable share of whole context lines; focus tiers fade back to full alpha', () => {
-  expect(edgeShader).toContain('float quiet = hot || share * 16777216. > float(lineRank & 16777215u) ? 1. : 0.;');
+  expect(edgeShader).toContain('float quiet = retained || hot || share * 16777216. >= float((lineRank & 16777215u) + 1u) ? 1. : 0.;');
   const fn = (line: string) => new Function('s', `with (s) { return (${line}); }`) as (s: any) => number;
-  const env = { min: Math.min, max: Math.max, mix: (a: number, b: number, t: number) => a + (b - a) * t };
+  const env = { pinned: false, min: Math.min, max: Math.max, mix: (a: number, b: number, t: number) => a + (b - a) * t };
   const share = fn(edgeShader.match(/float share = (.*);/)![1]!.replace(/(\d)u\b/g, '$1')), factor = fn(edgeShader.match(/alpha \*= (.*);/)![1]!.replace(/(\d)u\b/g, '$1'));
   for (const [ink, f, len] of [[.1, 300, 900], [.5, 300, 100], [1, 1e9, 5000]] as const) expect(share({ ...env, inkShare: ink, fadeLength: f, len, lineRank: 0 })).toBeCloseTo(ink * lengthFade(len, f), 12);
   // The kept fraction matches the share; a larger share keeps a superset (zooming in only adds lines).
@@ -76,9 +76,9 @@ test('edge shader keeps a stable share of whole context lines; focus tiers fade 
     expect(factor({ ...env, quiet, tier: 255, focus: 1, focusOnly: 0 })).toBe(1);
     expect(factor({ ...env, quiet, tier: 255, focus: .5, focusOnly: 1 })).toBeCloseTo((quiet + (1 - quiet) * .5) * .5, 12);
   }
-  expect(edgeShader).toContain('if (quiet < .5 && (tier == 0u || focus <= 0.) && !hot) { gl_Position = offscreen; return; }');
+  expect(edgeShader).toContain('if (!retained && quiet < .5 && (tier == 0u || focus <= 0.) && !hot) { gl_Position = offscreen; return; }');
   // "Focus only" removes context lines before rasterizing (no zero-alpha fragments, no dither speckle).
-  expect(edgeShader).toContain('focusOnly > 0. && tier == 0u) { gl_Position = offscreen; return; }');
+  expect(edgeShader).toContain('focusOnly > 0. && !pinned && tier == 0u) { gl_Position = offscreen; return; }');
 });
 
 test('edge mode setting: three values, validated, defaulted for old settings', () => {

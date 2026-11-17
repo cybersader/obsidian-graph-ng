@@ -5,7 +5,7 @@ import { defaults, upgradeSettings, validateSettings } from '../src/settings';
 import { encodeStrings } from '../src/core/columns';
 import { ControlElement, control } from './support/controls-dom';
 import { topLeftHub } from './support/top-left-hub';
-import { focusTiers, incidentEdges } from '../src/render-data';
+import { focusTiers, incidentEdges, shownTier } from '../src/render-data';
 import { miniFit, miniBounds, toCamera } from '../src/minimap';
 import { shaderNames } from '../scripts/glsl.mjs';
 
@@ -2277,7 +2277,7 @@ test('direct-open clicks advance the same visit history as card selections', asy
 
 async function carrierRenderer(n = 3) {
   const f = await graduated([[0, 1], [1, 2]], n), { r, k } = f;
-  r.projection.carrier = new Uint32Array([7, 7]); r.projection.carrierNodes = new Uint32Array(n); r.projection.carrierNodes[1] = 8;
+  r.projection.carrier = new Uint32Array([7, 7]); r.projection.carrierNodes = new Uint32Array(n); r.projection.carrierNodes[1] = 8; r[k('carrierCount')] = 1;
   r.setView(new Uint8Array(n).fill(1), {}); f.settings.visuals.carrierLines = 'through'; r[k('baseNodeRadius')] = () => .01;
   return f;
 }
@@ -2296,7 +2296,7 @@ test('review: production path retains its carrier dot and both legs with direct 
   expect(paint.dots.some(d => d[0] === point.x && d[1] === point.y && d[2]! >= 2 && d[3]! >= .25)).toBe(true);
   // Execute the production shader's owner-tier override, not a parallel desired topology model.
   const text = readFileSync(new URL('../src/webgl-renderer.ts', import.meta.url), 'utf8'), line = text.split('\n').find(l => l.includes('if (owner >= 0') && l.includes('tier ='))!;
-  const tier = new Function('owner', 'tierByte', 'focusNode', 'state', 'shownTier', 'uint', `let tier = 255; ${line.replace(/(\d)u\b/g, '$1')} return tier;`);
+  const tier = new Function('owner', 'tierByte', 'focusNode', 'state', 'shownTier', 'uint', 'retained', `let tier = 255; ${line.replace(/(\d)u\b/g, '$1')} return tier;`);
   expect(tier(1, 253, -1, () => ({ g: 1 }), (g: number, ego: boolean) => ego ? g : 0, Math.floor)).toBe(255);
 });
 test('review: production collapse keeps incidence lines at the hub and never rewrites traversal masks', async () => {
@@ -2311,7 +2311,7 @@ test('review: production hovered Direct carrier remains drawn after zoom changes
   const { r, k, settings } = await carrierRenderer(); settings.visuals.carrierLines = 'direct'; r[k('hoveredEdge')] = 0; r[k('edgeQuiet')] = () => [0, Infinity];
   for (const ratio of [.05, 8]) { r.camera.ratio = ratio; const paint = carrierPaint(r, k), a = r.screenPoint(0), b = r.screenPoint(2); expect(paint.lines).toContainEqual([a.x, a.y, b.x, b.y]); }
   const text = readFileSync(new URL('../src/webgl-renderer.ts', import.meta.url), 'utf8'), expression = text.slice(text.indexOf('const edgeVertex')).match(/bool hot = (.*);/)![1]!;
-  const hot = new Function('gl_InstanceID', 'edgeHovered', 'owner', 'selected', 'hovered', 'carrierHovered', `return ${expression};`);
+  const hot = new Function('gl_InstanceID', 'edgeHovered', 'owner', 'selected', 'hovered', 'edgeNote', `return ${expression};`);
   expect(hot(0, 0, 1, -1, -1, 1)).toBe(true); expect(hot(1, 0, 1, -1, -1, 1)).toBe(true);
   settings.visuals.carrierLines = 'through'; const paint = carrierPaint(r, k), n = r.screenPoint(1);
   expect(paint.lines).toHaveLength(2); expect(paint.dots.some(d => d[0] === n.x && d[1] === n.y)).toBe(true);
@@ -2324,4 +2324,144 @@ test('review: production edge picking computes topology once and visits numeric 
   r[k('picker')].visit = (_x: number, _y: number, _r: number, visit: (n: number) => void) => { for (let i = 0; i < 5000; i++) visit(0); };
   r[k('edgeQuiet')] = () => [1, Infinity]; const a = r.screenPoint(0), b = r.screenPoint(2);
   expect(r[k('pickEdge')]((a.x + b.x) / 2, (a.y + b.y) / 2)).toBe(0); expect(levels).toBe(1); expect(targets).toBe(5000); expect(numeric).toBe(true);
+});
+
+async function retainedRenderer(nested: boolean, n = 6) {
+  const pairs: [number, number][] = nested ? [[0, 1], [1, 2], [1, 3], [3, 4], [5, 1]] : [[0, 1], [1, 2], [5, 1]], f = await graduated(pairs, n), { r, k, settings } = f;
+  r.projection.carrier = new Uint32Array(nested ? [7, 7, 8, 8, 0xffffffff] : [7, 7, 0xffffffff]); r.projection.carrierNodes = new Uint32Array(n); r.projection.carrierNodes.set(nested ? [0, 8, 0, 9, 0, 0] : [0, 8, 0, 0, 0, 0]);
+  r[k('carrierCount')] = nested ? 2 : 1; r.setView(new Uint8Array(n).fill(1), {}); settings.visuals.carrierLines = 'direct'; settings.visuals.carrierSize = .001; r[k('baseNodeRadius')] = () => .01; r[k('edgeQuiet')] = () => [1, 1];
+  return { ...f, pairs };
+}
+for (const nested of [false, true]) test(`retention: production ${nested ? 'nested relationships' : 'ordinary carrier endpoint'} stays attached in Direct when its whole component fits`, async () => {
+  const { r, k, settings, pairs } = await retainedRenderer(nested), geometry = r[k('carrierGeometry')], nodes = nested ? [1, 3] : [1];
+  expect(geometry.groups.map((g: number[][]) => g[0])).toEqual([nodes]);
+  for (const mode of ['direct', 'auto', 'through'] as const) for (const ratio of [.03, 1, 8]) {
+    settings.visuals.carrierLines = mode; r.camera.ratio = ratio; const paint = carrierPaint(r, k);
+    expect(paint.lines).toHaveLength(pairs.length);
+    for (const [a, b] of pairs) { const s = r.screenPoint(a), t = r.screenPoint(b); expect(paint.lines).toContainEqual([s.x, s.y, t.x, t.y]); }
+    for (const node of nodes) { const p = r.screenPoint(node); expect(paint.dots.some(d => d[0] === p.x && d[1] === p.y && d[2]! >= 2 && d[3]! >= .25)).toBe(true); }
+    expect(r[k('carrierGeometry')]).toBe(geometry);
+  }
+});
+test('retention: production focus, filter, collapse, zero opacity and reset keep the component together', async () => {
+  const { r, k, settings } = await retainedRenderer(true); settings.visuals.edgeMode = 'focus'; r[k('tierMask')] = 0;
+  expect(carrierPaint(r, k).lines).toHaveLength(0);
+  r[k('setFocus')](0, true); expect(r[k('stateBytes')][5]).toBe(255); expect(r[k('stateBytes')][13]).toBe(255);
+  expect(carrierPaint(r, k).lines.length).toBeGreaterThanOrEqual(5);
+  r[k('setFocus')](-1, true); expect(r[k('stateBytes')][5]).toBe(0); expect(r[k('stateBytes')][13]).toBe(0); expect(carrierPaint(r, k).lines).toHaveLength(0);
+  settings.visuals.edgeMode = 'all'; r.setView(new Uint8Array(6).fill(1), { groupCodes: new Uint32Array([0, 1, 2, 3, 4, 0]), groupLabels: ['a', 'b', 'c', 'd', 'e'], collapsed: new Uint8Array([1, 0, 0, 0, 0]) });
+  expect(r.visible[0]).toBe(0); expect(carrierPaint(r, k).lines).toHaveLength(5);
+  r.setView(new Uint8Array([0, 1, 1, 1, 1, 1]), {}); expect(Array.from(r[k('edgeOn')])).toEqual([1, 1, 1, 1, 1]); expect(Array.from(r[k('carrierGeometry')].enabled)).toEqual([0, 0, 0, 0, 0]); expect(carrierPaint(r, k).lines).toHaveLength(0);
+  r.setView(new Uint8Array(6).fill(1), {}); const edges = [0, 1, 2, 3]; r[k('pathView')] = { edges, from: 0, to: 4 }; r[k('setFocus')](-1, true, edges);
+  for (const key of ['carrierOpacity', 'edgeOpacity'] as const) { const old = settings.visuals[key]; settings.visuals[key] = 0; expect(carrierPaint(r, k).lines).toHaveLength(0); for (const node of [1, 3]) expect(r[k('carrierShown')](node, 1, 1)).toBe(false); settings.visuals[key] = old; }
+  settings.visuals.edgeMode = 'off'; expect(carrierPaint(r, k).lines).toHaveLength(0);
+});
+test('retention: shader marker excludes ordinary-node sentinels and bypasses sampling only for retained edges', () => {
+  const text = readFileSync(new URL('../src/webgl-renderer.ts', import.meta.url), 'utf8'), expression = text.match(/bool retained = (.*);/)![1]!.replace(/(\d)u\b/g, '$1'), retained = new Function('carrierRank', `return ${expression};`);
+  expect(retained(0xffffffff)).toBe(false); expect(retained(0x1ffffff)).toBe(false); expect(retained(0x3000000)).toBe(true);
+  const edge = text.slice(text.indexOf('const edgeVertex')), quiet = new Function('retained', 'hot', 'share', 'lineRank', 'float', `return ${edge.match(/float quiet = (.*);/)![1]!.replace(/(\d)u\b/g, '$1')};`);
+  expect(quiet(true, false, 0, 0x3000000, Number)).toBe(1); expect(quiet(false, false, 0, 0, Number)).toBe(0);
+});
+
+test('retention review: production lens picking admits retained dots through the same per-node predicate', async () => {
+  const { r, k, settings } = await retainedRenderer(true); settings.visuals.motion = 'off'; r[k('selectNote')](0, false); r[k('setLens')](0);
+  expect(r[k('lensPoints')].size).toBeGreaterThan(0); expect(r.carrierLevel().visibility).toBe(0);
+  const p = r.screenPoint(1); expect(r[k('carrierShown')](1, 1, 1)).toBe(true); expect(r.pick(p.x, p.y)).toBe(1);
+  r[k('edgeQuiet')] = () => [0, 1]; expect(r.pick(p.x, p.y)).not.toBe(1);
+});
+test('retention review: production 15000-carrier chain at zero ink has no drawn or pickable fragments', async () => {
+  const count = 15000, pairs: [number, number][] = [], own: number[] = [], notes = new Uint32Array(count + 2);
+  for (let n = 1; n <= count; n++) { pairs.push([n - 1, n], [n, count + 1]); own.push(n + 7, n + 7); notes[n] = n + 8; }
+  const { r, k, settings } = await graduated(pairs, count + 2, 40000); r.projection.carrier = Uint32Array.from(own); r.projection.carrierNodes = notes; r[k('carrierCount')] = count; r.setView(new Uint8Array(count + 2).fill(1), {});
+  settings.visuals.carrierLines = 'direct'; r[k('edgeQuiet')] = () => [0, Infinity]; r[k('setFocus')](1, true);
+  const paint = carrierPaint(r, k); expect(paint.lines).toHaveLength(0);
+  const ordinary = new Set([0, count + 1].map(n => { const p = r.screenPoint(n); return `${p.x},${p.y}`; })); expect(paint.dots.every(d => ordinary.has(`${d[0]},${d[1]}`))).toBe(true);
+  for (let n = 1; n <= count; n++) expect(r[k('carrierShown')](n, 0, 1)).toBe(false);
+  const p = r.screenPoint(1); expect(r.pick(p.x, p.y)).not.toBe(1); expect(r[k('carrierGeometry')].groups).toHaveLength(1);
+  // Actual selection is a bounded exception: two owned legs, not the entire 30k-leg chain.
+  r[k('selectNote')](2, false); expect(r.selected).toBe(2);
+  const selected = carrierPaint(r, k), unique = new Set(selected.lines.map(line => JSON.stringify(line)));
+  expect(unique.size).toBe(2); expect(r[k('carrierShown')](1, 0, 1)).toBe(true); expect(r[k('carrierShown')](2, 0, 1)).toBe(true);
+  for (let n = 3; n <= count; n++) expect(r[k('carrierShown')](n, 0, 1)).toBe(false);
+
+});
+
+test('retention review: production shader rejects an oversized whole component before focus exemptions', () => {
+  const text = readFileSync(new URL('../src/webgl-renderer.ts', import.meta.url), 'utf8'), edge = text.slice(text.indexOf('const edgeVertex'));
+  const condition = edge.match(/if \(through && carrierAlpha <= 0\. \|\| (retained && .*?)\) \{/)![1]!.replace(/(\d)u\b/g, '$1');
+  const reject = new Function('retained', 'lineRank', 'inkShare', 'float', 'pinned', `return ${condition};`);
+  for (const share of [0, .001, .3, .99]) expect(reject(true, 0x3ffffff, share, Number)).toBe(true);
+  expect(reject(true, 0x3ffffff, 0, Number, true)).toBe(false); expect(reject(true, 0x3ffffff, 1, Number)).toBe(false); expect(reject(false, 0x3ffffff, 0, Number)).toBe(false);
+  expect(edge.indexOf('if (through && carrierAlpha')).toBeLessThan(edge.indexOf('bool hot ='));
+});
+
+test('retention review two: actual selection then lower ink preserves only its own legs and endpoint dots', async () => {
+  const { r, k, settings } = await retainedRenderer(true); settings.visuals.motion = 'off';
+  r[k('selectNote')](3, false); expect(r.selected).toBe(3);
+  r[k('edgeQuiet')] = () => [0, Infinity]; r.camera.ratio *= 8;
+  const check = () => {
+    const paint = carrierPaint(r, k), unique = [...new Set(paint.lines.map(line => JSON.stringify(line)))];
+    expect(unique).toHaveLength(2);
+    for (const [a, b] of [[1, 3], [3, 4]]) { const s = r.screenPoint(a), t = r.screenPoint(b); expect(unique).toContain(JSON.stringify([s.x, s.y, t.x, t.y])); }
+    for (const n of [1, 3]) { const p = r.screenPoint(n); expect(r[k('carrierShown')](n, 0, 1)).toBe(true); expect(paint.dots.some(d => d[0] === p.x && d[1] === p.y && d[2]! >= 2 && d[3]! >= .25)).toBe(true); }
+  };
+  check(); settings.visuals.dimOpacity = 0; r[k('tierMask')] = 0; check();
+  const endpoint = r.screenPoint(4); expect(carrierPaint(r, k).dots.some(d => d[0] === endpoint.x && d[1] === endpoint.y && d[3]! >= .25)).toBe(true);
+  // Hover is an explicit one-hop exception too, even with highlighting switched off.
+  r[k('selectNote')](-1, false); settings.visuals.hoverHighlight = false; r.hovered = 3; r[k('animate')](performance.now()); check();
+  r.hovered = -1; r[k('animate')](performance.now()); expect(carrierPaint(r, k).lines).toHaveLength(0);
+  r[k('selectNote')](3, false); check();
+  for (const key of ['carrierOpacity', 'edgeOpacity'] as const) { const old = settings.visuals[key]; settings.visuals[key] = 0; expect(carrierPaint(r, k).lines).toHaveLength(0); expect(r[k('carrierShown')](3, 0, 1)).toBe(false); settings.visuals[key] = old; }
+  settings.visuals.edgeMode = 'off'; expect(carrierPaint(r, k).lines).toHaveLength(0); settings.visuals.edgeMode = 'all';
+  r.setView(new Uint8Array([0, 1, 1, 1, 1, 1]), {}); expect(carrierPaint(r, k).lines).toHaveLength(0); expect(r[k('carrierShown')](3, 0, 1)).toBe(false);
+});
+
+test('retention review two: hidden relationship labels cannot leave false endpoint rings behind', async () => {
+  const { r, k, settings } = await retainedRenderer(true); settings.visuals.labelStyle = 'anchored'; settings.visuals.namePriority = 'all';
+  r[k('selectNote')](0, false); r[k('edgeQuiet')] = () => [1, Infinity]; r[k('placeOverlay')]();
+  expect(r[k('anchorNames')].some((it: any) => it.node === 1 || it.node === 3)).toBe(true);
+  r[k('edgeQuiet')] = () => [0, Infinity]; r[k('placeOverlay')]();
+  const hidden = new Set([r.name(1), r.name(3)]);
+  for (const el of r[k('anchorPool')]) if (!el.hidden) expect(hidden.has(el.getAttribute('aria-description'))).toBe(false);
+});
+
+// Execute visibility/coverage expressions extracted from the shipped, minified shader strings.
+// Geometry/rasterization remains a separate native acceptance lane.
+function shippedCarrierScalar() {
+  const names = (text: string) => text.replace(/\b[A-Za-z_]\w*\b/g, name => shaderOriginalNames[name] ?? name);
+  const js = (text: string) => text.replace(/\b(?:int|uint|float|bool|vec4) (?=\w)/g, 'let ').replace(/(\d)u\b/g, '$1').replace(/return;/g, 'return 0;');
+  const node = names(source.match(/void main\(\)\{int id=layer==2[\s\S]*?float \w+=nodeSize/)![0]!).replace(/^void main\(\)\{/, '').replace(/float \w+=nodeSize$/, '');
+  const edge = names(source.match(/void main\(\)\{int s=int\(source\)[\s\S]*?if\(layer==2\)[^;]+;\}/)![0]!).replace(/^void main\(\)\{/, '');
+  const prelude = edge.slice(0, edge.indexOf('int segment=')), quiet = edge.match(/float share=.*?float quiet=.*?;/)![0]!, alpha = edge.match(/float alpha=edgeAlpha[\s\S]*?(?=if\(tier==254u)/)![0]!;
+  const floor = edge.match(/if\(through&&alpha>0\.\)alpha=max\(\.25,alpha\);/)![0]!;
+  return { node: new Function('e', `with(e){${js(node)} return k;}`), edge: new Function('e', `with(e){${js(prelude + quiet + alpha + floor)} return alpha;}`) };
+}
+function carrierUniforms(r: any, k: (s: string) => string) {
+  const d = driver(r), values: Record<string, number> = {}; let current = -1;
+  r[k('programs')] = [0, 1, 2, 3].map(handle => ({ handle, uniforms: new Proxy({}, { get: (_o, key) => key }) })); r.atlas = undefined;
+  d.gl.useProgram = (handle: number) => { current = handle; };
+  const uniform = (name: string, value: number) => { if (current === 0) values[name] = value; };
+  d.gl.uniform1f = uniform; d.gl.uniform1i = uniform; r[k('draw')]();
+  return { ...values, seed: 0, tint: 0, gl_Position: 0, offscreen: 0, len: 1, u: .5,
+    min: Math.min, max: Math.max, float: Number, int: Math.trunc, uint: Math.trunc, vec4: () => 0, mix: (a: number, b: number, t: number) => a + (b - a) * t,
+    state: (n: number) => { const b = r[k('stateBytes')]; return { r: b[n * 4] / 255, g: b[n * 4 + 1] / 255, b: b[n * 4 + 2] / 255, a: b[n * 4 + 3] / 255 }; },
+    shownTier: (g: number, ego: boolean) => shownTier(Math.round(g * 255), values.tierMask!, ego) / 255 };
+}
+for (const retained of [false, true]) test(`retention review three: compiled WebGL and Canvas ${retained ? 'hover outside zero-dim focus' : 'ordinary selected carrier in Focus mode'} preserve dot and owned legs`, async () => {
+  const { r, k, settings } = retained ? await retainedRenderer(true, 7) : await carrierRenderer(7);
+  settings.visuals.motion = 'off'; settings.visuals.edgeMode = 'focus'; settings.visuals.carrierLines = 'through'; settings.visuals.focusEdges = false; settings.visuals.edgeDirection = false; settings.visuals.dimOpacity = 0;
+  if (retained) {
+    r[k('selectNote')](6, false); expect(r[k('stateBytes')][13]).toBe(0); expect(r[k('edgeTier')][2]).toBe(0);
+    r[k('focusLevel')] = r[k('focusTarget')] = 1; r.hovered = 3; r[k('animate')](performance.now()); r[k('edgeQuiet')] = () => [0, Infinity];
+  } else { settings.visuals.hoverHighlight = false; r[k('selectNote')](1, false); r[k('edgeQuiet')] = () => [0, Infinity]; }
+  const n = retained ? 3 : 1, edges = retained ? [2, 3] : [0, 1], paint = carrierPaint(r, k), point = r.screenPoint(n);
+  expect(paint.lines.length).toBeGreaterThanOrEqual(2);
+  const uniforms = carrierUniforms(r, k), scalar = shippedCarrierScalar();
+  for (const e of edges) {
+    const alpha = scalar.edge({ ...uniforms, gl_InstanceID: e, source: r.projection.source[e], target: r.projection.target[e], foldEnd: r[k('carrierGeometry')].ends[e], lineRank: r[k('lineRanks')][e], tierByte: r[k('edgeTier')][e], typeOn: 1 });
+    expect(alpha).toBeGreaterThanOrEqual(.25);
+    const a = r.screenPoint(r.projection.source[e]), b = r.screenPoint(r.projection.target[e]); expect(paint.lines).toContainEqual([a.x, a.y, b.x, b.y]);
+  }
+  expect(scalar.node({ ...uniforms, layer: retained ? 0 : 2, gl_InstanceID: n, carrierRank: r[k('carrierGeometry')].nodes[n] })).toBeGreaterThan(0);
+  expect(paint.dots.some(d => d[0] === point.x && d[1] === point.y && d[3]! >= .25)).toBe(true);
 });

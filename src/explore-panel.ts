@@ -779,7 +779,7 @@ export class ExplorePanel {
       const button = row.createEl('button', { text, attr: { 'aria-pressed': String(nodes === value) } }); button.disabled = this.relationBusy || nodes === value;
       button.onclick = () => { this.relationPending = value; this.render(); };
     }
-    if (nodes) settingSelect(host, 'Relationship lines', 'Auto folds tiny dots; Through the note keeps both legs; Direct joins the endpoints.', [['auto', 'Auto (default)'], ['through', 'Through the note'], ['direct', 'Direct']], this.settings.visuals.carrierLines, value => { this.settings.visuals.carrierLines = value as Visuals['carrierLines']; this.settings.visuals.carrierLod = value !== 'through'; this.host.visualsChanged(false); });
+    if (nodes) settingSelect(host, 'Relationship lines', 'Auto folds tiny dots. Through keeps both legs. Direct joins endpoints. Endpoint notes stay connected.', [['auto', 'Auto (default)'], ['through', 'Through the note'], ['direct', 'Direct']], this.settings.visuals.carrierLines, value => { this.settings.visuals.carrierLines = value as Visuals['carrierLines']; this.settings.visuals.carrierLod = value !== 'through'; this.host.visualsChanged(false); });
     if (this.relationPending !== undefined && this.relationPending !== nodes) {
       const value = this.relationPending, confirm = host.createDiv({ cls: 'graph-ng-relation-confirm' });
       const total = Math.max(0, (this.host.result()?.nodes ?? 0) + (value ? count : -count));
