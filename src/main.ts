@@ -13,6 +13,7 @@ import { folderPath, predicateColumn, groupColumn as sourceColumn } from './core
 import { Modal, ItemView, Menu, Plugin, PluginSettingTab, Setting, Notice, TFile, apiVersion, type WorkspaceLeaf, type ViewStateResult } from 'obsidian';
 import { obsidianMenu } from './context-menu';
 import { LocalAdapter, type PropertySource } from './adapter/local';
+import { FactCache } from './adapter/fact-cache';
 import { canonical, digest, layoutDeclaration, migrateDeclaration, validateDeclaration, type GraphDeclaration, type Predicate } from './core/declaration';
 import { groupLabel, canonicalView, validateSaved, NO_COLOR, type SavedView, type ExploreResult, type ExploreView, type ViewCamera } from './core/explore';
 import { ExplorePanel, setRelationshipDisplay } from './explore-panel';
@@ -89,6 +90,7 @@ export default class GraphPlugin extends Plugin {
   private work: Promise<unknown> = Promise.resolve();
   pipeline!: WorkerPipeline;
   store!: BinaryLayoutStore;
+  factStore!: FactCache;
   ingestedHash = '';
   nextRevision = 0;
   private viewIdentity = 'local';
@@ -105,7 +107,8 @@ export default class GraphPlugin extends Plugin {
     if (!identity || identity.length > 512) throw new Error('Invalid source view identity');
     if (identity === this.viewIdentity) return;
     for (const leaf of this.app.workspace.getLeavesOfType(VIEW)) (leaf.view as GraphView).invalidateSource();
-    await this.serialize(async () => { await this.store.discard(); this.generations = Object.create(null); this.viewIdentity = identity; this.viewNamespace = identity === 'local' ? 'local' : await digest({ identity }); this.ingestedHash = ''; this.adapter.invalidate(); this.resetStore(); }); this.notify();
+    this.adapter.invalidate();
+    await this.serialize(async () => { await this.factStore?.clear(); await this.store.discard(); this.generations = Object.create(null); this.viewIdentity = identity; this.viewNamespace = identity === 'local' ? 'local' : await digest({ identity }); this.ingestedHash = ''; this.adapter.invalidate(); this.adapter.attachFactCache(this.factStore, `${this.deviceNamespace}/${this.manifest.version}/${identity}`); this.resetStore(); }); this.notify();
   }
   readonly linkProducer = `obsidian-links@${apiVersion}`;
   async onload() {
@@ -131,8 +134,11 @@ export default class GraphPlugin extends Plugin {
     this.addCommand({ id: 'open', name: 'Open graph', callback: () => { void this.open(); } });
     this.addRibbonIcon('git-fork', 'Graph NG', () => { void this.open(); });
     this.addSettingTab(new GraphSettings(this));
+    this.factStore = new FactCache(this.app.vault.adapter, dataPath.replace(/\/data\.json$/, '/cache/startup-facts'));
+    this.factStore.paused = !await this.ensureDeviceNamespace();
     this.resetAdapter(); this.watchProperties();
-    // Loading normalizes settings in memory only; adoption requires explicit validated apply.
+    this.addCommand({ id: 'clear-saved-facts', name: 'Clear saved startup facts', callback: () => { void this.adapter.clearFacts().then(() => { new Notice('Saved facts cleared until next load.'); this.notify(); }, error => new Notice(`Saved facts could not be cleared: ${String(error)}`)); } });
+    // Namespace creation acknowledges validated settings; other adoption requires explicit apply.
     this.registerEvent(this.app.vault.on('modify', file => { if (file.path === this.settings.projectionFile) this.notify(); }));
   }
   propertySource?: PropertySource;
@@ -163,7 +169,7 @@ export default class GraphPlugin extends Plugin {
     this.register(() => { active = false; clearTimeout(timer); host.removeEventListener?.('oc:property-facts-changed', changed); });
     changed();
   }
-  resetAdapter() { this.adapter?.index.dispose(); this.adapter = new LocalAdapter(this.app, this, this.linkProducer, this.settings.debounceMs, () => this.notify(), true, this.settings.declaration, this.propertySource); this.ingestedHash = ''; }
+  resetAdapter() { this.adapter?.invalidate(); this.adapter?.index.dispose(); this.adapter = new LocalAdapter(this.app, this, this.linkProducer, this.settings.debounceMs, () => this.notify(), true, this.settings.declaration, this.propertySource); this.adapter.attachFactCache(this.factStore, `${this.deviceNamespace}/${this.manifest.version}/${this.sourceIdentity}`); this.ingestedHash = ''; }
   subscribe(listener: () => void | Promise<void>) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   notify() { return Promise.all([...this.listeners].map(fn => fn())); }
   async open() {
@@ -348,7 +354,7 @@ export class GraphView extends ItemView {
     renderInformation(this.status, [text, this.detailFallback].filter(Boolean).join(' '), this.layoutWorking ? 'building' : state, this.report, this.explored, this.informationActions, this.loading());
     const health = state === 'error' ? [text] : this.loading() ? [this.loading()!.stage]
       : this.plugin.settings.projectionFile ? ['External aggregate, not verified']
-      : this.provisional ? [pendingText(this.report)] : [];
+      : this.provisional ? [this.plugin.adapter?.savedCopy ? 'Saved copy while host confirms' : pendingText(this.report)] : [];
     const chips = [this.viewFeedbackText, this.layoutStopped && !this.loading() && state !== 'error' ? 'Layout stopped' : '', ...health].filter(Boolean), readout = state === 'ready' && !this.provisional && this.report;
     const info = this.statusSummary.querySelector<HTMLElement>('.graph-ng-summary-info') ?? this.statusSummary.createEl('button', { cls: 'graph-ng-summary-info', attr: { 'aria-label': 'Graph information' } });
     info.hidden = !readout && !chips.length;
@@ -638,6 +644,8 @@ export class GraphView extends ItemView {
       this.buildProgress.text(4); this.contentEl.dataset.state = 'ready'; this.statusText = this.provisional ? pendingText(report) : this.layoutSettled ? '' : 'Layout not settled';
       this.contentEl.dataset.layoutMs = String(layout.milliseconds); this.contentEl.dataset.cached = String(layout.cached);
       if (this.presentation === 'nodes') await this.showDetails();
+      if (current() && !this.provisional) await this.plugin.adapter.saveFacts?.();
+      if (this.plugin.adapter.factError) this.statusText = 'Saved facts unavailable. Using host properties.';
       if (current() && !this.provisional) this.plugin.recordPerformance?.({ notes: result.nodes, edges: result.edges, ingestMs, projectMs, groupsMs: Number(this.contentEl.dataset.refreshGroupMs), layoutMs: layout.milliseconds, totalMs: performance.now() - start });
       if (layout.settled !== false && settings.persistLayout && this.plugin.store.committed !== result.meta.key && complete && !this.provisional && (!settings.declaration.edges.some(e => e.kind === 'producer') || this.plugin.adapter.linksResolved)) {
         const generation = await this.plugin.pipeline.request<BinaryGeneration>(revision, { kind: 'encode' });
