@@ -2,6 +2,33 @@
 
 Results belong to an exact invocation, fixture, source revision and hardware class. They do not establish all-scale acceptance. Original slice-1 source is `041e1382` (2026-11-10); release-readiness baseline is `9b8cc07`. Historical tables below remain dated evidence. The slice-2 section records the new worker/browser/native invocations and unmet targets separately. Raw receipts remain ignored and local; publish only scrubbed summaries without hostnames, usernames, real-vault paths or private projections.
 
+## Indexed instanced geometry (2026-11-17)
+
+Source: the commit carrying this section, compared with `3d7096b`. Only the node/edge vertex mapping, two static element buffers and their draw calls change. Eight-segment edges reference 18 vertices instead of 48; nodes reference four instead of six. The 32-segment ceiling needs 396 bytes of static GPU index data in total. Positions, triangle order, shader arithmetic after endpoint mapping, fragments, policies and Canvas remain unchanged.
+
+**Desktop RTX evidence only:** Linux x86-64 desktop, 32 GiB RAM, NVIDIA RTX 4060 Ti, Chromium 151.0.7922.34 through ANGLE Vulkan. A standalone renderer with a minimal public-host DOM shim, not Obsidian, draws seeded synthetic 5,000/20,000/49,000-note graphs with 14,000/56,000/114,000 edges and 1,000/4,000/33,000 relationship notes. Canvas size is 1000×650 at DPR 1. Default policy uses eight segments at 5k/20k and straight lines at 49k; the extended parity cases explicitly raise the existing curve-count threshold to exercise 32 segments at every size without changing production defaults.
+
+The same WebGL context alternates frozen-baseline shaders/array draws and actual production indexed shaders/element draws. Each case has 20 alternating warmups and 96 measured pairs, reversing order every pair; 12 cases give **1,152 pairs**. Query availability, non-disjoint status and zero GL errors are required. These are queued-draw GPU throughput timings, not interactive frame latency or FPS. Percentage change is the median of within-pair ratios, not a ratio of independent-run medians.
+
+| Notes | Camera, no selection | Baseline median GPU ms | Indexed median GPU ms | Median paired change |
+| ---: | --- | ---: | ---: | ---: |
+| 5,000 | overview | 0.247808 | 0.221184 | -10.70% |
+| 20,000 | overview | 0.967680 | 0.769024 | -20.59% |
+| 49,000 | overview | 0.267264 | 0.224256 | -15.77% |
+| 5,000 | close-up, 0.15× home ratio | 0.079872 | 0.055296 | -31.65% |
+| 20,000 | close-up, 0.15× home ratio | 0.296960 | 0.192512 | -35.27% |
+| 49,000 | close-up, 0.15× home ratio | 0.171008 | 0.129024 | -24.55% |
+
+The corresponding selected-note changes are **-9.88% / -19.26% / -13.28%** at overview and **-30.86% / -33.56% / -22.49%** close-up. Absolute timings vary with GPU clocks and workload; the 49k straight-line policy is not directly comparable with the curved 20k workload.
+
+All **12 original fixed-camera/selection FNV32 checksums** reproduce the research receipts exactly and match the indexed version. Those 12 plus 48 extended comparisons check every synchronous RGBA byte: **60 comparisons, zero differing bytes**. Extended cases cover light/dark themes, Blend/Density, straight/32-segment curves, hover, and centered selected relationship notes. Every requested density target is complete. Actual `WEBGL_lose_context` loss/restoration at each size recreates both element bindings, restores identical pixels in light-theme 32-segment density mode, and explicitly deletes all ten owned instance/index buffers on disposal. Separate baseline/candidate Canvas fallback checks match all eight theme/camera/selection checksums on a 600-note fixture. The deterministic initialization regression expands every triangle index through segments 1–32 and verifies fresh resource ownership and the unchanged unindexed disc VAOs.
+
+Invocation: `flock -w 1800 /tmp/graph-ng-harness.lock timeout --kill-after=10s 600s node .workspace/indexed-geometry/runner.mjs`. The runner checks `free -g` available memory >=8 before launch, uses one browser and closes the browser/server in `finally`. Vulkan flags match the research probe: `--enable-unsafe-webgpu --use-angle=vulkan --enable-features=Vulkan --ignore-gpu-blocklist`. Raw results and synthetic screenshots are in `.workspace/evidence/indexed-geometry/browser-warmed/`; the fixture, runner and frozen baseline source are in `.workspace/indexed-geometry/`. Original research and complete local receipts are also retained in the requested external receipt directory. No real vault, remote or publication was used.
+
+The first attempt refused before browser creation at 7 GiB available. A cold Vulkan attempt lost its context while installing comparison shaders and was excluded; restoring the research runner's 100-note/1.5-second startup warmup yielded the complete passing run. Both failures remain in the receipts. Synthetic screenshots were visually inspected for privacy and selected relationship rendering; a dark screenshot retained the previously observed Vulkan capture black corner despite exact synchronous readback parity. This is not native-host/compositor acceptance. Integrated/mobile GPUs, other drivers, native Obsidian and independent merge review remain separate gates.
+
+Verification: `flock -w 3000 -E 75 /tmp/openclast-bun.lock timeout --kill-after=5s 1800s ./scripts/run.sh build`, then the same wrapper with `test --timeout 10000` and `gates`; bundle report via `node scripts/bundle-size.mjs`. Build passes; **836 tests pass, one existing optional skip, zero failures**, across 39 files. Initial unit failures were four draw spies that recorded only array draws; they now observe indexed draws without removing ordering/selection assertions. The standalone bundle is **414,351 raw / 141,118 gzip bytes**, versus **413,948 / 140,976** at `3d7096b`: **+403 raw / +142 gzip**, below unchanged **420,000 / 145,000** ceilings. This excludes concurrent startup/layout/performance changes and grants no deployment or release approval.
+
 ## Morton Barnes-Hut query locality (2026-11-17)
 
 Source: the commit carrying this section, compared with `d5bed0a`. Linux x86-64 desktop class, 32 GiB RAM, shared local load. Only query visitation order changes for at least 20,000 nodes; tree insertion, per-node force accumulation, integration and the 50 ms message-friendly yield are unchanged. The 5k control keeps ordering disabled, so its small timing differences do not establish a lower crossover. The gate remains 20k.

@@ -38,6 +38,56 @@ test('every production shader retains identical tokens after expanding private n
   });
 });
 
+test('indexed node and curve VAOs preserve triangle order through the segment ceiling and reinitialize', async () => {
+  const { DetailRenderer } = await import('../src/webgl-renderer');
+  const source = readZoomProbeSource(new URL('../src/webgl-renderer.ts', import.meta.url), 'utf8');
+  expect(source).toContain('corners[int[4](0,1,2,5)[gl_VertexID]]');
+  expect(source).toContain('int segment = gl_VertexID / 2; vec2 c = vec2(-1., (gl_VertexID % 2) == 0 ? -1. : 1.);');
+  const r: any = Object.create(DetailRenderer.prototype);
+  let vao: object | null = null, element: object | null = null;
+  const elements = new Map<object, object>(), data = new Map<object, Uint16Array>();
+  Object.assign(r, {
+    ready: false, lost: false, disposed: false, timings: {}, positionWidth: 1, positionHeight: 1,
+    projection: { source: new Uint32Array([0]), target: new Uint32Array([1]) }, edgeTier: new Uint8Array(1), lineRanks: new Uint32Array(1), sizes: new Float32Array(2),
+    carrierGeometry: { enabled: new Uint8Array(1), ends: new Uint32Array(1), nodes: new Uint32Array(2) }, theme: { palette: new Uint8Array(1024) },
+    programs: [], vaos: [], buffers: [], discBuffers: [], async program() { return {}; }, async waitForResize() {}, resize() {}, texture() {}, uploadPalette() {}, uploadLens() {}, uploadView() {}, refresh() {},
+    gl: { ELEMENT_ARRAY_BUFFER: 1, ARRAY_BUFFER: 2, STATIC_DRAW: 3,
+      getParameter() { return 16384; }, createVertexArray() { return {}; }, bindVertexArray(v: object | null) { vao = v; },
+      createBuffer() { return {}; }, bindBuffer(target: number, b: object) { if (target === 1) { expect(vao).not.toBeNull(); element = b; elements.set(vao!, b); } },
+      bufferData(target: number, bytes: Uint16Array, usage: number) { if (target === 1) { expect(bytes).toBeInstanceOf(Uint16Array); expect(usage).toBe(3); data.set(element!, bytes.slice()); } },
+      enableVertexAttribArray() {}, vertexAttribPointer() {}, vertexAttribIPointer() {}, vertexAttribDivisor() {}, enable() {}, blendFunc() {},
+    },
+  });
+  const corners = [[-1, -1], [1, -1], [-1, 1], [-1, 1], [1, -1], [1, 1]];
+  let prior: object[] = [];
+  for (let pass = 0; pass < 2; pass++) {
+    r.programs = []; r.vaos = []; r.buffers = []; r.ready = false;
+    await r.initialize();
+    expect(r.ready).toBe(true); expect(vao).toBeNull(); expect(r.buffers.length).toBe(10);
+    const curveBuffer = elements.get(r.vaos[0])!, nodeBuffer = elements.get(r.vaos[1])!;
+    expect(r.buffers[8]).toBe(curveBuffer); expect(r.buffers[9]).toBe(nodeBuffer);
+    for (const b of [curveBuffer, nodeBuffer]) expect(prior.includes(b)).toBe(false);
+    prior = [curveBuffer, nodeBuffer];
+    expect(elements.has(r.vaos[2])).toBe(false); expect(elements.has(r.vaos[3])).toBe(false);
+    const nodes = data.get(nodeBuffer)!, curves = data.get(curveBuffer)!;
+    expect([...nodes].map(id => corners[[0, 1, 2, 5][id]!])).toEqual(corners);
+    expect(new Set(nodes).size).toBe(4); expect(curves.length).toBe(32 * 6);
+    for (let segments = 1; segments <= 32; segments++) {
+      const ids = curves.slice(0, segments * 6);
+      expect(new Set(ids).size).toBe(2 * (segments + 1));
+      ids.forEach((id, vertex) => {
+        const oldCorner = corners[vertex % 6]!;
+        const oldU = (Math.floor(vertex / 6) + (oldCorner[0]! + 1) * .5) / segments;
+        expect(Math.floor(id / 2) / segments).toBe(oldU);
+        expect(id % 2 ? 1 : -1).toBe(oldCorner[1]!);
+      });
+    }
+  }
+  const settings = defaults('links'); settings.visuals.curveSegments = 32;
+  expect(() => validateSettings(settings)).not.toThrow(); settings.visuals.curveSegments = 33;
+  expect(() => validateSettings(settings)).toThrow();
+});
+
 test('packed picking handles negative coordinates, ties, hidden and empty nodes', () => {
   const grid = new PickGrid(new Float32Array([-10, -5, -10, -5, 50, 50]), new Uint8Array([1, 1, 0]));
   expect(grid.pick(-10, -5, 1)).toBe(0); expect(grid.pick(50, 50, 1)).toBe(-1); expect(grid.pick(1e9, 1e9, 1)).toBe(-1);
