@@ -290,3 +290,25 @@ test('cooperative stop keeps the last computed frame exactly and never marks it 
   const resumed = await runLayoutStream({ ...input, initial: result }, { ...options, iterations: 1 }, 1, () => {}, async () => {});
   expect(resumed).toEqual(runLayout({ ...input, initial: result }, { ...options, iterations: 1 })); expect(resumed).not.toEqual(result);
 });
+
+
+test('message-friendly yields bypass boosted scheduler continuations', async () => {
+  const { yieldTask } = await import('../src/core/scheduler');
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'scheduler'); let calls = 0;
+  Object.defineProperty(globalThis, 'scheduler', { configurable: true, value: { yield: async () => { calls++; } } });
+  try { await yieldTask(true); expect(calls).toBe(0); await yieldTask(); expect(calls).toBe(1); }
+  finally { if (descriptor) Object.defineProperty(globalThis, 'scheduler', descriptor); else delete (globalThis as any).scheduler; }
+});
+
+test('long layout batches check Stop after 50 ms of work without changing solver steps', async () => {
+  const input = { count: 2, source: Uint32Array.of(0), target: Uint32Array.of(1), seed: 17 };
+  const options = { ...DEFAULT_LAYOUT, iterations: 1000, batchIterations: 1000, convergenceThreshold: 0 };
+  const expected = runLayout(input, { ...options, iterations: 2 }), step = LayoutSolver.prototype.step, now = performance.now;
+  let clock = 0, yields = 0, stopped = false, settled = true;
+  LayoutSolver.prototype.step = function () { const value = step.call(this); clock += 30; return value; };
+  performance.now = () => clock;
+  try {
+    const positions = await runLayoutStream(input, options, 1000, () => {}, async () => { if (++yields === 2) stopped = true; }, undefined, value => { settled = value; }, () => stopped);
+    expect(yields).toBe(2); expect(settled).toBe(false); expect(positions).toEqual(expected);
+  } finally { performance.now = now; LayoutSolver.prototype.step = step; }
+});

@@ -93,6 +93,12 @@ Explicit recompute prepares coordinates without mutating worker authority. Only 
 ## Active overlap numerical identity (2026-11-16)
 
 `layoutIdentity` includes `overlap: 2` only when `force.adjustSizes` is enabled. The marker participates in generation keys and layout hashes, so old overlap generations fail the existing hash check before exact reuse or warm seeding. Ordinary-mode identity and arithmetic remain unchanged. Producer stays `graph-ng-fa2@2` and binary format stays 3; the conditional numerical identity is the migration mechanism. Appearance remains excluded from layout identity, so the size-aware force uses a documented degree/count proxy rather than claiming exact rendered-radius collision avoidance.
+## Message-friendly layout cancellation (2026-11-17)
+
+The shared layout/refinement solver explicitly requests MessageChannel task yields rather than boosted `scheduler.yield()` continuations. Native Chromium testing showed that repeatedly boosted continuations could starve a queued Stop message until the iteration budget completed. Other callers retain the scheduler default. Each channel closes both ports on completion.
+
+The solver yields at its configured batch/stream boundaries or after at least 50 ms of work since the last yield, then checks Stop immediately. A single solver iteration remains atomic and can exceed that target; this is not a hard real-time cancellation guarantee. An immediate Stop still computes one step rather than returning a seed. No force equations, iteration order, position authority, cache identity, request ownership, deadline or unsettled-generation persistence rules change. Exact unstopped Float32 coordinates and bounded synthetic Stop latency are measured separately in [benchmarks](../benchmarks.md).
+
 ## Display-only ingestion and explicit Stop (2026-11-16)
 
 Worker ingest identity depends on source identity, declared property keys and producer names, not projection display. Lines/Notes still changes declaration/projection/generation identity, but need not resend unchanged fact columns. Exclusion changes invalidate the adapter and force reset independently. In-flight notifications retain their dirty versions until acknowledgement, then a sliced audit compares the current facts with the acknowledged stamps. Identical hydration causes no extra refresh; real differences, including mid-batch reverts, remain dirty.

@@ -199,10 +199,14 @@ export async function runLayoutStream(input: LayoutInput, options: LayoutOptions
   if (!input.count) { finished(true); return solver.positions; }
   // A seed is not a layout. Even an immediate Stop completes one bounded step.
   await yieldNow();
+  let yieldedAt = performance.now();
   while (!solver.done && (!solver.iteration || !stopped())) {
     solver.step();
     if (!solver.done && solver.iteration % every === 0) send();
-    if (!solver.done && (solver.iteration % options.batchIterations === 0 || solver.iteration % every === 0)) await yieldNow();
+    // Large configured batches still admit Stop between steps; a single step is atomic.
+    if (!solver.done && (solver.iteration % options.batchIterations === 0 || solver.iteration % every === 0 || performance.now() - yieldedAt >= 50)) {
+      await yieldNow(); if (stopped()) break; yieldedAt = performance.now();
+    }
   }
   finished(!stopped() && solver.settled);
   return solver.positions;

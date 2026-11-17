@@ -79,7 +79,7 @@ async function solve(input: LayoutInput, options: PipelineConfig['layout'], revi
   const arrange = isolateRing(input);
   const positions = await runLayoutStream(input, options, config.streamEveryIterations, (p, iteration, total) => {
     arrange(p); self.postMessage({ kind: 'positions', revision, positions: p, iteration, total }, { transfer: [p.buffer] });
-  }, yieldTask, takeBuffer, value => { settled = value; }, stopped);
+  }, () => yieldTask(true), takeBuffer, value => { settled = value; }, stopped);
   arrange(positions);
   return { positions, settled };
 }
