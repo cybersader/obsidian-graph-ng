@@ -23,11 +23,11 @@ export function performanceSettings(s: Settings, selected: ReadonlySet<Performan
   return next;
 }
 export function performanceControls(host: HTMLElement, plugin: GraphPlugin, redraw?: () => void) {
-  settingSelect(host, 'Performance', 'Auto adapts resolution and motion to measured drawing cost. Fast limits resolution to 1x and disables motion. Quality preserves full resolution and your motion setting. Layout accuracy is unchanged.', [['auto', 'Auto'], ['fast', 'Fast'], ['quality', 'Quality']], plugin.settings.performance, value => { plugin.settings.performance = value as PerformanceMode; void plugin.save(); plugin.refreshPerformance(); });
+  settingSelect(host, 'Performance', 'Applies to this device only. Auto adapts resolution and motion to measured drawing cost. Fast limits resolution to 1x and disables motion. Quality preserves full resolution and your motion setting. Layout accuracy is unchanged.', [['auto', 'Auto'], ['fast', 'Fast'], ['quality', 'Quality']], plugin.settings.performance, value => { plugin.settings.performance = value as PerformanceMode; void plugin.save(); plugin.refreshPerformance(); });
   const tier = settingRow(host, 'Device tier');
   panelHelp(tier, devicePerformance.tier === 'low' ? 'Lower' : 'Standard', 'A provisional estimate from CPU, memory and the existing graphics context. Measured drawing cost can revise it. Not a hardware benchmark.');
   panelButton(host, 'Speed up graph', () => showPerformanceSuggestions(plugin, redraw));
-  const row = settingRow(host, 'Local performance log', 'graph-ng-toggle', 'Off by default. Stores at most 16 numeric timing, count and memory samples in plugin data. No note names, paths, content or hardware identifiers. Anyone with plugin-data access can read it.');
+  const row = settingRow(host, 'Local performance log', 'graph-ng-toggle', 'Off by default. Keeps at most 16 numeric timing, count and memory samples on this device, not in shared plugin data. No note names, paths, content or hardware identifiers. If local storage is unavailable, samples last only for this session.');
   const input = row.querySelector('input')!; input.checked = plugin.settings.performanceDiagnostics;
   input.onchange = () => { plugin.settings.performanceDiagnostics = input.checked; if (!input.checked) plugin.performanceLog = []; void plugin.save(); };
   panelButton(host.createDiv(), 'Clear log', () => { plugin.performanceLog = []; void plugin.save(); });

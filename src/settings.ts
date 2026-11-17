@@ -1,4 +1,5 @@
-import { PERFORMANCE_MODES, type PerformanceMode } from './performance';
+import { PERFORMANCE_MODES } from './performance';
+import { deviceDefaults, type DevicePreferences } from './device-performance';
 import { MAX_NODE_RADIUS, legacySizing, validateNodeSizing, validateNodeRadius, type NodeSizingPolicy } from './node-sizing';
 import { DEFAULT_LAYOUT, validateLayout, type LayoutOptions } from './core/layout-options';
 import { defaultDeclaration, migrateDeclaration, validateDeclaration, type GraphDeclaration } from './core/declaration';
@@ -166,7 +167,7 @@ export function decodeText(v: unknown): unknown {
   }
   return v;
 }
-/** The exact object written to data.json: settings only, explore text scanner-safe. */
+/** Validated save candidate with scanner-safe text; the final write separates device preferences. */
 export const persistedSettings = (s: Settings) => ({ ...s, declaration: { ...s.declaration, groups: s.declaration.groups.map(g => g.from === 'expr' ? { ...g, expr: encodeText(g.expr) } : g), colors: s.declaration.colors.map(c => c.predicate.kind === 'expr' ? { ...c, predicate: { ...c.predicate, expr: encodeText(c.predicate.expr) } } : c) }, explore: encodeText(s.explore) });
 // Include a possible trailing JSON comma when checking a serialized string token.
 function assertText(v: unknown): void {
@@ -187,11 +188,8 @@ export function settingsForSave(s: Settings) {
   if (new TextEncoder().encode(JSON.stringify({ settings: stored })).byteLength > defaults('producer@1').maxSettingsBytes) throw new Error('Settings byte limit exceeded');
   return stored;
 }
-export interface Settings {
-  performance: PerformanceMode;
-  performanceDiagnostics: boolean;
-  performanceSuggestions: boolean;
-  performancePrompted: boolean;
+/** Runtime settings include device preferences; GraphPlugin.saveData splits storage scopes. */
+export interface Settings extends DevicePreferences {
   settingsVersion: 2;
   ingest: { chunkRows: number; budgetMs: number };
   cache: { directory: string; chunkBytes: number; maxGenerationBytes: number; retainedArtifacts: number; maxRetainedBytes: number };
@@ -249,7 +247,7 @@ export function defaults(producer: string): Settings {
     labelCandidateMultiplier: 32, frameBackstopMs: 32, shaderPollMs: 8, contextRestoreTimeoutMs: 5000, cameraMinRatio: .02, cameraMaxRatio: 8,
     ingest: { chunkRows: 2000, budgetMs: 8 }, cache: { directory: '', chunkBytes: 1048576, maxGenerationBytes: 268435456, retainedArtifacts: 8, maxRetainedBytes: 268435456 }, maxProjectionBytes: 67108864, maxSettingsBytes: 16777216,
     declaration: defaultDeclaration(producer), layout: structuredClone(DEFAULT_LAYOUT), debounceMs: 5000,
-    performance: 'auto', performanceDiagnostics: false, performanceSuggestions: true, performancePrompted: false,
+    ...deviceDefaults(),
     workerTimeoutMs: 120000, workerRestarts: 2, streamEveryIterations: 5, groupLevel: 0, nodeSize: 3, nodeSizing: legacySizing(), edgeSize: 0.5, labelSize: 13,
     groupRadius: 26, groupCurveDivisor: 5, groupEdgeHitRadius: 6, groupCurveSamples: 32, groupLoopScale: 1.5, groupRingPadding: 56, labelDensity: 1, labelGridCellSize: 100, labelRenderedSizeThreshold: 6, edgeWidthScale: 0.8, listPageSize: 100,
     backgroundColor: '#141b26', nodeColor: '#7fc8e7', edgeColor: '#43566e', groupColor: '#7fc8e7', textColor: '#edf4ff',

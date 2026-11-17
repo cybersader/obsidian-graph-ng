@@ -1,4 +1,5 @@
 import { devicePerformance, performanceRecords, type PerformanceRecord } from './performance';
+import { DevicePerformanceStore, sharedPerformanceData } from './device-performance';
 import { performanceChoices, performanceSettings, type PerformanceChoice, performanceControls, showPerformanceSuggestions } from './performance-ui';
 import { stateChip } from './view-state';
 import { disclosure, disclosureBody, panelHelp, iconButton } from './panel-help';
@@ -44,8 +45,28 @@ export default class GraphPlugin extends Plugin {
   performanceLog: PerformanceRecord[] = [];
   performanceModalOpen = false;
   performanceReason?: [string, string];
-  override saveData(data: { settings: { performanceDiagnostics?: boolean } }) {
-    return super.saveData({ ...data, ...(data.settings.performanceDiagnostics ? { performanceLog: performanceRecords(this.performanceLog) } : {}) });
+  deviceNamespace?: string;
+  private namespaceWrite?: Promise<string | undefined>;
+  private deviceStore = new DevicePerformanceStore();
+  async ensureDeviceNamespace(): Promise<string | undefined> {
+    if (this.namespaceWrite) return this.namespaceWrite;
+    if (this.deviceNamespace) return this.deviceNamespace;
+    try { settingsForSave(this.settings); this.deviceNamespace = Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2, '0')).join(''); }
+    catch { return undefined; }
+    this.namespaceWrite = this.save().then(() => this.deviceNamespace, () => { this.deviceNamespace = undefined; return undefined; }).finally(() => { this.namespaceWrite = undefined; });
+    return this.namespaceWrite;
+  }
+  async loadDevicePerformance(namespace: unknown) {
+    this.deviceNamespace = typeof namespace === 'string' && /^[0-9a-f]{32}$/.test(namespace) ? namespace : undefined;
+    const identity = await this.ensureDeviceNamespace();
+    this.deviceStore = new DevicePerformanceStore(identity, this.manifest.id);
+    const local = this.deviceStore.load(this.settings);
+    Object.assign(this.settings, local.settings); this.performanceLog = local.performanceLog;
+  }
+  override async saveData(data: { settings: object }) {
+    // A rejected shared write must not adopt a candidate's device settings either.
+    await super.saveData({ ...sharedPerformanceData(data), ...(this.deviceNamespace ? { deviceNamespace: this.deviceNamespace } : {}) });
+    this.deviceStore.save(data.settings, this.performanceLog);
   }
   refreshPerformance() { for (const leaf of this.app.workspace.getLeavesOfType(VIEW)) (leaf.view as GraphView).performanceChanged(); }
   recordPerformance(sample: Partial<PerformanceRecord>) {
@@ -91,8 +112,8 @@ export default class GraphPlugin extends Plugin {
     const dataPath = `${this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`}/data.json`;
     const loaded = await loadSettings(this.app.vault.adapter, dataPath, this.linkProducer, message => { new Notice(message); });
     this.settings = loaded.settings;
+    await this.loadDevicePerformance(loaded.data?.deviceNamespace);
     this.register(devicePerformance.observe());
-    this.performanceLog = this.settings.performanceDiagnostics ? performanceRecords(loaded.data?.performanceLog) : [];
     const data = loaded.data as Data | undefined;
     if (data?.generations && typeof data.generations === 'object' && data.settings?.declaration) { const oldHash = await digest(layoutDeclaration(data.settings.declaration)), currentHash = await digest(layoutDeclaration(this.settings.declaration)); const old = data.generations[oldHash]; if (old) this.generations[currentHash] = old; }
     const url = URL.createObjectURL(new Blob([expressionPrelude(), __LAYOUT_WORKER_SOURCE__], { type: 'text/javascript' }));

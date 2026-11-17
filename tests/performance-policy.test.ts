@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test';
 import './support/obsidian-fixture';
 import { deviceTier, devicePerformance, PerformanceState, performanceRecords } from '../src/performance';
 import { defaults, upgradeSettings, validateSettings } from '../src/settings';
+import { DevicePerformanceStore, deviceDefaults, sharedPerformanceData } from '../src/device-performance';
 import { performanceChoices, performanceSettings } from '../src/performance-ui';
 import { buildLabels } from '../src/render-labels';
 import { buildProjection } from '../src/core/projection';
@@ -90,3 +91,50 @@ test('performance checklist omits motion already suppressed by effective perform
     s.performance = 'quality'; expect(performanceChoices(s)[0]?.[0]).toBe('fast'); expect(performanceChoices(s).some(row => row[0] === 'motion')).toBe(true);
   } finally { devicePerformance.tier = tier; }
 });
+
+test('shared serialization strips device fields without changing graph or appearance settings', () => {
+  const settings = defaults('links'); settings.performance = 'fast'; settings.performanceDiagnostics = true;
+  const source = { settings, performanceLog: [{ tier: 'low', mode: 'fast', notes: 10 }], deviceNamespace: 'a'.repeat(32), generations: { synthetic: 1 } };
+  const shared = sharedPerformanceData(source);
+  for (const key of Object.keys(deviceDefaults())) expect(Object.hasOwn(shared.settings, key)).toBe(false);
+  expect(Object.hasOwn(shared, 'performanceLog')).toBe(false);
+  expect(shared.deviceNamespace).toBe(source.deviceNamespace); expect(shared.generations).toEqual(source.generations);
+  for (const [key, value] of Object.entries(settings)) if (!Object.hasOwn(deviceDefaults(), key)) expect((shared.settings as any)[key]).toEqual(value);
+  expect(source.settings.performance).toBe('fast'); expect(source.performanceLog).toHaveLength(1);
+  expect(upgradeSettings(shared.settings, 'links').visuals).toEqual(settings.visuals);
+});
+
+test('device store migrates preferences once and never imports shared samples', () => {
+  const storage = memoryStorage(), namespace = 'a'.repeat(32), s = { ...deviceDefaults(), performance: 'fast' as const, performanceDiagnostics: true, performancePrompted: true };
+  const store = new DevicePerformanceStore(namespace, 'graph-ng', () => storage);
+  const migrated = store.load({ ...s, performanceLog: [{ tier: 'low', mode: 'fast', notes: 99 }] });
+  expect(migrated.settings).toEqual(s); expect(migrated.performanceLog).toEqual([]);
+  store.save({ ...s, performance: 'quality' }, [{ tier: 'standard', mode: 'quality', notes: 7, path: 'Synthetic/ignored.md' }]);
+  const reloaded = new DevicePerformanceStore(namespace, 'graph-ng', () => storage).load(s);
+  expect(reloaded.settings.performance).toBe('quality'); expect(reloaded.performanceLog).toEqual([{ tier: 'standard', mode: 'quality', notes: 7 }]);
+  expect(new DevicePerformanceStore('b'.repeat(32), 'graph-ng', () => storage).load(deviceDefaults()).settings.performance).toBe('auto');
+  expect(new DevicePerformanceStore(namespace, 'other-plugin', () => storage).load(deviceDefaults()).settings.performance).toBe('auto');
+  store.save({ ...s, performanceDiagnostics: false }, reloaded.performanceLog);
+  expect(new DevicePerformanceStore(namespace, 'graph-ng', () => storage).load(s).performanceLog).toEqual([]);
+});
+
+test('missing, denied, corrupt and oversized local storage remain optional and allowlisted', () => {
+  const namespace = 'c'.repeat(32), key = `graph-ng:graph-ng:${namespace}:performance:v1`;
+  for (const access of [() => undefined, () => { throw Error('denied'); }, () => ({ getItem() { throw Error('read'); }, setItem() { throw Error('write'); } }), () => ({ getItem() { return null; }, setItem() { throw Error('quota'); } })]) {
+    const store = new DevicePerformanceStore(namespace, 'graph-ng', access);
+    expect(() => store.load(deviceDefaults())).not.toThrow(); expect(() => store.save({ ...deviceDefaults(), performance: 'fast' }, [])).not.toThrow();
+  }
+  const storage = memoryStorage();
+  for (const bad of ['{', 'x'.repeat(16385), JSON.stringify({ version: 4 }), JSON.stringify({ version: 1, settings: { performance: 'invalid', performancePrompted: 'yes' }, performanceLog: ['bad'] })]) {
+    storage.setItem(key, bad);
+    const value = new DevicePerformanceStore(namespace, 'graph-ng', () => storage).load({ ...deviceDefaults(), performance: 'fast' });
+    expect(value.settings).toEqual(deviceDefaults()); expect(value.performanceLog).toEqual([]);
+  }
+  let accessed = false;
+  new DevicePerformanceStore(undefined, 'graph-ng', () => { accessed = true; return storage; }).load(deviceDefaults());
+  expect(accessed).toBe(false);
+});
+function memoryStorage() {
+  const rows = new Map<string, string>();
+  return { getItem: (key: string) => rows.get(key) ?? null, setItem: (key: string, value: string) => { rows.set(key, value); } };
+}
