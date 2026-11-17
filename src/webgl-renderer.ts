@@ -437,6 +437,7 @@ export class DetailRenderer {
     const tune = (s: ViewState) => this.tuneViewState?.(s);
     stateChip(this.stateStrip, state, state !== 'Notes' && n >= 0 ? this.name(n) + (state === 'Path between notes' ? ' → ' + this.name(this.pathView!.to) : '') : '', () => this.leaveViewState(state), tune, s => this.switchViewState(s), available);
     if (this.isolation && state !== 'Only connections') stateChip(this.stateStrip, 'Only connections', '', () => this.leaveViewState('Only connections'), tune);
+    if (this.isolation) this.stateStrip.createSpan({ cls: 'graph-ng-screen-reader', text: `Only connections of ${this.name(this.isolation.node)}`, attr: { role: 'status' } });
     this.onViewStateChange?.();
   }
   private tierSource: number | number[] = -1;

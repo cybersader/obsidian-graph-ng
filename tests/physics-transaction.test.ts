@@ -2566,3 +2566,15 @@ test('review3: Groups owns its chip, appearance link, caret menu and Notes exit 
     control(f.stage, 'Leave Groups').click(); expect(notes).toBe(3);
   } finally { f.view.renderer.dispose(); }
 });
+
+test('review4: isolation scope retains a text-only live announcement under overlapping rings', async () => {
+  const { renderer: r } = await fixture(), k = compiled;
+  const announcements = () => r[k('stateStrip')].querySelectorAll('span').filter((e: any) => e.getAttribute('role') === 'status');
+  r[k('selectNote')](0, true); r.isolate(0);
+  expect(announcements().map((e: any) => e.textContent)).toEqual(['Only connections of 0']);
+  expect(announcements()[0].className).toBe('graph-ng-screen-reader');
+  r[k('setLens')](0); expect(announcements().map((e: any) => e.textContent)).toEqual(['Only connections of 0']);
+  r[k('setLens')](-1); r.isolate(1);
+  expect(announcements().map((e: any) => e.textContent)).toEqual(['Only connections of 1']);
+  control(r[k('stateStrip')], 'Leave Only connections').click(); expect(announcements()).toHaveLength(0);
+});

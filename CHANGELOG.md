@@ -4,6 +4,8 @@ The owner-approved bounded download ceilings for this UI pass are **400,000 raw 
 
 ## Unreleased named view states
 
+- Restore a text-only status announcement for Only connections in the chip strip, including when rings overlap the scope. Changing the scope updates its announced note; leaving isolation removes the announcement.
+
 - Keep equivalent state chrome in Groups after the detail renderer is disposed: Groups opens its Appearance section, the caret offers Notes, and X returns to Notes through the existing guarded transition. Group-page redraws retain those controls.
 
 - Disable selection-dependent chip actions when their target is no longer visible, and revalidate visibility when an action executes. Filtering out a selected note cannot reopen its card through a current or stale menu action.
