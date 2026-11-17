@@ -28,6 +28,7 @@ export interface LayoutOptions {
   /** Bound subdivision for coincident or nearly coincident coordinates. */
   maxTreeDepth: number;
   nodeRadius: number;
+  /** Legacy settings/cache field; overlap mode no longer clips force magnitude. */
   maxForce: number;
   force: ForceSettings;
 }
@@ -39,10 +40,10 @@ export const DEFAULT_LAYOUT: LayoutOptions = {
     edgeWeightInfluence: 1, scalingRatio: 2, strongGravityMode: false, gravity: 1, familyPull: 0, hubGravity: 2,
     slowDown: 1, barnesHutOptimize: true, barnesHutTheta: 1.2 },
 };
-/** Omit disabled optional forces from identity; producer version owns solver migrations. */
+/** Omit disabled forces; the active overlap solver has its own numerical revision. */
 export function layoutIdentity(options: LayoutOptions) {
   const { familyPull, hubGravity, ...force } = options.force;
-  return { ...options, force: { ...force, ...(familyPull ? { familyPull } : {}), ...(hubGravity ? { hubGravity } : {}) } };
+  return { ...options, ...(force.adjustSizes ? { overlap: 2 } : {}), force: { ...force, ...(familyPull ? { familyPull } : {}), ...(hubGravity ? { hubGravity } : {}) } };
 }
 export function validateLayout(options: LayoutOptions): void {
   for (const key of Object.keys(options)) if (!Object.hasOwn(DEFAULT_LAYOUT, key)) throw new Error(`Unknown layout setting: ${key}`);

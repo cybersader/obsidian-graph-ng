@@ -76,11 +76,32 @@ async function fixture(renderView: any = {}) {
   const view: any = new GraphView(null, plugin), stage = new Element(), p = projection(), visible = new Uint8Array([1, 1, 1]), positions = new Float32Array([0, 0, 2, 2, 100, 100]);
   const renderer = await Renderer.create(stage, p, positions, visible, plugin.settings, () => {}, () => {}, new Uint32Array(3), () => true, true, () => {}, renderView);
   renderers.push(renderer);
-  Object.assign(view, { activeRevision: 7, detailGeneration: 7, projection: p, positions, visible, colors: new Uint32Array(3), contentEl: { dataset: { mode: 'nodes' } }, stage, detailRenderer: renderer, renderer });
+  Object.assign(view, { [compiled('statusSummary')]: new ControlElement(), activeRevision: 7, detailGeneration: 7, projection: p, positions, visible, colors: new Uint32Array(3), contentEl: { dataset: { mode: 'nodes' } }, stage, detailRenderer: renderer, renderer });
   Object.defineProperty(view, 'statusText', { configurable: true, get() { return this.statusMessage ?? ''; }, set(text: string) { this.statusMessage = text; } });
   renderer.camera = { x: .25, y: .4, ratio: 2 }; renderer.selected = 2;
   return { plugin, view, stage, renderer, writes, next, positions, requests: () => requests };
 }
+test('loading preview attaches pan and zoom while suppressing picking and retains the user camera', async () => {
+  const f = await fixture({ loading: true }), r = f.renderer;
+  expect(r.canvas.listeners.has('pointerdown')).toBe(true); expect(r.canvas.listeners.has('wheel')).toBe(true);
+  const before = { ...r.camera }, input = r.controls();
+  input[compiled('panBy')](30, 10); input[compiled('zoomAt')](1.2, 0, 0);
+  expect(r.camera).not.toEqual(before); const moved = { ...r.camera };
+  expect(input.pick(0, 0)).toBe(-1); expect(input[compiled('pickHub')](0, 0)).toBe(-1); expect(input[compiled('pickEdge')](0, 0)).toBe(-1);
+  r[compiled('streamPositions')](f.next); expect(r.camera).toEqual(moved); expect(r.overlay.hidden).toBe(true);
+});
+
+test('Stop layout remains beside status, sends one active revision and hides without removing its slot', async () => {
+  const f = await fixture(), summary = f.view[compiled('statusSummary')]; let stopped = -1;
+  const label = summary.createSpan({ text: 'Laying out notes 60%' });
+  f.plugin.pipeline.stopLayout = (revision: number) => { stopped = revision; };
+  f.view[compiled('layoutControl')](true); const button = control(summary, 'Stop layout');
+  expect(button.style.visibility).toBe('visible'); expect(button.disabled).toBe(false);
+  button.click(); expect(stopped).toBe(7); expect(button.disabled).toBe(true);
+  f.view[compiled('layoutControl')](false); expect(button.style.visibility).toBe('hidden'); expect(summary.children).toEqual([label, button]);
+  f.view[compiled('layoutControl')](true); expect(control(summary, 'Stop layout')).toBe(button); expect(button.disabled).toBe(false);
+});
+
 test('compiled Canvas computes base radius once and preserves radii across zoom and preview', async () => {
   const { renderer: r } = await fixture(), baseKey = compiled('baseNodeRadius'), original = r[baseKey], oldArc = ctx.arc;
   let calls = 0; const arcs: number[][] = [];
@@ -124,7 +145,7 @@ test('Apply rejects seed frames, streams on the same renderer and keeps pan/zoom
   expect(input.pick(0, 0)).toBe(-1); expect(f.view.statusMessage).toContain('Laying out notes');
   release.resolve(); await work;
   expect(f.renderer.positions).toBe(f.next); expect(f.renderer.camera).toEqual(camera); expect(f.renderer.overlay.hidden).toBe(false);
-  expect(f.view[compiled('layoutWorking')]).toBe(false); expect(f.view.statusMessage).toContain('691 notes'); expect(f.view.statusMessage).toContain('Ready');
+  expect(f.view[compiled('layoutWorking')]).toBe(false); expect(f.view.statusMessage).toBe('691 notes with unverified properties'); expect(f.view[compiled('statusSummary')].querySelector('.graph-ng-working')).toBeFalsy();
 });
 test('failed streamed Apply restores last-good geometry without undoing pan/zoom', async () => {
   const f = await fixture(), display = f.renderer.display;
@@ -148,14 +169,14 @@ test('Apply updates zoom-out extent after expanded coordinates without reframing
 test('review: retained layout suppresses semantic actions but keeps pan and zoom', async () => {
   const f = await fixture(), r = f.renderer, k = (s: string) => mangle[s] ?? s, calls: string[] = [];
   r[k('onNode')] = () => calls.push('open'); r[k('travel')] = () => calls.push('travel'); r[k('showMenu')] = () => calls.push('menu');
-  const finish = r.beginLayout(), input = r.controls(), camera = { ...r.camera };
+  const finish = r[compiled('beginLayout')](), input = r.controls(), camera = { ...r.camera };
   input.open(2); input[k('travel')](2); input[k('showMenu')]([], 0, 0, 2);
   input[k('panBy')](30, 10); input[k('zoomAt')](1.2, 0, 0);
   expect(calls).toEqual([]); expect(input[k('openable')](2)).toBe(false); expect(r.camera).not.toEqual(camera);
   finish(false); input.open(2); expect(calls).toEqual(['open']);
 });
 test('review: streamed geometry updates zoom extents before final adoption', async () => {
-  const f = await fixture(), r = f.renderer, finish = r.beginLayout(), frame = r[compiled('cameraFrame')];
+  const f = await fixture(), r = f.renderer, finish = r[compiled('beginLayout')](), frame = r[compiled('cameraFrame')];
   const positions = new Float32Array([0, 0, 10000, 10000, 20000, 20000]);
   r[compiled('streamPositions')](positions);
   expect(r.grid.width).toBeGreaterThan(10000); expect(r.grid.positions).toBe(positions);
@@ -163,7 +184,7 @@ test('review: streamed geometry updates zoom extents before final adoption', asy
   finish(false); expect(r.grid.positions).toBe(f.positions);
 });
 test('review: sizing invalidation during retained layout rebuilds labels on rollback', async () => {
-  const f = await fixture(), r = f.renderer, finish = r.beginLayout();
+  const f = await fixture(), r = f.renderer, finish = r[compiled('beginLayout')]();
   r[compiled('queueSizingLabels')](); await Bun.sleep(220); expect(r.atlas).toBeUndefined();
   finish(false); await Bun.sleep(220); expect(r.atlas).toBeDefined();
 });
@@ -178,7 +199,7 @@ test('review: committed expanded coordinates rebuild minimap bounds without movi
   f.plugin.pipeline.request = async () => ({ positions: new Float32Array([0, 0, 10000, 10000, 20000, 20000]) });
   await f.view[compiled('applyLayout')](values); r[compiled('placeOverlay')]();
   const mini = r[compiled('miniMap')], state = mini[compiled('miniLast')];
-  expect(state.layoutFrame?.width).toBeGreaterThan(10000);
+  expect(state[compiled('layoutFrame')]?.width).toBeGreaterThan(10000);
   expect(r[compiled('cameraFrame')]).toBe(frame); expect(r.camera).toEqual(camera);
   const bounds = mini[compiled('miniShown')][0]; expect(bounds.minX + bounds.width).toBeGreaterThan(20000);
 });
@@ -191,7 +212,7 @@ test('production software Apply preserves renderer/canvas/camera/frame/selection
   const f = await fixture(), canvas = f.renderer.canvas, frame = f.renderer[compiled('cameraFrame')], camera = { ...f.renderer.camera }, center = [f.renderer[compiled('centerX')], f.renderer[compiled('centerY')], f.renderer.scale];
   const atlas = f.renderer.atlas;
   f.renderer.fitAll = () => { throw new Error('Fit after manual pan'); };
-  const begin = f.renderer.beginLayout.bind(f.renderer); f.renderer.beginLayout = () => { const finish = begin(); f.renderer.controls()[compiled('stopFlight')](); return finish; };
+  const begin = f.renderer[compiled('beginLayout')].bind(f.renderer); f.renderer[compiled('beginLayout')] = () => { const finish = begin(); f.renderer.controls()[compiled('stopFlight')](); return finish; };
   Renderer.create = new Proxy(Renderer.create, { apply() { throw new Error('Renderer reconstructed'); } });
   try { await f.view[compiled('applyLayout')](values); } finally { Renderer.create = originalFactory; }
   expect(f.view.detailRenderer).toBe(f.renderer); expect(f.renderer.canvas).toBe(canvas); expect(f.renderer[compiled('cameraFrame')]).toBe(frame); expect(f.renderer.camera).toEqual(camera); expect([f.renderer[compiled('centerX')], f.renderer[compiled('centerY')], f.renderer.scale]).toEqual(center);
@@ -222,7 +243,7 @@ test('failed settings save never adopts or persists a settled refinement', async
 test('streaming follows growing extent until manual input, respecting disabled motion', async () => {
   const f = await fixture(), r = f.renderer;
   f.plugin.settings.visuals.motion = 'off';
-  const finish = r.beginLayout(), before = r.camera.ratio;
+  const finish = r[compiled('beginLayout')](), before = r.camera.ratio;
   r[compiled('streamPositions')](Float32Array.from(f.positions, (x: number) => x * 100));
   expect(r.camera.ratio).toBeGreaterThan(before);
   r.controls()[compiled('panBy')](12, 0); const held = { ...r.camera };
@@ -2011,7 +2032,7 @@ test('card opening minimally uncovers a selection without zoom; optional center 
 test('retained Apply suppresses selection framing, then frames expanded coordinates beside the card', async () => {
   const f = await graduated([[0, 1], [1, 2]], 3), { r, k, settings } = f;
   settings.visuals.motion = 'off'; f.tap(1);
-  const frame = r[k('cameraFrame')], finish = r.beginLayout();
+  const frame = r[k('cameraFrame')], finish = r[compiled('beginLayout')]();
   const next = new Float32Array([0, 0, 10000, 10000, 20000, 20000]);
   r[k('streamPositions')](next);
   const camera = { ...r.camera };
@@ -2072,7 +2093,7 @@ test.each(['canvas keyboard', 'card keyboard', 'card buttons', 'Recent chips'])(
   const { r, k } = await graduated([[0, 1], [1, 2]], 3);
   [0, 1, 2].forEach(n => r[k('selectNote')](n, true)); r.card.step(-1); r[k('placeOverlay')]();
   const card = r[k('noteCard')], recent = r[k('crumbTrail')].root;
-  const finish = r.beginLayout(), camera = { ...r.camera };
+  const finish = r[compiled('beginLayout')](), camera = { ...r.camera };
   try {
     for (const step of [-1, 1]) {
       const event = { key: step < 0 ? 'ArrowLeft' : 'ArrowRight', altKey: true, target: entry === 'canvas keyboard' ? r.canvas : card, preventDefault() {}, stopPropagation() {} };
@@ -2275,6 +2296,12 @@ test('direct-open clicks advance the same visit history as card selections', asy
   expect(r.card.history.items[r.card.history.at]).toBe(1);
 });
 
+test('anchored overflow badge names one hidden connection in the singular', async () => {
+  const f = await graduated([[0, 1]], 2), { r, k } = f;
+  f.settings.visuals.labelStyle = 'anchored'; f.tap(0);
+  r[k('focusLevel')] = 1; r[k('tierMask')] = 0; r[k('placeOverlay')]();
+  expect(r[k('moreButton')].textContent).toBe('1 more connection');
+});
 async function carrierRenderer(n = 3) {
   const f = await graduated([[0, 1], [1, 2]], n), { r, k } = f;
   r.projection.carrier = new Uint32Array([7, 7]); r.projection.carrierNodes = new Uint32Array(n); r.projection.carrierNodes[1] = 8; r[k('carrierCount')] = 1;

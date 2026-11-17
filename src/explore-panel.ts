@@ -1,6 +1,6 @@
 import { setIcon } from 'obsidian';
 import { workingText } from './working';
-import { panelHelp, disclosure, settingRow, settingSelect, panelButton, iconButton } from './panel-help';
+import { panelHelp, disclosure, disclosureBody, settingRow, settingSelect, panelButton, iconButton } from './panel-help';
 import { everythingView, folderPredicate, folderView } from './saved-views';
 import { sizingValues, sizingSettings, MAX_NODE_RADIUS, type NodeSizingValues } from './node-sizing';
 import { physicsSettings, presetValues, PHYSICS_FIELDS, PHYSICS_PRESETS, type PhysicsKey, type PhysicsValues } from './physics-controls';
@@ -308,12 +308,12 @@ export class ExplorePanel {
   /** One bounded text editor serves filters, colours and custom group values. */
   private expressionField(host: HTMLElement, r: ExploreResult, label: string, context: 'filter' | 'group', submit: (expr: string) => void) {
     const details = host.createEl('details', { cls: 'graph-ng-expression' }); details.open = this.drafts.has(label);
-    disclosure(details, label);
-    const input = details.createEl('input', { attr: { type: 'text', 'aria-label': label, placeholder: context === 'filter' ? 'note.status == "open"' : 'note.category', spellcheck: 'false' } });
+    disclosure(details, label); const body = disclosureBody(details);
+    const input = body.createEl('input', { attr: { type: 'text', 'aria-label': label, placeholder: context === 'filter' ? 'note.status == "open"' : 'note.category', spellcheck: 'false' } });
     input.value = this.drafts.get(label) ?? '';
-    const completions = details.createEl('datalist'), id = `graph-ng-expr-${this.expressionPanelId}-${label.split(' ').join('-')}`; completions.id = id; input.setAttribute('list', id);
-    const feedback = details.createEl('pre', { cls: 'graph-ng-expression-status', attr: { role: 'status', 'aria-live': 'polite' } });
-    const apply = details.createEl('button', { text: context === 'group' ? 'Group by expression' : 'Apply expression', cls: 'mod-cta' });
+    const completions = body.createEl('datalist'), id = `graph-ng-expr-${this.expressionPanelId}-${label.split(' ').join('-')}`; completions.id = id; input.setAttribute('list', id);
+    const feedback = body.createEl('pre', { cls: 'graph-ng-expression-status', attr: { role: 'status', 'aria-live': 'polite' } });
+    const apply = body.createEl('button', { text: context === 'group' ? 'Group by expression' : 'Apply expression', cls: 'mod-cta' });
     const sync = () => {
       this.drafts.set(label, input.value);
       completions.empty(); for (const value of suggestions(input.value.slice(0, input.selectionStart ?? input.value.length), [...declaredKeys(this.settings.declaration), ...r.facets.map(f => f.key)])) completions.createEl('option', { value });
@@ -351,9 +351,9 @@ export class ExplorePanel {
       if (f.kind !== 'expr') {
         const builder = chip.createEl('details', { cls: 'graph-ng-chip-json' });
         disclosure(builder, 'JSON', { 'aria-label': `Edit builder filter ${i + 1} as JSON` });
-        const input = builder.createEl('textarea', { attr: { 'aria-label': `Builder filter ${i + 1}` } }); input.value = JSON.stringify(f, null, 2);
-        const error = builder.createDiv({ cls: 'graph-ng-explore-error', attr: { role: 'alert' } });
-        panelButton(builder, 'Save builder entry', () => { try { const value: unknown = JSON.parse(input.value); validatePredicate(value); this.update({ filters: this.view.filters.map((p, j) => j === i ? value : p) }); } catch (e) { error.textContent = String(e); } });
+        const body = disclosureBody(builder), input = body.createEl('textarea', { attr: { 'aria-label': `Builder filter ${i + 1}` } }); input.value = JSON.stringify(f, null, 2);
+        const error = body.createDiv({ cls: 'graph-ng-explore-error', attr: { role: 'alert' } });
+        panelButton(body, 'Save builder entry', () => { try { const value: unknown = JSON.parse(input.value); validatePredicate(value); this.update({ filters: this.view.filters.map((p, j) => j === i ? value : p) }); } catch (e) { error.textContent = String(e); } });
       }
       const remove = icon(chip, `Remove filter: ${summary.text}`, 'x', 'graph-ng-remove');
       remove.onclick = () => { this.update({ filters: this.view.filters.filter((_, j) => j !== i) }); (this.body.querySelectorAll<HTMLButtonElement>('.graph-ng-remove')[i] ?? this.search).focus(); };
@@ -363,7 +363,7 @@ export class ExplorePanel {
     const add = host.createEl('details', { cls: 'graph-ng-add-filter' }); add.open = this.adding || this.drafts.has('Filter expression');
     add.ontoggle = () => { this.adding = add.open; };
     disclosure(add, 'Add filter');
-    this.predicateForm(add, r, 'Add filter', p => { this.adding = false; this.update({ filters: [...this.view.filters, p] }); });
+    this.predicateForm(disclosureBody(add), r, 'Add filter', p => { this.adding = false; this.update({ filters: [...this.view.filters, p] }); });
   }
   /** One checkbox per value of a small, complete facet; unticking hides the value through an ordinary filter. */
   private filterToggles(host: HTMLElement, r: ExploreResult) {
@@ -430,9 +430,9 @@ export class ExplorePanel {
     select.onchange = () => this.update({ group: options[Number(select.value)]![1], hiddenGroups: [], collapsedGroups: [] });
     const advanced = host.createEl('details', { cls: 'graph-ng-group-advanced' });
     advanced.open = this.drafts.has('Group expression');
-    disclosure(advanced, 'Advanced grouping');
-    this.derivedForm(advanced, r);
-    this.expressionField(advanced, r, 'Group expression', 'group', expr => this.update({ group: { from: 'expr', expr }, hiddenGroups: [], collapsedGroups: [] }));
+    disclosure(advanced, 'Advanced grouping'); const body = disclosureBody(advanced);
+    this.derivedForm(body, r);
+    this.expressionField(body, r, 'Group expression', 'group', expr => this.update({ group: { from: 'expr', expr }, hiddenGroups: [], collapsedGroups: [] }));
     const disabled = this.settings.explore.disabledDerived;
     if (disabled.length) {
       const note = host.createDiv({ cls: 'graph-ng-explore-note graph-ng-disabled-derive', attr: { role: 'status' } });
@@ -470,9 +470,9 @@ export class ExplorePanel {
   }
   /** Group by a bounded transform of an existing value; no note needs a new property. */
   private derivedForm(host: HTMLElement, r: ExploreResult) {
-    const details = host.createEl('details', { cls: 'graph-ng-derived' }); disclosure(details, 'Group by part of a value');
+    const details = host.createEl('details', { cls: 'graph-ng-derived' }); disclosure(details, 'Group by part of a value'); const body = disclosureBody(details);
     // Visible labels; the stored transform keeps its 0-based segment index (-1 = last).
-    const form = details.createDiv({ cls: 'graph-ng-derive-grid' });
+    const form = body.createDiv({ cls: 'graph-ng-derive-grid' });
     const field = <K extends 'select' | 'input'>(label: string, tag: K, attr: Record<string, string>) => { const l = form.createEl('label', { cls: 'graph-ng-field' }), caption = l.createSpan({ text: label }); return [l.createEl(tag, { attr: { 'aria-label': label, ...attr } }), caption] as const; };
     const [source] = field('Derive from', 'select', {});
     source.createEl('option', { value: '$identity', text: 'ID' }); source.createEl('option', { value: '$path', text: 'Path' });
@@ -482,7 +482,7 @@ export class ExplorePanel {
     const [delimiter] = field('Split at', 'input', { type: 'text', value: ':', maxlength: '8' });
     const [n, caption] = field('Part (0 = first, -1 = last)', 'input', { type: 'number', value: '0', min: '-64', max: '63' });
     kind.onchange = () => { const prefix = kind.value === 'prefix', label = prefix ? 'Number of parts' : 'Part (0 = first, -1 = last)'; caption.textContent = label; n.setAttribute('aria-label', label); if (prefix && Number(n.value) < 1) n.value = '1'; };
-    const error = details.createDiv({ cls: 'graph-ng-explore-error', attr: { role: 'alert' } });
+    const error = body.createDiv({ cls: 'graph-ng-explore-error', attr: { role: 'alert' } });
     panelButton(form, 'Group', () => {
       const transform = kind.value === 'prefix' ? { kind: 'prefix' as const, delimiter: delimiter.value, segments: Number(n.value) } : { kind: 'segment' as const, delimiter: delimiter.value, index: Number(n.value) };
       const group: GroupSource = { from: 'derived', key: source.value, transform };
@@ -550,7 +550,7 @@ export class ExplorePanel {
   }
   private guard(host: HTMLElement, effect: string) {
     const box = host.createEl('details', { cls: 'graph-ng-guard' });
-    const summary = disclosure(box).querySelector('.graph-ng-disclosure-label')!, reason = box.createDiv();
+    const summary = disclosure(box).querySelector('.graph-ng-disclosure-label')!, reason = disclosureBody(box);
     const update = () => { const reasons = this.host.policy().filter(r => r.includes(effect) || r.includes('software renderer')); box.hidden = !reasons.length; summary.textContent = `${effect[0]!.toUpperCase() + effect.slice(1)} ${reasons.some(r => r.includes('limited')) ? 'limited' : 'turned off'} by the performance guard`; reason.textContent = reasons.join('; '); };
     this.guards.push(update); update();
   }
@@ -582,16 +582,16 @@ export class ExplorePanel {
     const summarize = () => {
       const now = applied(), diff = PHYSICS_FIELDS.filter(([key]) => draft[key] !== now[key]); changes.empty(); changes.hidden = !diff.length;
       if (diff.length) {
-        const details = changes.createEl('details'); disclosure(details, plural(diff.length, 'change'));
+        const details = changes.createEl('details'); disclosure(details, plural(diff.length, 'change')); const body = disclosureBody(details);
         const show = (v: string | boolean) => typeof v === 'boolean' ? (v ? 'on' : 'off') : v;
-        for (const [key, title] of diff) statRow(details, 'minus', title, `${show(now[key])} → ${show(draft[key])}`);
+        for (const [key, title] of diff) statRow(body, 'minus', title, `${show(now[key])} → ${show(draft[key])}`);
       }
     };
     const basic = host.createDiv(), advanced = host.createEl('details', { cls: 'graph-ng-physics-advanced' });
-    disclosure(advanced, 'Advanced layout'); advanced.open = this.physicsAdvanced; advanced.ontoggle = () => { this.physicsAdvanced = advanced.open; };
+    disclosure(advanced, 'Advanced layout'); const body = disclosureBody(advanced); advanced.open = this.physicsAdvanced; advanced.ontoggle = () => { this.physicsAdvanced = advanced.open; };
     for (const [key, title, help, more] of PHYSICS_FIELDS) {
       if (key === 'familyPull' && !this.settings.declaration.hierarchy) continue;
-      const parent = more ? advanced : basic, value = draft[key], def = recommended[key];
+      const parent = more ? body : basic, value = draft[key], def = recommended[key];
       if (typeof value === 'boolean') {
         const row = settingRow(parent, title, 'graph-ng-toggle graph-ng-physics-field', help), input = row.querySelector('input')!;
         input.disabled = this.physicsBusy; input.checked = value; input.onchange = () => { draft[key] = input.checked; summarize(); };
@@ -639,19 +639,19 @@ export class ExplorePanel {
     const presets = group.createDiv({ cls: 'graph-ng-form' });
     for (const [label, value] of [['None', 1], ['Balanced', 5], ['Strong', 9]] as const) panelButton(presets, label, () => { Object.assign(draft, { curve: 'linear', compensation: '0', floor: '100' }); tune(String(value)); this.render(); }, this.sizingBusy || !this.host.previewSizing);
     group.createDiv({ cls: 'graph-ng-explore-note graph-ng-sizing-readout', text: this.host.sizingReadout?.() ?? '' });
-    const advanced = group.createEl('details'); disclosure(advanced, 'Advanced sizing');
-    const fields: [Exclude<keyof NodeSizingValues, 'curve'>, string, string, Curve][] = [
+    const advanced = group.createEl('details'); disclosure(advanced, 'Advanced sizing'); const body = disclosureBody(advanced);
+    const fields: [Exclude<keyof NodeSizingValues, 'curve' | 'prominence'>, string, string, Curve][] = [
       ['radius', 'Node size', 'px', { min: .01, max: 20, k: 3 }],
       ['compensation', 'Shrink crowded dots', '%', { min: 0, max: 100 }], ['floor', 'Retain base size', '%', { min: .1, max: 100, k: 2 }],
     ];
-    const help = { radius: 'Dot radius before zoom and crowding adjustments. Type a larger value for larger dots.', prominence: 'Largest hub radius compared with an unconnected note. 1 keeps dots the same size.', compensation: 'How much crowding shrinks dots, not the space between them. 0 turns shrinking off.', floor: 'Minimum base radius kept after crowding shrink, not a percentage of hub size. Applies equally to every note. Tiny dots also have a one-device-pixel radius minimum.' };
+    const help = { radius: 'Dot radius before zoom and crowding adjustments. Type a larger value for larger dots.', compensation: 'How much crowding shrinks dots, not the space between them. 0 turns shrinking off.', floor: 'Minimum base radius kept after crowding shrink, not a percentage of hub size. Applies equally to every note. Tiny dots also have a one-device-pixel radius minimum.' };
     const message = group.createDiv({ cls: 'graph-ng-explore-note', attr: { role: 'status', 'aria-live': 'polite' } }); message.textContent = this.sizingMessage;
     const changed = (key: keyof NodeSizingValues, value: string) => { draft[key] = value; this.sizingPreview = false; this.host.previewSizing?.(null); this.sizingMessage = message.textContent = 'Draft not previewed or saved.'; };
-    const curve = settingSelect(advanced, 'Size by connections', 'Chooses how connection counts change dot sizes. Previous keeps the earlier sizing curve.', [['sqrt', 'Square root'], ['log', 'Logarithmic'], ['linear', 'Linear'], ['legacy', 'Previous']], draft.curve, value => changed('curve', value), 'graph-ng-select', this.sizingBusy);
+    const curve = settingSelect(body, 'Size by connections', 'Chooses how connection counts change dot sizes. Previous keeps the earlier sizing curve.', [['sqrt', 'Square root'], ['log', 'Logarithmic'], ['linear', 'Linear'], ['legacy', 'Previous']], draft.curve, value => changed('curve', value), 'graph-ng-select', this.sizingBusy);
     sync.push(() => { curve.value = draft.curve; });
     const base = sizingValues(defaults('links')), initial = { ...base, compensation: base.compensation * 100, floor: base.floor * 100 };
     for (const [key, title, unit, range] of fields) {
-      const field = progressiveSlider(advanced, { label: title, unit, desc: help[key], curve: range, value: draft[key], def: initial[key], disabled: this.sizingBusy, cls: 'graph-ng-sizing-row', attr: { min: key === 'prominence' ? '1' : '0', max: String(key === 'radius' ? MAX_NODE_RADIUS : key === 'prominence' ? 25 : 100) }, changed: value => changed(key, value) });
+      const field = progressiveSlider(body, { label: title, unit, desc: help[key], curve: range, value: draft[key], def: initial[key], disabled: this.sizingBusy, cls: 'graph-ng-sizing-row', attr: { min: '0', max: String(key === 'radius' ? MAX_NODE_RADIUS : 100) }, changed: value => changed(key, value) });
       sync.push(() => field.sync(draft[key]));
     }
     const values = () => {
@@ -726,8 +726,8 @@ export class ExplorePanel {
     choice(host, 'cardPlacement', 'Card placement', 'Side uses a sheet when space is tight. Auto switches earlier.', [['auto', 'Auto (default)'], ['side', 'Side'], ['sheet', 'Bottom sheet']]);
     choice(host, 'clickFraming', 'Click framing (experimental)', 'Move only when needed. Off only uncovers the selected note. Respects Motion.', [['off', 'Off (default)'], ['center', 'Center when hidden'], ['fit-neighbours', 'Fit connections']]);
     settingSelect(host, 'Click a note', 'Highlight shows direct connections, neighbours of neighbours and dimmed context. Relationship notes count with their endpoints. Ctrl/Cmd-click opens a note; touch shows its card.', [['highlight', 'Highlight connections (default)'], ['card', 'Open the card only'], ['open', 'Open the note']], v.clickOpens ? 'open' : v.hoverHighlight ? 'highlight' : 'card', value => { v.clickOpens = value === 'open'; if (value !== 'open') v.hoverHighlight = value === 'highlight'; this.host.visualsChanged(false); });
-    const find = host.createEl('details', { cls: 'graph-ng-highlight-options' }); disclosure(find, 'Finding connections');
-    choice(find, 'emphasis', 'Highlight emphasis', 'Adaptive limits growth in large neighbourhoods. Scale keeps the original magnification.', [['adaptive', 'Adaptive (default)'], ['scale', 'Scale']]);
+    const details = host.createEl('details', { cls: 'graph-ng-highlight-options' }); disclosure(details, 'Finding connections'); const find = disclosureBody(details);
+    choice(find, 'emphasis', 'Highlight emphasis', 'Adaptive (default) limits growth in large neighbourhoods. Scale keeps the original magnification.', [['adaptive', 'Adaptive'], ['scale', 'Scale']]);
     slider('tierMinSize', 'Highlighted size target (px)', { min: 0, max: 16, k: 1.5 }, 'Adaptive reduces this target for large neighbourhoods; Scale uses it as a minimum. 0 disables neighbour size targets.', false, find);
     for (const [key, label] of [
       ['tierRings', 'Connection rings (around the focus and direct connections)'],
@@ -892,7 +892,7 @@ export class ExplorePanel {
       }
       const definition = item.createEl('details'); definition.open = this.viewDefinitions.has(saved.name);
       definition.ontoggle = () => { if (definition.open) this.viewDefinitions.add(saved.name); else this.viewDefinitions.delete(saved.name); };
-      disclosure(definition, 'View definition', { 'aria-label': `View definition: ${saved.name}` }); this.viewDefinition(definition, saved);
+      disclosure(definition, 'View definition', { 'aria-label': `View definition: ${saved.name}` }); this.viewDefinition(disclosureBody(definition), saved);
       const actions = item.createDiv({ cls: 'graph-ng-row' });
       this.viewOpen(actions, saved);
       const remove = iconButton(actions, `Delete view ${saved.name}`, 'trash-2'); remove.disabled = this.viewBusy; remove.onclick = async () => {

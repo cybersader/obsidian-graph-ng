@@ -51,6 +51,8 @@ export function panelHelp(host: HTMLElement, label: string, text?: string, cls =
   trigger.onkeydown = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } };
   return tip;
 }
+/** One non-scrolling content boundary below the native summary, including nested disclosures. */
+export function disclosureBody(host: HTMLElement) { return host.createEl('div', { cls: 'graph-ng-disclosure-body' }); }
 /** The same host chevron for every panel disclosure; native summary keyboard behavior stays intact. */
 export function disclosure(host: HTMLElement, text = '', attr: Record<string, string> = {}) {
   const summary = host.createEl('summary', { attr });

@@ -58,6 +58,7 @@ export class LayoutSolver {
   movement = Infinity;
   private quiet = 0;
   private mass: Float32Array;
+  private radii?: Float32Array;
   private forces: Float32Array;
   private oldForces: Float32Array;
   private convergence: Float32Array;
@@ -91,6 +92,12 @@ export class LayoutSolver {
       for (let i = 0; i < n; i++) { if (offsets[i]! > offsets[i + 1]!) throw new Error('Invalid layout CSR'); this.mass[i]! += offsets[i + 1]! - offsets[i]!; }
       for (const target of targets) if (target >= n) throw new Error('Invalid layout CSR endpoint');
     } else for (let e = 0; e < input.source.length; e++) { this.mass[input.source[e]!]!++; this.mass[input.target[e]!]!++; }
+    // Default sqrt-degree AREA curve (1x..5x radius), with sqrt-count spacing
+    // in layout units. This is a camera-independent proxy, not a pixel guarantee.
+    if (options.force.adjustSizes) {
+      let max = 1; for (const m of this.mass) max = Math.max(max, m - 1);
+      this.radii = this.mass.map(m => options.nodeRadius * Math.max(1, Math.sqrt(n) / 16) * Math.sqrt(1 + 24 * Math.sqrt((m - 1) / max)));
+    }
     if (options.force.hubGravity) {
       const totals = this.hubMass = new Float32Array(n), mass = this.mass;
       for (let e = 0; e < input.source.length; e++) {
@@ -111,13 +118,13 @@ export class LayoutSolver {
     const old = this.oldForces; this.oldForces = this.forces; this.forces = old;
     const forces = this.forces, history = this.oldForces;
     forces.fill(0);
-    if (this.tree) { this.tree.build(p, mass, o.maxTreeDepth); this.tree.repulse(p, mass, forces, f.scalingRatio, f.barnesHutTheta, movable); }
+    if (this.tree) { this.tree.build(p, mass, o.maxTreeDepth); this.tree.repulse(p, mass, forces, f.scalingRatio, f.barnesHutTheta, movable, this.radii); }
     else {
       for (let i = 0; i < n; i++) for (let j = 0; j < i; j++) {
         const dx = p[2 * i]! - p[2 * j]!, dy = p[2 * i + 1]! - p[2 * j + 1]!;
         let d = Math.sqrt(dx * dx + dy * dy), factor = 0;
-        if (f.adjustSizes) { d -= 2 * o.nodeRadius; factor = d > 0 ? f.scalingRatio * mass[i]! * mass[j]! / (d * d) : d < 0 ? 100 * f.scalingRatio * mass[i]! * mass[j]! : 0; }
-        else if (d > 0) factor = f.scalingRatio * mass[i]! * mass[j]! / (d * d);
+        if (this.radii) d = Math.max(d * .5, d - this.radii[i]! - this.radii[j]!);
+        if (d > 0) factor = f.scalingRatio * mass[i]! * mass[j]! / (d * d);
         const x = dx * factor, y = dy * factor;
         forces[2 * i]! += x; forces[2 * i + 1]! += y; forces[2 * j]! -= x; forces[2 * j + 1]! -= y;
       }
@@ -135,7 +142,7 @@ export class LayoutSolver {
       const family = e >= source.length, h = e - source.length;
       if (family) while (up!.offsets[child + 1]! <= h) child++;
       const a = family ? child : source[e]!, b = family ? up!.targets[h]! : target[e]!, x = p[2 * a]! - p[2 * b]!, y = p[2 * a + 1]! - p[2 * b + 1]!;
-      const distance = Math.sqrt(x * x + y * y) - (f.adjustSizes ? 2 * o.nodeRadius : 0);
+      const distance = Math.sqrt(x * x + y * y) - (this.radii ? this.radii[a]! + this.radii[b]! : 0);
       if ((f.adjustSizes || f.linLogMode) && distance <= 0) continue;
       const factor = family ? -f.familyPull / Math.sqrt(this.familyDegree![a]! * this.familyDegree![b]!) : -this.compensation * (f.linLogMode ? Math.log1p(distance) / distance : 1) / (f.outboundAttractionDistribution ? mass[a]! : 1);
       forces[2 * a]! += x * factor; forces[2 * a + 1]! += y * factor;
@@ -154,12 +161,14 @@ export class LayoutSolver {
     let movement = 0, moved = 0;
     for (let i = 0; i < n; i++) {
       if (movable && !movable[i]) continue;
-      let dx = forces[2 * i]!, dy = forces[2 * i + 1]!;
-      if (f.adjustSizes) { const length = Math.sqrt(dx * dx + dy * dy); if (length > o.maxForce) { forces[2 * i] = dx * o.maxForce / length; forces[2 * i + 1] = dy * o.maxForce / length; dx = forces[2 * i]!; dy = forces[2 * i + 1]!; } }
+      const dx = forces[2 * i]!, dy = forces[2 * i + 1]!;
       const ox = history[2 * i]!, oy = history[2 * i + 1]!;
       const swing = mass[i]! * Math.sqrt((ox - dx) ** 2 + (oy - dy) ** 2), traction = Math.sqrt((ox + dx) ** 2 + (oy + dy) ** 2) / 2;
-      const speed = (f.adjustSizes ? .1 : this.convergence[i]!) * Math.log1p(traction) / (1 + Math.sqrt(swing));
-      if (!f.adjustSizes) this.convergence[i] = Math.min(1, Math.sqrt(speed * (dx * dx + dy * dy) / (1 + Math.sqrt(swing))));
+      // A balanced overlap node must be able to respond when its neighbours move.
+      let speed = (f.adjustSizes && this.convergence[i] === 0 ? 1 : this.convergence[i]!) * Math.log1p(traction) / (1 + Math.sqrt(swing));
+      this.convergence[i] = Math.min(1, Math.sqrt(speed * (dx * dx + dy * dy) / (1 + Math.sqrt(swing))));
+      // Damping affects displacement only, not the convergence recurrence.
+      if (f.adjustSizes) speed *= .3;
       const beforeX = p[2 * i]!, beforeY = p[2 * i + 1]!;
       p[2 * i] = beforeX + dx * speed / f.slowDown; p[2 * i + 1] = beforeY + dy * speed / f.slowDown;
       if (!Number.isFinite(p[2 * i]) || !Number.isFinite(p[2 * i + 1])) throw new Error('Layout produced nonfinite positions; change force settings');
@@ -168,9 +177,10 @@ export class LayoutSolver {
     this.iteration++; this.movement = Math.sqrt(movement / Math.max(1, moved));
     let extent = 0;
     for (const value of p) extent += value * value;
-    // A budget ending is not convergence. Zero only disables early termination.
+    // A budget ending is not convergence. Compensate step damping as well as
+    // slowdown so tiny integration steps cannot manufacture a settled report.
     const threshold = o.convergenceThreshold || .002 * Math.sqrt(extent / Math.max(1, n));
-    this.quiet = this.movement * (o.convergenceThreshold ? 1 : f.slowDown) <= threshold ? this.quiet + 1 : 0;
+    this.quiet = this.movement * (o.convergenceThreshold ? 1 : f.slowDown / (f.adjustSizes ? .3 : 1)) <= threshold ? this.quiet + 1 : 0;
   }
 }
 export function runLayout(input: LayoutInput, options: LayoutOptions): Float32Array {
@@ -182,18 +192,18 @@ export function runLayout(input: LayoutInput, options: LayoutOptions): Float32Ar
  * Iteration budgets (rather than wall-clock early exits) preserve determinism.
  * The worker remains terminable by the host deadline even within one iteration.
  */
-export async function runLayoutStream(input: LayoutInput, options: LayoutOptions, every: number, emit: (p: Float32Array, iteration: number, total: number) => void, yieldNow: () => Promise<void>, buffer = (length: number) => new Float32Array(length), finished = (_settled: boolean) => {}): Promise<Float32Array> {
+export async function runLayoutStream(input: LayoutInput, options: LayoutOptions, every: number, emit: (p: Float32Array, iteration: number, total: number) => void, yieldNow: () => Promise<void>, buffer = (length: number) => new Float32Array(length), finished = (_settled: boolean) => {}, stopped = () => false): Promise<Float32Array> {
   if (!Number.isSafeInteger(every) || every < 1) throw new Error('Invalid layout stream cadence');
   const solver = new LayoutSolver(input, options);
   const send = () => { const p = buffer(solver.positions.length); p.set(solver.positions); emit(p, solver.iteration, solver.limit); };
   if (!input.count) { finished(true); return solver.positions; }
-  // A seed is not a layout. Every published frame has completed at least one batch.
+  // A seed is not a layout. Even an immediate Stop completes one bounded step.
   await yieldNow();
-  while (!solver.done) {
+  while (!solver.done && (!solver.iteration || !stopped())) {
     solver.step();
     if (!solver.done && solver.iteration % every === 0) send();
     if (!solver.done && (solver.iteration % options.batchIterations === 0 || solver.iteration % every === 0)) await yieldNow();
   }
-  finished(solver.settled);
+  finished(!stopped() && solver.settled);
   return solver.positions;
 }

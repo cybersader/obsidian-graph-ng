@@ -306,7 +306,7 @@ test('UX graph status uses structured phase, coverage and failures rather than E
   const view: any = Object.create(GraphView.prototype);
   Object.assign(view, { contentEl: { dataset: { state: 'building' } }, status: new ControlElement(), statusSummary: new ControlElement(), plugin: { settings: {} }, provisional: true, gpu: { available: true } });
   view.statusText = 'partial, provisional, pending'; expect(view.statusSummary.textContent).toBe('partial, provisional, pending');
-  view.contentEl.dataset.state = 'ready'; view.statusText = '0 unresolved'; expect(view.statusSummary.textContent).toBe('Ready, still reading properties');
+  view.contentEl.dataset.state = 'ready'; view.statusText = '0 unresolved'; expect(view.statusSummary.textContent).toBe('Ready, source checks incomplete');
   view.provisional = false; view.statusText = 'error is a note name, not a health signal'; expect(view.statusSummary.hidden).toBe(true);
   view.report = { nodes: 4, edges: 2, indexed: 4, listed: 4, linksPending: false, provisional: false, unresolved: 3, duplicates: 0 }; view.statusText = 'details'; expect(view.statusSummary.textContent).toBe('4 notes2 edges'); expect(view.statusSummary.hidden).toBe(false); view.report = undefined;
   view.contentEl.dataset.state = 'error'; view.statusText = 'Projection refresh failed: synthetic missing file'; expect(view.statusSummary.textContent).toContain('synthetic missing file'); expect(view.statusSummary.textContent).not.toContain('Retry');
@@ -627,7 +627,7 @@ test('Filter rows use shared columns, keyboard-visible actions and only one scro
 test('adaptive emphasis control switches live without moving the camera or rebuilding the view', () => {
   const f = fixture(); f.panel.show('appearance');
   const field: any = f.panel.root.querySelectorAll('select').find((e: any) => e.getAttribute('aria-label') === 'Highlight emphasis');
-  expect(field.tagName).toBe('SELECT'); expect(field.children.map((e: any) => e.textContent)).toEqual(['Adaptive (default)', 'Scale']);
+  expect(field.tagName).toBe('SELECT'); expect(field.children.map((e: any) => e.textContent)).toEqual(['Adaptive', 'Scale']);
   expect(field.children[0].selected).toBe(true);
   for (const mode of ['scale', 'adaptive'] as const) { field.value = mode; field.onchange(); expect(f.settings.visuals.emphasis).toBe(mode); }
   expect(f.state.visual).toBe(2); expect(f.state.fit + f.state.layout + f.state.viewCalls).toBe(0);

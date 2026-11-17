@@ -1,4 +1,4 @@
-import { disclosure, panelHelp, iconButton } from './panel-help';
+import { disclosure, disclosureBody, panelHelp, iconButton } from './panel-help';
 import { BuildProgress, workingText } from './working';
 import { LayoutPreview } from './layout-preview';
 import type { CoordinateToken } from './webgl-renderer';
@@ -264,6 +264,12 @@ export class GraphView extends ItemView {
   private readProgress?: { indexed: number; listed: number };
   private buildProgress = new BuildProgress();
   private layoutWorking = false;
+  private layoutStop?: HTMLButtonElement;
+  private layoutControl(active: boolean) {
+    const button = this.layoutStop ??= iconButton(this.statusSummary, 'Stop layout', 'square', 'clickable-icon graph-ng-layout-stop');
+    button.style.visibility = active ? 'visible' : 'hidden'; button.disabled = !active;
+    button.onclick = () => { this.plugin.pipeline.stopLayout(this.activeRevision); button.disabled = true; };
+  }
   private loading() { return this.layoutWorking || this.contentEl.dataset.state === 'building' ? { stage: this.statusMessage, ...this.readProgress } : undefined; }
   private progressAt = 0;
   private progressText(text: string) { const now = performance.now(); if (now - (this.progressAt ?? 0) >= 100) { this.progressAt = now; this.statusText = text; } }
@@ -529,8 +535,10 @@ export class GraphView extends ItemView {
         if (this.gpu.reason === 'Not probed') this.gpu = gpuStatus();
         const bits = this.detailVisible()!, renderRevision = ++this.renderRevision;
         if (!this.admitDetail(bits)) throw new Error(this.detailFallback);
+        const previous = this.renderer instanceof DetailRenderer ? this.renderer : undefined;
         this.renderer?.dispose(); this.stage.empty(); this.contentEl.dataset.mode = 'nodes-building';
         const renderer = await DetailRenderer.create(this.stage, this.projection!, positions, bits, settings, () => {}, () => {}, this.colors!, () => active() && renderRevision === this.renderRevision, !this.gpu.available, () => {}, { loading: true, typeHidden: this.renderView().typeHidden });
+        if (previous) renderer.adoptCamera(previous);
         this.renderer = renderer; return renderer;
       }, recycle, () => current() && this.presentation === 'nodes', error => {
         this.detailFallback ||= `Layout preview unavailable: ${String(error)}. Showing Groups.`;
@@ -539,14 +547,16 @@ export class GraphView extends ItemView {
       this.plugin.pipeline.onPositions = event => {
         if (event.revision === revision && current()) {
           report.progress = { iteration: event.iteration, total: event.total }; this.progressText(this.buildProgress.text(2, event.iteration / Math.max(1, event.total)));
-          // Two progressed batches, never the iteration-zero random square. A fixed-frame preview has no labels or input.
+          // Two progressed batches, never the seed. Labels and picking wait; camera input stays live.
           if (event.iteration >= 2 * settings.streamEveryIterations) { preview!.push(event.positions); return; }
         }
         recycle(event.positions);
       };
       let layout: LayoutResult;
+      this.layoutControl(true);
       try { layout = await this.plugin.pipeline.request<LayoutResult>(revision, { kind: 'layout' }); }
       catch (error) { if (String(error).includes('Saved identities')) { await this.plugin.store.quarantine(result.meta); } throw error; }
+      finally { this.layoutControl(false); }
       if (!current()) return;
       await preview.finish(true);
       if (!current()) return;
@@ -615,11 +625,11 @@ export class GraphView extends ItemView {
     const edges = this.section('relationships'); disclosure(edges, `Relationships (${plural(projection.groupEdges.length, 'group pair')})`);
     this.paginate(projection.groupEdges, (edge, host) => {
       host.createEl('button', { text: `${pages.labels.get(edge.a)} ↔ ${pages.labels.get(edge.b)} (${plural(edge.total, 'edge')})`, cls: 'graph-ng-edge' }).onclick = () => this.edgeList(edge, projection, generation, source);
-    }, edges);
+    }, disclosureBody(edges));
     if (this.projection?.quarantined.length) {
       const conflicts = this.section('quarantine', 'graph-ng-quarantine');
       disclosure(conflicts, `${this.projection.quarantined.length} notes share an ID (excluded)`);
-      this.paginate(this.projection.quarantined, (note, host) => { host.createEl('button', { text: `${note.path} (${note.id})` }).onclick = () => this.openPath(note.path); }, conflicts);
+      this.paginate(this.projection.quarantined, (note, host) => { host.createEl('button', { text: `${note.path} (${note.id})` }).onclick = () => this.openPath(note.path); }, disclosureBody(conflicts));
     }
     this.contentEl.dataset.mode = 'groups'; this.contentEl.dataset.groupFirstPageMs = String(performance.now() - start); this.explorePanel?.render();
     if (this.contributionPage.selection) { this.renderContributionPanel(); this.contributionPage.update(this.contributionContext()); }
@@ -721,6 +731,11 @@ export class GraphView extends ItemView {
     if (this.gpu.available && this.positions) { const bits = new Uint8Array(p.nodeCount); for (const i of members) bits[i] = 1; this.detailScope = bits; this.showDetails(bits, false); }
     this.memberList(Array.from(members), i => renderPath(p, i));
   }
+  private contributionHeading(edge?: GroupProjection['groupEdges'][number]) {
+    this.panel.empty();
+    this.panel.createEl('strong', { text: edge ? Object.entries(edge.typeCounts).map(([t, n]) => `${t}: ${num(n)}`).join(', ') : 'Contributing relationships' });
+    if (edge?.directional) { this.panel.createDiv({ text: `A → B: ${JSON.stringify(edge.directional.aToB)}` }); this.panel.createDiv({ text: `B → A: ${JSON.stringify(edge.directional.bToA)}` }); }
+  }
   private async edgeList(edge: GroupProjection['groupEdges'][number], clickedGraph = this.groupGraph, clickedGeneration = this.groupGeneration, clickedSource = this.viewSource) {
     this.explorePanel?.show('members');
     this.contributionPage.clear();
@@ -729,9 +744,7 @@ export class GraphView extends ItemView {
       this.contributionPage.update(this.contributionContext());
       return;
     }
-    this.panel.empty();
-    this.panel.createEl('strong', { text: Object.entries(edge.typeCounts).map(([t, n]) => `${t}: ${num(n)}`).join(', ') });
-    if (edge.directional) { this.panel.createDiv({ text: `A → B: ${JSON.stringify(edge.directional.aToB)}` }); this.panel.createDiv({ text: `B → A: ${JSON.stringify(edge.directional.bToA)}` }); }
+    this.contributionHeading(edge);
     const renderRevision = ++this.renderRevision;
     if (!this.carrierLookup) {
       const status = this.panel.createDiv({ text: 'Resolving relationship notes…', attr: { role: 'status' } });
@@ -761,10 +774,7 @@ export class GraphView extends ItemView {
   }
   private renderContributionPanel() {
     const pager = this.contributionPage; if (!pager.selection || this.closed || !this.panel) return;
-    this.panel.empty();
-    const edge = pager.edge;
-    this.panel.createEl('strong', { text: edge ? Object.entries(edge.typeCounts).map(([t, n]) => `${t}: ${num(n)}`).join(', ') : 'Contributing relationships' });
-    if (edge?.directional) { this.panel.createDiv({ text: `A → B: ${JSON.stringify(edge.directional.aToB)}` }); this.panel.createDiv({ text: `B → A: ${JSON.stringify(edge.directional.bToA)}` }); }
+    this.contributionHeading(pager.edge);
     const status = this.panel.createDiv({ cls: 'graph-ng-contribution-status', attr: { role: 'status', 'data-state': pager.status }, text: pager.message });
     if (pager.status === 'error') status.createEl('button', { text: 'Retry' }).onclick = () => pager.retry(this.contributionContext());
     if (pager.status !== 'ready' || !pager.result) return;
@@ -795,6 +805,7 @@ export class GraphView extends ItemView {
           if (event.iteration > 0 && finish) { try { old!.streamPositions(event.positions); } catch (e) { streamError = e; } }
           else this.plugin.pipeline.recycle(event.positions.buffer as ArrayBuffer);
         };
+        this.layoutControl(true);
         const result = await this.plugin.pipeline.request<LayoutResult>(revision, { kind: 'recompute', options: next.layout, initial: this.positions!.slice() });
         this.plugin.pipeline.onPositions = previousStream;
         requireLayout(current); if (streamError) throw streamError;
@@ -815,7 +826,7 @@ export class GraphView extends ItemView {
           }
         }
       } finally {
-        this.plugin.pipeline.onPositions = previousStream; token?.discard();
+        this.layoutControl(false); this.plugin.pipeline.onPositions = previousStream; token?.discard();
         try { finish?.(committed); }
         finally { if (working) { this.layoutWorking = false; this.statusText = this.provisional ? pendingText(this.report) : this.layoutSettled ? '' : 'Layout not settled'; } }
       }

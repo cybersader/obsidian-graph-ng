@@ -68,8 +68,8 @@ export class BarnesHut {
     for (let c = 0; c < this.used; c++) if (this.mass[c]) { this.mx[c]! /= this.mass[c]!; this.my[c]! /= this.mass[c]!; }
   }
   /** Fixed nodes never read their own force, so a warm start only walks the tree for movable ones. */
-  repulse(p: Float32Array, weights: Float32Array, forces: Float32Array, scaling: number, theta: number, movable?: Uint8Array): void {
-    const theta2 = theta * theta;
+  repulse(p: Float32Array, weights: Float32Array, forces: Float32Array, scaling: number, theta: number, movable?: Uint8Array, radii?: Float32Array): void {
+    const theta2 = theta * theta, maxRadius = radii?.reduce((a, b) => Math.max(a, b), 0) ?? 0;
     for (let i = 0; i < weights.length; i++) {
       if (movable && !movable[i]) continue;
       const x = p[2 * i]!, y = p[2 * i + 1]!, m = weights[i]!;
@@ -78,6 +78,9 @@ export class BarnesHut {
         let mass = this.mass[c]!;
         if (!mass) { c = this.next[c]!; continue; }
         let dx = x - this.mx[c]!, dy = y - this.my[c]!, d2 = dx * dx + dy * dy;
+        // A conservative region radius opens nearby cells; softening bounds force
+        // amplification to 4x and traversal to the ordinary theta/2 opening rule.
+        if (radii) { const d = Math.sqrt(d2), gap = Math.max(d * .5, d - radii[i]! - (this.child[c]! < 0 && this.head[c]! >= 0 ? radii[this.head[c]!]! : maxRadius)); d2 = gap * gap; }
         const h = this.half[c]!, contains = Math.abs(x - this.cx[c]!) <= h && Math.abs(y - this.cy[c]!) <= h;
         if (this.child[c]! >= 0 && (contains || 4 * h * h >= theta2 * d2)) { c = this.child[c]!; continue; }
         if (this.child[c]! < 0 && this.owner[i] === c) {
@@ -85,6 +88,7 @@ export class BarnesHut {
           const other = mass - m;
           if (other <= 0) { c = this.next[c]!; continue; }
           dx = (dx * mass) / other; dy = (dy * mass) / other; mass = other; d2 = dx * dx + dy * dy;
+          if (radii) { const d = Math.sqrt(d2), gap = Math.max(d * .5, d - radii[i]! - maxRadius); d2 = gap * gap; }
         }
         if (d2 > 0) { const factor = scaling * m * mass / d2; fx += dx * factor; fy += dy * factor; }
         c = this.next[c]!;

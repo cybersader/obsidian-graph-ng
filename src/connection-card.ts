@@ -1,7 +1,7 @@
 import { middleTruncate } from './label-layout';
 import type { Visuals } from './settings';
 import { setIcon } from 'obsidian';
-import { disclosure, panelHelp } from './panel-help';
+import { disclosure, disclosureBody, panelHelp } from './panel-help';
 import type { RenderProjection } from './render-projection';
 /** Incident-edge CSR (`incidentEdges`): per node, every edge row touching it. */
 export interface Incidence { offsets: Uint32Array; edges: Uint32Array }
@@ -256,7 +256,7 @@ export class ConnectionCard {
     const more = this.more = c.appendChild(el('details', '', 'graph-ng-card-more')) as HTMLDetailsElement;
     disclosure(more, 'More actions');
     more.ontoggle = () => { this.size = undefined; h.cue(-1); };
-    const actions = more.appendChild(el('div', '', 'graph-ng-card-actions')), tool = (text: string, a: CardAction) => actions.appendChild(button(text, text + ': ' + name, act(a)));
+    const actions = disclosureBody(more).appendChild(el('div', '', 'graph-ng-card-actions')), tool = (text: string, a: CardAction) => actions.appendChild(button(text, text + ': ' + name, act(a)));
     tool('New tab', 'tab'); tool('Open to the right', 'split'); tool('Focus here', 'focus');
     this.lensToggle = h.lensed ? tool('Connection lens', 'lens') : undefined; this.syncLens();
     tool('Copy link', 'copy');
@@ -331,7 +331,7 @@ export class ConnectionCard {
         };
         toggle.dataset.group = String(key); toggle.setAttribute('aria-expanded', String(expanded)); toggle.setAttribute('aria-controls', `${this.navId}-${key}`);
         toggle.append(el('span', entries.length.toLocaleString(), 'graph-ng-count'));
-        const body = block.appendChild(el('div')); body.id = `${this.navId}-${key}`; body.hidden = !expanded;
+        const body = disclosureBody(block); body.id = `${this.navId}-${key}`; body.hidden = !expanded;
         if (!expanded) continue;
         if (scoped) {
           const on = this.navSecond.has(key), two = body.appendChild(button('Neighbours of neighbours', `Show neighbours of neighbours for ${label} on the graph`, () => {

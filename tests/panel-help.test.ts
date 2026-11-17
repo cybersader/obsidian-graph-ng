@@ -18,7 +18,7 @@ test('one weighted build never regresses on repeated stages, revised totals or c
   const p = new BuildProgress(); p.start(); const seen: number[] = [];
   for (const [step, fraction] of [[0, 0], [0, .8], [0, .2], [1, 0], [2, .4], [0, 0], [2, .1], [3, 0], [4, 0]]) { p.text(step!, fraction); seen.push(p.percent); }
   expect(seen).toEqual([0, 24, 24, 30, 68, 68, 68, 95, 100]);
-  p.start(); expect(p.text(0)).toBe('Reading notes 0%');
+  p.start(); expect(p.text(0)).toBe('Reading notes');
   expect(p.text(2, .4)).toBe('Laying out notes 68%');
 });
 test('summary retains the same working glyph span through number and step updates', () => {
@@ -28,7 +28,7 @@ test('summary retains the same working glyph span through number and step update
   stage = 'Reading notes 20%'; f.panel.updateSummary(); expect(f.panel.counts.querySelector('.graph-ng-working')).toBe(span);
   expect(f.panel.counts.querySelector('.graph-ng-status-previous')).toBeUndefined();
   stage = 'Laying out notes 64%'; f.panel.updateSummary(); expect(f.panel.counts.querySelector('.graph-ng-working')).toBe(span);
-  expect(f.panel.counts.querySelector('.graph-ng-status-previous')).toBeDefined(); f.panel.dispose();
+  expect(f.panel.counts.querySelector('.graph-ng-status-previous')).toBeUndefined(); f.panel.dispose();
 });
 test('Filters relationships exposes the existing Lines and Notes save/rebuild action', async () => {
   const f = fixture(); const calls: boolean[] = [];
@@ -271,6 +271,33 @@ test('Appearance names relationship notes once and keeps global rebuild scope in
   f.panel.dispose();
 });
 
+
+test('side-panel disclosures contain their contents in one shared non-scrolling guide', () => {
+  const f = fixture(); let seen = 0;
+  for (const tool of ['filters', 'appearance', 'layout', 'views']) {
+    f.panel.show(tool);
+    for (const details of f.root.querySelectorAll('details')) {
+      expect(details.children[0]!.tagName).toBe('SUMMARY');
+      expect(details.children.slice(1)).toHaveLength(1);
+      expect(details.children[1]!.classes.has('graph-ng-disclosure-body')).toBe(true);
+      seen++;
+    }
+  }
+  expect(seen).toBeGreaterThan(5);
+  f.panel.show('appearance');
+  const find = f.root.querySelector('.graph-ng-highlight-options')!;
+  expect(find.children[1]!.textContent).toContain('Highlight emphasis');
+  expect(find.children[1]!.textContent).toContain('Minimap');
+  expect(find.children[1]!.textContent).not.toContain('Label style');
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+  const guide = css.match(/^\.graph-ng-disclosure-body \{([^}]+)\}/m)![1]!;
+  expect(guide).toContain('border-inline-start:1px solid var(--background-modifier-border)');
+  expect(guide).toContain('var(--gng-space-3)'); expect(guide).toContain('display:flow-root');
+  expect(guide).not.toMatch(/overflow|max-height|height:/);
+  expect(css).not.toContain('.graph-ng-status details > div {');
+  expect(f.root.querySelectorAll('details').some(d => d.classes.has('graph-ng-explore-section'))).toBe(false);
+  f.panel.dispose();
+});
 test('relationship line choices persist live in Appearance and Filters; shared term is one definition', () => {
   const f = fixture(), calls: boolean[] = []; f.settings.declaration.display.reifiedAsNodes = true;
   f.settings.declaration.edges.push({ kind: "reified", name: "relation", sourceProperty: "source", targetProperty: "target" });
@@ -287,4 +314,12 @@ test('relationship line choices persist live in Appearance and Filters; shared t
   expect(calls).toEqual(Array(6).fill(false));
   const host = new ControlElement(); panelHelp(host as any, 'Relationship notes', 'An older definition');
   expect(host.querySelector('.graph-ng-help-popover')!.textContent).toBe(RELATIONSHIP_HELP); f.panel.dispose();
+});
+
+test('unmeasured phases shimmer without invented percentages and measured phases never go backwards', async () => {
+  const { BuildProgress } = await import('../src/working'); const p = new BuildProgress();
+  for (const fraction of [0, .03, 0, .7, .2]) expect(p.text(0, fraction)).toBe('Reading notes');
+  expect(p.text(1)).toBe('Building');
+  const seen = [[2, 0], [2, .3], [2, .1], [3, 0], [4, 0]].map(([phase, fraction]) => Number(p.text(phase!, fraction).match(/(\d+)%/)![1]));
+  expect(seen).toEqual([50, 63, 63, 95, 100]);
 });

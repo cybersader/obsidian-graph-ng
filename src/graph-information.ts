@@ -1,6 +1,6 @@
 import { workingText } from './working';
 import { setIcon } from 'obsidian';
-import { disclosure, panelHelp, iconButton } from './panel-help';
+import { disclosure, disclosureBody, panelHelp, iconButton } from './panel-help';
 import type { EdgeRuleCounts, LayoutResult } from './pipeline';
 import type { ExploreResult } from './core/explore';
 import { filterSummary, hiddenClause } from './filter-summary';
@@ -89,8 +89,9 @@ function partRows(host: HTMLElement, parts: Part[], r: InformationReport, act: I
     if (list) list.dataset.info = 'missing';
     const click = go === undefined ? p.lines ? act.relationships : p.icon === 'copy' ? act.duplicates : p.icon === 'folder-x' ? act.exclusions : undefined : go < -1 ? act.relationships : act.filter && (() => act.filter!(go));
     statRow(list ? disclosure(list) : host, p.icon, p.icon === 'unlink' && r.linksPending ? 'Target checks pending' : p.label, (p.count < 0 ? '−' : '') + num(Math.abs(p.count)), '', click);
-    for (const [rule, from, to] of list ? r.missed! : []) list!.createDiv({ cls: 'graph-ng-stat-sub', text: `${from} → ${to} (${rule})` });
-    if (list && p.count > r.missed!.length) list.createDiv({ cls: 'graph-ng-stat-sub', text: `First ${r.missed!.length} listed` });
+    const body = list ? disclosureBody(list) : undefined;
+    for (const [rule, from, to] of list ? r.missed! : []) body!.createDiv({ cls: 'graph-ng-stat-sub', text: `${from} → ${to} (${rule})` });
+    if (body && p.count > r.missed!.length) body.createDiv({ cls: 'graph-ng-stat-sub', text: `First ${r.missed!.length} listed` });
   }
 }
 function revealInformation(host: HTMLElement, id: string) {
@@ -100,7 +101,7 @@ function revealInformation(host: HTMLElement, id: string) {
   target?.querySelector('summary')?.focus(); target?.scrollIntoView({ block: 'nearest' });
 }
 const informationState = new WeakMap<HTMLElement, Map<string, boolean>>();
-const pendingHelp = (host: HTMLElement) => panelHelp(host, 'Source checks pending', 'Provisional: targets may resolve as properties and Obsidian links load.');
+const pendingHelp = (host: HTMLElement) => panelHelp(host, 'Source checks pending', 'The host has not verified these properties or links. The graph is usable and updates when facts arrive.');
 /** Preserve semantic disclosures, focus, open help and scroll through asynchronous updates. */
 export function renderInformation(host: HTMLElement, message: string, state: string | undefined, r?: InformationReport, view?: Explored, act: InformationActions = {}, loading?: { indexed?: number; listed?: number }) {
   const opened = informationState.get(host) ?? new Map<string, boolean>(); informationState.set(host, opened);
@@ -137,7 +138,7 @@ function renderBody(host: HTMLElement, message: string, state: string | undefine
   statRow(headline, 'circle-dot', 'Notes shown', num(a.dots)); statRow(headline, 'spline', 'Edges drawn', num(edges.drawn), '', () => revealInformation(host, 'edges'));
   const section = (id: string, icon: string, label: string, value: string, cls = '') => {
     const details = host.createEl('details', { cls: `graph-ng-info-section ${cls}` }); details.dataset.info = id;
-    statRow(disclosure(details), icon, label, value); return details;
+    statRow(disclosure(details), icon, label, value); return disclosureBody(details);
   };
   e?.carrierHidden?.forEach((hidden, i) => {
     if (!hidden) return;
@@ -184,4 +185,4 @@ export function layoutText(l: NonNullable<InformationReport['layout']>) {
 /** Stage-local progress only: no elapsed-time estimate and no invented resolver percentage. */
 export const readingProgress = (c: { indexed: number; listed: number }) => `Reading notes ${Math.floor(100 * c.indexed / Math.max(1, c.listed))}%`;
 export const layoutProgress = (p: { iteration: number; total: number }) => `Laying out ${Math.floor(100 * p.iteration / Math.max(1, p.total))}% (step ${num(p.iteration)}, ${num(p.total)} steps)`;
-export const pendingText = (r?: { pendingProperties?: number; linksPending: boolean }) => `Ready, still reading ${r?.pendingProperties ? plural(r.pendingProperties, 'note') : r?.linksPending ? 'links' : 'properties'}`;
+export const pendingText = (r?: { pendingProperties?: number; linksPending: boolean }) => r?.pendingProperties ? `${plural(r.pendingProperties, 'note')} with unverified properties` : 'Ready, source checks incomplete';
