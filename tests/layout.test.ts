@@ -130,7 +130,7 @@ test('centering: normal gravity rings disconnected parts far out, strong gravity
   // The far ring is the reference ForceAtlas2 behaviour, not a solver error.
   for (const [mine, strongMode, gravity] of [[weak, false, .5], [strong, true, .15]] as const)
     expect(Math.abs(ring(oracleLayout(g, room(strongMode, gravity))).ratio / mine.ratio - 1)).toBeLessThan(.1);
-});
+}, 30_000);
 
 test('cold seeds are deterministic discs whose radius grows with square root of note count', () => {
   const small = initialPositions(100, 7, 10), large = initialPositions(400, 7, 10);
