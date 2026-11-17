@@ -56,7 +56,7 @@ let fixtureReducedMotion = false, rejectStorage = false;
 const rendererStorage = { getItem() { if (rejectStorage) throw new Error('storage denied'); return null; }, setItem() { if (rejectStorage) throw new Error('storage denied'); } };
 const rendererWindow = { devicePixelRatio: 1 };
 const module = { exports: {} as any };
-const obsidian = { ItemView: class {}, Menu: class {}, Plugin: class {}, PluginSettingTab: class {}, Setting: class {}, TFile: class {}, apiVersion: 'synthetic', Notice: class {}, setIcon: (el: any, icon: string) => { el.empty(); el.dataset ??= {}; el.dataset.icon = icon; el.icon = icon; } };
+const obsidian = { ItemView: class {}, Menu: class {}, Plugin: class {}, PluginSettingTab: class {}, Setting: class {}, TFile: class {}, apiVersion: 'synthetic', Notice: class {}, setIcon: (el: any, icon: string) => { el.empty(); el.dataset ??= {}; el.dataset.icon = icon; el.icon = icon; if (icon === 'circle-stop') { const svg = el.createEl('svg'), circle = svg.createEl('circle'); circle.cloneNode = () => new ControlElement('CIRCLE'); svg.createEl('rect'); } } };
 vm.runInNewContext(source + `\n;module.exports.__renderer=${rendererName};`, { module, exports: module.exports, require: () => obsidian, console, structuredClone, setTimeout: fixtureTimeout, clearTimeout: clearFixtureTimeout, performance, TextEncoder, TextDecoder, MessageChannel, document, localStorage: rendererStorage, window: rendererWindow, devicePixelRatio: 1, getComputedStyle: () => ({ getPropertyValue: () => '' }), matchMedia: (query: string) => ({ get matches() { return query.includes('prefers-reduced-motion') && fixtureReducedMotion; }, addEventListener() {}, removeEventListener() {} }), ResizeObserver: class { observe() {} disconnect() {} }, requestAnimationFrame: requestFrame, cancelAnimationFrame: cancelFrame }, { filename: 'production-main.js' });
 const GraphPlugin = module.exports.default, GraphView = module.exports.GraphView, Renderer = module.exports.__renderer;
 const mangle = JSON.parse(readFileSync(new URL('../.workspace/evidence/main-mangle-cache.json', import.meta.url), 'utf8'));
@@ -95,11 +95,29 @@ test('Stop layout remains beside status, sends one active revision and hides wit
   const f = await fixture(), summary = f.view[compiled('statusSummary')]; let stopped = -1;
   const label = summary.createSpan({ text: 'Laying out notes 60%' });
   f.plugin.pipeline.stopLayout = (revision: number) => { stopped = revision; };
+  f.view[compiled('buildProgress')].percent = 60;
   f.view[compiled('layoutControl')](true); const button = control(summary, 'Stop layout');
+  const ring = f.view.layoutRing;
+  expect(button.getAttribute('aria-label')).toBe('Stop layout'); expect(button.getAttribute('title')).toBe('Stop layout');
+  expect(button.getAttribute('type')).toBe('button');
+  expect(ring.getAttribute('pathLength')).toBe('100'); expect(ring.getAttribute('stroke-dashoffset')).toBe('40');
+  expect(summary.classes.has('graph-ng-layout-active')).toBe(true);
   expect(button.style.visibility).toBe('visible'); expect(button.disabled).toBe(false);
   button.click(); expect(stopped).toBe(7); expect(button.disabled).toBe(true);
-  f.view[compiled('layoutControl')](false); expect(button.style.visibility).toBe('hidden'); expect(summary.children).toEqual([label, button]);
-  f.view[compiled('layoutControl')](true); expect(control(summary, 'Stop layout')).toBe(button); expect(button.disabled).toBe(false);
+  expect(f.view.layoutStopped).toBe(true); expect(f.view.statusText).toBe('Stopping layout…');
+  f.view[compiled('layoutControl')](false); expect(button.style.visibility).toBe('hidden'); expect(summary.children).toEqual([label, button]); expect(summary.classes.has('graph-ng-layout-active')).toBe(false);
+  f.view[compiled('layoutControl')](true); expect(control(summary, 'Stop layout')).toBe(button); expect(button.disabled).toBe(false); expect(f.view.layoutStopped).toBe(false);
+});
+
+
+test('layout progress keeps shimmer and ring motion optional without a JavaScript animation clock', () => {
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+  expect(css).toContain('background-clip:text'); expect(css).toContain('animation:gng-working 2s linear infinite');
+  expect(css).toContain('@keyframes gng-working { from { background-position:100% 0; } to { background-position:0% 0; } }');
+  expect(css).toContain('@media (prefers-reduced-motion:reduce) { .graph-ng-layout-stop circle.graph-ng-layout-ring { transition:none; } }');
+  expect(css).toContain('.graph-ng-working { background:none; -webkit-text-fill-color:currentColor; }');
+  expect(css).toContain('[data-motion=off] .graph-ng-layout-ring, [data-motion=reduced] .graph-ng-layout-ring { transition:none !important; }');
+  expect(css).toContain('.graph-ng-summary :focus-visible { outline:2px solid var(--interactive-accent)');
 });
 
 test('compiled Canvas computes base radius once and preserves radii across zoom and preview', async () => {
@@ -2577,4 +2595,20 @@ test('review4: isolation scope retains a text-only live announcement under overl
   r[k('setLens')](-1); r.isolate(1);
   expect(announcements().map((e: any) => e.textContent)).toEqual(['Only connections of 1']);
   control(r[k('stateStrip')], 'Leave Only connections').click(); expect(announcements()).toHaveLength(0);
+});
+
+
+test('settlement winning a stop race does not leave stopped feedback', async () => {
+  const f = await fixture(); f.plugin.settings.persistLayout = false;
+  f.plugin.pipeline.stopLayout = () => {};
+  f.plugin.pipeline.request = async (_revision: number, request: any) => {
+    if (request.kind === 'recompute') {
+      control(f.view[compiled('statusSummary')], 'Stop layout').click();
+      expect(f.view.layoutStopped).toBe(true);
+      return { positions: f.next, settled: true };
+    }
+    return {};
+  };
+  await f.view[compiled('applyLayout')](values);
+  expect(f.view.layoutStopped).toBe(false);
 });

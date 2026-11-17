@@ -266,10 +266,21 @@ export class GraphView extends ItemView {
   private buildProgress = new BuildProgress();
   private layoutWorking = false;
   private layoutStop?: HTMLButtonElement;
+  private layoutRing?: SVGCircleElement;
+  private layoutStopped = false;
   private layoutControl(active: boolean) {
-    const button = this.layoutStop ??= iconButton(this.statusSummary, 'Stop layout', 'square', 'clickable-icon graph-ng-layout-stop');
+    if (!this.layoutStop) {
+      this.layoutStop = iconButton(this.statusSummary, 'Stop layout', 'circle-stop', 'clickable-icon graph-ng-layout-stop', { title: 'Stop layout', type: 'button' });
+      const ring = this.layoutRing = this.layoutStop.querySelector('circle')!;
+      ring.before(ring.cloneNode());
+      ring.setAttribute('class', 'graph-ng-layout-ring'); ring.setAttribute('pathLength', '100');
+    }
+    const button = this.layoutStop;
+    if (active) this.layoutStopped = false;
+    this.statusSummary.toggleClass('graph-ng-layout-active', active);
+    this.layoutRing!.setAttribute('stroke-dashoffset', String(100 - this.buildProgress.percent));
     button.style.visibility = active ? 'visible' : 'hidden'; button.disabled = !active;
-    button.onclick = () => { this.plugin.pipeline.stopLayout(this.activeRevision); button.disabled = true; };
+    button.onclick = () => { this.plugin.pipeline.stopLayout(this.activeRevision); this.layoutStopped = true; button.disabled = true; this.statusText = 'Stopping layout…'; };
   }
   private loading() { return this.layoutWorking || this.contentEl.dataset.state === 'building' ? { stage: this.statusMessage, ...this.readProgress } : undefined; }
   private progressAt = 0;
@@ -278,20 +289,21 @@ export class GraphView extends ItemView {
   /** Graph information: a short message over structured tiles/issues; the canvas summary shows separate chips. */
   private set statusText(text: string) {
     this.statusMessage = text; this.contentEl.dataset.motion = this.plugin.settings.visuals?.motion ?? 'full';
+    this.layoutRing?.setAttribute('stroke-dashoffset', String(100 - this.buildProgress.percent));
     (this.explorePanel as (ExplorePanel & { updateSummary?(): void }) | undefined)?.updateSummary?.();
     const state = this.contentEl.dataset.state;
     renderInformation(this.status, [text, this.detailFallback].filter(Boolean).join(' '), this.layoutWorking ? 'building' : state, this.report, this.explored, this.informationActions, this.loading());
     const health = state === 'error' ? [text] : this.loading() ? [this.loading()!.stage]
       : this.plugin.settings.projectionFile ? ['External aggregate, not verified']
       : this.provisional ? [pendingText(this.report)] : [];
-    const chips = [this.viewFeedbackText, ...health].filter(Boolean), readout = state === 'ready' && !this.provisional && this.report;
+    const chips = [this.viewFeedbackText, this.layoutStopped && !this.loading() && state !== 'error' ? 'Layout stopped' : '', ...health].filter(Boolean), readout = state === 'ready' && !this.provisional && this.report;
     const info = this.statusSummary.querySelector<HTMLElement>('.graph-ng-summary-info') ?? this.statusSummary.createEl('button', { cls: 'graph-ng-summary-info', attr: { 'aria-label': 'Graph information' } });
     info.hidden = !readout && !chips.length;
     info.onclick = () => this.explorePanel?.show('information', info);
     if (this.loading()) {
       let progress = info.querySelector<HTMLElement>('.graph-ng-summary-progress');
       if (!progress) { info.empty(); progress = info.createSpan({ cls: 'graph-ng-summary-progress' }); }
-      workingText(progress, chips.join(' '), true);
+      workingText(progress, this.layoutStopped ? 'Stopping layout…' : chips.join(' '), !this.layoutStopped);
     } else {
       info.empty();
       if (readout) renderReadout(info, accounting(readout, this.explored));
@@ -460,7 +472,7 @@ export class GraphView extends ItemView {
     const settings = this.plugin.settings, start = performance.now();
     this.carrierLookup = undefined; this.renderRevision++; this.provisional = true; this.contentEl.dataset.verified = 'false';
     this.report = undefined; this.explored = undefined; this.positions = undefined;
-    (this.buildProgress ??= new BuildProgress()).start(); this.progressAt = 0; this.readProgress = undefined; this.contentEl.dataset.state = 'building'; this.statusText = this.buildProgress.text(0);
+    this.layoutStopped = false; (this.buildProgress ??= new BuildProgress()).start(); this.progressAt = 0; this.readProgress = undefined; this.contentEl.dataset.state = 'building'; this.statusText = this.buildProgress.text(0);
     // Hold the last useful layout, without stale captions, until a progressed replacement exists.
     const heldLayout = this.presentation === 'nodes' ? this.detailRenderer?.beginLayout() : undefined;
     if (this.presentation === 'nodes') this.contentEl.dataset.mode = 'nodes-building';
@@ -563,7 +575,7 @@ export class GraphView extends ItemView {
       await preview.finish(true);
       if (!current()) return;
       this.statusText = this.buildProgress.text(3);
-      this.positions = layout.positions; this.layoutSettled = layout.settled !== false; this.explorePanel?.render();
+      this.positions = layout.positions; this.layoutSettled = layout.settled !== false; if (this.layoutSettled) this.layoutStopped = false; this.explorePanel?.render();
       this.cacheTrace.push({ expected: result.meta.key, stored: layout.stored, nodes: result.nodes, ...coverage, valid: layout.cached }); if (this.cacheTrace.length > 16) this.cacheTrace.shift();
       report.layout = { cached: layout.cached, reused: layout.reused, ms: layout.milliseconds, totalMs: performance.now() - start };
       this.buildProgress.text(4); this.contentEl.dataset.state = 'ready'; this.statusText = this.provisional ? pendingText(report) : this.layoutSettled ? '' : 'Layout not settled';
@@ -801,7 +813,7 @@ export class GraphView extends ItemView {
       try {
         if (this.closed || !current() || !projection || this.detailGeneration !== revision || this.plugin.settings.projectionFile) throw new Error('Layout unavailable or generation changed');
         const next = physicsSettings(this.plugin.settings, values);
-        this.layoutWorking = working = true; (this.buildProgress ??= new BuildProgress()).start(); this.progressAt = 0; this.statusText = this.buildProgress.text(2);
+        this.layoutWorking = working = true; this.layoutStopped = false; (this.buildProgress ??= new BuildProgress()).start(); this.progressAt = 0; this.statusText = this.buildProgress.text(2);
         finish = old?.beginLayout();
         this.plugin.pipeline.onPositions = event => {
           if (event.revision !== revision || !current() || streamError) { this.plugin.pipeline.recycle(event.positions.buffer as ArrayBuffer); return; }
@@ -817,7 +829,7 @@ export class GraphView extends ItemView {
         if (old && this.contentEl.dataset.mode === 'nodes') token = await old.preparePositions(result.positions, current);
         await this.plugin.commitLayout(values, ready, () => {
           token?.commit();
-          this.positions = result.positions; this.layoutSettled = result.settled !== false;
+          this.positions = result.positions; this.layoutSettled = result.settled !== false; if (this.layoutSettled) this.layoutStopped = false;
           committed = true;
         });
         // The worker adopts only after settings and visible coordinates commit. A failed
