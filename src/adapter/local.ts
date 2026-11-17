@@ -37,17 +37,25 @@ export class LocalAdapter {
     for (const path of this.savedFacts.keys()) this.index.change(path);
     this.savedFacts.clear();
   }
-  private cacheKey(current: () => boolean) { return factKey(this.app.vault.getFiles(), [this.cacheScope, this.producer, this.declaration], current); }
+  private purgeFacts() {
+    this.retireSaved();
+    return this.cache?.clear().catch(error => { this.cacheStatus = 'unavailable'; this.factError = String(error); });
+  }
+  private rejectSaved(error: unknown) {
+    void this.purgeFacts(); this.cacheStatus = 'unavailable'; this.factError = String(error);
+  }
+  private cacheKey(check: () => void) { return factKey(this.app.vault.getFiles(), [this.cacheScope, this.producer, this.declaration], check); }
   private restoreFacts(): Promise<void> {
     return this.restore ??= (async () => {
-      if (!this.cache || this.cache.paused || this.propertySource) return;
+      if (!this.cache || this.cache.paused) return;
+      if (this.propertySource) { await this.purgeFacts(); return; }
       const turn = this.cacheTurn, current = () => turn === this.cacheTurn && !this.cache?.paused && !this.propertySource;
       try {
-        const rows = await this.cache.load(await this.cacheKey(current), current);
+        const rows = await this.cache.load(check => this.cacheKey(check), current);
         if (!current() || !rows) { this.cacheStatus = 'miss'; return; }
         if ([...rows.keys()].some(p => !this.paths.has(p)) || rows.size !== this.paths.size) throw Error('Saved facts mismatch');
         this.savedFacts = rows; this.cacheStatus = 'restored';
-      } catch (error) { if (current()) { this.cacheStatus = 'unavailable'; this.factError = String(error); } }
+      } catch (error) { if (current()) this.rejectSaved(error); }
     })();
   }
   async saveFacts() {
@@ -55,14 +63,13 @@ export class LocalAdapter {
     const turn = this.cacheTurn, version = this.factVersion;
     const current = () => turn === this.cacheTurn && version === this.factVersion && !this.propertySource && !this.cache?.paused && this.factsComplete();
     try {
-      const key = await this.cacheKey(current);
-      await this.cache.save(key, this.values(), current);
+      await this.cache.save(check => this.cacheKey(check), this.values(), current);
       if (current()) { this.savedVersion = version; this.cacheStatus = 'saved'; this.factError = ''; }
     } catch (error) { if (current()) { this.cacheStatus = 'unavailable'; this.factError = String(error); } }
   }
   async clearFacts() {
-    this.retireSaved(); this.cacheStatus = 'cleared';
-    await this.cache?.clear(true);
+    this.retireSaved(); await this.cache?.clear(true);
+    this.cacheStatus = 'cleared'; this.factError = '';
   }
   private seedComplete = false;
   private paths = new Set<string>();
@@ -90,7 +97,7 @@ export class LocalAdapter {
     return `${text.length}:${hashEdge(text).join(':')}`;
   }
   invalidate() { this.retireSaved(); this.epoch++; this.propertyAuditWake?.(); this.reloadRequired = true; this.seedComplete = false; this.indexed.clear(); this.pendingPropertyPaths = new Set(this.paths); this.sent.clear(); this.sentComplete = false; this.linksResolved = false; }
-  setPropertySource(source?: PropertySource) { this.propertySource = source; this.invalidate(); }
+  setPropertySource(source?: PropertySource) { if (source !== this.propertySource) void this.purgeFacts(); this.propertySource = source; this.invalidate(); }
   private declaration?: GraphDeclaration;
   private excluded: string[] = [];
   /** Declared excluded folders never enter paths, rows, coverage or identity. */
@@ -157,7 +164,7 @@ export class LocalAdapter {
   }
   *values(): IterableIterator<FactRow> { if (!this.streaming) { yield* this.index.values(); return; } for (const path of this.paths) { const row = this.read(path); if (row) yield row; } }
   configure(declaration: GraphDeclaration) {
-    if (JSON.stringify(declaration) !== JSON.stringify(this.declaration)) this.retireSaved();
+    if (JSON.stringify(declaration) !== JSON.stringify(this.declaration)) void this.purgeFacts();
     this.declaration = declaration; this.keys = declaredKeys(declaration);
     const excluded = (declaration.exclude ?? []).map(folderPath);
     if (excluded.join('\n') !== this.excluded.join('\n')) { this.excluded = excluded; this.invalidate(); }
@@ -202,6 +209,10 @@ export class LocalAdapter {
       this.seedComplete = this.indexed.size === this.paths.size;
       if (this.seedComplete && [...this.paths].every(path => Object.hasOwn(this.app.metadataCache.resolvedLinks, path))) this.linksResolved = true;
       this.sentComplete = this.factsComplete(); finished = true;
+    } catch (error) {
+      current(); if (!this.savedFacts.size) throw error;
+      this.rejectSaved(error);
+      yield* this.columns(true, options); finished = true;
     } finally {
       this.ingesting = false;
       if (!finished) this.invalidate();

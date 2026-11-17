@@ -1,10 +1,10 @@
-import { test, expect } from 'bun:test';
+import { test, expect, spyOn } from 'bun:test';
 import { defaults } from '../src/settings';
 import { FixtureFile } from './support/obsidian-fixture';
 import { MemoryAdapter } from './support/memory-adapter';
 import { FactCache, factKey } from '../src/adapter/fact-cache';
 import { LocalAdapter, type PropertySource } from '../src/adapter/local';
-import { defaultDeclaration } from '../src/core/declaration';
+import { defaultDeclaration, digest } from '../src/core/declaration';
 import { unpackRows } from '../src/core/columns';
 import { buildProjection, type FactRow } from '../src/core/projection';
 
@@ -49,19 +49,22 @@ test('saved native facts never override selected derived verified:false or persi
     const writes = saved.disk.writes, rows = await f.rows();
     expect(rows[0]!.properties.category).toBe('Derived'); expect(f.adapter.factsComplete()).toBe(false);
     await f.adapter.saveFacts(); expect(saved.disk.writes).toBe(writes); expect(f.adapter.savedCopy).toBe(false);
+    expect(saved.disk.files.size).toBe(0);
   } finally { f.dispose(); }
 });
 
 test('source, declaration, file stamps and whole-vault namespace mismatches refuse cache', async () => {
-  for (const kind of ['source', 'declaration', 'mtime', 'size', 'namespace']) {
-    const saved = await savedFixture(), f = saved.boot(undefined, kind === 'source' ? 'other' : 'local');
+  for (const kind of ['source', 'device namespace', 'plugin version', 'producer', 'declaration', 'mtime', 'size', 'namespace']) {
+    const saved = await savedFixture(), f = saved.boot(undefined, ['source', 'device namespace', 'plugin version'].includes(kind) ? `other-${kind}` : 'local');
     try {
+      if (kind === 'producer') (f.adapter as any).producer = 'native@2';
       if (kind === 'declaration') f.adapter.configure({ ...f.declaration, columns: ['other'] });
       if (kind === 'mtime') Object.assign(f.files[0]!.stat, { mtime: 101 });
       if (kind === 'size') f.files[0]!.stat.size++;
       if (kind === 'namespace') { const file = new FixtureFile('outside/image.png'); file.extension = 'png'; Object.assign(file.stat, { mtime: 100 }); f.files.push(file); }
       expect((await f.rows()).every(r => Object.keys(r.properties).length === 0)).toBe(true);
       expect(f.adapter.cacheStatus).toBe('miss'); expect(f.adapter.factsComplete()).toBe(false);
+      expect(saved.disk.files.size).toBe(0);
     } finally { f.dispose(); }
   }
 });
@@ -180,4 +183,176 @@ test('provisional rows retain the ordinary duplicate-ID quarantine', async () =>
     expect(projected.paths).toEqual([]); expect(projected.quarantined.map(row => row.path)).toEqual(['a.md', 'b.md']);
     expect(cold.adapter.factsComplete()).toBe(false);
   } finally { first.dispose(); cold.dispose(); }
+});
+
+test('byte-aware chunks accept large declared values and count UTF-8 bytes', async () => {
+  const disk = new MemoryAdapter(), store = new FactCache(disk, 'plugin/cache/startup-facts');
+  const rows = Array.from({ length: 256 }, (_, i) => ({ path: `synthetic-${i}.md`, properties: { id: String(i), description: '界'.repeat(1800) } }));
+  await store.save('key', rows, () => true);
+  const manifest = JSON.parse(await disk.read('plugin/cache/startup-facts/manifest.json'));
+  expect(manifest.parts.length).toBe(2);
+  for (const part of manifest.parts) expect(part.bytes).toBeLessThanOrEqual(1024 * 1024);
+  expect([...(await store.load('key', () => true))!.values()]).toEqual(rows);
+  await expect(store.save('key', [{ path: 'large.md', properties: { id: 'x'.repeat(1024 * 1024) } }], () => true)).rejects.toThrow('over limit');
+  expect(await disk.exists('plugin/cache/startup-facts/manifest.json')).toBe(false);
+});
+
+test('missing manifest skips namespace work and key work shares the storage deadline', async () => {
+  const disk = new MemoryAdapter(), store = new FactCache(disk, 'plugin/cache/startup-facts', async () => {}, 20);
+  let prepared = 0;
+  expect(await store.load(async () => { prepared++; return 'key'; }, () => true)).toBeUndefined();
+  expect(prepared).toBe(0);
+  for (const operation of ['load', 'save'] as const) {
+    await disk.write('plugin/cache/startup-facts/manifest.json', '{}');
+    let release!: () => void;
+    const key = async (check: () => void) => { await new Promise<void>(r => release = r); check(); return 'key'; };
+    const pending = operation === 'load' ? store.load(key, () => true) : store.save(key, [], () => true);
+    await expect(pending).rejects.toThrow('deadline'); release();
+    await new FactCache(disk, 'plugin/cache/startup-facts').clear();
+  }
+  const key = async (check: () => void) => { const end = performance.now() + 25; while (performance.now() < end) {} check(); return 'key'; };
+  await expect(store.save(key, [], () => true)).rejects.toThrow('deadline');
+});
+
+test('namespace preparation yields before reading the whole vault and bounds merge work', async () => {
+  let reads = 0, active = true, state = 42;
+  const files = Array.from({ length: 100000 }, (_, i) => {
+    state = (Math.imul(1664525, state) + 1013904223) >>> 0;
+    const path = `${state.toString(16).padStart(8, '0')}/synthetic-${i}.md`;
+    return { get path() { reads++; return path; }, stat: { mtime: 100, size: 10 } };
+  });
+  const start = performance.now(), pending = factKey(files, ['synthetic'], () => { if (!active) throw Error('cancelled'); });
+  const synchronousMs = performance.now() - start;
+  expect(reads).toBe(256); active = false; await expect(pending).rejects.toThrow('cancelled');
+  console.log('100k namespace pre-yield', JSON.stringify({ files: files.length, collected: reads, synchronousMs, scope: 'unit runtime, not native app timing' }));
+  await expect(factKey([...files, files[0]!], [], () => {})).rejects.toThrow('over limit');
+  const subset = files.slice(0, 1200), ordered = subset.map(f => [f.path, f.stat.mtime, f.stat.size] as const).sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0), parts = [];
+  for (let i = 0; i < ordered.length; i += 256) parts.push(await digest(ordered.slice(i, i + 256)));
+  const key = await factKey(subset, [], () => {});
+  expect(key).toBe(await digest({ format: 1, scope: [], parts }));
+  expect(await factKey([...subset].reverse(), [], () => {})).toBe(key);
+});
+
+test('entropy failure disables optional namespace without rejecting startup', async () => {
+  const { default: GraphPlugin } = await import('../src/main');
+  const plugin: any = Object.create(GraphPlugin.prototype); plugin.settings = defaults('native@1');
+  plugin.save = async () => { throw Error('must not save'); };
+  const entropy = spyOn(crypto, 'getRandomValues').mockImplementation(() => { throw Error('Synthetic entropy unavailable'); });
+  try { expect(await plugin.ensureDeviceNamespace()).toBeUndefined(); expect(plugin.deviceNamespace).toBeUndefined(); }
+  finally { entropy.mockRestore(); }
+});
+
+test('checksummed deep, nonfinite and excessive-value payloads fall back and are discarded', async () => {
+  const { hashBytes } = await import('../src/core/binary-layout');
+  for (const value of ['['.repeat(20000) + '0' + ']'.repeat(20000), '1e999', '[' + Array(65537).fill('0').join(',') + ']']) {
+    const saved = await savedFixture(), path = 'plugin/saved-facts/manifest.json';
+    const manifest = JSON.parse(await saved.disk.read(path));
+    const bytes = new TextEncoder().encode('[{"path":"a.md","properties":{"id":' + value + '}}]');
+    await saved.disk.writeBinary('plugin/saved-facts/0.bin', bytes.buffer);
+    manifest.parts = [{ bytes: bytes.length, hash: await hashBytes(bytes) }]; await saved.disk.write(path, JSON.stringify(manifest));
+    const f = saved.boot();
+    try {
+      expect((await f.rows()).every(row => !row.properties.id)).toBe(true);
+      expect(f.adapter.cacheStatus).toBe('unavailable'); expect(f.adapter.factsComplete()).toBe(false);
+      await new FactCache(saved.disk, 'plugin/saved-facts').load('barrier', () => true);
+      expect(await saved.disk.exists(path)).toBe(false);
+    } finally { f.dispose(); }
+  }
+});
+
+test('unexpected replay serialization failure resets partial worker input and retries native', async () => {
+  const saved = await savedFixture(), f = saved.boot();
+  const stamp = (f.adapter as any).stamp.bind(f.adapter); let failed = false;
+  (f.adapter as any).stamp = (row: FactRow) => {
+    if (!failed && row.path === 'b.md' && row.properties.category === 'Saved') { failed = true; throw Error('Synthetic replay serialization failure'); }
+    return stamp(row);
+  };
+  try {
+    const batches = []; for await (const b of f.adapter.columns(true, { chunkRows: 1, budgetMs: 8 })) batches.push(b);
+    expect(failed).toBe(true); expect(batches.map(b => b.reset)).toEqual([true, true, false]);
+    expect(batches.slice(1).flatMap(b => unpackRows(b.columns)).every(row => !row.properties.id)).toBe(true);
+    expect(f.adapter.cacheStatus).toBe('unavailable'); expect(f.adapter.savedCopy).toBe(false);
+    await new FactCache(saved.disk, 'plugin/saved-facts').load('barrier', () => true);
+    expect(saved.disk.files.size).toBe(0);
+  } finally { f.dispose(); }
+});
+
+test('module reload clear and replacement save wait for uncancellable old writes', async () => {
+  for (const action of ['clear', 'save']) {
+    const disk = new MemoryAdapter(), directory = 'plugin/cache/startup-facts';
+    let release!: () => void, started!: () => void, active = true, finished = false;
+    const held = new Promise<void>(r => release = r), waiting = new Promise<void>(r => started = r), write = disk.writeBinary.bind(disk);
+    disk.writeBinary = async (path, bytes) => { started(); await held; await write(path, bytes); };
+    const old = new FactCache(disk, directory), saving = old.save('old', [{ path: 'old.md', properties: { id: 'old' } }], () => active).catch(String);
+    await waiting; active = false;
+    const modulePath = '../src/adapter/fact-cache.ts?reload-regression';
+    const reloadedModule = await import(modulePath);
+    const fresh = new reloadedModule.FactCache(disk, directory);
+    const next = (action === 'clear' ? fresh.clear(true) : fresh.save('new', [{ path: 'new.md', properties: { id: 'new' } }], () => true)).then(() => { finished = true; });
+    await Promise.resolve(); await Promise.resolve(); expect(finished).toBe(false);
+    release(); expect(await saving).toContain('cancelled'); await next;
+    if (action === 'clear') expect(disk.files.size).toBe(0);
+    else expect([...(await fresh.load('new', () => true))!.keys()]).toEqual(['new.md']);
+  }
+});
+
+test('onload retains purge when namespace persistence fails and clear reports deletion failures', async () => {
+  const { default: GraphPlugin } = await import('../src/main');
+  const previousWorker = globalThis.Worker, previousSource = (globalThis as any).__LAYOUT_WORKER_SOURCE__;
+  (globalThis as any).Worker = class { onmessage = null; postMessage() {} terminate() {} };
+  (globalThis as any).__LAYOUT_WORKER_SOURCE__ = '';
+  try {
+    for (const failure of [false, true]) {
+      const disk = new MemoryAdapter(), directory = 'plugin/cache/startup-facts', f = fixture();
+      const cleanup: (() => void)[] = [], commands = new Map<string, () => void>(); let notifications = 0;
+      await new FactCache(disk, directory).save('old', [{ path: 'a.md', properties: { id: 'plaintext' } }], () => true);
+      await disk.write('plugin/data.json', JSON.stringify({ settings: defaults('obsidian-links@test') }));
+      const plugin: any = new GraphPlugin(f.adapter.app, { dir: 'plugin', id: 'graph-ng', name: 'Graph NG', description: 'Synthetic test', version: '0.5.2', minAppVersion: '1.0.0', author: 'test' }); plugin.app = f.adapter.app; plugin.app.vault.adapter = disk;
+      plugin.manifest = { dir: 'plugin', id: 'graph-ng', version: '0.5.2' };
+      plugin.register = (fn: () => void) => cleanup.push(fn); plugin.registerEvent = plugin.registerView = plugin.addRibbonIcon = plugin.addSettingTab = plugin.watchProperties = () => {};
+      plugin.addCommand = (command: any) => commands.set(command.id, command.callback);
+      plugin.save = async () => { throw Error('Synthetic namespace save failure'); }; plugin.notify = () => { notifications++; };
+      try {
+        await plugin.onload(); expect(plugin.deviceNamespace).toBeUndefined(); expect(plugin.factStore.paused).toBe(true);
+        for await (const _ of plugin.adapter.columns(true, { chunkRows: 1, budgetMs: 8 })) {}
+        expect(disk.reads.some(path => path.startsWith(directory))).toBe(false);
+        const clear = plugin.adapter.clearFacts.bind(plugin.adapter); let clearing!: Promise<void>;
+        plugin.adapter.clearFacts = () => clearing = clear();
+        if (failure) disk.rmdir = async () => { throw Error('Synthetic deletion failure'); };
+        notifications = 0; commands.get('clear-saved-facts')!();
+        if (failure) { await expect(clearing).rejects.toThrow('deletion failure'); expect(plugin.adapter.cacheStatus).not.toBe('cleared'); expect(notifications).toBe(0); }
+        else { await clearing; expect(await disk.exists(`${directory}/manifest.json`)).toBe(false); expect(notifications).toBe(1); }
+      } finally { cleanup.reverse().forEach(fn => fn()); f.dispose(); }
+    }
+  } finally { globalThis.Worker = previousWorker; (globalThis as any).__LAYOUT_WORKER_SOURCE__ = previousSource; }
+});
+
+test('live provider and declaration changes purge an already restored generation', async () => {
+  for (const change of ['provider', 'declaration']) {
+    const saved = await savedFixture(), f = saved.boot();
+    try {
+      await f.rows(); expect(f.adapter.savedCopy).toBe(true);
+      if (change === 'provider') f.adapter.setPropertySource(derived);
+      else f.adapter.configure({ ...f.declaration, columns: ['other'] });
+      let existsAtNextOperation = true;
+      const diskExists = saved.disk.exists.bind(saved.disk);
+      saved.disk.exists = async path => { const exists = await diskExists(path); if (path.endsWith('/manifest.json')) existsAtNextOperation = exists; return exists; };
+      await new FactCache(saved.disk, 'plugin/saved-facts').load('barrier', () => true);
+      expect(existsAtNextOperation).toBe(false); expect(saved.disk.files.size).toBe(0); expect(f.adapter.savedCopy).toBe(false);
+    } finally { f.dispose(); }
+  }
+});
+
+test('mismatched generation purge is deadline bounded and deletion failures are not success', async () => {
+  for (const mode of ['failure', 'deadline']) {
+    const disk = new MemoryAdapter(), directory = 'plugin/cache/startup-facts';
+    await new FactCache(disk, directory).save('old', [{ path: 'a.md', properties: { id: 'old' } }], () => true);
+    const remove = disk.rmdir.bind(disk); let release!: () => void;
+    disk.rmdir = async path => { if (mode === 'failure') throw Error('Synthetic purge failure'); await new Promise<void>(r => release = r); await remove(path); };
+    const store = new FactCache(disk, directory, async () => {}, 20);
+    await expect(store.load('new', () => true)).rejects.toThrow(mode === 'failure' ? 'purge failure' : 'deadline');
+    expect(disk.reads.some(path => path.endsWith('.bin'))).toBe(false);
+    disk.rmdir = remove; if (mode === 'deadline') release();
+    await new FactCache(disk, directory).clear(); expect(disk.files.size).toBe(0);
+  }
 });

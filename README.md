@@ -434,7 +434,7 @@ MIT, copyright 2026 **cybersader**. No third-party plugin implementation was cop
 
 ## Provisional saved-fact startup
 
-After a stable native-source graph is verified, Graph NG saves declared properties and native link targets under `cache/startup-facts/`. The next compatible open can show **Saved copy while host confirms** through the same worker projection. Saved rows never count as verification; available host facts win. Changed declarations, source/version, vault file names or file stamps refuse the saved generation. Stamps are not content proof.
+After a stable native-source graph is verified, Graph NG saves declared properties and native link targets under `cache/startup-facts/`. The next compatible open can show **Saved copy while host confirms** through the same worker projection. Saved rows never count as verification; available host facts win. Observed mismatches in declarations, namespace/source/version, vault file names or file stamps refuse and purge the saved generation. Stamps are not content proof, and local mismatch cleanup is not offline access revocation.
 
 This initial capability is **native-source only**. Selecting the optional derived property source disables saving and replay because its public interface does not expose a durable provider/parser binding. It does not accelerate that configuration, and never upgrades its `verified:false` rows.
 

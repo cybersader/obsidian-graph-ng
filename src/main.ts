@@ -47,11 +47,10 @@ export default class GraphPlugin extends Plugin {
   async ensureDeviceNamespace(): Promise<string | undefined> {
     if (this.namespaceWrite) return this.namespaceWrite;
     if (this.deviceNamespace) return this.deviceNamespace;
-    try { settingsForSave(this.settings); } catch { return; }
-    return this.namespaceWrite = (async () => {
-      this.deviceNamespace = Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2, '0')).join('');
-      try { await this.save(); return this.deviceNamespace; } catch { this.deviceNamespace = undefined; }
-    })().finally(() => { this.namespaceWrite = undefined; });
+    try { settingsForSave(this.settings); this.deviceNamespace = Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2, '0')).join(''); }
+    catch { return undefined; }
+    this.namespaceWrite = this.save().then(() => this.deviceNamespace, () => { this.deviceNamespace = undefined; return undefined; }).finally(() => { this.namespaceWrite = undefined; });
+    return this.namespaceWrite;
   }
   performanceLog: PerformanceRecord[] = [];
   performanceModalOpen = false;
@@ -125,7 +124,8 @@ export default class GraphPlugin extends Plugin {
     this.addCommand({ id: 'open', name: 'Open graph', callback: () => { void this.open(); } });
     this.addRibbonIcon('git-fork', 'Graph NG', () => { void this.open(); });
     this.addSettingTab(new GraphSettings(this));
-    if (await this.ensureDeviceNamespace()) this.factStore = new FactCache(this.app.vault.adapter, dataPath.replace(/\/data\.json$/, '/cache/startup-facts'));
+    this.factStore = new FactCache(this.app.vault.adapter, dataPath.replace(/\/data\.json$/, '/cache/startup-facts'));
+    this.factStore.paused = !await this.ensureDeviceNamespace();
     this.resetAdapter(); this.watchProperties();
     this.addCommand({ id: 'clear-saved-facts', name: 'Clear saved startup facts', callback: () => { void this.adapter.clearFacts().then(() => { new Notice('Saved facts cleared until next load.'); this.notify(); }, error => new Notice(`Saved facts could not be cleared: ${String(error)}`)); } });
     // Namespace creation acknowledges validated settings; other adoption requires explicit apply.
