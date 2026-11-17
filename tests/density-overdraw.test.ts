@@ -102,6 +102,10 @@ test('density correction leaves node radius and edge geometry/direction/focus eq
     // Selection is an opaque final one-instance pass; ordinary-node geometry is unchanged.
     .replace('layer == 2 ? selected : gl_InstanceID', 'gl_InstanceID')
     .replace('hot ? 1. : note ? carrierAlpha : 1.', 'note ? (hot ? carrierFold : carrierAlpha) : 1.')
+    .replace('note ? (hot ? min(1., carrierAlpha * 2.) : carrierAlpha) : 1.', 'note ? (hot ? carrierFold : carrierAlpha) : 1.')
+    .replace(/\n if \(note(?: && k > 0\.)?\).*?;/g, '')
+    .replace(/\n.*\b(carrierRank|foldEnd|through|owner)\b.*/g, '')
+    .replace('hot))', 'gl_InstanceID == edgeHovered))').replace('!hot)', 'gl_InstanceID != edgeHovered)')
     .replace(' || (layer != 2 && id == selected)', '')
     .replace('(layer != 2 && note != (layer == 0))', 'note != (layer == 0)')
     .replace(/\n if \(id == selected\).*?\n/, '\n');

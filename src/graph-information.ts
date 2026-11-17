@@ -72,7 +72,7 @@ export function edgeAccounting(r: InformationReport, view?: Explored) {
 export function statRow(host: HTMLElement, icon: string, label: string, value: string, cls = '', click?: () => void) {
   const row = host.createEl(click ? 'button' : 'div', { cls: `graph-ng-stat ${click ? 'graph-ng-stat-nav' : ''} ${cls}` }); if (click) row.onclick = click;
   setIcon(row.createSpan({ cls: 'graph-ng-stat-icon' }), icon);
-  row.createSpan({ cls: 'graph-ng-stat-label', text: label }); countSpan(row, value);
+  panelHelp(row, label, undefined, 'graph-ng-stat-label'); countSpan(row, value);
   if (click) setIcon(row.createSpan({ cls: 'graph-ng-stat-icon' }), 'chevron-right');
   return row;
 }

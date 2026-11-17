@@ -1,7 +1,7 @@
 import { test, expect, beforeEach, afterEach } from 'bun:test';
 import './support/obsidian-fixture';
 import { ControlElement } from './support/controls-dom';
-import { panelHelp, disclosure, settingSelect, panelButton } from '../src/panel-help';
+import { panelHelp, RELATIONSHIP_HELP, disclosure, settingSelect, panelButton } from '../src/panel-help';
 import { ExplorePanel } from '../src/explore-panel';
 import { defaults } from '../src/settings';
 import { emptyView, explore } from '../src/core/explore';
@@ -35,7 +35,7 @@ test('Filters relationships exposes the existing Lines and Notes save/rebuild ac
   f.settings.declaration.edges.push({ kind: 'reified', name: 'relation', sourceProperty: 'source', targetProperty: 'target' });
   f.host.setRelationshipDisplay = async (nodes: boolean) => { calls.push(nodes); f.settings.declaration.display.reifiedAsNodes = nodes; };
   f.panel.show('filters'); const section = f.root.querySelector('.graph-ng-explore-edges')!;
-  expect(section.textContent).toContain('Relationship notes'); expect(section.textContent).toContain('Switching saves globally and rebuilds');
+  expect(section.textContent).toContain('Relationship notes'); expect(section.textContent).toContain('reified edges');
   const button: any = section.querySelectorAll('button').find(e => e.textContent === 'Notes'); expect(button).toBeDefined(); await button.onclick();
   expect(calls).toEqual([]);
   expect(f.root.textContent).toContain('Switch to Notes?');
@@ -264,7 +264,7 @@ test('Appearance names relationship notes once and keeps global rebuild scope in
   f.panel.show('appearance');
   const visibleText = (e: ControlElement): string => e.hidden ? '' : e.children.length ? e.children.map(visibleText).join('') : e.textContent;
   expect(visibleText(f.root).match(/Relationship notes/g)).toHaveLength(1);
-  const help = f.root.querySelectorAll('.graph-ng-help-popover').find(e => e.textContent.includes('Switching saves globally'));
+  const help = f.root.querySelectorAll('.graph-ng-help-popover').find(e => e.textContent.includes('reified edges'));
   expect(help).toBeDefined(); expect(help!.hidden).toBe(true);
   expect(f.root.textContent).not.toContain('Saves globally and rebuilds the graph.');
   expect(f.root.querySelectorAll('button').some(e => e.textContent === 'Fit graph')).toBe(false);
@@ -297,4 +297,21 @@ test('side-panel disclosures contain their contents in one shared non-scrolling 
   expect(css).not.toContain('.graph-ng-status details > div {');
   expect(f.root.querySelectorAll('details').some(d => d.classes.has('graph-ng-explore-section'))).toBe(false);
   f.panel.dispose();
+});
+test('relationship line choices persist live in Appearance and Filters; shared term is one definition', () => {
+  const f = fixture(), calls: boolean[] = []; f.settings.declaration.display.reifiedAsNodes = true;
+  f.settings.declaration.edges.push({ kind: "reified", name: "relation", sourceProperty: "source", targetProperty: "target" });
+  f.host.visualsChanged = (labels: boolean) => calls.push(labels);
+  f.host.setRelationshipDisplay = () => { throw new Error('Line choice must not rebuild'); };
+  for (const panel of ['appearance', 'filters']) {
+    f.panel.show(panel);
+    const select: any = f.root.querySelectorAll('select').find(e => e.getAttribute('aria-label') === 'Relationship lines');
+    expect(select).toBeDefined(); expect(select.children.map((e: any) => e.textContent)).toEqual(['Auto (default)', 'Through the note', 'Direct']);
+    for (const mode of ['direct', 'through', 'auto'] as const) { select.value = mode; select.onchange(); expect(f.settings.visuals.carrierLines).toBe(mode); expect(f.settings.visuals.carrierLod).toBe(mode !== 'through'); }
+    const term = f.root.querySelectorAll('.graph-ng-help-trigger').find(e => e.textContent === 'Relationship notes')!;
+    expect(term).toBeDefined(); expect(f.root.querySelectorAll('.graph-ng-help-popover').some(e => e.textContent === RELATIONSHIP_HELP)).toBe(true);
+  }
+  expect(calls).toEqual(Array(6).fill(false));
+  const host = new ControlElement(); panelHelp(host as any, 'Relationship notes', 'An older definition');
+  expect(host.querySelector('.graph-ng-help-popover')!.textContent).toBe(RELATIONSHIP_HELP); f.panel.dispose();
 });

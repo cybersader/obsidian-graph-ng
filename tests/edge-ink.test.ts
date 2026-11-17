@@ -60,7 +60,7 @@ test('length fade: a long line adds no more ink than a typical one, and only whi
 // The shader's stable line rank, evaluated in 32-bit unsigned arithmetic like GLSL.
 const rankOf = (id: number) => { let k = Math.imul(id, 2654435769) >>> 0; k = (k ^ k >>> 15) >>> 0; k = Math.imul(k, 2246822519) >>> 0; return ((k ^ k >>> 13) >>> 0) >>> 8; };
 test('edge shader keeps a stable share of whole context lines; focus tiers fade back to full alpha', () => {
-  expect(edgeShader).toContain('float quiet = share * 16777216. > float(lineRank & 16777215u) ? 1. : 0.;');
+  expect(edgeShader).toContain('float quiet = hot || share * 16777216. > float(lineRank & 16777215u) ? 1. : 0.;');
   const fn = (line: string) => new Function('s', `with (s) { return (${line}); }`) as (s: any) => number;
   const env = { min: Math.min, max: Math.max, mix: (a: number, b: number, t: number) => a + (b - a) * t };
   const share = fn(edgeShader.match(/float share = (.*);/)![1]!.replace(/(\d)u\b/g, '$1')), factor = fn(edgeShader.match(/alpha \*= (.*);/)![1]!.replace(/(\d)u\b/g, '$1'));
@@ -76,7 +76,7 @@ test('edge shader keeps a stable share of whole context lines; focus tiers fade 
     expect(factor({ ...env, quiet, tier: 255, focus: 1, focusOnly: 0 })).toBe(1);
     expect(factor({ ...env, quiet, tier: 255, focus: .5, focusOnly: 1 })).toBeCloseTo((quiet + (1 - quiet) * .5) * .5, 12);
   }
-  expect(edgeShader).toContain('if (quiet < .5 && (tier == 0u || focus <= 0.) && gl_InstanceID != edgeHovered) { gl_Position = offscreen; return; }');
+  expect(edgeShader).toContain('if (quiet < .5 && (tier == 0u || focus <= 0.) && !hot) { gl_Position = offscreen; return; }');
   // "Focus only" removes context lines before rasterizing (no zero-alpha fragments, no dither speckle).
   expect(edgeShader).toContain('focusOnly > 0. && tier == 0u) { gl_Position = offscreen; return; }');
 });
@@ -190,7 +190,7 @@ test('density shader power shoulder is monotone, preserves zero, bounds coverage
   expect(fragment).toContain('c.a < .99 ? c.rgb / max(c.a, .00001) : outline');
   expect(fragment).toContain('vec4(rgb * a, a)');
   const predicate = edgeShader.match(/if \(layer > 1 && \(layer == 2\) == \((.*?)\)\)/)![1]!
-    .replaceAll('0u', '0').replaceAll('0.', '0').replaceAll('gl_InstanceID', 'id');
+    .replaceAll('0u', '0').replaceAll('0.', '0').replaceAll('gl_InstanceID', 'id').replaceAll('hot', 'id == edgeHovered');
   const protectedEdge = new Function('tier', 'focus', 'id', 'edgeHovered', `return ${predicate}`) as (...args: number[]) => boolean;
   for (const tier of [0, 128, 255]) for (const focus of [0, .5, 1]) for (const hovered of [-1, 7]) {
     expect(protectedEdge(tier, focus, 7, hovered)).toBe(tier > 0 && focus > 0 || hovered === 7);

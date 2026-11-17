@@ -145,6 +145,7 @@
     "carrierSize": 0.6,
     "carrierDensityReference": 8000,
     "carrierLod": true,
+    "carrierLines": "auto",
     "carrierLodNear": 0.3,
     "carrierLodFar": 0.6,
     "zoomAdapt": true,

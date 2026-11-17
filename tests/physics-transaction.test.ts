@@ -124,7 +124,7 @@ test('Apply rejects seed frames, streams on the same renderer and keeps pan/zoom
   expect(input.pick(0, 0)).toBe(-1); expect(f.view.statusMessage).toContain('Laying out notes');
   release.resolve(); await work;
   expect(f.renderer.positions).toBe(f.next); expect(f.renderer.camera).toEqual(camera); expect(f.renderer.overlay.hidden).toBe(false);
-  expect(f.view.layoutWorking).toBe(false); expect(f.view.statusMessage).toContain('691 notes'); expect(f.view.statusMessage).toContain('Ready');
+  expect(f.view[compiled('layoutWorking')]).toBe(false); expect(f.view.statusMessage).toContain('691 notes'); expect(f.view.statusMessage).toContain('Ready');
 });
 test('failed streamed Apply restores last-good geometry without undoing pan/zoom', async () => {
   const f = await fixture(), display = f.renderer.display;
@@ -170,7 +170,7 @@ test('review: sizing invalidation during retained layout rebuilds labels on roll
 test('review: property promotion cannot erase active Apply progress', async () => {
   const f = await fixture(); f.view.groupGraph = {}; f.view.contentEl.dataset.state = 'ready';
   f.plugin.adapter = { [compiled('factsComplete')]: () => true, [compiled('linksPending')]: () => false, [compiled('pendingProperties')]: () => 0 };
-  f.view.layoutWorking = true; f.view.statusText = 'Laying out notes 68%';
+  f.view[compiled('layoutWorking')] = true; f.view.statusText = 'Laying out notes 68%';
   f.view[compiled('promoteProperties')](); expect(f.view.statusText).toBe('Laying out notes 68%');
 });
 test('review: committed expanded coordinates rebuild minimap bounds without moving camera frame', async () => {
@@ -410,7 +410,8 @@ test('Repair R2 carrier-size edits invalidate stale label multipliers and coales
   const atlas = f.renderer.atlas, timer = f.renderer[compiled('sizingTimer')]; f.renderer.refreshVisuals(false);
   expect(f.renderer.atlas).toBe(atlas); expect(f.renderer[compiled('sizingTimer')]).toBe(timer);
   const radii: number[] = []; ctx.arc = (_x: number, _y: number, radius: number) => radii.push(radius); f.renderer[compiled('drawCanvas')]();
-  expect(radii).toEqual([20]); expect(f.renderer.camera).toEqual(camera); expect(f.renderer.positions).toBe(positions); expect(f.renderer.selected).toBe(2); expect(f.requests()).toBe(0);
+  // This fixture has no declared legs: an orphan relationship dot must stay hidden.
+  expect(radii).toEqual([]); expect(f.renderer[compiled('drawnRadius')](0, false, 0)).toBe(20); expect(f.renderer.camera).toEqual(camera); expect(f.renderer.positions).toBe(positions); expect(f.renderer.selected).toBe(2); expect(f.requests()).toBe(0);
 });
 
 
@@ -634,7 +635,7 @@ test('graduated production WebGL uploads the tier column and state on focus and 
   r[k('buffers')] = ['source', 'target', 'on', 'tier', 'sizes'];
   f.tap(2); expect(uploads.some(([b, d]) => b === 'tier' && d === r[k('edgeTier')])).toBe(true); expect(images).toContain(r[k('stateBytes')]);
   uploads.length = images.length = 0; r[k('uploadView')]();
-  expect(uploads.some(([b, d]) => b === 'tier' && d === r[k('edgeTier')])).toBe(true); expect(uploads.some(([b, d]) => b === 'on' && d === r[k('edgeOn')])).toBe(true); expect(images).toContain(r[k('stateBytes')]);
+  expect(uploads.some(([b, d]) => b === 'tier' && d === r[k('edgeTier')])).toBe(true); expect(uploads.some(([b, d]) => b === 'on' && d === r[k('carrierGeometry')].enabled)).toBe(true); expect(images).toContain(r[k('stateBytes')]);
   r.gl = null;
 });
 test('graduated production dense hub reports deterministic 2-hop truncation in the visible hover readout', async () => {
@@ -2105,9 +2106,9 @@ test('review regression: rejected Apply preserves the previous refresh error and
   const f = await fixture(), status = 'Refresh failed: synthetic projection error', previousStream = () => {};
   f.view.detailGeneration = -1; f.view.provisional = true; f.view.report = { linksPending: true };
   f.view.statusText = status; f.plugin.pipeline.onPositions = previousStream;
-  const working = f.view.layoutWorking;
+  const working = f.view[compiled('layoutWorking')];
   expect(await outcome(f.view[compiled('applyLayout')](values))).toContain('Layout unavailable or generation changed');
-  expect(f.view.statusText).toBe(status); expect(f.view.layoutWorking).toBe(working);
+  expect(f.view.statusText).toBe(status); expect(f.view[compiled('layoutWorking')]).toBe(working);
   expect(f.plugin.pipeline.onPositions).toBe(previousStream); expect(f.requests()).toBe(0); expect(f.writes).toEqual([]);
 });
 
@@ -2127,7 +2128,7 @@ test('selected WebGL dot is one final instance with its own size and restored ve
   d.gl.drawArraysInstanced = (_: number, __: number, ___: number, count: number) => events.push(['draw', program, layer, count]);
   r[k('draw')]();
   const last = events.findIndex(e => e[0] === 'disable');
-  expect(events.slice(last, last + 4)).toEqual([['disable', 0], ['size', 0, r[k('sizes')][2]], ['draw', 1, 2, 1], ['enable', 0]]);
+  expect(events.slice(last, last + 6)).toEqual([['disable', 0], ['size', 0, r[k('sizes')][2]], ['disable', 1], ['draw', 1, 2, 1], ['enable', 0], ['enable', 1]]);
   expect(r[k('sizes')][2]).not.toBe(r[k('sizes')][0]);
   expect(events.findIndex(e => e[0] === 'draw' && e[1] === 0)).toBeLessThan(last);
   f.settings.visuals.hoverHighlight = false; f.settings.nodeSize = .16;
@@ -2199,7 +2200,7 @@ test('wave12: selection captions survive pointer leave without connection highli
     expect(r[k('anchorNames')].map((n: any) => n.node)).toEqual(expect.arrayContaining([3, 4]));
     expect(r[k('anchorNames')].map((n: any) => n.node)).not.toContain(0);
     let opened = -1; r[k('onMoreConnections')] = (n: number) => { opened = n; };
-    r.moreControl().onclick(); expect(opened).toBe(3);
+    r[k('moreControl')]().onclick(); expect(opened).toBe(3);
     r.setView(new Uint8Array(5).fill(1), { [k('typeHidden')]: new Uint8Array([1]) }); r[k('placeOverlay')]();
     expect(r[k('anchorNames')].map((n: any) => n.node)).toEqual([3]);
     r[k('selectNote')](-1); r[k('placeOverlay')](); expect(r[k('anchorNames')]).toEqual([]);
@@ -2279,4 +2280,54 @@ test('anchored overflow badge names one hidden connection in the singular', asyn
   f.settings.visuals.labelStyle = 'anchored'; f.tap(0);
   r[k('focusLevel')] = 1; r[k('tierMask')] = 0; r[k('placeOverlay')]();
   expect(r[k('moreButton')].textContent).toBe('1 more connection');
+});
+async function carrierRenderer(n = 3) {
+  const f = await graduated([[0, 1], [1, 2]], n), { r, k } = f;
+  r.projection.carrier = new Uint32Array([7, 7]); r.projection.carrierNodes = new Uint32Array(n); r.projection.carrierNodes[1] = 8;
+  r.setView(new Uint8Array(n).fill(1), {}); f.settings.visuals.carrierLines = 'through'; r[k('baseNodeRadius')] = () => .01;
+  return f;
+}
+function carrierPaint(r: any, k: (s: string) => string) {
+  const old = [ctx.arc, ctx.moveTo, ctx.lineTo], dots: number[][] = [], lines: number[][] = []; let from: number[] = [];
+  ctx.arc = (x: number, y: number, radius: number) => dots.push([x, y, radius, ctx.globalAlpha]);
+  ctx.moveTo = (x: number, y: number) => { from = [x, y]; }; ctx.lineTo = (x: number, y: number) => lines.push([...from, x, y]);
+  try { r[k('drawCanvas')](); } finally { [ctx.arc, ctx.moveTo, ctx.lineTo] = old; }
+  return { dots, lines };
+}
+test('review: production path retains its carrier dot and both legs with direct legend disabled', async () => {
+  const { r, k, settings } = await carrierRenderer(), edges = [0, 1]; settings.visuals.edgeMode = 'focus';
+  r[k('pathView')] = { edges, from: 0, to: 2 }; r[k('setFocus')](-1, true, edges); r[k('tierMask')] = 14;
+  const point = r.screenPoint(1), paint = carrierPaint(r, k);
+  expect(paint.lines.length).toBeGreaterThanOrEqual(2);
+  expect(paint.dots.some(d => d[0] === point.x && d[1] === point.y && d[2]! >= 2 && d[3]! >= .25)).toBe(true);
+  // Execute the production shader's owner-tier override, not a parallel desired topology model.
+  const text = readFileSync(new URL('../src/webgl-renderer.ts', import.meta.url), 'utf8'), line = text.split('\n').find(l => l.includes('if (owner >= 0') && l.includes('tier ='))!;
+  const tier = new Function('owner', 'tierByte', 'focusNode', 'state', 'shownTier', 'uint', `let tier = 255; ${line.replace(/(\d)u\b/g, '$1')} return tier;`);
+  expect(tier(1, 253, -1, () => ({ g: 1 }), (g: number, ego: boolean) => ego ? g : 0, Math.floor)).toBe(255);
+});
+test('review: production collapse keeps incidence lines at the hub and never rewrites traversal masks', async () => {
+  const { r, k } = await carrierRenderer(4), view = { groupCodes: new Uint32Array([0, 1, 2, 0]), groupLabels: ['one', 'two', 'three'], collapsed: new Uint8Array([1, 0, 0]) };
+  r.setView(new Uint8Array([1, 1, 1, 1]), view);
+  expect(r.visible[0]).toBe(0); expect(Array.from(r[k('edgeOn')])).toEqual([1, 1]); expect(Array.from(r[k('carrierGeometry')].enabled)).toEqual([1, 1]);
+  const paint = carrierPaint(r, k), a = r.screenPoint(0), b = r.screenPoint(1);
+  expect(paint.lines).toContainEqual([a.x, a.y, b.x, b.y]);
+  r.setView(new Uint8Array([0, 1, 1, 1]), {}); expect(Array.from(r[k('edgeOn')])).toEqual([1, 1]); expect(Array.from(r[k('carrierGeometry')].enabled)).toEqual([0, 0]);
+});
+test('review: production hovered Direct carrier remains drawn after zoom changes its ink admission', async () => {
+  const { r, k, settings } = await carrierRenderer(); settings.visuals.carrierLines = 'direct'; r[k('hoveredEdge')] = 0; r[k('edgeQuiet')] = () => [0, Infinity];
+  for (const ratio of [.05, 8]) { r.camera.ratio = ratio; const paint = carrierPaint(r, k), a = r.screenPoint(0), b = r.screenPoint(2); expect(paint.lines).toContainEqual([a.x, a.y, b.x, b.y]); }
+  const text = readFileSync(new URL('../src/webgl-renderer.ts', import.meta.url), 'utf8'), expression = text.slice(text.indexOf('const edgeVertex')).match(/bool hot = (.*);/)![1]!;
+  const hot = new Function('gl_InstanceID', 'edgeHovered', 'owner', 'selected', 'hovered', 'carrierHovered', `return ${expression};`);
+  expect(hot(0, 0, 1, -1, -1, 1)).toBe(true); expect(hot(1, 0, 1, -1, -1, 1)).toBe(true);
+  settings.visuals.carrierLines = 'through'; const paint = carrierPaint(r, k), n = r.screenPoint(1);
+  expect(paint.lines).toHaveLength(2); expect(paint.dots.some(d => d[0] === n.x && d[1] === n.y)).toBe(true);
+});
+test('review: production edge picking computes topology once and visits numeric targets without pair arrays', async () => {
+  const { r, k, settings } = await carrierRenderer(); settings.visuals.carrierLines = 'direct';
+  const level = r.carrierLevel, target = r[k('lineTarget')]; let levels = 0, targets = 0, numeric = true;
+  r.carrierLevel = function(...a: any[]) { levels++; return level.apply(this, a); };
+  r[k('lineTarget')] = function(...a: any[]) { const value = target.apply(this, a); targets++; numeric &&= typeof value === 'number'; return value; };
+  r[k('picker')].visit = (_x: number, _y: number, _r: number, visit: (n: number) => void) => { for (let i = 0; i < 5000; i++) visit(0); };
+  r[k('edgeQuiet')] = () => [1, Infinity]; const a = r.screenPoint(0), b = r.screenPoint(2);
+  expect(r[k('pickEdge')]((a.x + b.x) / 2, (a.y + b.y) / 2)).toBe(0); expect(levels).toBe(1); expect(targets).toBe(5000); expect(numeric).toBe(true);
 });

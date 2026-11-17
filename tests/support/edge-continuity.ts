@@ -17,7 +17,7 @@ test('90000 unequal carrier legs are admitted whole, with a row-weighted budget 
   const ranks = edgeRanks(s, t, offsets, undefined, undefined, () => true, carrier, notes);
   const vertex = shader('edgeVertex');
   const expression = (name: string) => new Function('lineRank', 'inkShare', 'fadeLength', 'len', 'min', 'max', 'float', `return ${vertex.match(new RegExp('float ' + name + ' = (.*);'))![1]!.replace(/(\d)u\b/g, '$1')};`);
-  const share = expression('share'), quiet = new Function('share', 'lineRank', 'float', `return ${vertex.match(/float quiet = (.*);/)![1]!.replace(/(\d)u\b/g, '$1')};`);
+  const share = expression('share'), quiet = new Function('share', 'lineRank', 'float', 'hot', `return ${vertex.match(/float quiet = (.*);/)![1]!.replace(/(\d)u\b/g, '$1')};`);
   for (const fraction of [0, .001, .01, .1, .5, 1]) {
     let kept = 0;
     for (let e = 0; e < m; e += 3) {

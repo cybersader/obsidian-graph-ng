@@ -753,7 +753,7 @@ export class ExplorePanel {
       slider('carrierOpacity', 'Relationship-note opacity', { min: 0, max: 1, k: 2 });
       slider('carrierSize', 'Relationship-note size', { min: .001, max: 4, k: 2 });
       this.flag(host, 'carrierTint', 'Endpoint colors (for relationship notes)');
-      this.flag(host, 'carrierLod', 'Fold into edges (relationship notes when zoomed out)');
+
     }
   }
   /** Edges: All / Focus only / Off. Live, saved with plugin settings. */
@@ -774,11 +774,12 @@ export class ExplorePanel {
   private relationshipDisplay(host: HTMLElement) {
     const nodes = this.settings.declaration.display.reifiedAsNodes, count = this.host.relationshipNotes?.() ?? 0;
     const row = host.createDiv({ cls: 'graph-ng-row graph-ng-segmented', attr: { role: 'group', 'aria-label': 'Relationship notes' } });
-    panelHelp(row, 'Relationship notes', `Lines join the endpoints; Notes makes each relationship a clickable dot${count ? ` (${plural(count, 'added dot')})` : ''}. Switching saves globally and rebuilds the layout.`);
+    panelHelp(row, 'Relationship notes');
     for (const [value, text] of [[false, 'Lines'], [true, 'Notes']] as const) {
       const button = row.createEl('button', { text, attr: { 'aria-pressed': String(nodes === value) } }); button.disabled = this.relationBusy || nodes === value;
       button.onclick = () => { this.relationPending = value; this.render(); };
     }
+    if (nodes) settingSelect(host, 'Relationship lines', 'Auto folds tiny dots; Through the note keeps both legs; Direct joins the endpoints.', [['auto', 'Auto (default)'], ['through', 'Through the note'], ['direct', 'Direct']], this.settings.visuals.carrierLines, value => { this.settings.visuals.carrierLines = value as Visuals['carrierLines']; this.settings.visuals.carrierLod = value !== 'through'; this.host.visualsChanged(false); });
     if (this.relationPending !== undefined && this.relationPending !== nodes) {
       const value = this.relationPending, confirm = host.createDiv({ cls: 'graph-ng-relation-confirm' });
       const total = Math.max(0, (this.host.result()?.nodes ?? 0) + (value ? count : -count));

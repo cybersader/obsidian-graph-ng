@@ -173,3 +173,10 @@ Selecting a note retargets an already-enabled lens, including canvas, keyboard a
 ## Shared disclosure content boundary (2026-11-16)
 
 Caret disclosures keep their native summary and existing state/keyboard behavior. Their content uses one shared `graph-ng-disclosure-body` wrapper and theme-token indentation guide, including nested disclosures and card actions. The wrapper does not scroll, measure graph geometry or own state; it makes the beginning and end of expanded settings visible without relying on a newer browser pseudo-element. No graph, worker, persistence or trust boundary changes.
+## Exclusive relationship-line topology (2026-11-16)
+
+The renderer caches opposite endpoints for explicitly owned adjacent incidence-leg pairs when a view changes. Auto chooses Through at a nominal relationship radius of at least 1.5 CSS px, independent of home framing. Through uses a 2 CSS px minimum dot radius and shared rank admission for the dot and both legs. Direct draws the incoming row at its true opposite endpoint and suppresses the outgoing row and dot. The exclusive handoff deliberately avoids a crossfade that would show a bridge and legs together. No projection, parser, layout or worker authority changes; no new per-frame edge-wide CPU traversal.
+
+`visuals.carrierLines` defaults to `auto`. Missing new values migrate legacy `carrierLod: false` to `through`, otherwise to `auto`; all old keys and thresholds remain readable. WebGL and bounded Canvas use the same pair mapping. Synthetic local evidence uses 5,000 ordinary notes and 15,000 relationship notes in both themes and three zoom levels; this is not hardware performance or production acceptance.
+
+Known limitation: nested relationship-note endpoints and ordinary links targeting relationship notes still need component-coupled retention; the invariant is not claimed for those cases yet.
