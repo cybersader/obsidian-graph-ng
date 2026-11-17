@@ -924,6 +924,14 @@ The same-renderer/context candidate subsequently measures **211,202 minified / 6
 
 The owner-approved bounded download ceilings for the controls preview are **227,000 raw / 72,000 gzip bytes** (previously 224,000 / 71,000). Correctness, independent review, deployment and native/runtime acceptance gates are unchanged.
 
+## Bounded bundle cleanup - 2026-11-17
+
+Against `904072f`, `main.js` shrinks from **395,779 raw / 134,070 gzip-9 bytes** to **393,479 / 133,636**, saving **2,300 / 434 bytes**. The unchanged **395,000 / 134,000** caps leave **1,521 / 364 bytes** of headroom. This meets the bounded 2,000 raw / 400 gzip target.
+
+The change shares repeated GL texture/buffer/attribute setup and contribution headings, adds the unchanged scheduler and edge-hash modules to the existing shared-core factory, extends the existing main-only/shader-private name allowlists, and removes unreachable prominence-only branches from the advanced sizing fields. GL operation order, uniforms, attributes, visible copy, settings, worker messages and validation are unchanged. Compiled-test access to the newly mangled names uses the existing emitted cache; no tests or assertions were removed.
+
+On a Linux x86-64 development workstation, `build` and `test --timeout 10000` pass through `flock -w 3000 -E 75 /tmp/openclast-bun.lock timeout --kill-after=5s 1800s ./scripts/run.sh <arguments>`, retaining the inner containment lock. The full suite reports **787 pass / 1 existing skip / 0 fail**, **996,880 assertions**, across 38 files. Private build/test receipts are `.workspace/build-size-cleanup.log` and `.workspace/test-size-cleanup.log`; `scripts/bundle-size.mjs` records the gzip-9 measurement in `.workspace/evidence/bundle-size.json`. Independent source review found no blocking issue. No native screenshots or hardware performance measurements were added; existing runtime acceptance limits remain.
+
 ## Bounded bundle size reclamation — 2026-11-15
 
 Against baseline `f603cbb`, the retained build-only change reduces `main.js` from **354,038 raw / 117,705 gzip** to **349,822 raw / 117,167 gzip** (gzip level 9): **4,216 / 538 bytes saved**. The unchanged **355,000 / 118,000** caps leave **5,178 raw / 833 gzip bytes** of headroom. The requested 10,000 / 3,000 reduction target is **not met**. This is the measured safe candidate retained, not a claim that further optimization is impossible.

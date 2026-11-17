@@ -764,10 +764,23 @@ export class DetailRenderer {
       return { handle, uniforms };
     } catch (e) { gl.deleteProgram(handle); throw e; } finally { for (const shader of shaders) gl.deleteShader(shader); }
   }
-  private buffer(data: ArrayBufferView, usage = this.gl!.STATIC_DRAW) { const gl = this.gl!, b = gl.createBuffer()!; this.buffers.push(b); gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.bufferData(gl.ARRAY_BUFFER, data, usage); return b; }
+  /** Shared GL setup; callers retain upload order, formats and ownership. */
+  private arrayData(buffer: WebGLBuffer, data: ArrayBufferView, usage: number = this.gl!.STATIC_DRAW) {
+    const gl = this.gl!; gl.bindBuffer(gl.ARRAY_BUFFER, buffer); gl.bufferData(gl.ARRAY_BUFFER, data, usage);
+  }
+  private textureUnit(unit: number) {
+    const gl = this.gl!; gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, this.textures[unit]!); return gl;
+  }
+  private textureFilter(filter: number) {
+    const gl = this.gl!; gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
+  }
+  private floatAttribute(location: number, size: number, stride: number, offset: number) {
+    const gl = this.gl!; gl.enableVertexAttribArray(location); gl.vertexAttribPointer(location, size, gl.FLOAT, false, stride, offset); gl.vertexAttribDivisor(location, 1);
+  }
+  private buffer(data: ArrayBufferView, usage = this.gl!.STATIC_DRAW) { const gl = this.gl!, b = gl.createBuffer()!; this.buffers.push(b); this.arrayData(b, data, usage); return b; }
   private integer(location: number, data: Uint32Array | Uint8Array) { const gl = this.gl!, b = this.buffer(data); gl.enableVertexAttribArray(location); gl.vertexAttribIPointer(location, 1, data instanceof Uint8Array ? gl.UNSIGNED_BYTE : gl.UNSIGNED_INT, 0, 0); gl.vertexAttribDivisor(location, 1); return b; }
-  private texture(unit: number) { const gl = this.gl!, t = gl.createTexture()!; this.textures[unit] = t; gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, t); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE); }
-  private bytes(unit: number, data: Uint8Array) { const gl = this.gl!; gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, this.textures[unit]!); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, this.positionWidth, this.positionHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, data); }
+  private texture(unit: number) { const gl = this.gl!, t = gl.createTexture()!; this.textures[unit] = t; this.textureUnit(unit); this.textureFilter(gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE); }
+  private bytes(unit: number, data: Uint8Array) { const gl = this.textureUnit(unit); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, this.positionWidth, this.positionHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, data); }
   private async initialize() {
     if (this.disposed || this.lost) return;
     const gl = this.gl;
@@ -785,13 +798,13 @@ export class DetailRenderer {
     this.uploadPalette(); this.uploadLens();
     for (let i = 0; i < 2; i++) { const vao = gl.createVertexArray()!; this.vaos.push(vao); gl.bindVertexArray(vao);
       if (i === 0) { this.integer(0, this.projection.source); this.integer(1, this.projection.target); this.integer(2, this.carrierGeometry.enabled); this.integer(3, this.edgeTier); }
-      else { this.buffer(this.sizes); gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 1, gl.FLOAT, false, 0, 0); gl.vertexAttribDivisor(0, 1); }
+      else { this.buffer(this.sizes); this.floatAttribute(0, 1, 0, 0); }
       await yieldTask(); if (this.disposed || this.lost) return;
     }
     gl.bindVertexArray(this.vaos[0]!); this.integer(4, this.lineRanks); this.integer(5, this.carrierGeometry.ends);
     gl.bindVertexArray(this.vaos[1]!); this.integer(1, this.carrierGeometry.nodes);
     for (let i = 0; i < 2; i++) { const vao = gl.createVertexArray()!, b = gl.createBuffer()!; this.vaos.push(vao); this.discBuffers[i] = b; gl.bindVertexArray(vao); gl.bindBuffer(gl.ARRAY_BUFFER, b);
-      for (let a = 0; a < 2; a++) { gl.enableVertexAttribArray(a); gl.vertexAttribPointer(a, 4, gl.FLOAT, false, 32, a * 16); gl.vertexAttribDivisor(a, 1); } }
+      for (let a = 0; a < 2; a++) this.floatAttribute(a, 4, 32, a * 16); }
     gl.bindVertexArray(null); this.uploadView();
     this.timings.upload = performance.now() - uploadStart;
     gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
@@ -806,10 +819,10 @@ export class DetailRenderer {
       this.densitySize = [w, h];
       if (!this.textures[6]) this.texture(6);
       this.densityBuffer ??= gl.createFramebuffer();
-      gl.activeTexture(gl.TEXTURE0 + 6); gl.bindTexture(gl.TEXTURE_2D, this.textures[6]!);
+      this.textureUnit(6);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
       // Linear upscale: NEAREST gives uneven line weight at fractional scaling and on capped (>2048 px) panes.
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      this.textureFilter(gl.LINEAR);
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.densityBuffer);
       if (this.densityBuffer) gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.textures[6]!, 0);
       this.densityReady = !!this.densityBuffer && gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE && gl.getError() === gl.NO_ERROR;
@@ -820,27 +833,27 @@ export class DetailRenderer {
   /** View/hover changes re-upload compact per-node textures and one per-edge byte column. */
   private uploadView() {
     this.updateSizingRange();
-    const gl = this.gl!; this.uploadCoordinates(true);
+    this.uploadCoordinates(true);
     this.bytes(3, this.colorBytes); this.uploadTiers();
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.buffers[2]!); gl.bufferData(gl.ARRAY_BUFFER, this.carrierGeometry.enabled, gl.STATIC_DRAW);
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.buffers[5]!); gl.bufferData(gl.ARRAY_BUFFER, this.lineRanks, gl.STATIC_DRAW);
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.buffers[6]!); gl.bufferData(gl.ARRAY_BUFFER, this.carrierGeometry.ends, gl.STATIC_DRAW);
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.buffers[7]!); gl.bufferData(gl.ARRAY_BUFFER, this.carrierGeometry.nodes, gl.STATIC_DRAW);
+    this.arrayData(this.buffers[2]!, this.carrierGeometry.enabled);
+    this.arrayData(this.buffers[5]!, this.lineRanks);
+    this.arrayData(this.buffers[6]!, this.carrierGeometry.ends);
+    this.arrayData(this.buffers[7]!, this.carrierGeometry.nodes);
   }
-  private uploadTiers() { const gl = this.gl!; this.bytes(4, this.stateBytes); gl.bindBuffer(gl.ARRAY_BUFFER, this.buffers[3]!); gl.bufferData(gl.ARRAY_BUFFER, this.edgeTier, gl.STATIC_DRAW); }
+  private uploadTiers() { this.bytes(4, this.stateBytes); this.arrayData(this.buffers[3]!, this.edgeTier); }
   private uploadCoordinates(allocate = false) {
     const gl = this.gl!, packed = positionTexture(this.display, this.positionWidth);
     if (packed.width !== this.positionWidth || packed.height !== this.positionHeight) throw new Error('Coordinate texture size changed');
-    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.textures[0]!);
+    this.textureUnit(0);
     if (allocate) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RG32F, packed.width, packed.height, 0, gl.RG, gl.FLOAT, packed.data);
     else gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, packed.width, packed.height, gl.RG, gl.FLOAT, packed.data);
     this.uploadDiscs();
   }
   private uploadDiscs() {
     const gl = this.gl!;
-    for (let i = 0; i < 2; i++) { gl.bindBuffer(gl.ARRAY_BUFFER, this.discBuffers[i]!); gl.bufferData(gl.ARRAY_BUFFER, this.discData[i]!, gl.DYNAMIC_DRAW); }
+    for (let i = 0; i < 2; i++) { this.arrayData(this.discBuffers[i]!, this.discData[i]!, gl.DYNAMIC_DRAW); }
   }
-  private uploadPalette() { const gl = this.gl!; gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.textures[1]!); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 256, this.theme.palette.length / 1024, 0, gl.RGBA, gl.UNSIGNED_BYTE, this.theme.palette); this.paletteUploads++; }
+  private uploadPalette() { const gl = this.textureUnit(1); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 256, this.theme.palette.length / 1024, 0, gl.RGBA, gl.UNSIGNED_BYTE, this.theme.palette); this.paletteUploads++; }
   private async prepareLabels(current: () => boolean) {
     this.labelsPending = true;
     if (this.view.loading || this.layoutActive) return;
@@ -854,11 +867,11 @@ export class DetailRenderer {
   private uploadLabels() {
     const started = performance.now(), gl = this.gl!;
     const reuse = this.labelBuffers.length > 0;
-    gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, this.textures[2]!); gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false); if (reuse) gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, this.atlas!.canvas); else gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, this.atlas!.canvas);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    this.textureUnit(2); gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false); if (reuse) gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, this.atlas!.canvas); else gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, this.atlas!.canvas);
+    this.textureFilter(gl.LINEAR);
     for (let level = 0; level < this.atlas!.levels.length; level++) {
-      const data = this.atlas!.levels[level]!, vao = this.labelVaos[level] ?? gl.createVertexArray()!, b = this.labelBuffers[level] ?? gl.createBuffer()!; this.labelVaos[level] = vao; this.labelBuffers[level] = b; gl.bindVertexArray(vao); gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
-      for (let i = 0; i < 4; i++) { gl.enableVertexAttribArray(i); gl.vertexAttribPointer(i, [4, 4, 3, 2][i]!, gl.FLOAT, false, 52, [0, 16, 32, 44][i]!); gl.vertexAttribDivisor(i, 1); }
+      const data = this.atlas!.levels[level]!, vao = this.labelVaos[level] ?? gl.createVertexArray()!, b = this.labelBuffers[level] ?? gl.createBuffer()!; this.labelVaos[level] = vao; this.labelBuffers[level] = b; gl.bindVertexArray(vao); this.arrayData(b, data);
+      for (let i = 0; i < 4; i++) this.floatAttribute(i, [4, 4, 3, 2][i]!, 52, [0, 16, 32, 44][i]!);
     }
     gl.bindVertexArray(null); this.timings.labelUpload = performance.now() - started;
   }
@@ -934,7 +947,7 @@ export class DetailRenderer {
   private keep = 1;
   private uploadSizes() {
     const sv = this.sizingSettings().visuals; this.sizes = degreeSizes(this.projection.offsets, sv.degreeSizing * this.keep, sv.degreeCurve, this.sizes); this.updateSizingRange();
-    if (this.gl && this.ready && !this.lost) { const gl = this.gl; gl.bindBuffer(gl.ARRAY_BUFFER, this.buffers[4]!); gl.bufferData(gl.ARRAY_BUFFER, this.sizes, gl.STATIC_DRAW); }
+    if (this.gl && this.ready && !this.lost) this.arrayData(this.buffers[4]!, this.sizes);
   }
   private adaptSizes(zoom: number) {
     const s = this.sizingSettings(), keep = prominenceKeep(zoom, s.visuals.zoomAdapt && densityScale(this.width, this.height, this.visibleNodes, zoom, s.nodeSize, 0) < 1);
@@ -1099,7 +1112,7 @@ export class DetailRenderer {
     if (this.gl && this.ready && !this.lost) this.uploadLens(changed);
   }
   private uploadLens(changed?: Iterable<number>) {
-    const gl = this.gl!; gl.activeTexture(gl.TEXTURE0 + 5); gl.bindTexture(gl.TEXTURE_2D, this.textures[5]!);
+    const gl = this.textureUnit(5);
     if (!changed) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, this.positionWidth, this.positionHeight, 0, gl.RGBA, gl.FLOAT, this.lensBytes);
     else {
       // One span per touched texture row, not one driver call per displaced note.

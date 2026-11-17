@@ -6,7 +6,7 @@
  */
 import { build } from 'esbuild';
 import path from 'node:path';
-const modules = ['core/expr/syntax', 'core/expr/engine', 'core/declaration', 'core/columns', 'core/layout-options', 'core/binary-layout', 'gpu-probe', 'core/explore', 'core/group-projection', 'render-projection', 'core/derive', 'core/projection'];
+const modules = ['core/expr/syntax', 'core/expr/engine', 'core/declaration', 'core/columns', 'core/layout-options', 'core/binary-layout', 'gpu-probe', 'core/explore', 'core/group-projection', 'render-projection', 'core/derive', 'core/projection', 'core/scheduler', 'core/edge-hash'];
 export async function expressionBuild(root = process.cwd()) {
   const registry = new Map(); let next = 0;
   for (const name of modules) {

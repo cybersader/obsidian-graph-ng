@@ -33,5 +33,10 @@ export const MANGLED_PROPS = ['layoutActive', 'buildProgress', 'followLayout', '
   'updateSummary', 'layoutAdvice', 'resetAdapter', 'commitSizing', 'nextRevision',
   'commitLayout', 'guard', 'focusFilter', 'lensed', 'scoped', 'exclusions', 'canvasOnly',
   'frameGroup', 'clearHover', 'sector', 'maxDegree', 'stale', 'stats', 'onHub', 'discs',
-  'apriori', 'showAll', 'partial', 'seen', 'scales', 'act', 'trail', 'slots'];
+  'apriori', 'showAll', 'partial', 'seen', 'scales', 'act', 'trail', 'slots',
+  // Main-realm upload helpers, transient panel callbacks and renderer state.
+  'arrayData', 'textureUnit', 'textureFilter', 'floatAttribute', 'layoutFrame',
+  'confirmRelationshipDisplay', 'browseGroups', 'sentComplete', 'adoptCamera',
+  'beginLayout', 'averageDegree', 'viewCurrent', 'hasPending', 'openGroup',
+  'canTravel', 'hubRatio', 'contributionHeading'];
 export const mangleProps = new RegExp(`^(?:${MANGLED_PROPS.join('|')})$`);

@@ -731,6 +731,11 @@ export class GraphView extends ItemView {
     if (this.gpu.available && this.positions) { const bits = new Uint8Array(p.nodeCount); for (const i of members) bits[i] = 1; this.detailScope = bits; this.showDetails(bits, false); }
     this.memberList(Array.from(members), i => renderPath(p, i));
   }
+  private contributionHeading(edge?: GroupProjection['groupEdges'][number]) {
+    this.panel.empty();
+    this.panel.createEl('strong', { text: edge ? Object.entries(edge.typeCounts).map(([t, n]) => `${t}: ${num(n)}`).join(', ') : 'Contributing relationships' });
+    if (edge?.directional) { this.panel.createDiv({ text: `A → B: ${JSON.stringify(edge.directional.aToB)}` }); this.panel.createDiv({ text: `B → A: ${JSON.stringify(edge.directional.bToA)}` }); }
+  }
   private async edgeList(edge: GroupProjection['groupEdges'][number], clickedGraph = this.groupGraph, clickedGeneration = this.groupGeneration, clickedSource = this.viewSource) {
     this.explorePanel?.show('members');
     this.contributionPage.clear();
@@ -739,9 +744,7 @@ export class GraphView extends ItemView {
       this.contributionPage.update(this.contributionContext());
       return;
     }
-    this.panel.empty();
-    this.panel.createEl('strong', { text: Object.entries(edge.typeCounts).map(([t, n]) => `${t}: ${num(n)}`).join(', ') });
-    if (edge.directional) { this.panel.createDiv({ text: `A → B: ${JSON.stringify(edge.directional.aToB)}` }); this.panel.createDiv({ text: `B → A: ${JSON.stringify(edge.directional.bToA)}` }); }
+    this.contributionHeading(edge);
     const renderRevision = ++this.renderRevision;
     if (!this.carrierLookup) {
       const status = this.panel.createDiv({ text: 'Resolving relationship notes…', attr: { role: 'status' } });
@@ -771,10 +774,7 @@ export class GraphView extends ItemView {
   }
   private renderContributionPanel() {
     const pager = this.contributionPage; if (!pager.selection || this.closed || !this.panel) return;
-    this.panel.empty();
-    const edge = pager.edge;
-    this.panel.createEl('strong', { text: edge ? Object.entries(edge.typeCounts).map(([t, n]) => `${t}: ${num(n)}`).join(', ') : 'Contributing relationships' });
-    if (edge?.directional) { this.panel.createDiv({ text: `A → B: ${JSON.stringify(edge.directional.aToB)}` }); this.panel.createDiv({ text: `B → A: ${JSON.stringify(edge.directional.bToA)}` }); }
+    this.contributionHeading(pager.edge);
     const status = this.panel.createDiv({ cls: 'graph-ng-contribution-status', attr: { role: 'status', 'data-state': pager.status }, text: pager.message });
     if (pager.status === 'error') status.createEl('button', { text: 'Retry' }).onclick = () => pager.retry(this.contributionContext());
     if (pager.status !== 'ready' || !pager.result) return;

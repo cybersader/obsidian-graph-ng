@@ -169,14 +169,14 @@ test('Apply updates zoom-out extent after expanded coordinates without reframing
 test('review: retained layout suppresses semantic actions but keeps pan and zoom', async () => {
   const f = await fixture(), r = f.renderer, k = (s: string) => mangle[s] ?? s, calls: string[] = [];
   r[k('onNode')] = () => calls.push('open'); r[k('travel')] = () => calls.push('travel'); r[k('showMenu')] = () => calls.push('menu');
-  const finish = r.beginLayout(), input = r.controls(), camera = { ...r.camera };
+  const finish = r[compiled('beginLayout')](), input = r.controls(), camera = { ...r.camera };
   input.open(2); input[k('travel')](2); input[k('showMenu')]([], 0, 0, 2);
   input[k('panBy')](30, 10); input[k('zoomAt')](1.2, 0, 0);
   expect(calls).toEqual([]); expect(input[k('openable')](2)).toBe(false); expect(r.camera).not.toEqual(camera);
   finish(false); input.open(2); expect(calls).toEqual(['open']);
 });
 test('review: streamed geometry updates zoom extents before final adoption', async () => {
-  const f = await fixture(), r = f.renderer, finish = r.beginLayout(), frame = r[compiled('cameraFrame')];
+  const f = await fixture(), r = f.renderer, finish = r[compiled('beginLayout')](), frame = r[compiled('cameraFrame')];
   const positions = new Float32Array([0, 0, 10000, 10000, 20000, 20000]);
   r[compiled('streamPositions')](positions);
   expect(r.grid.width).toBeGreaterThan(10000); expect(r.grid.positions).toBe(positions);
@@ -184,7 +184,7 @@ test('review: streamed geometry updates zoom extents before final adoption', asy
   finish(false); expect(r.grid.positions).toBe(f.positions);
 });
 test('review: sizing invalidation during retained layout rebuilds labels on rollback', async () => {
-  const f = await fixture(), r = f.renderer, finish = r.beginLayout();
+  const f = await fixture(), r = f.renderer, finish = r[compiled('beginLayout')]();
   r[compiled('queueSizingLabels')](); await Bun.sleep(220); expect(r.atlas).toBeUndefined();
   finish(false); await Bun.sleep(220); expect(r.atlas).toBeDefined();
 });
@@ -199,7 +199,7 @@ test('review: committed expanded coordinates rebuild minimap bounds without movi
   f.plugin.pipeline.request = async () => ({ positions: new Float32Array([0, 0, 10000, 10000, 20000, 20000]) });
   await f.view[compiled('applyLayout')](values); r[compiled('placeOverlay')]();
   const mini = r[compiled('miniMap')], state = mini[compiled('miniLast')];
-  expect(state.layoutFrame?.width).toBeGreaterThan(10000);
+  expect(state[compiled('layoutFrame')]?.width).toBeGreaterThan(10000);
   expect(r[compiled('cameraFrame')]).toBe(frame); expect(r.camera).toEqual(camera);
   const bounds = mini[compiled('miniShown')][0]; expect(bounds.minX + bounds.width).toBeGreaterThan(20000);
 });
@@ -212,7 +212,7 @@ test('production software Apply preserves renderer/canvas/camera/frame/selection
   const f = await fixture(), canvas = f.renderer.canvas, frame = f.renderer[compiled('cameraFrame')], camera = { ...f.renderer.camera }, center = [f.renderer[compiled('centerX')], f.renderer[compiled('centerY')], f.renderer.scale];
   const atlas = f.renderer.atlas;
   f.renderer.fitAll = () => { throw new Error('Fit after manual pan'); };
-  const begin = f.renderer.beginLayout.bind(f.renderer); f.renderer.beginLayout = () => { const finish = begin(); f.renderer.controls()[compiled('stopFlight')](); return finish; };
+  const begin = f.renderer[compiled('beginLayout')].bind(f.renderer); f.renderer[compiled('beginLayout')] = () => { const finish = begin(); f.renderer.controls()[compiled('stopFlight')](); return finish; };
   Renderer.create = new Proxy(Renderer.create, { apply() { throw new Error('Renderer reconstructed'); } });
   try { await f.view[compiled('applyLayout')](values); } finally { Renderer.create = originalFactory; }
   expect(f.view.detailRenderer).toBe(f.renderer); expect(f.renderer.canvas).toBe(canvas); expect(f.renderer[compiled('cameraFrame')]).toBe(frame); expect(f.renderer.camera).toEqual(camera); expect([f.renderer[compiled('centerX')], f.renderer[compiled('centerY')], f.renderer.scale]).toEqual(center);
@@ -243,7 +243,7 @@ test('failed settings save never adopts or persists a settled refinement', async
 test('streaming follows growing extent until manual input, respecting disabled motion', async () => {
   const f = await fixture(), r = f.renderer;
   f.plugin.settings.visuals.motion = 'off';
-  const finish = r.beginLayout(), before = r.camera.ratio;
+  const finish = r[compiled('beginLayout')](), before = r.camera.ratio;
   r[compiled('streamPositions')](Float32Array.from(f.positions, (x: number) => x * 100));
   expect(r.camera.ratio).toBeGreaterThan(before);
   r.controls()[compiled('panBy')](12, 0); const held = { ...r.camera };
@@ -2032,7 +2032,7 @@ test('card opening minimally uncovers a selection without zoom; optional center 
 test('retained Apply suppresses selection framing, then frames expanded coordinates beside the card', async () => {
   const f = await graduated([[0, 1], [1, 2]], 3), { r, k, settings } = f;
   settings.visuals.motion = 'off'; f.tap(1);
-  const frame = r[k('cameraFrame')], finish = r.beginLayout();
+  const frame = r[k('cameraFrame')], finish = r[compiled('beginLayout')]();
   const next = new Float32Array([0, 0, 10000, 10000, 20000, 20000]);
   r[k('streamPositions')](next);
   const camera = { ...r.camera };
@@ -2093,7 +2093,7 @@ test.each(['canvas keyboard', 'card keyboard', 'card buttons', 'Recent chips'])(
   const { r, k } = await graduated([[0, 1], [1, 2]], 3);
   [0, 1, 2].forEach(n => r[k('selectNote')](n, true)); r.card.step(-1); r[k('placeOverlay')]();
   const card = r[k('noteCard')], recent = r[k('crumbTrail')].root;
-  const finish = r.beginLayout(), camera = { ...r.camera };
+  const finish = r[compiled('beginLayout')](), camera = { ...r.camera };
   try {
     for (const step of [-1, 1]) {
       const event = { key: step < 0 ? 'ArrowLeft' : 'ArrowRight', altKey: true, target: entry === 'canvas keyboard' ? r.canvas : card, preventDefault() {}, stopPropagation() {} };
