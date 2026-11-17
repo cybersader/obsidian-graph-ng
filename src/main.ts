@@ -1,5 +1,5 @@
 import { devicePerformance, performanceRecords, type PerformanceRecord } from './performance';
-import { lighterChoices, lighterSettings, type LighterChoice, performanceControls, showPerformanceSuggestions } from './performance-ui';
+import { performanceChoices, performanceSettings, type PerformanceChoice, performanceControls, showPerformanceSuggestions } from './performance-ui';
 import { stateChip } from './view-state';
 import { disclosure, disclosureBody, panelHelp, iconButton } from './panel-help';
 import { BuildProgress, workingText } from './working';
@@ -43,6 +43,7 @@ export default class GraphPlugin extends Plugin {
   settings!: Settings;
   performanceLog: PerformanceRecord[] = [];
   performanceModalOpen = false;
+  performanceReason?: [string, string];
   override saveData(data: { settings: { performanceDiagnostics?: boolean } }) {
     return super.saveData({ ...data, ...(data.settings.performanceDiagnostics ? { performanceLog: performanceRecords(this.performanceLog) } : {}) });
   }
@@ -54,7 +55,8 @@ export default class GraphPlugin extends Plugin {
         this.performanceLog = performanceRecords([...this.performanceLog, { ...sample, tier: devicePerformance.tier, mode: this.settings.performance, frameMs: devicePerformance.frameMs, longTasks: devicePerformance.longTasks, longTaskMs: devicePerformance.longTaskMs, heapBytes: heap }]);
         this.saveSoon();
       }
-      if (!this.settings.performancePrompted && !this.performanceModalOpen && this.settings.performanceSuggestions && (devicePerformance.tier === 'low' || (sample.notes ?? 0) >= 10000 || (sample.edges ?? 0) >= 50000 || (heap ?? 0) >= 1e9) && lighterChoices(this.settings).length) {
+      this.performanceReason = devicePerformance.suggestion(sample, heap);
+      if (!this.settings.performancePrompted && !this.performanceModalOpen && this.settings.performanceSuggestions && this.performanceReason && performanceChoices(this.settings).length) {
         showPerformanceSuggestions(this);
       }
     } catch { /* Optional observations and suggestions must never fail a graph operation. */ }
@@ -193,11 +195,11 @@ export default class GraphPlugin extends Plugin {
       }
     }); return this.writes;
   }
-  async commitPerformance(selected: ReadonlySet<LighterChoice>, never: boolean, current: () => boolean) {
+  async commitPerformance(selected: ReadonlySet<PerformanceChoice>, never: boolean, current: () => boolean) {
     selected = new Set(selected);
     await this.serialize(async () => {
-      await this.commitCandidate('Performance', () => ({ ...lighterSettings(this.settings, selected), performanceSuggestions: never ? false : this.settings.performanceSuggestions }),
-        (next, was) => adopt(this.settings.visuals, next.visuals, was.visuals, ['labelStyle', 'curvedEdges', 'motion']) + adopt(this.settings.declaration.display, next.declaration.display, was.declaration.display, ['reifiedAsNodes']) + adopt(this.settings, next, was, ['performanceSuggestions']), current);
+      await this.commitCandidate('Performance', () => ({ ...performanceSettings(this.settings, selected), performanceSuggestions: never ? false : this.settings.performanceSuggestions }),
+        (next, was) => adopt(this.settings.visuals, next.visuals, was.visuals, ['labelStyle', 'curvedEdges', 'motion']) + adopt(this.settings.declaration.display, next.declaration.display, was.declaration.display, ['reifiedAsNodes']) + adopt(this.settings, next, was, ['performance', 'performanceSuggestions']), current);
       if (selected.size) { this.adapter.configure(this.settings.declaration); this.resetStore(); }
     }); if (selected.size) await this.notify();
   }

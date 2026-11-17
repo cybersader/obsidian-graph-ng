@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test';
 import './support/obsidian-fixture';
 import { deviceTier, devicePerformance, PerformanceState, performanceRecords } from '../src/performance';
 import { defaults, upgradeSettings, validateSettings } from '../src/settings';
-import { lighterChoices, lighterSettings } from '../src/performance-ui';
+import { performanceChoices, performanceSettings } from '../src/performance-ui';
 import { buildLabels } from '../src/render-labels';
 import { buildProjection } from '../src/core/projection';
 import { renderProjection } from '../src/render-projection';
@@ -25,6 +25,23 @@ test('measured drawing contradicts hints with hysteresis; explicit modes overrid
   d.task(80); d.task(80); d.task(80); expect(d.tier).toBe('low');
   const previous = d.frameMs; d.frame(NaN); expect(d.frameMs).toBe(previous);
 });
+test('suggestion reason follows the admitting signal without inventing a layout cause', () => {
+  const d = new PerformanceState(12, 8);
+  expect(d.suggestion({ notes: 9999, edges: 49999, layoutMs: 80000 }, 999999999)).toBeUndefined();
+  expect(d.suggestion({ notes: 10000 })).toEqual(['This graph is large', '10,000 notes in this graph']);
+  expect(d.suggestion({ notes: 4000, edges: 50000 })).toEqual(['This graph is large', '50,000 edges in this graph']);
+  expect(d.suggestion({}, 1.1e9)).toEqual(['This app is using a lot of memory', 'About 1,100 MB of app memory in use']);
+  const low = new PerformanceState(4, 4);
+  expect(low.suggestion({ notes: 10000 })).toEqual(['This graph is large for this device', '10,000 notes in this graph']);
+  expect(low.suggestion({ notes: 4000 })).toEqual(['This graph may be slow on this device', '4,000 notes on a lower power device']);
+  expect(low.suggestion()).toEqual(['This graph may be slow on this device', 'Lower power device detected']);
+  d.task(80); d.task(80); d.task(80);
+  expect(d.suggestion()).toEqual(['This app is busy on this device', '3 long tasks took about 240 ms']);
+  for (let i = 0; i < 8; i++) d.frame(80);
+  expect(d.suggestion({ notes: 20000 })).toEqual(['Drawing is slow on this device', 'Frames took about 80 ms']);
+  for (let i = 0; i < 240; i++) d.frame(1);
+  expect(d.suggestion({ notes: 4000 })).toBeUndefined();
+});
 test('performance settings upgrade with diagnostics off and reject invalid types', () => {
   const s = defaults('links'); expect(s.performance).toBe('auto'); expect(s.performanceDiagnostics).toBe(false);
   const old: any = { ...s }; delete old.performance; delete old.performanceDiagnostics; delete old.performanceSuggestions; delete old.performancePrompted;
@@ -40,13 +57,14 @@ test('diagnostics allowlist strips note names, paths, content, strings and nonfi
   expect(JSON.stringify(rows)).not.toContain(privateText);
   expect(performanceRecords([{ tier: privateText, mode: 'auto' }, null, { tier: 'low', mode: privateText }])).toEqual([]);
 });
-test('lighter suggestions list only enabled work and change only checked choices', () => {
+test('performance suggestions list only enabled work and change only checked choices', () => {
   const s = defaults('links'); s.performance = 'quality'; s.visuals.labelStyle = 'ranked'; s.visuals.curvedEdges = true; s.declaration.display.reifiedAsNodes = true;
-  expect(lighterChoices(s).map(r => r[0])).toEqual(['labels', 'curves', 'motion', 'relationships']);
-  const next = lighterSettings(s, new Set(['labels', 'relationships']));
+  expect(performanceChoices(s).map(r => r[0])).toEqual(['fast', 'labels', 'curves', 'motion', 'relationships']);
+  const next = performanceSettings(s, new Set(['labels', 'relationships']));
   expect(next.visuals.labelStyle).toBe('anchored'); expect(next.declaration.display.reifiedAsNodes).toBe(false);
+  expect(next.performance).toBe('quality');
   expect(next.visuals.curvedEdges).toBe(true); expect(next.layout).toBe(s.layout); expect(s.visuals.labelStyle).toBe('ranked');
-  const all = lighterSettings(s, new Set(['labels', 'curves', 'motion', 'relationships'])); expect(lighterChoices(all)).toEqual([]);
+  const all = performanceSettings(s, new Set(['fast', 'labels', 'curves', 'motion', 'relationships'])); expect(performanceChoices(all)).toEqual([]); expect(all.performance).toBe('fast');
 });
 test('anchored labels keep ranked placement and widths without raster or glyph geometry', async () => {
   const s = defaults('links'), rows = Array.from({ length: 20 }, (_, i) => ({ path: `Synthetic/Note-${i}.md`, properties: {}, links: {} }));
@@ -64,11 +82,11 @@ test('anchored labels keep ranked placement and widths without raster or glyph g
   } finally { (globalThis as any).document = previous; }
 });
 
-test('lighter checklist omits motion already suppressed by effective performance mode', () => {
+test('performance checklist omits motion already suppressed by effective performance mode', () => {
   const s = defaults('links'), tier = devicePerformance.tier;
   try {
-    s.performance = 'fast'; expect(lighterChoices(s).some(row => row[0] === 'motion')).toBe(false);
-    s.performance = 'auto'; devicePerformance.tier = 'low'; expect(lighterChoices(s).some(row => row[0] === 'motion')).toBe(false);
-    s.performance = 'quality'; expect(lighterChoices(s).some(row => row[0] === 'motion')).toBe(true);
+    s.performance = 'fast'; expect(performanceChoices(s).some(row => row[0] === 'fast')).toBe(false); expect(performanceChoices(s).some(row => row[0] === 'motion')).toBe(false);
+    s.performance = 'auto'; devicePerformance.tier = 'low'; expect(performanceChoices(s).some(row => row[0] === 'fast')).toBe(false); expect(performanceChoices(s).some(row => row[0] === 'motion')).toBe(false);
+    s.performance = 'quality'; expect(performanceChoices(s)[0]?.[0]).toBe('fast'); expect(performanceChoices(s).some(row => row[0] === 'motion')).toBe(true);
   } finally { devicePerformance.tier = tier; }
 });

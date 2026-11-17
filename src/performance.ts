@@ -23,6 +23,19 @@ export class PerformanceState {
     else if (this.frameMs >= 8) this.quick = 0;
   }
   task(ms: number) { this.longTasks++; this.longTaskMs += ms; if (this.longTasks >= 3 && this.longTaskMs > 200) this.tier = 'low'; }
+  /** Same admission thresholds as the offer; return the evidence used, not an inferred layout cause. */
+  suggestion(sample: Partial<PerformanceRecord> = {}, heap = 0): [string, string] | undefined {
+    const count = (n: number) => Math.round(n).toLocaleString();
+    if (this.tier === 'low' && this.samples >= 8 && this.frameMs > 24)
+      return ['Drawing is slow on this device', `Frames took about ${count(this.frameMs)} ms`];
+    if ((sample.notes ?? 0) >= 10000 || (sample.edges ?? 0) >= 50000)
+      return [this.tier === 'low' ? 'This graph is large for this device' : 'This graph is large', (sample.notes ?? 0) >= 10000 ? `${count(sample.notes!)} notes in this graph` : `${count(sample.edges!)} edges in this graph`];
+    if (heap >= 1e9) return ['This app is using a lot of memory', `About ${count(heap / 1e6)} MB of app memory in use`];
+    if (this.tier !== 'low') return;
+    if (this.longTasks >= 3 && this.longTaskMs > 200)
+      return ['This app is busy on this device', `${count(this.longTasks)} long tasks took about ${count(this.longTaskMs)} ms`];
+    return ['This graph may be slow on this device', sample.notes == null ? 'Lower power device detected' : `${count(sample.notes)} notes on a lower power device`];
+  }
   observe() {
     let observer: PerformanceObserver | undefined;
     try { observer = new PerformanceObserver(list => { for (const e of list.getEntries()) this.task(e.duration); }); observer.observe({ type: 'longtask' }); } catch { /* Optional public API. */ }
