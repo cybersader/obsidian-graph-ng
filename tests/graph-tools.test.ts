@@ -703,7 +703,7 @@ test('UX click intent and note-name priority are explicit Appearance choices', (
 test('named states derive from existing layers in priority order, never hover or loading', () => {
   const active = [false, false, false, false, false];
   expect(namedViewState(...active as [boolean, boolean, boolean, boolean, boolean])).toBe('Notes');
-  for (let i = 4; i >= 0; i--) { active[i] = true; expect(namedViewState(...active as [boolean, boolean, boolean, boolean, boolean])).toBe(VIEW_STATES[5 - i]!); }
+  for (const [i, state] of [[4, 'Selected note'], [3, 'Only connections'], [1, 'Path between notes'], [2, 'Connection rings'], [0, 'Groups']] as const) { active[i] = true; expect(namedViewState(...active as [boolean, boolean, boolean, boolean, boolean])).toBe(state); }
 });
 test('state chip has named layer exits, text-only subjects, disabled unavailable transitions and accessible menu', () => {
   for (const state of VIEW_STATES) {

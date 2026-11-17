@@ -4,6 +4,8 @@ The owner-approved bounded download ceilings for this UI pass are **400,000 raw 
 
 ## Unreleased named view states
 
+- Match chip precedence and subject to rendered emphasis when Connection rings opens over a path. Its X exits the rings and restores the underlying path state; a compiled regression exercises hover, ring entry and both scoped exits.
+
 - Name the current graph view Notes, Selected note, Only connections, Connection rings, Path between notes or Groups. A compact canvas chip opens the matching Appearance section; its caret switches available states and links directly to Click a note. Each temporary X exits only its named layer, preserving filters and independent scopes. Hover never changes the state label.
 - Organize Appearance into state disclosures and one Everywhere owner for shared settings. Keep every existing control, conditional capability, sizing draft/preview/apply, performance guard and relationship-display confirmation. Rename the temporary lens to Connection rings and decorative rings to Highlight outlines, without changing stored keys. Stable state updates preserve focused editors and manual disclosures. Add derived-state, scoped-exit and setting-inventory regressions; synthetic light/dark Obsidian 1.12.7 browser-native evidence is recorded in the README. The 1.13.7 harness failed to enable the plugin; broader runtime acceptance and independent review remain separate. Standalone bundle at the named-state candidate is **398,337 raw / 135,307 gzip bytes**, **+4,858 / +1,671** versus `6747495`; **793 tests pass**, one skips, and all six gates pass. Download caps are unchanged.
 

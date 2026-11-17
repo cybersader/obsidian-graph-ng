@@ -2521,3 +2521,17 @@ for (const retained of [false, true]) test(`retention review three: compiled Web
   expect(scalar.node({ ...uniforms, layer: retained ? 0 : 2, gl_InstanceID: n, carrierRank: r[k('carrierGeometry')].nodes[n] })).toBeGreaterThan(0);
   expect(paint.dots.some(d => d[0] === point.x && d[1] === point.y && d[3]! >= .25)).toBe(true);
 });
+
+test('review1: rings entered over a path own the chip subject and scoped exit', async () => {
+  const { r, k, hover } = await graduated([[0, 1], [1, 2], [2, 3]], 4);
+  r[k('findPath')](0, 2); const path = r[k('pathView')]; expect(path).toBeDefined();
+  hover(3); r[k('toggleLens')]();
+  expect(r[k('lensNode')]).toBe(3); expect(r[k('focusNode')]).toBe(3);
+  expect(r[k('namedViewState')]).toBe('Connection rings');
+  expect(r[k('stateStrip')].querySelector('.graph-ng-state-subject').textContent).toBe('3');
+  control(r[k('stateStrip')], 'Leave Connection rings').click();
+  expect(r[k('lensNode')]).toBe(-1); expect(r[k('pathView')]).toBe(path);
+  expect(r[k('namedViewState')]).toBe('Path between notes');
+  control(r[k('stateStrip')], 'Leave Path between notes').click();
+  expect(r[k('pathView')]).toBeUndefined(); expect(r[k('namedViewState')]).toBe('Notes');
+});

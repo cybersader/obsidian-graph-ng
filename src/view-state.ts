@@ -4,7 +4,7 @@ import { disclosure, disclosureBody, iconButton, panelButton, panelHelp } from '
 export const VIEW_STATES = ['Notes', 'Selected note', 'Only connections', 'Connection rings', 'Path between notes', 'Groups'] as const;
 export type ViewState = typeof VIEW_STATES[number];
 export function namedViewState(groups: boolean, path: boolean, rings: boolean, isolated: boolean, selected: boolean): ViewState {
-  return VIEW_STATES[groups ? 5 : path ? 4 : rings ? 3 : isolated ? 2 : selected ? 1 : 0]!;
+  return VIEW_STATES[groups ? 5 : rings ? 3 : path ? 4 : isolated ? 2 : selected ? 1 : 0]!;
 }
 export const STATE_HELP = [
   'Your note graph, with filters kept.',
