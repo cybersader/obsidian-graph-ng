@@ -1,4 +1,4 @@
-import { disclosure, panelHelp, iconButton } from './panel-help';
+import { disclosure, disclosureBody, panelHelp, iconButton } from './panel-help';
 import { BuildProgress, workingText } from './working';
 import { LayoutPreview } from './layout-preview';
 import type { CoordinateToken } from './webgl-renderer';
@@ -615,11 +615,11 @@ export class GraphView extends ItemView {
     const edges = this.section('relationships'); disclosure(edges, `Relationships (${plural(projection.groupEdges.length, 'group pair')})`);
     this.paginate(projection.groupEdges, (edge, host) => {
       host.createEl('button', { text: `${pages.labels.get(edge.a)} ↔ ${pages.labels.get(edge.b)} (${plural(edge.total, 'edge')})`, cls: 'graph-ng-edge' }).onclick = () => this.edgeList(edge, projection, generation, source);
-    }, edges);
+    }, disclosureBody(edges));
     if (this.projection?.quarantined.length) {
       const conflicts = this.section('quarantine', 'graph-ng-quarantine');
       disclosure(conflicts, `${this.projection.quarantined.length} notes share an ID (excluded)`);
-      this.paginate(this.projection.quarantined, (note, host) => { host.createEl('button', { text: `${note.path} (${note.id})` }).onclick = () => this.openPath(note.path); }, conflicts);
+      this.paginate(this.projection.quarantined, (note, host) => { host.createEl('button', { text: `${note.path} (${note.id})` }).onclick = () => this.openPath(note.path); }, disclosureBody(conflicts));
     }
     this.contentEl.dataset.mode = 'groups'; this.contentEl.dataset.groupFirstPageMs = String(performance.now() - start); this.explorePanel?.render();
     if (this.contributionPage.selection) { this.renderContributionPanel(); this.contributionPage.update(this.contributionContext()); }

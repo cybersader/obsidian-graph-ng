@@ -2273,3 +2273,10 @@ test('direct-open clicks advance the same visit history as card selections', asy
   expect(r.card.node).toBe(-1); expect(r.card.history.items).toEqual([0, 1]);
   expect(r.card.history.items[r.card.history.at]).toBe(1);
 });
+
+test('anchored overflow badge names one hidden connection in the singular', async () => {
+  const f = await graduated([[0, 1]], 2), { r, k } = f;
+  f.settings.visuals.labelStyle = 'anchored'; f.tap(0);
+  r[k('focusLevel')] = 1; r[k('tierMask')] = 0; r[k('placeOverlay')]();
+  expect(r[k('moreButton')].textContent).toBe('1 more connection');
+});

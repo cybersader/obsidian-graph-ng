@@ -627,7 +627,7 @@ test('Filter rows use shared columns, keyboard-visible actions and only one scro
 test('adaptive emphasis control switches live without moving the camera or rebuilding the view', () => {
   const f = fixture(); f.panel.show('appearance');
   const field: any = f.panel.root.querySelectorAll('select').find((e: any) => e.getAttribute('aria-label') === 'Highlight emphasis');
-  expect(field.tagName).toBe('SELECT'); expect(field.children.map((e: any) => e.textContent)).toEqual(['Adaptive (default)', 'Scale']);
+  expect(field.tagName).toBe('SELECT'); expect(field.children.map((e: any) => e.textContent)).toEqual(['Adaptive', 'Scale']);
   expect(field.children[0].selected).toBe(true);
   for (const mode of ['scale', 'adaptive'] as const) { field.value = mode; field.onchange(); expect(f.settings.visuals.emphasis).toBe(mode); }
   expect(f.state.visual).toBe(2); expect(f.state.fit + f.state.layout + f.state.viewCalls).toBe(0);

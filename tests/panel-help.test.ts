@@ -270,3 +270,31 @@ test('Appearance names relationship notes once and keeps global rebuild scope in
   expect(f.root.querySelectorAll('button').some(e => e.textContent === 'Fit graph')).toBe(false);
   f.panel.dispose();
 });
+
+
+test('side-panel disclosures contain their contents in one shared non-scrolling guide', () => {
+  const f = fixture(); let seen = 0;
+  for (const tool of ['filters', 'appearance', 'layout', 'views']) {
+    f.panel.show(tool);
+    for (const details of f.root.querySelectorAll('details')) {
+      expect(details.children[0]!.tagName).toBe('SUMMARY');
+      expect(details.children.slice(1)).toHaveLength(1);
+      expect(details.children[1]!.classes.has('graph-ng-disclosure-body')).toBe(true);
+      seen++;
+    }
+  }
+  expect(seen).toBeGreaterThan(5);
+  f.panel.show('appearance');
+  const find = f.root.querySelector('.graph-ng-highlight-options')!;
+  expect(find.children[1]!.textContent).toContain('Highlight emphasis');
+  expect(find.children[1]!.textContent).toContain('Minimap');
+  expect(find.children[1]!.textContent).not.toContain('Label style');
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+  const guide = css.match(/^\.graph-ng-disclosure-body \{([^}]+)\}/m)![1]!;
+  expect(guide).toContain('border-inline-start:1px solid var(--background-modifier-border)');
+  expect(guide).toContain('var(--gng-space-3)'); expect(guide).toContain('display:flow-root');
+  expect(guide).not.toMatch(/overflow|max-height|height:/);
+  expect(css).not.toContain('.graph-ng-status details > div {');
+  expect(f.root.querySelectorAll('details').some(d => d.classes.has('graph-ng-explore-section'))).toBe(false);
+  f.panel.dispose();
+});

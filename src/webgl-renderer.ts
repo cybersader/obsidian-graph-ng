@@ -1,3 +1,4 @@
+import { plural } from './graph-information';
 import { renderPath, type RenderProjection } from './render-projection';
 import type { Settings } from './settings';
 import { adaptiveRadius, PickGrid, positionTexture, incidentEdges, focusTiers, tintedEdge, edgeBucket, tierNode, tierEdge, tierLabel, segmentDistance, shownTier, shownEdgeTier, tierCounts, tierLift, liftRadius, strongEdge, focusAlpha, offscreenPips, TIERS, ALL_TIERS, PIP_DIRECTIONS, canvasDetailEdges, CanvasLimit, resizeDrawingBuffer, LABEL_RATIOS, PATH_EDGE, pathStroke } from './render-data';
@@ -1669,7 +1670,7 @@ export class DetailRenderer {
       }
       const ranked = ego < 0 ? { list: [] as (readonly [number, number])[], direct: 0 } : rankFocus(ego, near, state, this.visible, this.projection.offsets, ANCHORED_CANDIDATES, this.projection.carrierNodes, this.interestOf(ego), DIRECT_LABELS);
       if (s.visuals.namePriority !== 'selection') { const seen = new Set(ranked.list.map(([n]) => n)); for (const n of overview) if (!seen.has(n) && (ego < 0 || ranked.list.length < ANCHORED_CANDIDATES)) ranked.list.push([n, 5]); }
-      this.moreTotal = ranked.direct; this.moreSize = [m.measureText(`${ranked.direct} more connections`).width + 32, Math.max(32, h + 4)];
+      this.moreTotal = ranked.direct; this.moreSize = [m.measureText(plural(ranked.direct, 'more connection')).width + 32, Math.max(32, h + 4)];
       const list = node >= 0 ? [[node, 0] as const, ...ranked.list.filter(([n]) => n !== node)] : ranked.list;
       this.anchorNames = list.map(([n, rank]) => { const text = middleTruncate(n === node ? this.noteCaption(n) : this.name(n), n === node ? 48 : 32); return { node: n, rank, tier: state[n * 4 + 1]!, text, w: Math.ceil(m.measureText(text).width) + 12 }; });
       this.anchorKey = key;
@@ -1701,7 +1702,7 @@ export class DetailRenderer {
       const b = this.moreControl();
       const x = anchor.left, y = anchor.top + h + 4, [w, bh] = this.moreSize;
       b.hidden = under(x, y, w!, bh!) || taken.some(box => overlapsBox(x, y, w!, bh!, box));
-      b.textContent = `${rest} more connections`; b.removeAttribute('aria-label'); b.style.font = `${size}px ${this.theme.font}`; b.style.transform = `translate(${x}px, ${y}px)`;
+      b.textContent = plural(rest, 'more connection'); b.removeAttribute('aria-label'); b.style.font = `${size}px ${this.theme.font}`; b.style.transform = `translate(${x}px, ${y}px)`;
       if (!b.hidden) taken.push([x, y, w!, bh!]);
     }
     return taken;

@@ -4,6 +4,8 @@ The owner-approved bounded download ceilings for this UI pass are **395,000 raw 
 
 ## Unreleased Nodes sizing successor
 
+- Expanded side-panel sections now share a subtle indentation guide that ends with their contents, including Finding connections and More actions. Native caret and keyboard behavior remain unchanged. Highlight emphasis uses a fitting Adaptive option label, and a single overflow connection is named in the singular.
+
 - Keep the connection lens on the current selection instead of the last lensed note. Highlight the new selection immediately while the old ring eases home, then open only the new direct connections; turning the lens off restores original coordinates. Direct-open clicks now advance Recent notes too. Appearance uses the shared native toggle and on-demand help for Connection lens, and Fit graph remains only beside the minimap. No graph, settings, worker or layout authority changes.
 
 - Correct wave 12 review findings: keep a preview's user-controlled camera through final renderer replacement, retain Layout not settled after property promotion, preserve advanced sizing when Hub size moves and synchronize its controls, and derive selection captions independently of highlighting. Preset help names its full sizing reset. Groups honors saved page sizes up to a visibly stated 100-group canvas limit, hides exhausted Next, and hides the pager when one page fits. Eight regressions failed before correction. Download caps remain unchanged; native acceptance is not extended.

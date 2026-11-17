@@ -168,3 +168,8 @@ Fit graph reuses the minimap's existing fitAll callback. The corner action remai
 ## Selection-following connection lens (2026-11-16)
 
 Selecting a note retargets an already-enabled lens, including canvas, keyboard and direct-open selections. The existing outgoing/incoming easing still returns the old neighbours before opening the new ring; highlight focus follows the requested target immediately rather than waiting for the outgoing geometry anchor. Turning the lens off retains the original layout coordinates and the idle path has no lens animation or traversal. Motion Off/Reduced and system reduced motion use the existing instant path. Direct-open selections advance the same ConnectionCard history without opening its card. Appearance uses the shared native checkbox row and panel help; the duplicate Fit graph action is removed. No persisted setting, projection, coordinate authority or worker contract changes.
+
+
+## Shared disclosure content boundary (2026-11-16)
+
+Caret disclosures keep their native summary and existing state/keyboard behavior. Their content uses one shared `graph-ng-disclosure-body` wrapper and theme-token indentation guide, including nested disclosures and card actions. The wrapper does not scroll, measure graph geometry or own state; it makes the beginning and end of expanded settings visible without relying on a newer browser pseudo-element. No graph, worker, persistence or trust boundary changes.

@@ -280,6 +280,9 @@ test('card exposes two primary actions, keeps secondary actions in a closed disc
   const r = rig(3), primary = r.root.find('graph-ng-card-primary')[0]!, more = r.root.find('graph-ng-card-more')[0]!;
   expect(primary.tag('button').map(b => b.textContent)).toEqual(['Open note', 'Show only connections']);
   expect(more.open).toBe(false);
+  expect(more.children).toHaveLength(2);
+  expect(more.children[1]!.className).toBe('graph-ng-disclosure-body');
+  expect(more.children[1]!.tag('button')).toHaveLength(4);
   expect(more.tag('summary')[0]!.textContent).toBe('More actions');
   expect(more.tag('button').map(b => b.textContent)).toEqual(['New tab', 'Open to the right', 'Focus here', 'Copy link']);
   more.open = true; more.tag('button')[0]!.focus(); r.key('Escape');
