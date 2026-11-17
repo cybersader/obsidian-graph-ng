@@ -12,4 +12,6 @@
 
 - [ADR-0008: adaptive presentation and local performance observations](ADR-0008-adaptive-performance.md)
 
+- [ADR-0009: provisional startup from saved host facts](ADR-0009-provisional-fact-cache.md)
+
 These capture implementation decisions, not permission to publish or deploy. Add a dated superseding ADR rather than rewriting a historical decision to imply a later implementation existed. Release/public identity, history strategy, distribution and CI residency still require the owner's choices in [the checklist](../publish-checklist.md).

@@ -40,7 +40,7 @@ interface Part { name: string; bytes: number; chunks: { bytes: number; hash: str
 interface Manifest { meta: GenerationMeta; parts: Part[] }
 interface Entry { declarationHash: string; key: string }
 export interface StoreOptions { directory: string; chunkBytes: number; maxGenerationBytes: number; cachedDeclarations: number; retainedArtifacts?: number; maxRetainedBytes?: number }
-const hash = async (b: Uint8Array) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', b as Uint8Array<ArrayBuffer>)), n => n.toString(16).padStart(2, '0')).join('');
+export const hashBytes = async (b: Uint8Array) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', b as Uint8Array<ArrayBuffer>)), n => n.toString(16).padStart(2, '0')).join('');
 const id = (s: unknown): s is string => typeof s === 'string' && /^[a-f0-9]{64}$/.test(s);
 export class BinaryLayoutStore {
   readonly trace: { action: string; declarationHash: string; key: string }[] = [];
@@ -70,8 +70,8 @@ export class BinaryLayoutStore {
       const part: Part = { name, bytes: file.byteLength, chunks: [] };
       for (let offset = 0, i = 0; offset < file.byteLength; offset += this.options.chunkBytes, i++) {
         const chunk = file.slice(offset, offset + this.options.chunkBytes);
-        const chunkPath = `${directory}/${name}.${i}.bin`, checksum = await hash(chunk);
-        const reusable = (await this.adapter.stat(chunkPath))?.size === chunk.byteLength && await hash(new Uint8Array(await this.adapter.readBinary(chunkPath))) === checksum;
+        const chunkPath = `${directory}/${name}.${i}.bin`, checksum = await hashBytes(chunk);
+        const reusable = (await this.adapter.stat(chunkPath))?.size === chunk.byteLength && await hashBytes(new Uint8Array(await this.adapter.readBinary(chunkPath))) === checksum;
         if (!reusable) await this.adapter.writeBinary(chunkPath, chunk.buffer);
         part.chunks.push({ bytes: chunk.byteLength, hash: checksum }); await this.yieldNow();
       }
@@ -115,7 +115,7 @@ export class BinaryLayoutStore {
           const chunk = part.chunks[i]!, filePath = `${path}/${part.name}.${i}.bin`;
           if (!Number.isSafeInteger(chunk.bytes) || chunk.bytes < 1 || chunk.bytes > MAX_CHUNK_BYTES || offset + chunk.bytes > part.bytes || !id(chunk.hash) || (await this.adapter.stat(filePath))?.size !== chunk.bytes) throw new Error('Invalid or oversized chunk');
           const buffer = new Uint8Array(await this.adapter.readBinary(filePath));
-          if (buffer.byteLength !== chunk.bytes || await hash(buffer) !== chunk.hash) throw new Error('Truncated or corrupt chunk');
+          if (buffer.byteLength !== chunk.bytes || await hashBytes(buffer) !== chunk.hash) throw new Error('Truncated or corrupt chunk');
           out.set(buffer, offset); offset += buffer.byteLength; await this.yieldNow();
         }
         if (offset !== part.bytes) throw new Error('Truncated generation'); files[part.name] = out;
