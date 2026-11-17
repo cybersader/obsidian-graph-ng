@@ -2,6 +2,7 @@ import { test, expect } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { DEFAULT_LAYOUT, LayoutSolver, initialPositions, random, runLayout, runLayoutStream } from '../src/core/layout';
 import { BarnesHut } from '../src/core/barnes-hut';
+import { MortonOrder } from '../src/core/morton';
 import { buildProjection } from '../src/core/projection';
 import { exampleDeclaration, fixture, clusteredFixture } from '../scripts/fixture';
 import { recommendedPhysics } from '../src/recommend';
@@ -311,4 +312,72 @@ test('long layout batches check Stop after 50 ms of work without changing solver
     const positions = await runLayoutStream(input, options, 1000, () => {}, async () => { if (++yields === 2) stopped = true; }, undefined, value => { settled = value; }, () => stopped);
     expect(yields).toBe(2); expect(settled).toBe(false); expect(positions).toEqual(expected);
   } finally { performance.now = now; LayoutSolver.prototype.step = step; }
+});
+
+test('Morton ordering gates at 20k, refreshes every eight builds and reuses all buffers', () => {
+  expect((new BarnesHut(19999) as any).queryOrder).toBeUndefined();
+  const n = 20000, tree = new BarnesHut(n), state = (tree as any).queryOrder;
+  const arrays = [state.indices, state.codes, state.scratch, state.bins];
+  const p = initialPositions(n, 37, 100), mass = new Float32Array(n).fill(1);
+  const update = state.update; let refreshes = 0;
+  state.update = function (...args: unknown[]) { refreshes++; return update.apply(this, args); };
+  tree.build(p, mass, 32);
+  expect(refreshes).toBe(1);
+  const first = state.indices.slice();
+  // Mirroring changes spatial order but must not refresh until build nine.
+  for (let i = 0; i < p.length; i++) p[i] = -p[i]!;
+  for (let i = 0; i < 7; i++) tree.build(p, mass, 32);
+  expect(refreshes).toBe(1); expect(state.indices).toEqual(first);
+  tree.build(p, mass, 32);
+  expect(refreshes).toBe(2); expect(state.indices).not.toEqual(first);
+  const seen = new Uint8Array(n);
+  for (const i of state.indices) { expect(i).toBeLessThan(n); seen[i]!++; }
+  expect(seen.every(value => value === 1)).toBe(true);
+  for (let i = 0; i < 8; i++) tree.build(p, mass, 32);
+  expect(refreshes).toBe(3);
+  [state.indices, state.codes, state.scratch, state.bins].forEach((a, i) => expect(a).toBe(arrays[i]));
+});
+
+for (const adjustSizes of [false, true]) for (const pinned of [false, true]) test(`gated Morton parity across refreshes: overlap=${adjustSizes}, pinned=${pinned}`, () => {
+  const count = 20000, source = Uint32Array.from({ length: count }, (_, i) => i);
+  const target = source.map(i => (i + 1) % count), movable = pinned ? Uint8Array.from(source, i => i % 3 ? 1 : 0) : undefined;
+  const initial = initialPositions(count, 51, 100);
+  // Coincident points and a shallow depth also exercise mass buckets.
+  initial[2] = initial[0]!; initial[3] = initial[1]!;
+  const saved = initial.slice();
+  const config = { ...options, iterations: 17, relaxIterations: 17, maxTreeDepth: 8, force: { ...options.force, adjustSizes } };
+  const input = { count, source, target, seed: 7, initial, movable };
+  const ordered = new LayoutSolver(input, config), indexed = new LayoutSolver(input, config);
+  // Reference changes only outer query order; never expose a production setting.
+  (indexed as any).tree.queryOrder = undefined;
+  while (!ordered.done) {
+    ordered.step(); indexed.step();
+    expect(Buffer.from(ordered.positions.buffer).equals(Buffer.from(indexed.positions.buffer))).toBe(true);
+  }
+  if (movable) for (let i = 0; i < count; i++) if (!movable[i]) {
+    expect(ordered.positions[2 * i]).toBe(initial[2 * i]); expect(ordered.positions[2 * i + 1]).toBe(initial[2 * i + 1]);
+  }
+  expect(initial).toEqual(saved);
+});
+
+
+test('Morton radix order is stable, unsigned and handles coincident/degenerate extents', () => {
+  const corners = new MortonOrder(5);
+  corners.update(Float32Array.of(-1, -1, 1, -1, -1, 1, 1, 1, -1, -1), -1, -1, 1, 1);
+  expect(corners.indices).toEqual(Uint32Array.of(0, 4, 1, 2, 3));
+  corners.update(new Float32Array(10).fill(7), 7, 7, 7, 7);
+  expect(corners.indices).toEqual(Uint32Array.of(0, 1, 2, 3, 4));
+  const n = 257, rng = random(13), p = Float32Array.from({ length: n * 2 }, () => Math.floor(rng() * 65536));
+  const order = new MortonOrder(n);
+  // Independent bit-by-bit unsigned code oracle exercises every radix pass.
+  const code = (i: number) => {
+    let value = 0;
+    for (let b = 0; b < 16; b++) value += ((p[2 * i]! >>> b) & 1) * 2 ** (2 * b) + ((p[2 * i + 1]! >>> b) & 1) * 2 ** (2 * b + 1);
+    return value;
+  };
+  const expected = Array.from({ length: n }, (_, i) => i).sort((a, b) => code(a) - code(b));
+  order.update(p, 0, 0, 65535, 65535);
+  expect(Array.from(order.indices)).toEqual(expected);
+  const empty = new MortonOrder(0); empty.update(new Float32Array(), 0, 0, 0, 0);
+  expect(empty.indices.length).toBe(0);
 });

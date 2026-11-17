@@ -1,3 +1,4 @@
+import { MortonOrder } from './morton';
 /** Flat, reusable, threaded quadtree. No JS node/edge/cell objects.
  * Leaves at the precision/depth limit are mass buckets: coincident nodes cannot
  * cause unbounded subdivision (or an all-pairs walk through a giant bucket).
@@ -15,8 +16,11 @@ export class BarnesHut {
   private mass: Float64Array;
   private mx: Float64Array;
   private my: Float64Array;
+  private queryOrder?: MortonOrder;
+  private builds = 0;
   constructor(count: number) {
     this.owner = new Int32Array(count);
+    if (count >= 20000) this.queryOrder = new MortonOrder(count);
     this.capacity = Math.max(16, count * 4 + 4);
     this.child = new Int32Array(this.capacity); this.head = new Int32Array(this.capacity); this.next = new Int32Array(this.capacity);
     this.cx = new Float64Array(this.capacity); this.cy = new Float64Array(this.capacity); this.half = new Float64Array(this.capacity);
@@ -40,6 +44,8 @@ export class BarnesHut {
     this.used = 0;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (let i = 0; i < p.length; i += 2) { minX = Math.min(minX, p[i]!); maxX = Math.max(maxX, p[i]!); minY = Math.min(minY, p[i + 1]!); maxY = Math.max(maxY, p[i + 1]!); }
+    // Refresh before steps 1, 9, 17...; retained order affects locality, not forces.
+    if (this.queryOrder && this.builds++ % 8 === 0) this.queryOrder.update(p, minX, minY, maxX, maxY);
     this.allocate((minX + maxX) / 2, (minY + maxY) / 2, Math.max(maxX - minX, maxY - minY, 1e-6) / 2, -1);
     for (let i = 0; i < weights.length; i++) {
       const x = p[2 * i]!, y = p[2 * i + 1]!, m = weights[i]!;
@@ -70,7 +76,9 @@ export class BarnesHut {
   /** Fixed nodes never read their own force, so a warm start only walks the tree for movable ones. */
   repulse(p: Float32Array, weights: Float32Array, forces: Float32Array, scaling: number, theta: number, movable?: Uint8Array, radii?: Float32Array): void {
     const theta2 = theta * theta, maxRadius = radii?.reduce((a, b) => Math.max(a, b), 0) ?? 0;
-    for (let i = 0; i < weights.length; i++) {
+    const order = this.queryOrder?.indices;
+    for (let q = 0; q < weights.length; q++) {
+      const i = order ? order[q]! : q;
       if (movable && !movable[i]) continue;
       const x = p[2 * i]!, y = p[2 * i + 1]!, m = weights[i]!;
       let c = 0, fx = 0, fy = 0;
