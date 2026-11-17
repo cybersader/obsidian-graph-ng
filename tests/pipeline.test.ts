@@ -516,3 +516,20 @@ test('stop layout keeps an unsettled result and refinement resumes its adopted p
     expect(await p.request(1, { kind: 'encode' }).catch(String)).toContain('not settled');
   } finally { p.dispose(); }
 });
+
+
+test('mid-layout and refinement Stop return unsettled within 500 ms of the request', async () => {
+  const p = pipeline(), options = { ...layout, iterations: 10000, batchIterations: 5, convergenceThreshold: 0 };
+  const rows = Array.from({ length: 500 }, (_, i) => ({ path: `${i}.md`, properties: {}, links: { 'fixture@1': [`${(i + 1) % 500}.md`] } }));
+  try {
+    await p.request(1, { kind: 'configure', config: { ...config, layout: options, streamEveryIterations: 5 } });
+    await p.request(1, { kind: 'rows', reset: true, columns: packRows(rows, declaration) }); await p.request(1, { kind: 'project' });
+    for (const kind of ['layout', 'recompute'] as const) {
+      let stopAt = 0, lastIteration = 0;
+      p.onPositions = e => { lastIteration = e.iteration; if (!stopAt) { stopAt = performance.now(); p.stopLayout(e.revision); } p.recycle(e.positions.buffer as ArrayBuffer); };
+      const result = await p.request<LayoutResult>(1, kind === 'layout' ? { kind } : { kind, options });
+      expect(stopAt).toBeGreaterThan(0); expect(performance.now() - stopAt).toBeLessThan(500);
+      expect(lastIteration).toBeLessThan(options.iterations / 2); expect(result.settled).toBe(false); expect(result.positions.every(Number.isFinite)).toBe(true);
+    }
+  } finally { p.dispose(); }
+});

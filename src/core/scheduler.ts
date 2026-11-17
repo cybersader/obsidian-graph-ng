@@ -1,7 +1,8 @@
 /** Cooperative, configurable main-realm budget. Each batch yields even on fast hosts. */
-export function yieldTask(): Promise<void> {
+/** messages=true avoids scheduler.yield's boosted continuations starving worker messages. */
+export function yieldTask(messages = false): Promise<void> {
   const scheduler = (globalThis as typeof globalThis & { scheduler?: { yield(): Promise<void> } }).scheduler;
-  if (scheduler?.yield) return scheduler.yield();
+  if (!messages && scheduler?.yield) return scheduler.yield();
   return new Promise(resolve => {
     const channel = new MessageChannel();
     channel.port1.onmessage = () => { channel.port1.close(); channel.port2.close(); resolve(); };

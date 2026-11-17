@@ -9,6 +9,17 @@ The owner-approved bounded download ceilings for this UI pass are **405,000 raw 
 - Fast and low-tier Auto limit device-pixel resolution and disable motion without changing settled layout accuracy. Their first progressed worker batch may paint sooner. Existing Stop, deferred captions, camera interaction and zero idle drawing are retained.
 - CPU-throttled synthetic native and memory evidence, remaining gaps and unchanged size-cap failures are recorded in the benchmark section. This does not explain the reported 2.5 GB tab or establish hardware/mobile acceptance.
 
+## Unreleased responsive layout cancellation
+
+- Prevent boosted `scheduler.yield()` continuations from starving worker Stop messages. Layout and refinement now yield through a normal MessageChannel task, with an additional 50 ms work-cadence check and an immediate post-yield cancellation check. Individual solver steps remain atomic; force equations and unstopped coordinates are unchanged.
+- Add message-queue, deterministic time-budget and actual-worker initial/refinement Stop regressions. Paired Chromium probe reduced Stop latency from **17,812.2 ms to 8.9 ms**. Six paired throughput samples changed median elapsed time by **-1.30% at 5k notes / +0.44% at 20k notes**, with exact Float32 coordinate equality.
+- Combined verification: **820 tests pass, one existing skip, zero failures**, all six gates pass, and **35/35** synthetic browser-native steps pass with no page/console errors. Native initial/refinement Stop returned in **11.9 / 13.4 ms**, both unsettled. Inspected dark/light, hover, keyboard focus, Motion Off and stopped/refinement captures. Final bundle: **403,435 raw / 137,113 gzip bytes**, **+874 / +248** versus `a2b2877`, within unchanged ceilings. Full native, mobile, screen-reader and hardware-GPU acceptance remain unproven; exact scope and receipts are in [benchmarks](docs/benchmarks.md).
+
+## Unreleased layout progress control
+
+- Join the working status and Stop action in one compact capsule. A thin determinate ring surrounds the rounded stop glyph, with theme-token hover/focus states and a **Stop layout** tooltip/accessibility label. Reuse the existing CSS-only text shimmer; ring transitions and shimmer respect OS and in-app motion preferences. No per-frame JavaScript or new setting.
+- Show **Layout stopped** without leftover animation, retain **Keep refining**, and clear stopped feedback on resume or when normal settlement wins a simultaneous Stop. Add compiled-control, status-lifecycle, motion-CSS and settlement-race regressions. UI-only bundle: **403,334 raw / 137,075 gzip bytes**, **+773 / +210** versus `a2b2877`.
+
 ## Unreleased named view states
 
 - Verify the four independent-review fixes with **814 passing tests**, one skip, and **42/42** synthetic Obsidian 1.12.7 browser-native steps. Inspect all 22 light/dark captures, including Groups chip/menu and path-to-rings restoration. Final code bundle is **402,561 raw / 136,865 gzip bytes**, **+329 / +159** versus `bf02883` and **+9,082 / +3,229** versus `6747495`. Build and policy lanes pass; size alone fails unchanged caps by **2,561 raw / 865 gzip bytes**. Screen-reader speech, mobile, Electron fidelity and hardware-performance acceptance are not established by these checks.

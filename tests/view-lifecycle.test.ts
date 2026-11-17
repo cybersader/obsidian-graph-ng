@@ -620,3 +620,23 @@ test('review: save completes after its rebuild while later hydration rebuilds co
     await Promise.all([apply, later, final]);
   }
 });
+
+
+test('layout status updates the same ring, stops shimmer and clears stopped feedback on refinement', async () => {
+  const { GraphView } = await import('../src/main'); const { BuildProgress } = await import('../src/working');
+  const view: any = Object.create(GraphView.prototype), root = new ControlElement();
+  Object.assign(view, { contentEl: root, status: new ControlElement(), statusSummary: new ControlElement(), buildProgress: new BuildProgress(), plugin: { settings: {} }, layoutWorking: true });
+  view.statusText = view.buildProgress.text(2, .2); view.layoutControl(true);
+  const ring = view.layoutRing, button = control(view.statusSummary, 'Stop layout');
+  expect(ring.getAttribute('stroke-dashoffset')).toBe('41');
+  view.statusText = view.buildProgress.text(2, .4);
+  expect(view.layoutRing).toBe(ring); expect(ring.getAttribute('stroke-dashoffset')).toBe('32');
+  expect(view.statusSummary.querySelector('.graph-ng-working')).toBeDefined();
+  let stops = 0; view.plugin.pipeline = { stopLayout() { stops++; } };
+  button.click(); button.click(); expect(stops).toBe(1);
+  expect(view.statusSummary.querySelector('.graph-ng-working')).toBeUndefined();
+  view.layoutControl(false); view.layoutWorking = false; root.dataset.state = 'ready'; view.statusText = 'Layout not settled';
+  expect(view.statusSummary.textContent).toContain('Layout stopped'); expect(view.statusSummary.querySelector('.graph-ng-working')).toBeUndefined();
+  view.layoutControl(true); view.layoutWorking = true; view.statusText = view.buildProgress.text(2, .5);
+  expect(view.statusSummary.textContent).not.toContain('Layout stopped'); expect(view.statusSummary.querySelector('.graph-ng-working')).toBeDefined();
+});

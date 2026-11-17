@@ -589,7 +589,19 @@ button.graph-ng-help-trigger:hover { color:var(--text-accent); }
 .graph-ng-stage:has(.graph-ng-groups-heading) > .graph-ng-back-chip { top:84px; }
 .graph-ng-groups-heading > button { max-width:60%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; vertical-align:middle; }
 
-.graph-ng-layout-stop { flex:none; width:32px; height:32px; }
+/* One progress capsule, two distinct keyboard actions: information and Stop. */
+.graph-ng-summary.graph-ng-layout-active { gap:0; flex-wrap:nowrap; padding:2px; border:1px solid var(--background-modifier-border); border-radius:20px; background:var(--background-primary); }
+.graph-ng-layout-active button.graph-ng-summary-info { border:0; background:none; border-radius:18px; }
+.graph-ng-layout-stop { flex:none; width:32px; height:32px; padding:4px; border-radius:50%; color:var(--text-muted); }
+.graph-ng-layout-stop:hover { color:var(--text-normal); background:var(--background-modifier-hover); }
+.graph-ng-layout-stop svg { width:24px; height:24px; }
+.graph-ng-layout-stop circle { stroke:var(--background-modifier-border); stroke-width:1.5; }
+.graph-ng-layout-stop rect { fill:currentColor; stroke:none; rx:1.5px; }
+.graph-ng-layout-stop circle.graph-ng-layout-ring { stroke:var(--interactive-accent); stroke-dasharray:100; transform:rotate(-90deg); transform-origin:center; transition:stroke-dashoffset 160ms linear; }
+.graph-ng-layout-stop:disabled .graph-ng-layout-ring { transition:none; }
+[data-motion=off] .graph-ng-layout-ring, [data-motion=reduced] .graph-ng-layout-ring { transition:none !important; }
+@media (prefers-reduced-motion:reduce) { .graph-ng-layout-stop circle.graph-ng-layout-ring { transition:none; } }
+@media (forced-colors:active) { .graph-ng-layout-stop circle.graph-ng-layout-ring { stroke:ButtonText; } }
 /* Named view layers and their single-owner Appearance sections. */
 .graph-ng-state-strip { order:-3; display:flex; flex-wrap:wrap; gap:var(--gng-space-2); pointer-events:auto; max-width:100%; }
 .graph-ng-state-chip { position:relative; display:flex; align-items:center; gap:var(--gng-space-1); max-width:100%; border:1px solid var(--background-modifier-border); border-radius:var(--radius-m); background:var(--background-primary); font-size:var(--gng-text-sm); padding:2px; }
