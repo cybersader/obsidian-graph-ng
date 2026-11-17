@@ -13,7 +13,7 @@ export const PHYSICS_FIELDS: readonly [PhysicsKey, string, string, boolean][] = 
   ['hubGravity', 'Hub gravity', 'Larger neighbours pull harder along existing links. Pulls only the smaller note; 0 is off.', false],
   ['linLogMode', 'Tighter clusters (LinLog)', 'Weakens long-distance edge pull so densely connected regions separate into distinct clusters. Often pairs well with more Spread.', true],
   ['outboundAttractionDistribution', 'Dissuade hubs', 'High-degree notes pull less, so hubs drift to the outside of their cluster and their neighbours spread out.', true],
-  ['adjustSizes', 'Prevent overlap', 'Treats each dot as having size so dots stop stacking on top of each other. Settles more slowly.', true],
+  ['adjustSizes', 'Prevent overlap', 'Adds space around notes, more around hubs. Zoom and Appearance can still make dots overlap.', true],
   ['strongGravityMode', 'Strong gravity', 'Pull to center no longer weakens with distance, so far-off disconnected parts are pulled in hard. Use with a small Pull to center.', true],
   ['iterations', 'Quality (iterations)', 'More steps settle the layout further but take longer. Enter a whole number, 1 or more.', true],
   ['slowDown', 'Step slowdown', 'Higher values make smaller moves each step, not slower animation. Must be greater than 0.', true],

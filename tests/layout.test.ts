@@ -3,7 +3,11 @@ import { createHash } from 'node:crypto';
 import { DEFAULT_LAYOUT, LayoutSolver, initialPositions, random, runLayout, runLayoutStream } from '../src/core/layout';
 import { BarnesHut } from '../src/core/barnes-hut';
 import { buildProjection } from '../src/core/projection';
-import { exampleDeclaration, fixture } from '../scripts/fixture';
+import { exampleDeclaration, fixture, clusteredFixture } from '../scripts/fixture';
+import { recommendedPhysics } from '../src/recommend';
+import { isolateRing } from '../src/core/layout';
+import { layoutIdentity } from '../src/core/layout-options';
+import { overlapPairs } from './support/overlap';
 import { oracleLayout, layoutQuality, qualityDifference } from './support/layout-oracle';
 import { defaults, upgradeSettings } from '../src/settings';
 const projection = buildProjection(fixture(400, 1000), exampleDeclaration);
@@ -75,8 +79,9 @@ test('edge-only compatibility protocol and CSR produce identical layouts', () =>
   const { offsets, targets, ...legacy } = input;
   expect(runLayout(input, options)).toEqual(runLayout(legacy, options));
 });
-test('20-step all-pairs FA2 preserves oracle integration history across supported force modes', () => {
-  for (const overrides of [{}, { linLogMode: true }, { strongGravityMode: true }, { outboundAttractionDistribution: true }, { adjustSizes: true }]) {
+test('20-step all-pairs FA2 preserves oracle integration history with overlap mode off', () => {
+  // Size-aware repulsion and its adaptive integrator intentionally diverge; see ADR-0006.
+  for (const overrides of [{}, { linLogMode: true }, { strongGravityMode: true }, { outboundAttractionDistribution: true }]) {
     const o = { ...options, iterations: 20, force: { ...options.force, barnesHutOptimize: false, ...overrides } };
     const own = runLayout(input, o), oracle = oracleLayout(input, o);
     expect(Math.max(...own.map((v, i) => Math.abs(v - oracle[i]!)))).toBeLessThan(1e-6);
@@ -196,4 +201,69 @@ test('15k-note isolate presentation forms complete evenly spaced rings, never fl
     }
     expect(Math.hypot(cx, cy)).toBeLessThan(.001);
   }
+});
+
+test('overlap convergence restarts after a temporarily balanced node has zero force', () => {
+  const initial = Float32Array.of(0, 0, -1, 0, 1, 0, 0, 1, 0, -1);
+  const solver = new LayoutSolver({ count: 5, source: Uint32Array.of(0, 0, 2), target: Uint32Array.of(1, 3, 4), initial, seed: 1 }, { ...options, iterations: 40, force: { ...options.force, adjustSizes: true, barnesHutOptimize: false, gravity: 0 } });
+  solver.step(); expect(solver.positions.slice(0, 2)).toEqual(Float32Array.of(0, 0));
+  while (!solver.done) solver.step();
+  expect(Math.hypot(solver.positions[0]!, solver.positions[1]!)).toBeGreaterThan(.01);
+  expect(solver.positions.every(Number.isFinite)).toBe(true); expect(initial).toEqual(Float32Array.of(0, 0, -1, 0, 1, 0, 0, 1, 0, -1));
+});
+
+test('overlap settlement compensates damping without feeding it into convergence', () => {
+  const solver = new LayoutSolver({ count: 1, source: new Uint32Array(), target: new Uint32Array(), initial: Float32Array.of(4, 0), seed: 1 }, { ...options, iterations: 300, force: { ...options.force, adjustSizes: true, gravity: .5, strongGravityMode: false } });
+  for (let i = 0; i < 30; i++) {
+    solver.step();
+    // With constant gravity, undamped adaptive motion still exceeds the relative threshold.
+    expect(solver.settled).toBe(false);
+  }
+});
+
+test('Prevent overlap reduces drawn-disc collisions at home and close zoom on seeded 5k hubs', () => {
+  const p = buildProjection(clusteredFixture(2000, 3000, 17, 24), { ...exampleDeclaration, display: { reifiedAsNodes: true } });
+  const input = { count: p.paths.length, source: p.source, target: p.target, offsets: p.offsets, targets: p.targets, seed: 17 };
+  const { iterations, ...force } = recommendedPhysics(input.count, p.source.length);
+  const result = [false, true].map(adjustSizes => {
+    const solver = new LayoutSolver(input, { ...DEFAULT_LAYOUT, iterations, force: { ...DEFAULT_LAYOUT.force, ...force, adjustSizes } });
+    while (!solver.done) solver.step();
+    // The old capped mode falsely declared these still-moving cold seeds settled.
+    expect(solver.settled).toBe(false);
+    isolateRing(input)(solver.positions); return solver.positions;
+  });
+  for (const zoom of [1, .2]) expect(overlapPairs(p, result[1]!, zoom)).toBeLessThanOrEqual(overlapPairs(p, result[0]!, zoom));
+  expect(overlapPairs(p, result[1]!, .2, 25)).toBeLessThanOrEqual(overlapPairs(p, result[0]!, .2, 25));
+});
+
+test('size-aware tree matches softened all-pairs at tiny theta and excludes coincident self mass', () => {
+  const p = initialPositions(40, 3, 10), mass = Float32Array.from({ length: 40 }, (_, i) => 2 + i % 5), radii = Float32Array.from({ length: 40 }, (_, i) => 1 + i % 4);
+  p[2] = p[0]!; p[3] = p[1]!; radii[0] = radii[1] = 4;
+  const tree = new BarnesHut(40), out = new Float32Array(80); tree.build(p, mass, 32); tree.repulse(p, mass, out, 2, 1e-8, undefined, radii);
+  for (let i = 0; i < 40; i++) {
+    let fx = 0, fy = 0;
+    for (let j = 0; j < 40; j++) if (i !== j) {
+      const dx = p[2 * i]! - p[2 * j]!, dy = p[2 * i + 1]! - p[2 * j + 1]!, d = Math.hypot(dx, dy), gap = Math.max(d * .5, d - radii[i]! - radii[j]!);
+      if (gap > 0) { const f = 2 * mass[i]! * mass[j]! / (gap * gap); fx += dx * f; fy += dy * f; }
+    }
+    expect(out[2 * i]!).toBeCloseTo(fx, 3); expect(out[2 * i + 1]!).toBeCloseTo(fy, 3);
+  }
+  const pinned = new Float32Array(80); tree.repulse(p, mass, pinned, 2, .8, new Uint8Array(40), radii); expect(pinned.every(v => v === 0)).toBe(true);
+});
+
+test('size-aware aggregate cells use the maximum radius, not their retained first-member index', () => {
+  const p = Float32Array.of(0, 0, 100, 100, 101, 101), mass = new Float32Array(3).fill(1), radii = Float32Array.of(1, 1, 10), out = new Float32Array(6);
+  const tree = new BarnesHut(3); tree.build(p, mass, 32); tree.repulse(p, mass, out, 1, 1, undefined, radii);
+  const gap = Math.hypot(100.5, 100.5) - 1 - 10, expected = -100.5 * 2 / (gap * gap);
+  expect(out[0]!).toBeCloseTo(expected, 6); expect(out[1]!).toBeCloseTo(expected, 6);
+});
+
+test('overlap migration changes only active layout identity; pinned coordinates and streaming stay deterministic', async () => {
+  const off = { ...options, force: { ...options.force, adjustSizes: false } }, on = { ...options, force: { ...options.force, adjustSizes: true } };
+  expect(Object.hasOwn(layoutIdentity(off), 'overlap')).toBe(false); expect(layoutIdentity(on).overlap).toBe(2);
+  const { overlap, ...legacy } = layoutIdentity(on); expect(overlap).toBe(2); expect(JSON.stringify(legacy)).not.toBe(JSON.stringify(layoutIdentity(on)));
+  const initial = runLayout(input, off), saved = initial.slice(), movable = new Uint8Array(input.count); movable[0] = 1;
+  const warm = { ...input, initial, movable }, expected = runLayout(warm, on);
+  expect(expected.slice(2)).toEqual(saved.slice(2)); expect(initial).toEqual(saved);
+  expect(await runLayoutStream(warm, on, 3, () => {}, async () => {})).toEqual(expected);
 });

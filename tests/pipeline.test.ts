@@ -93,6 +93,21 @@ test('source/view mismatch never loads or warm seeds; format and layout mismatch
     }
   } finally { p.dispose(); }
 });
+test('legacy overlap hashes refuse before reuse while ordinary generations still load', async () => {
+  for (const adjustSizes of [false, true]) {
+    const p = pipeline(), selected = { ...layout, force: { ...layout.force, adjustSizes } };
+    try {
+      const hashes = await p.request<{ declarationHash: string }>(1, { kind: 'configure', config: { ...config, layout: selected } });
+      const g = await generation(1, hashes.declarationHash), { overlap: _revision, ...legacy } = layoutIdentity(selected);
+      g.meta.layout = selected;
+      g.meta.layoutHash = await digest({ layout: legacy, streamEveryIterations: 1 });
+      const loaded = await p.request(1, { kind: 'load', generation: structuredClone(g) });
+      expect(loaded !== undefined).toBe(!adjustSizes);
+      g.meta.layoutHash = await digest({ layout: layoutIdentity(selected), streamEveryIterations: 1 });
+      expect(await p.request(1, { kind: 'load', generation: g })).toBeDefined();
+    } finally { p.dispose(); }
+  }
+});
 test('worker builds/groups first, transfers detail buffers, reuses exact cache and rejects foreign identities', async () => {
   const p = pipeline(), events: string[] = [];
   p.onGroups = () => events.push('groups'); p.onPositions = e => { expect(e.positions.every(Number.isFinite)).toBe(true); events.push('positions'); };
