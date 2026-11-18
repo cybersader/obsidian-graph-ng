@@ -13,21 +13,13 @@ beforeEach(() => {
   Object.assign(globalThis, { document: { get activeElement() { return ControlElement.active; } }, HTMLElement: ControlElement, HTMLInputElement: ControlElement });
 });
 afterEach(() => { for (const [key, value] of old) { if (value === undefined) delete (globalThis as any)[key]; else (globalThis as any)[key] = value; } ControlElement.active = undefined; });
-test('one weighted build never regresses on repeated stages, revised totals or cache skips', async () => {
-  const { BuildProgress } = await import('../src/working');
-  const p = new BuildProgress(); p.start(); const seen: number[] = [];
-  for (const [step, fraction] of [[0, 0], [0, .8], [0, .2], [1, 0], [2, .4], [0, 0], [2, .1], [3, 0], [4, 0]]) { p.text(step!, fraction); seen.push(p.percent); }
-  expect(seen).toEqual([0, 24, 24, 30, 68, 68, 68, 95, 100]);
-  p.start(); expect(p.text(0)).toBe('Reading notes');
-  expect(p.text(2, .4)).toBe('Laying out notes 68%');
-});
 test('summary retains the same working glyph span through number and step updates', () => {
-  const f = fixture(); let stage = 'Reading notes 10%'; f.host.loading = () => ({ stage }); f.panel.show('filters');
+  const f = fixture(); let stage = 'Reading notes'; f.host.loading = () => ({ stage }); f.panel.show('filters');
   const span = f.panel.counts.querySelector('.graph-ng-working');
   f.panel.counts.empty = () => { throw new Error('Progress must stay connected during percentage and step updates'); };
-  stage = 'Reading notes 20%'; f.panel.updateSummary(); expect(f.panel.counts.querySelector('.graph-ng-working')).toBe(span);
+  stage = 'Preparing graph'; f.panel.updateSummary(); expect(f.panel.counts.querySelector('.graph-ng-working')).toBe(span);
   expect(f.panel.counts.querySelector('.graph-ng-status-previous')).toBeUndefined();
-  stage = 'Laying out notes 64%'; f.panel.updateSummary(); expect(f.panel.counts.querySelector('.graph-ng-working')).toBe(span);
+  stage = 'Arranging notes'; f.panel.updateSummary(); expect(f.panel.counts.querySelector('.graph-ng-working')).toBe(span);
   expect(f.panel.counts.querySelector('.graph-ng-status-previous')).toBeUndefined(); f.panel.dispose();
 });
 test('Filters relationships exposes the existing Lines and Notes save/rebuild action', async () => {
@@ -56,11 +48,11 @@ test('dotted help is text-only and supports focus, hover, tap, Escape and blur w
   const trigger: any = root.querySelector('.graph-ng-help-trigger'), wrap: any = root.children[0];
   let opens = 0, closes = 0, stopped = 0;
   trigger.ownerDocument = { defaultView: { innerWidth: 320, innerHeight: 240 }, activeElement: null };
-  trigger.getBoundingClientRect = () => ({ left: 300, bottom: 230 });
+  trigger.getBoundingClientRect = () => ({ left: 300, top: 206, bottom: 230 });
   tip.offsetWidth = 200; tip.offsetHeight = 80; tip.showPopover = () => opens++; tip.hidePopover = () => closes++;
   expect(tip.hidden).toBe(true); expect(tip.textContent).toBe('<b>Text only</b>'); expect(tip.children).toHaveLength(0);
   expect(trigger.getAttribute('aria-describedby')).toBe(tip.id); expect(trigger.getAttribute('title')).toBeNull(); expect(trigger.getAttribute('aria-label')).toBeNull();
-  trigger.onfocus(); expect(tip.hidden).toBe(false); expect(tip.style.left).toBe('112px'); expect(tip.style.top).toBe('152px');
+  trigger.onfocus(); expect(tip.hidden).toBe(false); expect(tip.style.left).toBe('112px'); expect(tip.style.top).toBe('126px');
   trigger.onkeydown({ key: 'Escape', preventDefault() { stopped++; }, stopPropagation() { stopped++; } }); expect(stopped).toBe(2); expect(tip.hidden).toBe(true);
   trigger.onpointerenter(); expect(tip.hidden).toBe(false); wrap.onpointerleave(); expect(tip.hidden).toBe(true);
   trigger.onclick(); expect(tip.hidden).toBe(false); trigger.onblur(); expect(tip.hidden).toBe(true);
@@ -101,10 +93,10 @@ test('progress updates only the summary, preserving focused drafts and scroll, a
   f.panel.close(); const counts = [...f.panel.counts.children]; f.panel.updateSummary(); expect(f.panel.counts.children).toEqual(counts); f.panel.dispose();
 });
 
-test('layout loading percentage appears once', async () => {
+test('layout step count names its unit without a percentage', async () => {
   const { layoutProgress } = await import('../src/graph-information');
   const f = fixture(); f.host.loading = () => ({ stage: layoutProgress({ iteration: 35, total: 100 }), done: 35, total: 100 });
-  f.panel.updateSummary(); expect(f.panel.counts.textContent.match(/35%/g)).toHaveLength(1); f.panel.dispose();
+  f.panel.updateSummary(); expect(f.panel.counts.textContent.match(/35 of 100 steps/g)).toHaveLength(1); expect(f.panel.counts.textContent).not.toContain('%'); f.panel.dispose();
 });
 
 test('one layout draft change uses singular copy', () => {
@@ -315,12 +307,4 @@ test('relationship line choices persist live in Appearance and Filters; shared t
   expect(calls).toEqual(Array(6).fill(false));
   const host = new ControlElement(); panelHelp(host as any, 'Relationship notes', 'An older definition');
   expect(host.querySelector('.graph-ng-help-popover')!.textContent).toBe(RELATIONSHIP_HELP); f.panel.dispose();
-});
-
-test('unmeasured phases shimmer without invented percentages and measured phases never go backwards', async () => {
-  const { BuildProgress } = await import('../src/working'); const p = new BuildProgress();
-  for (const fraction of [0, .03, 0, .7, .2]) expect(p.text(0, fraction)).toBe('Reading notes');
-  expect(p.text(1)).toBe('Building');
-  const seen = [[2, 0], [2, .3], [2, .1], [3, 0], [4, 0]].map(([phase, fraction]) => Number(p.text(phase!, fraction).match(/(\d+)%/)![1]));
-  expect(seen).toEqual([50, 63, 63, 95, 100]);
 });

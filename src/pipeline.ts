@@ -51,7 +51,7 @@ export class WorkerPipeline {
   private restarts = 0;
   onPositions?: (event: { revision: number; positions: Float32Array; iteration: number; total: number }) => void;
   onGroups?: (event: GroupEvent) => void;
-  onEngine?: (status: EngineStatus) => void;
+  onEngine?: (status: EngineStatus, total: number) => void;
   constructor(private worker: Transport, private timeoutMs: () => number, private cleanup = () => {}, private recovery?: Recovery) { this.attach(); }
   private attach() {
     const worker = this.worker;
@@ -59,7 +59,7 @@ export class WorkerPipeline {
       if (worker !== this.worker || this.closed) return;
       const m = event.data, p = this.active;
       if (!p || m.revision !== p.revision) return;
-      if (m.kind === 'engine') { this.onEngine?.(m.engineStatus); return; }
+      if (m.kind === 'engine') { this.onEngine?.(m.engineStatus, m.total); return; }
       if (m.kind === 'positions') { this.onPositions?.(m); return; }
       if (m.kind === 'groups') { this.onGroups?.(m); return; }
       if (m.id !== p.id) return;

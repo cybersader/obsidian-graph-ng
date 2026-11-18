@@ -11,7 +11,7 @@ export interface InformationReport {
   nodes: number; edges: number; listed: number;
   engineStatus?: EngineStatus;
   linksPending: boolean; provisional: boolean; unresolved: number; duplicates: number;
-  layout?: { cached: boolean; reused?: LayoutResult['reused']; ms: number; totalMs: number };
+  layout?: { cached: boolean; reused?: LayoutResult['reused']; ms: number; totalMs?: number };
   progress?: { iteration: number; total: number };
   pendingProperties?: number;
   dropped?: Record<string, EdgeRuleCounts>;
@@ -131,7 +131,7 @@ function renderBody(host: HTMLElement, message: string, state: string | undefine
     if (loading?.indexed !== undefined && loading.listed !== undefined) {
       statRow(host, 'files', 'Notes read', num(loading.indexed)); statRow(host, 'loader', 'Notes pending', num(Math.max(0, loading.listed - loading.indexed)));
     }
-    statRow(host, 'timer', 'Layout', r?.layout ? layoutText(r.layout) : r?.progress ? `Step ${num(r.progress.iteration)} (${num(r.progress.total)} steps planned)` : 'Preparing graph');
+    statRow(host, 'timer', 'Layout', r?.progress && (state === 'building' || !r.layout) ? layoutProgress(r.progress) : r?.layout ? layoutText(r.layout) : 'Preparing graph');
     if (r) statRow(host, 'spline', 'Relationship notes', r.relationshipNodes ? 'Notes' : 'Lines');
     pendingHelp(host);
     return;
@@ -188,6 +188,5 @@ export function layoutText(l: NonNullable<InformationReport['layout']>) {
 }
 
 /** Stage-local progress only: no elapsed-time estimate and no invented resolver percentage. */
-export const readingProgress = (c: { indexed: number; listed: number }) => `Reading notes ${Math.floor(100 * c.indexed / Math.max(1, c.listed))}%`;
-export const layoutProgress = (p: { iteration: number; total: number }) => `Laying out ${Math.floor(100 * p.iteration / Math.max(1, p.total))}% (step ${num(p.iteration)}, ${num(p.total)} steps)`;
+export const layoutProgress = (p: { iteration: number; total: number }) => `${num(p.iteration)} of ${num(p.total)} steps`;
 export const pendingText = (r?: { pendingProperties?: number; linksPending: boolean }) => r?.pendingProperties ? `${plural(r.pendingProperties, 'note')} with unverified properties` : 'Ready, source checks incomplete';

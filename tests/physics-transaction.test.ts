@@ -1,6 +1,7 @@
 import { test, expect, afterEach } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import { execFileSync } from 'node:child_process';
 import { defaults, upgradeSettings, validateSettings } from '../src/settings';
 import { encodeStrings } from '../src/core/columns';
 import { ControlElement, control } from './support/controls-dom';
@@ -93,19 +94,18 @@ test('loading preview attaches pan and zoom while suppressing picking and retain
 
 test('Stop layout remains beside status, sends one active revision and hides without removing its slot', async () => {
   const f = await fixture(), summary = f.view[compiled('statusSummary')]; let stopped = -1;
-  const label = summary.createSpan({ text: 'Laying out notes 60%' });
+  const label = summary.createSpan({ text: 'Arranging notes' });
   f.plugin.pipeline.stopLayout = (revision: number) => { stopped = revision; };
-  f.view[compiled('buildProgress')].percent = 60;
   f.view[compiled('layoutControl')](true); const button = control(summary, 'Stop layout');
   const ring = f.view.layoutRing;
-  expect(button.getAttribute('aria-label')).toBe('Stop layout'); expect(button.getAttribute('title')).toBe('Stop layout');
+  expect(button.getAttribute('aria-label')).toBe('Stop layout'); expect(f.view.layoutTip.textContent).toBe('Stop layout');
   expect(button.getAttribute('type')).toBe('button');
-  expect(ring.getAttribute('pathLength')).toBe('100'); expect(ring.getAttribute('stroke-dashoffset')).toBe('40');
+  expect(ring.getAttribute('pathLength')).toBe('100'); expect(ring.getAttribute('stroke-dashoffset')).toBe('100');
   expect(summary.classes.has('graph-ng-layout-active')).toBe(true);
-  expect(button.style.visibility).toBe('visible'); expect(button.disabled).toBe(false);
+  expect(button.disabled).toBe(false);
   button.click(); expect(stopped).toBe(7); expect(button.disabled).toBe(true);
   expect(f.view.layoutStopped).toBe(true); expect(f.view.statusText).toBe('Stopping layout…');
-  f.view[compiled('layoutControl')](false); expect(button.style.visibility).toBe('hidden'); expect(summary.children).toEqual([label, button]); expect(summary.classes.has('graph-ng-layout-active')).toBe(false);
+  f.view[compiled('layoutControl')](false); expect(button.disabled).toBe(true); expect(summary.children[0]).toBe(label); expect(summary.classes.has('graph-ng-layout-active')).toBe(false);
   f.view[compiled('layoutControl')](true); expect(control(summary, 'Stop layout')).toBe(button); expect(button.disabled).toBe(false); expect(f.view.layoutStopped).toBe(false);
 });
 
@@ -148,22 +148,29 @@ function driver(r: any) {
 test('Apply rejects seed frames, streams on the same renderer and keeps pan/zoom while labels are hidden', async () => {
   const f = await fixture(), entered = deferred(), release = deferred(), canvas = f.renderer.canvas;
   const frame = new Float32Array([10, 12, 20, 22, 400, 500]); let recycled = 0;
-  f.view.provisional = true; f.view.report = { linksPending: false, [compiled('pendingProperties')]: 691 };
+  f.view[compiled('provisional')] = false; f.view.report = {}; f.plugin.settings.persistLayout = true;
+  const calls: string[] = []; f.plugin.pipeline.stopLayout = () => release.resolve();
   f.plugin.pipeline.recycle = () => recycled++;
-  f.plugin.pipeline.request = async () => {
+  f.plugin.pipeline.request = async (_: number, r: any) => {
+    calls.push(r.kind); if (r.kind === 'adoptLayout') return;
+    expect(f.view.layoutSteps.textContent).toBe('0 of 100 steps');
     expect(f.renderer.positions).toBe(f.positions); expect(f.renderer.overlay.hidden).toBe(true);
     f.plugin.pipeline.onPositions({ revision: 7, iteration: 0, total: 100, positions: new Float32Array(6) });
     expect(f.renderer.positions).toBe(f.positions);
     f.plugin.pipeline.onPositions({ revision: 7, iteration: 20, total: 100, positions: frame });
-    entered.resolve(); await release.promise; return { positions: f.next };
+    entered.resolve(); await release.promise; return { positions: f.next, settled: false };
   };
   const work = f.view[compiled('applyLayout')](values); await entered.promise;
   expect(f.renderer.positions).toBe(frame); expect(f.renderer.canvas).toBe(canvas); expect(f.view.positions).toBe(f.positions); expect(recycled).toBe(1);
   const input = f.renderer.controls(); input[compiled('panBy')](30, 10); input[compiled('zoomAt')](1.2, 0, 0); const camera = { ...f.renderer.camera };
-  expect(input.pick(0, 0)).toBe(-1); expect(f.view.statusMessage).toContain('Laying out notes');
-  release.resolve(); await work;
+  expect(input.pick(0, 0)).toBe(-1); expect(f.view.statusMessage).toBe('Arranging notes');
+  const action = control(f.view[compiled('statusSummary')], 'Explore now');
+  expect(f.view.layoutSteps.textContent).toBe('20 of 100 steps'); expect(f.view.layoutTip.textContent).toBe('Finish this pass and use the current layout.');
+  const preview = f.renderer.screenPoint(2); expect(input.pick(preview.x, preview.y)).toBe(-1);
+  action.click(); await work;
+  expect(calls).toEqual(['recompute', 'adoptLayout']); const final = f.renderer.screenPoint(2); expect(input.pick(final.x, final.y)).toBe(2);
   expect(f.renderer.positions).toBe(f.next); expect(f.renderer.camera).toEqual(camera); expect(f.renderer.overlay.hidden).toBe(false);
-  expect(f.view[compiled('layoutWorking')]).toBe(false); expect(f.view.statusMessage).toBe('691 notes with unverified properties'); expect(f.view[compiled('statusSummary')].querySelector('.graph-ng-working')).toBeFalsy();
+  expect(f.view[compiled('layoutWorking')]).toBe(false); expect(f.view.statusMessage).toBe('Layout not settled'); expect(f.view[compiled('statusSummary')].querySelector('.graph-ng-working')).toBeFalsy();
 });
 test('failed streamed Apply restores last-good geometry without undoing pan/zoom', async () => {
   const f = await fixture(), display = f.renderer.display;
@@ -209,8 +216,8 @@ test('review: sizing invalidation during retained layout rebuilds labels on roll
 test('review: property promotion cannot erase active Apply progress', async () => {
   const f = await fixture(); f.view.groupGraph = {}; f.view.contentEl.dataset.state = 'ready';
   f.plugin.adapter = { [compiled('factsComplete')]: () => true, [compiled('linksPending')]: () => false, [compiled('pendingProperties')]: () => 0 };
-  f.view[compiled('layoutWorking')] = true; f.view.statusText = 'Laying out notes 68%';
-  f.view[compiled('promoteProperties')](); expect(f.view.statusText).toBe('Laying out notes 68%');
+  f.view[compiled('layoutWorking')] = true; f.view.statusText = 'Arranging notes';
+  f.view[compiled('promoteProperties')](); expect(f.view.statusText).toBe('Arranging notes');
 });
 test('review: committed expanded coordinates rebuild minimap bounds without moving camera frame', async () => {
   const f = await fixture(), r = f.renderer, frame = r[compiled('cameraFrame')], camera = { ...r.camera };
@@ -2617,3 +2624,5 @@ test('settlement winning a stop race does not leave stopped feedback', async () 
   await f.view[compiled('applyLayout')](values);
   expect(f.view.layoutStopped).toBe(false);
 });
+
+test('bundled performance UI regressions', () => { execFileSync('node', ['tests/performance-ui-regressions.cjs']); });

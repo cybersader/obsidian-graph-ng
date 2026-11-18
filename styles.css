@@ -516,7 +516,11 @@ button.graph-ng-help-trigger:hover { color:var(--text-accent); }
 .graph-ng-body:has(.graph-ng-minimap:not([hidden])) > .graph-ng-summary { max-width:calc(100% - 264px); }
 .graph-ng-body:has(.graph-ng-minimap-folded) > .graph-ng-summary { max-width:calc(100% - 96px); }
 .graph-ng-body:has(> .graph-ng-explore:not([hidden])) > .graph-ng-summary { max-width:calc(100% - 384px); }
-@container (max-width: 480px) { .graph-ng-body:has(> .graph-ng-explore:not([hidden])) > .graph-ng-summary { display:none; } }
+@container (max-width: 480px) {
+  .graph-ng-body:has(> .graph-ng-explore:not([hidden])) > .graph-ng-summary:not(.graph-ng-layout-active) { display:none; }
+  .graph-ng-body:has(> .graph-ng-explore:not([hidden])) > .graph-ng-summary.graph-ng-layout-active { max-width:calc(100% - 16px); z-index:4; }
+  .graph-ng-body:has(> .graph-ng-layout-active) > .graph-ng-explore { bottom:52px; }
+}
 
 /* Touch targets grow without adding wrapped toolbar labels or changing pip geometry. */
 @media (pointer: coarse) {
@@ -592,6 +596,12 @@ button.graph-ng-help-trigger:hover { color:var(--text-accent); }
 /* One progress capsule, two distinct keyboard actions: information and Stop. */
 .graph-ng-summary.graph-ng-layout-active { gap:0; flex-wrap:nowrap; padding:2px; border:1px solid var(--background-modifier-border); border-radius:20px; background:var(--background-primary); }
 .graph-ng-layout-active button.graph-ng-summary-info { border:0; background:none; border-radius:18px; }
+.graph-ng-pass { display:none; }
+.graph-ng-layout-active .graph-ng-pass { display:inline-flex; align-items:center; gap:4px; font-size:var(--gng-text-xs); white-space:nowrap; }
+.graph-ng-pass .graph-ng-help-popover { pointer-events:none; }
+.graph-ng-pass .graph-ng-layout-stop { display:inline-flex; align-items:center; text-decoration:none; }
+.graph-ng-pass .graph-ng-layout-stop[aria-label="Explore now"] { width:auto; gap:4px; border-radius:16px; padding-inline-end:8px; }
+.graph-ng-layout-stop[aria-label="Explore now"]::after { content:attr(aria-label); }
 .graph-ng-layout-stop { flex:none; width:32px; height:32px; padding:4px; border-radius:50%; color:var(--text-muted); }
 .graph-ng-layout-stop:hover { color:var(--text-normal); background:var(--background-modifier-hover); }
 .graph-ng-layout-stop svg { width:24px; height:24px; }

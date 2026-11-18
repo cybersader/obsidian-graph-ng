@@ -5,7 +5,7 @@ import { ControlElement } from './support/controls-dom';
 import { buildProjection, type FactRow } from '../src/core/projection';
 import { carrierHiddenBy, emptyView, explore, hiddenBy, relationshipNotes } from '../src/core/explore';
 import type { GraphDeclaration } from '../src/core/declaration';
-import { accounting, edgeAccounting, layoutProgress, pendingText, readingProgress, renderInformation, renderReadout, type InformationReport } from '../src/graph-information';
+import { accounting, edgeAccounting, layoutProgress, pendingText, renderInformation, renderReadout, type InformationReport } from '../src/graph-information';
 import { hiddenClause, setToggles, toggleable, toggledValues } from '../src/filter-summary';
 
 const d: GraphDeclaration = {
@@ -243,11 +243,10 @@ test('loading information suppresses unsettled counts, preserves configured mode
   const host: any = new ControlElement();
   renderInformation(host, '', 'building', report);
   expect(host.textContent).toContain('40 notes with unverified properties');
-  expect(host.textContent).toContain('Step 60 (100 steps planned)'); expect(host.textContent).not.toContain('%');
+  expect(host.textContent).toContain('60 of 100 steps'); expect(host.textContent).not.toContain('%');
   expect(host.querySelector('.graph-ng-help-trigger').textContent).toBe('Relationship notes');
   for (const misleading of ['44,572', '61,077', '189,505', 'drawn as dots', 'Edges drawn', 'No issues found', 'Save as']) expect(host.textContent).not.toContain(misleading);
-  expect(readingProgress({ indexed: 40, listed: 100 })).toBe('Reading notes 40%');
-  expect(layoutProgress({ iteration: 3, total: 6 })).toBe('Laying out 50% (step 3, 6 steps)');
+  expect(layoutProgress({ iteration: 3, total: 6 })).toBe('3 of 6 steps');
   expect(pendingText({ linksPending: true, pendingProperties: 0 })).toBe('Ready, source checks incomplete');
   // Completed layout does not turn unresolved host metadata into final-looking accounting.
   renderInformation(host, '', 'ready', { ...report, pendingProperties: 0, layout: { cached: true, ms: 0, totalMs: 1 } });

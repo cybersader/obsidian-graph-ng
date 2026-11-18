@@ -701,14 +701,14 @@ export class DetailRenderer {
     };
   }
   /** Progressed frames retain the camera frame. Live Apply keeps input attached. */
-  streamPositions(next: Float32Array) {
+  streamPositions(next: Float32Array, paint = false) {
     if (!(this.view.loading || this.layoutActive) || !this.usable || next.length !== this.positions.length || !next.every(Number.isFinite)) throw new Error('Layout preview unavailable');
     const previous = this.positions;
     const geometry = this.coordinateState(next, this.filterVisible, this.view);
     this.positions = next;
     Object.assign(this, geometry); this.discData = this.discs(geometry.halos, geometry.hubs);
     if (this.gl) this.uploadCoordinates();
-    this.followExtent(); this.refresh(); return previous;
+    this.followExtent(); if (paint) this.draw(); else this.refresh(); return previous;
   }
   /** Only zoom outward while streaming; a gesture permanently releases this run. */
   private followExtent() {

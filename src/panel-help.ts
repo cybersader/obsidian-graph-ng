@@ -41,7 +41,7 @@ export function panelHelp(host: HTMLElement, label: string, text?: string, cls =
     tip.hidden = false; tip.showPopover?.();
     const r = trigger.getBoundingClientRect(), w = trigger.ownerDocument.defaultView!;
     tip.style.left = `${Math.max(8, Math.min(r.left, w.innerWidth - tip.offsetWidth - 8))}px`;
-    tip.style.top = `${Math.max(8, Math.min(r.bottom, w.innerHeight - tip.offsetHeight - 8))}px`;
+    tip.style.top = `${Math.max(8, r.bottom + tip.offsetHeight + 8 <= w.innerHeight ? r.bottom : r.top - tip.offsetHeight)}px`;
   };
   trigger.onfocus = trigger.onpointerenter = open;
   // Buttons inside labels suppress native activation; forward name clicks to the toggle.

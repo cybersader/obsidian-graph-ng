@@ -3,8 +3,7 @@ import { validateSettings, type Settings } from './settings';
 import { DEFAULT_LAYOUT, type ForceSettings } from './core/layout-options';
 type Force = Settings['layout']['force'];
 /** Basic numbers are required; advanced engine knobs are optional so older callers keep untouched values. */
-export type PhysicsValues = Pick<Force, 'scalingRatio' | 'gravity' | 'slowDown'>
-  & Partial<Pick<Force, 'familyPull' | 'hubGravity' | 'linLogMode' | 'outboundAttractionDistribution' | 'adjustSizes' | 'strongGravityMode' | 'barnesHutTheta'>> & { iterations?: number; layoutEngine?: LayoutEnginePreference };
+export type PhysicsValues = Partial<Pick<Force, 'scalingRatio' | 'gravity' | 'slowDown' | 'familyPull' | 'hubGravity' | 'linLogMode' | 'outboundAttractionDistribution' | 'adjustSizes' | 'strongGravityMode' | 'barnesHutTheta'>> & { iterations?: number; layoutEngine?: LayoutEnginePreference };
 export type PhysicsKey = Exclude<keyof PhysicsValues, 'layoutEngine'>;
 /** [key, label, visible effect, advanced]. Values remain drafts until explicit Apply. */
 export const PHYSICS_FIELDS: readonly [PhysicsKey, string, string, boolean][] = [

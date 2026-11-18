@@ -232,6 +232,20 @@ test('fact groups paint before layout, pending links prevent exact caching, and 
     links['a.md'] = {}; adapter.invalidate();
     await view.refreshOnce(); expect(complete).toBe(true); expect(encoded).toBe(1); expect(caches).toBe(1); expect(view.contentEl.dataset.verified).toBe('true');
     const request = pipeline.request;
+    const stages: string[] = [];
+    const descriptor = Object.getOwnPropertyDescriptor(GraphView.prototype, 'statusText')!;
+    Object.defineProperty(view, 'statusText', { get: descriptor.get, set(text) { stages.push(text); descriptor.set!.call(view, text); } });
+    encoded = 0; pipeline.request = (rev: number, r: any) => r.kind === 'layout' ? { positions: new Float32Array(2), cached: true, settled: true } : request(rev, r);
+    await view.refreshOnce(); expect(stages).toContain('Reading notes'); expect(stages).toContain('Preparing graph'); expect(stages).toContain('Using saved layout'); expect(stages).not.toContain('Arranging notes');
+    encoded = 0; pipeline.request = (rev: number, r: any) => {
+      if (r.kind !== 'layout') return request(rev, r);
+      pipeline.onEngine({ engine: 'graphics', automatic: false, reason: 'manual' }, 15);
+      view.passSteps(5, 15);
+      pipeline.onEngine({ engine: 'processor', automatic: false, reason: 'failed' }, 15);
+      expect(view.statusText).toBe('Arranging notes'); expect(view.layoutSteps.textContent).toBe('5 of 15 steps');
+      return { positions: new Float32Array(2), settled: false };
+    };
+    await view.refreshOnce(); expect(encoded).toBe(0);
     for (const interruption of ['replacement', 'close']) {
       view.closed = false; encoded = 0; caches = 0;
       let release!: (v: any) => void, started!: () => void;
@@ -391,7 +405,7 @@ test('completed partial projections do not keep layout busy waiting for host met
   const { GraphView } = await import('../src/main'); const view: any = Object.create(GraphView.prototype);
   Object.assign(view, { contentEl: { dataset: { state: 'ready' } }, provisional: true, plugin: { settings: { projectionFile: '' } }, report: { linksPending: true, pendingProperties: 4 } });
   expect(view.loading()).toBeUndefined();
-  view.layoutWorking = true; view.statusMessage = 'Laying out notes 64%'; expect(view.loading().stage).toBe('Laying out notes 64%'); view.layoutWorking = false;
+  view.layoutWorking = true; view.statusMessage = 'Arranging notes'; expect(view.loading().stage).toBe('Arranging notes'); view.layoutWorking = false;
   view.plugin.settings.projectionFile = 'synthetic-projection'; expect(view.loading()).toBeUndefined();
   view.plugin.settings.projectionFile = ''; view.contentEl.dataset.state = 'error'; expect(view.loading()).toBeUndefined();
 });
@@ -521,7 +535,7 @@ test('fallback summary uses compact on-demand help outside the information butto
   for (const button of summary.querySelectorAll('button')) expect(button.querySelector('button')).toBeUndefined();
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   expect(css).toMatch(/\.graph-ng-body:has\(> \.graph-ng-explore:not\(\[hidden\]\)\) > \.graph-ng-summary[^}]+max-width:calc\(100% - 384px\)/);
-  expect(css).toMatch(/@container \(max-width: 480px\)[^\n]+\.graph-ng-summary[^\n]+display:none/);
+  expect(css).toMatch(/@container \(max-width: 480px\)\s*\{\s*[^}]+\.graph-ng-summary:not\(\.graph-ng-layout-active\)\s*\{ display:none/);
 });
 
 test('relationship display rebuild settles despite unchanged metadata bursts; real edits still queue once', async () => {
@@ -623,20 +637,24 @@ test('review: save completes after its rebuild while later hydration rebuilds co
 
 
 test('layout status updates the same ring, stops shimmer and clears stopped feedback on refinement', async () => {
-  const { GraphView } = await import('../src/main'); const { BuildProgress } = await import('../src/working');
+  const { GraphView } = await import('../src/main');
   const view: any = Object.create(GraphView.prototype), root = new ControlElement();
-  Object.assign(view, { contentEl: root, status: new ControlElement(), statusSummary: new ControlElement(), buildProgress: new BuildProgress(), plugin: { settings: {} }, layoutWorking: true });
-  view.statusText = view.buildProgress.text(2, .2); view.layoutControl(true);
+  Object.assign(view, { contentEl: root, status: new ControlElement(), statusSummary: new ControlElement(), plugin: { settings: {} }, layoutWorking: true });
+  view.layoutControl(true); view.passSteps(20, 100);
   const ring = view.layoutRing, button = control(view.statusSummary, 'Stop layout');
-  expect(ring.getAttribute('stroke-dashoffset')).toBe('41');
-  view.statusText = view.buildProgress.text(2, .4);
-  expect(view.layoutRing).toBe(ring); expect(ring.getAttribute('stroke-dashoffset')).toBe('32');
+  expect(ring.getAttribute('stroke-dashoffset')).toBe('80');
+  view.passSteps(40, 100);
+  expect(view.layoutRing).toBe(ring); expect(ring.getAttribute('stroke-dashoffset')).toBe('60');
   expect(view.statusSummary.querySelector('.graph-ng-working')).toBeDefined();
   let stops = 0; view.plugin.pipeline = { stopLayout() { stops++; } };
   button.click(); button.click(); expect(stops).toBe(1);
   expect(view.statusSummary.querySelector('.graph-ng-working')).toBeUndefined();
-  view.layoutControl(false); view.layoutWorking = false; root.dataset.state = 'ready'; view.statusText = 'Layout not settled';
+  view.layoutControl(false); view.layoutWorking = false; root.dataset.state = 'ready'; root.dataset.mode = 'nodes'; view.statusText = 'Layout not settled';
   expect(view.statusSummary.textContent).toContain('Layout stopped'); expect(view.statusSummary.querySelector('.graph-ng-working')).toBeUndefined();
-  view.layoutControl(true); view.layoutWorking = true; view.statusText = view.buildProgress.text(2, .5);
+  let applied: unknown; view.applyLayout = async (values: unknown) => { applied = values; };
+  control(view.statusSummary, 'Keep refining').click(); expect(applied).toEqual({});
+  view.layoutControl(true); view.layoutWorking = true; view.passSteps(0, 15);
+  expect(view.statusSummary.querySelector('.graph-ng-refine')).toBeUndefined();
+  expect(view.layoutSteps.textContent).toBe('0 of 15 steps');
   expect(view.statusSummary.textContent).not.toContain('Layout stopped'); expect(view.statusSummary.querySelector('.graph-ng-working')).toBeDefined();
 });

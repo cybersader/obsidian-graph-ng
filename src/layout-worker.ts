@@ -90,7 +90,7 @@ async function solve(input: LayoutInput, options: PipelineConfig['layout'], revi
   const arrange = isolateRing(input);
   const result = await engines.run(input, options, {
     preference, remembered, every: config.streamEveryIterations, stopped, yieldNow: () => yieldTask(true),
-    status: engineStatus => self.postMessage({ kind: 'engine', revision, engineStatus }),
+    status: engineStatus => self.postMessage({ kind: 'engine', revision, engineStatus, total: input.movable ? options.relaxIterations : options.iterations }),
     buffer: takeBuffer,
     emit: (p, iteration, total) => {
       arrange(p);
