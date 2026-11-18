@@ -12,8 +12,8 @@ export interface PropertySource {
   rooms?(): readonly RoomHandle[];
   roomFor?(path: string): RoomHandle | undefined;
 }
-interface RoomHandle { cacheIdentity?: string; generation?: number; verifiedComplete?: boolean }
-interface RoomPartition { id: string; generation: number; ready: boolean; settled: boolean; savedVersion: number; writing?: boolean }
+interface RoomHandle { load?(): Promise<unknown>; cacheIdentity?: string; generation?: number; verifiedComplete?: boolean }
+interface RoomPartition { id: string; generation: number; ready: boolean; permit?: object; loaded?: boolean; writing?: boolean }
 function validRoom(room: RoomHandle | undefined) {
   return typeof room?.cacheIdentity === 'string' && room.cacheIdentity.startsWith('ocpf1:') && Number.isSafeInteger(room.generation);
 }
@@ -44,39 +44,64 @@ export class LocalAdapter {
   private get partitioned() { return typeof this.propertySource?.rooms === 'function' && typeof this.propertySource.roomFor === 'function'; }
   private forget(path: string) { this.savedFacts.delete(path); this.savedOwners.delete(path); }
   private storageError(error: unknown) { this.cacheStatus = 'unavailable'; this.factError = String(error); }
-  // Re-read public summaries, copying scalar tags instead of retaining mutable host handles.
+  private roomBudget = { bytes: 0, parts: 0 };
+  private pruned = false;
+  private unknownRooms = false;
+  private inventory() {
+    try { const handles = this.propertySource?.rooms?.(); return this.partitioned && Array.isArray(handles) ? handles as RoomHandle[] : undefined; }
+    catch { return undefined; }
+  }
+  private prune(background = false) {
+    const source = this.propertySource, turn = this.cacheTurn, cache = this.cache!;
+    const current = () => source === this.propertySource && turn === this.cacheTurn && !cache.paused;
+    const inventory = () => this.inventory()?.filter(validRoom).map(h => h.cacheIdentity!);
+    const failed = (error: unknown) => { if (current()) this.storageError(error); };
+    return cache.prunePartitions(inventory, current, background ? failed : undefined)?.catch(failed);
+  }
+  // Unknown inventory disables replay and settlement; it never proves absence on disk.
   syncRooms() {
-    let handles: readonly RoomHandle[] = [];
-    if (this.partitioned) try { handles = this.propertySource!.rooms!(); } catch { /* fail closed */ }
-    const active = new Set<string>(); let moved = false;
-    if (Array.isArray(handles)) for (const h of handles) if (validRoom(h)) {
+    const handles = this.inventory(), active = new Set<string>(); let moved = false, retired = false;
+    for (const h of handles ?? []) if (validRoom(h)) {
       const id = h.cacheIdentity!; active.add(id);
       let room = this.partitions.get(id);
       if (!room || room.generation !== h.generation) {
         moved ||= !room;
-        this.partitions.set(id, room = { id, generation: h.generation!, ready: false, settled: false, savedVersion: -1 });
+        this.partitions.set(id, room = { id, generation: h.generation!, ready: false });
       }
       room.ready = h.verifiedComplete === true;
+      if (!room.ready) room.permit = undefined;
     }
     for (const id of this.partitions.keys()) if (!active.has(id)) {
-      this.partitions.delete(id); moved = true;
-      void this.cache?.dropPartition(id).catch(error => this.storageError(error));
+      this.partitions.delete(id); moved = retired = true;
     }
+    if ((retired || this.unknownRooms) && handles?.length && this.cache && !this.cache.paused) this.prune(true);
+    this.unknownRooms = !handles?.length;
     if (moved) for (const [path, id] of this.savedOwners) if (!active.has(id)) { this.forget(path); this.index.change(path); }
     if (moved) this.roomRevision++;
   }
-  async onRoomSettled(detail: { cacheIdentity?: unknown; generation?: unknown } | undefined, options: IngestOptions) {
+  async onRoomSettled(detail: { cacheIdentity?: unknown; generation?: unknown } | undefined, options: IngestOptions, refresh: () => Promise<unknown>) {
     const room = typeof detail?.cacheIdentity === 'string' ? this.partitions.get(detail.cacheIdentity) : undefined;
-    if (!room || room.generation !== detail?.generation) return;
-    room.settled = true;
-    if (room.ready && await this.verifyProperties(options)) {
-      await this.saveRoom(room);
-      return this.partitions.get(room.id) === room;
-    }
+    if (!room?.ready || room.generation !== detail?.generation) return;
+    const permit = room.permit = {}, epoch = this.epoch, turn = this.cacheTurn;
+    const current = () => this.epoch === epoch && this.cacheTurn === turn && this.partitions.get(room.id) === room && room.permit === permit;
+    // Even a previously indexed path can have a different final value.
+    let needsAck = this.reloadRequired, flush = false;
+    try {
+      await sliced([...this.paths], options, path => {
+        if (!current() || this.route(path, true) !== room) return;
+        if (this.index.hasPending(path)) flush = true;
+        else if (!this.dirty.has(path)) this.auditPath(path, false);
+        if (this.dirty.has(path) || this.index.hasPending(path)) needsAck = true;
+      });
+      // The continuation owns this exact event's permit. An ordinary refresh
+      // cannot sweep deferred rooms, even if several settlements interleave.
+      if (current() && needsAck) { if (flush) this.index.flush(); await refresh(); }
+      if (current()) { await this.saveRoom(room); return this.epoch === epoch; }
+    } catch (e) { if (current()) this.storageError(e); }
   }
-  private route(path: string) {
+  private route(path: string, strict = false) {
     let h: RoomHandle | undefined;
-    try { h = this.propertySource?.roomFor?.(path); } catch { /* unavailable */ }
+    try { h = this.propertySource?.roomFor?.(path); } catch (e) { if (strict) throw e; }
     const room = h && this.partitions.get(h.cacheIdentity!);
     return room && h?.generation === room.generation ? room : undefined;
   }
@@ -95,20 +120,20 @@ export class LocalAdapter {
   }
   private cacheKey(check: () => void) { return factKey(this.app.vault.getFiles(), [this.cacheScope, this.producer, this.declaration], check); }
   private restoreFacts(): Promise<void> {
-    return this.restore ??= (async () => {
+    if (this.partitioned && this.pruned && ![...this.partitions.values()].some(r => !r.loaded)) return Promise.resolve();
+    if (this.restore) return this.restore;
+    const partitioned = this.partitioned, work = (async () => {
       if (!this.cache || this.cache.paused) return;
       if (this.propertySource && !this.partitioned) { await this.purgeFacts(); return; }
       const turn = this.cacheTurn, source = this.propertySource, current = () => turn === this.cacheTurn && source === this.propertySource && !this.cache?.paused;
       try {
-        await this.cache.prunePartitions(source ? [...this.partitions.keys()] : undefined, current);
-        if (!current()) return;
         if (source) {
-          const paths = new Map([...this.partitions.values()].map(room => [room, new Set<string>()]));
-          const budget = { bytes: 0, parts: 0 };
-          // Fingerprint the whole resolution namespace at most once per cold open,
+          if (!this.pruned) { await this.prune(); if (!current()) return; this.pruned = true; this.syncRooms(); }
+          const paths = new Map([...this.partitions.values()].filter(r => !r.loaded).map(room => [room, new Set<string>()]));
+          // Fingerprint the whole resolution namespace once per restore pass,
           // and only if a manifest exists. Keep the room binding in the final digest.
           let namespace: string | undefined;
-          const key = async (check: () => void, id: string) => digest([namespace ??= await this.cacheKey(check), id]);
+          const key = async (check: () => void, id: string) => digest([2, namespace ??= await this.cacheKey(check), id]);
           await sliced([...this.paths], { chunkRows: 256, budgetMs: 8 }, path => {
             if (!current()) return;
             const room = this.route(path); if (!room) return;
@@ -116,7 +141,7 @@ export class LocalAdapter {
           });
           for (const [room, group] of paths) {
             if (!current()) break;
-            await this.loadRoom(room, group, current, budget, key);
+            await this.loadRoom(room, group, current, this.roomBudget, key);
           }
           return;
         }
@@ -124,53 +149,57 @@ export class LocalAdapter {
         if (!current() || !rows) { this.cacheStatus = 'miss'; return; }
         if ([...rows.keys()].some(p => !this.paths.has(p)) || rows.size !== this.paths.size) throw Error('Saved facts mismatch');
         this.savedFacts = rows; this.cacheStatus = 'restored';
-      } catch (error) { if (current()) this.rejectSaved(error); }
-    })();
+      } catch (error) { if (current()) { if (source) this.storageError(error); else this.rejectSaved(error); } }
+    })().finally(() => { if (partitioned && this.restore === work) this.restore = undefined; });
+    return this.restore = work;
   }
   private async loadRoom(room: RoomPartition, paths: Set<string>, owned: () => boolean, budget: { bytes: number; parts: number }, key: (check: () => void, id: string) => Promise<string>) {
-    const current = () => owned() && this.partitions.get(room.id) === room;
+    const current = () => !!(owned() && this.partitions.get(room.id) === room && this.inventory()?.some(h => h.cacheIdentity === room.id && h.generation === room.generation));
+    const admitted = { ...budget };
     try {
-      const rows = await this.cache!.load(check => key(check, room.id), current, room.id, budget);
+      const rows = await this.cache!.load(check => key(check, room.id), current, room.id, admitted);
       if (!owned()) return;
-      this.syncRooms(); if (!current() || !rows) return;
+      this.syncRooms(); if (!current()) return; room.loaded = true; if (!rows) return;
       if (rows.size !== paths.size || [...rows.keys()].some(p => !paths.has(p) || this.route(p) !== room)) throw Error('Saved facts mismatch');
+      Object.assign(budget, admitted);
       for (const [path, row] of rows) { this.savedFacts.set(path, row); this.savedOwners.set(path, room.id); }
       this.cacheStatus = 'restored';
-    } catch (error) { if (current()) { this.storageError(error); await this.cache!.dropPartition(room.id).catch(error => this.storageError(error)); } }
+    } catch (error) { if (current()) { room.loaded = true; this.storageError(error); await this.cache!.dropPartition(room.id, current).catch(error => this.storageError(error)); } }
   }
   private async saveRoom(room: RoomPartition) {
-    if (this.cache?.paused || !this.cache || this.reloadRequired || this.ingesting || !room.settled || !room.ready || room.writing || room.savedVersion === this.factVersion) return;
-    const version = this.factVersion, turn = this.cacheTurn, current = () => turn === this.cacheTurn && version === this.factVersion && !this.cache?.paused && this.partitions.get(room.id) === room && room.ready;
-    const commit = () => { if (!current()) return false; this.syncRooms(); return current(); };
-    const paths: string[] = []; room.writing = true;
+    const permit = room.permit;
+    if (!this.cache || this.cache.paused || this.reloadRequired || this.ingesting || !permit || room.writing) return;
+    const version = this.factVersion, epoch = this.epoch;
+    const current = () => epoch === this.epoch && version === this.factVersion && !this.cache?.paused && this.partitions.get(room.id) === room && room.permit === permit;
+    const paths = new Map<string, string>(), links = this.declaration?.edges.filter(e => e.kind === 'producer') ?? [];
+    if (links.some(e => e.producer !== this.producer)) return;
+    const confirmed = (path: string) => {
+      if (this.dirty.has(path) || this.index.hasPending(path) || links.length && !Object.hasOwn(this.app.metadataCache.resolvedLinks, path)) return;
+      const row = this.read(path, true);
+      if (row && this.stamp(row) === this.sent.get(path)) return row;
+      this.auditPath(path);
+    };
+    // No host routing revision exists. Recheck the exact set and the values
+    // immediately on each side of the uncancellable publication operation.
+    const commit = () => {
+      this.syncRooms(); if (!current() || this.ingesting || this.reloadRequired) return false;
+      for (const path of this.paths) if ((this.route(path, true) === room) !== paths.has(path) || paths.has(path) && (paths.get(path) !== this.sent.get(path) || !confirmed(path))) return false;
+      return true;
+    };
+    room.writing = true;
     try {
-      // No other room's readiness authorizes or blocks this partition. Links
-      // still require the actual declared native producer and resolved sources.
-      const links = this.declaration?.edges.filter(e => e.kind === 'producer') ?? [];
-      if (links.some(e => e.producer !== this.producer)) return;
       let ready = true;
       await sliced([...this.paths], { chunkRows: 256, budgetMs: 8 }, path => {
-        if (!ready || !current() || this.route(path) !== room) return;
-        paths.push(path);
-        if (this.pendingPropertyPaths.has(path) || this.dirty.has(path) || this.index.hasPending(path) || links.length && !Object.hasOwn(this.app.metadataCache.resolvedLinks, path)) ready = false;
+        if (ready && current() && this.route(path, true) === room) { ready = !!confirmed(path); if (ready) paths.set(path, this.sent.get(path)!); }
       });
-      if (!ready || !paths.length || !commit()) return;
-      const adapter = this;
-      function* rows() { for (const path of paths) {
-        const row = adapter.read(path);
-        if (!row || adapter.route(path) !== room || adapter.pendingPropertyPaths.has(path)) throw Error('Room facts changed');
-        yield row;
-      } }
-      await this.cache.save(async check => digest([await this.cacheKey(check), room.id]), rows(), current, commit, room.id);
-      if (current()) { room.savedVersion = version; this.cacheStatus = 'saved'; this.factError = ''; }
+      if (!ready || !paths.size || !current()) return;
+      function* rows() { for (const path of paths.keys()) { const row = confirmed(path); if (!row) throw Error('Room facts changed'); yield row; } }
+      await this.cache.save(async check => digest([2, await this.cacheKey(check), room.id]), rows(), current, commit, room.id);
+      if (current()) { room.permit = undefined; this.cacheStatus = 'saved'; this.factError = ''; }
     } catch (error) { if (current()) this.storageError(error); } finally { room.writing = false; }
   }
   async saveFacts() {
-    if (this.propertySource) {
-      this.syncRooms();
-      for (const room of [...this.partitions.values()]) if (room.settled && room.ready) await this.saveRoom(room);
-      return;
-    }
+    if (this.propertySource) return;
     if (!this.cache || this.cache.paused || !this.sentComplete || !this.factsComplete() || this.dirty.size || [...this.paths].some(p => this.index.hasPending(p)) || this.savedVersion === this.factVersion) return;
     const turn = this.cacheTurn, version = this.factVersion;
     const current = () => turn === this.cacheTurn && version === this.factVersion && !this.propertySource && !this.cache?.paused && this.factsComplete();
@@ -203,7 +232,7 @@ export class LocalAdapter {
   private ingesting = false;
   private stamp(row: FactRow | undefined) {
     if (!row) return;
-    const text = JSON.stringify([row, this.indexed.has(row.path), !this.pendingPropertyPaths.has(row.path)]);
+    const text = JSON.stringify([row, this.indexed.has(row.path), this.propertySource ? true : !this.pendingPropertyPaths.has(row.path)]);
     // Two hash lanes plus length make accidental equality unlikely without retaining JSON rows.
     // Not an authenticity check: collisions can delay a notification, never change source facts.
     return `${text.length}:${hashEdge(text).join(':')}`;
@@ -212,11 +241,11 @@ export class LocalAdapter {
   setPropertySource(source?: PropertySource, startup = false, siblingsCurrent = false) {
     const same = source === this.propertySource, wasPartitioned = this.partitioned;
     if (!same) {
-      this.propertySource = source;
+      this.propertySource = source; this.restore = undefined; this.pruned = false;
       if (wasPartitioned && this.partitioned) {
         // Preserve partitions with equal bindings, but do not inherit a settled
         // event or asynchronous work from the previous provider object.
-        for (const [id, room] of this.partitions) this.partitions.set(id, { ...room, settled: false, writing: false });
+        for (const [id, room] of this.partitions) this.partitions.set(id, { ...room, permit: undefined, writing: false });
       } else {
         this.partitions.clear();
         if (!startup || !this.partitioned) void this.purgeFacts();
@@ -335,15 +364,20 @@ export class LocalAdapter {
       current(); this.reloadRequired = false;
       this.seedComplete = this.indexed.size === this.paths.size;
       if (this.seedComplete && [...this.paths].every(path => Object.hasOwn(this.app.metadataCache.resolvedLinks, path))) this.linksResolved = true;
-      this.sentComplete = this.factsComplete(); finished = true;
+      this.ingesting = false; this.sentComplete = this.factsComplete(); finished = true;
     } catch (error) {
       current(); if (!this.savedFacts.size) throw error;
       this.rejectSaved(error);
       yield* this.columns(true, options); finished = true;
     } finally {
       this.ingesting = false;
-      if (!finished) this.invalidate();
+      if (!finished) this.invalidate(this.partitioned);
       else if (this.dirty.size) this.onChange(new Set(this.dirty.keys()));
+    }
+  }
+  private auditPath(path: string, notify = true) {
+    if (this.ingesting || this.stamp(this.read(path)) !== this.sent.get(path)) {
+      this.dirty.set(path, ++this.changeVersion); this.pendingPropertyPaths.add(path); this.indexed.delete(path); if (notify) this.index.change(path);
     }
   }
   /** Native resolver bursts share a paced, epoch-bound pending-path audit.
@@ -373,12 +407,8 @@ export class LocalAdapter {
             const file = this.app.vault.getAbstractFileByPath(path);
             if (file instanceof TFile && this.app.metadataCache.getFileCache(file) == null) return;
           }
-          if (refresh || !this.indexed.has(path)) {
-            if (this.ingesting || this.stamp(this.read(path)) !== this.sent.get(path)) {
-              this.dirty.set(path, ++this.changeVersion);
-              this.pendingPropertyPaths.add(path); this.indexed.delete(path); this.index.change(path);
-            }
-          } else this.read(path);
+          if (refresh || this.propertySource || !this.indexed.has(path)) this.auditPath(path);
+          else this.read(path);
         });
       } while (this.propertyAuditAgain && turn === this.epoch);
       return turn === this.epoch;
@@ -387,17 +417,20 @@ export class LocalAdapter {
   coverage() { return { indexed: this.indexed.size, listed: this.paths.size }; }
   linksPending() { return this.declaration?.edges.some(e => e.kind === 'producer' && (e.producer !== this.producer || !this.linksResolved)) ?? false; }
   pendingProperties() { return this.pendingPropertyPaths.size; }
-  factsComplete() { return this.pendingPropertyPaths.size === 0 && !this.linksPending(); }
-  private read(path: string): FactRow | undefined {
+  factsComplete() { return this.pendingPropertyPaths.size === 0 && !this.linksPending() && (!this.propertySource || !this.ingesting && !this.dirty.size); }
+  private read(path: string, verifiedDerived = false): FactRow | undefined {
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!(file instanceof TFile) || file.extension !== 'md' || !this.kept(path)) { this.indexed.delete(path); if (this.paths.has(path)) this.pendingPropertyPaths.add(path); else this.pendingPropertyPaths.delete(path); return undefined; }
     const fact = this.propertySource?.get(path);
     const usable = fact?.source === 'derived' && fact.state === 'current' && !fact.parseError && !fact.truncated;
+    if (verifiedDerived && (!usable || fact.verified !== true)) return;
     const cache = usable ? null : this.app.metadataCache.getFileCache(file);
-    if (usable || cache != null) this.indexed.add(path); else this.indexed.delete(path);
-    if (usable ? fact.verified === true : cache != null) this.pendingPropertyPaths.delete(path); else this.pendingPropertyPaths.add(path);
+    if (!verifiedDerived) {
+      if (usable || cache != null) this.indexed.add(path); else this.indexed.delete(path);
+      if (usable ? fact.verified === true : cache != null) this.pendingPropertyPaths.delete(path); else this.pendingPropertyPaths.add(path);
+    }
     if (!usable && cache == null && !fact && this.savedFacts.has(path) && (!this.propertySource || this.savedOwners.has(path) && this.route(path)?.id === this.savedOwners.get(path))) return this.savedFacts.get(path);
-    this.forget(path);
+    if (!verifiedDerived) this.forget(path);
     const fm = (usable ? fact.frontmatter : cache?.frontmatter) ?? {}, properties = Object.create(null) as Record<string, unknown>;
     for (const key of this.keys ?? Object.keys(fm)) if (key !== 'position' && Object.hasOwn(fm, key)) properties[key] = fm[key];
     // Derived properties never invent the declared native producer's targets.

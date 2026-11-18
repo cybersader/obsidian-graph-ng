@@ -4,7 +4,7 @@ The owner-approved bounded download ceilings for this UI pass are **435,000 raw 
 
 ## Unreleased room-scoped startup facts
 
-- Replay compatible saved facts provisionally per mounted room when OpenClast supplies both `roomFor(path)` and `rooms()`. A verified settled room can save independently; revocation removes only its partition. Hosts without the new routing contract still use derived facts without caching them.
+- Replay compatible saved facts provisionally per mounted room when OpenClast supplies both `roomFor(path)` and `rooms()`. A verified settlement can save only its own acknowledged derived rows; routing is checked before and after manifest publication. Revocation retires live fallback, while an empty or unavailable inventory defers disk pruning. Room handle loads run one at a time. Hosts without the new routing contract still use derived facts without caching them.
 
 ## Unreleased device-local performance state
 

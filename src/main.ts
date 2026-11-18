@@ -1,3 +1,4 @@
+import { latestWork, type WorkQueue } from './adapter/latest-work';
 import { devicePerformance, performanceRecords, type PerformanceRecord } from './performance';
 import { DevicePerformanceStore, sharedPerformanceData } from './device-performance';
 import { performanceChoices, performanceSettings, type PerformanceChoice, performanceControls, showPerformanceSuggestions } from './performance-ui';
@@ -143,9 +144,23 @@ export default class GraphPlugin extends Plugin {
   }
   propertySource?: PropertySource;
   propertyRevision = 0;
+  loadProperties?: () => Promise<void>;
   /** Public optional host capability; listener ownership never transfers the provider. */
   watchProperties(host = globalThis) {
     let active = true, verifying = false, pending = false, timer: ReturnType<typeof setTimeout> | undefined;
+    // Across view opens, grant swaps and plugin reloads in this window. The
+    // room-aware aggregate load fans out internally; never call it on that API.
+    const key = Symbol.for('graph-ng.property-loads'), queue = (host as unknown as Record<symbol, WorkQueue>)[key] ??= { work: Promise.resolve() };
+    this.loadProperties = () => latestWork(queue, async () => {
+      const source = this.propertySource;
+      if (!active || !source) return;
+      if (source.rooms) {
+        for (const handle of source.rooms()) {
+          if (!active || source !== this.propertySource) break;
+          if (source.rooms().includes(handle)) await handle.load?.();
+        }
+      } else if (!source.roomFor && !('room' in source)) await source.load?.();
+    });
     const verify = () => {
       if (!active || timer !== undefined || verifying) return;
       timer = setTimeout(async () => {
@@ -162,17 +177,18 @@ export default class GraphPlugin extends Plugin {
       if (observed === this.adapter.roomRevision && source === previous && (event as CustomEvent | undefined)?.detail?.invalidated === false) { pending = true; verify(); return; }
       clearTimeout(timer); timer = undefined; pending = false;
       this.propertySource = source; this.propertyRevision++;
-      this.adapter.setPropertySource(source, !event, observed !== this.adapter.roomRevision); observed = this.adapter.roomRevision; this.ingestedHash = '';
+      const moved = observed !== this.adapter.roomRevision;
+      this.adapter.setPropertySource(source, !event, moved); observed = this.adapter.roomRevision; this.ingestedHash = '';
       for (const leaf of this.app.workspace.getLeavesOfType(VIEW)) (leaf.view as GraphView).invalidateSource();
       this.notify();
-      if (source && source !== previous) void Promise.resolve().then(() => active && source === this.propertySource && source.load?.()).catch(() => {});
+      if (source && (source !== previous || moved)) void this.loadProperties?.();
     };
     const settled = (event: Event) => {
       const source = (host as typeof globalThis & { openclast?: { propertyFacts?: PropertySource } }).openclast?.propertyFacts;
       if (source === this.propertySource) this.adapter.syncRooms();
       if (source !== this.propertySource || observed !== this.adapter.roomRevision) changed(event);
       const revision = this.propertyRevision;
-      void this.adapter.onRoomSettled((event as CustomEvent).detail, this.settings.ingest).then(current => {
+      void this.adapter.onRoomSettled((event as CustomEvent).detail, this.settings.ingest, () => this.notify()).then(current => {
         if (current && active && revision === this.propertyRevision) for (const leaf of this.app.workspace.getLeavesOfType(VIEW)) (leaf.view as GraphView).promoteProperties();
       });
     };
@@ -504,8 +520,7 @@ export class GraphView extends ItemView {
     // Creating even a probe GL context can block; the initial group view needs no GPU.
     this.registerEvent(this.app.workspace.on('css-change', () => this.renderer?.refreshTheme?.()));
     this.unsubscribe = this.plugin.subscribe(() => this.refresh());
-    const source = this.plugin.propertySource;
-    void Promise.resolve().then(() => !this.closed && source === this.plugin.propertySource && source?.load?.()).catch(() => {});
+    void this.plugin.loadProperties?.();
     await this.refresh();
   }
   /** How far the open graph tools panel reaches over the stage from its right edge (CSS px). */
@@ -656,7 +671,7 @@ export class GraphView extends ItemView {
       this.buildProgress.text(4); this.contentEl.dataset.state = 'ready'; this.statusText = this.provisional ? pendingText(report) : this.layoutSettled ? '' : 'Layout not settled';
       this.contentEl.dataset.layoutMs = String(layout.milliseconds); this.contentEl.dataset.cached = String(layout.cached);
       if (this.presentation === 'nodes') await this.showDetails();
-      if (current() && (!this.provisional || this.plugin.propertySource)) await this.plugin.adapter.saveFacts?.();
+      if (current() && !this.provisional && !source) await this.plugin.adapter.saveFacts?.();
       if (this.plugin.adapter.factError) this.statusText = 'Saved facts unavailable. Using host properties.';
       if (current() && !this.provisional) this.plugin.recordPerformance?.({ notes: result.nodes, edges: result.edges, ingestMs, projectMs, groupsMs: Number(this.contentEl.dataset.refreshGroupMs), layoutMs: layout.milliseconds, totalMs: performance.now() - start });
       if (layout.settled !== false && settings.persistLayout && this.plugin.store.committed !== result.meta.key && complete && !this.provisional && (!settings.declaration.edges.some(e => e.kind === 'producer') || this.plugin.adapter.linksResolved)) {
@@ -666,12 +681,12 @@ export class GraphView extends ItemView {
         this.contentEl.dataset.cacheError = await this.plugin.cache(generation, current).then(() => '', String);
       }
     } catch (e) {
-      this.plugin.adapter.invalidate(); this.plugin.ingestedHash = ''; this.provisional = true; this.contentEl.dataset.verified = 'false';
+      this.plugin.adapter.invalidate(!!this.plugin.propertySource); this.plugin.ingestedHash = ''; this.provisional = true; this.contentEl.dataset.verified = 'false';
       if (current()) { this.report = undefined; this.contentEl.dataset.state = 'error'; if (this.presentation === 'nodes') { this.contentEl.dataset.mode = 'groups'; this.showGroups(true); } this.statusText = `Projection refresh failed: ${String(e)}`; this.contributionPage.fail(`Projection refresh failed: ${String(e)}`); }
     } finally {
       heldLayout?.(false);
       await preview?.finish();
-      if (!current()) { this.plugin.adapter.invalidate(); this.plugin.ingestedHash = ''; this.contentEl.dataset.verified = 'false'; }
+      if (!current()) { this.plugin.adapter.invalidate(!!this.plugin.propertySource); this.plugin.ingestedHash = ''; this.contentEl.dataset.verified = 'false'; }
     }
   }
   /** Groups from Notes: remember the held focus so its group is ringed and a chip leads back. */

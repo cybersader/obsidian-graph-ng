@@ -152,7 +152,7 @@ test('public property source changes refresh deferred facts, reject old epochs, 
   host.dispatchEvent(new Event('oc:property-facts-changed')); // successful deferred load, no native event
   expect(plugin.propertyRevision).toBe(revision + 1); expect(notifications).toBe(3); expect(loads).toBe(1);
   host.openclast.propertyFacts = { ...source }; host.dispatchEvent(new Event('oc:property-facts-changed'));
-  await Promise.resolve(); expect(loads).toBe(2); expect(plugin.propertySource).not.toBe(source);
+  await new Promise(r => setTimeout(r, 0)); expect(loads).toBe(2); expect(plugin.propertySource).not.toBe(source);
   cleanups.forEach(fn => fn()); const before = invalidated;
   host.dispatchEvent(new Event('oc:property-facts-changed')); expect(invalidated).toBe(before); expect(disposed).toBe(0);
 });

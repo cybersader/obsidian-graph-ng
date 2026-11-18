@@ -1,3 +1,4 @@
+import { latestWork, type WorkQueue } from './latest-work';
 import { hashBytes as sha, MAX_CHUNK_BYTES as FACT_CHUNK, type BinaryAdapter } from '../core/binary-layout';
 import type { FactRow } from '../core/projection';
 import { digest } from '../core/declaration';
@@ -10,7 +11,7 @@ type CacheKey = string | ((check: () => void) => Promise<string>);
 interface Part { bytes: number; hash: string }
 interface Manifest { format: number; key: string; parts: Part[] }
 // Retain only a void-valued queue across plugin module reloads, never loaded facts.
-interface Queue { work: Promise<void>; epoch: number }
+interface Queue extends WorkQueue { epoch: number }
 const queueKey = Symbol.for('graph-ng.startup-facts.queues');
 const queues = (globalThis as unknown as Record<symbol, WeakMap<BinaryAdapter, Map<string, Queue>>>)[queueKey] ??= new WeakMap();
 function bounded(value: unknown, depth = 0) {
@@ -52,8 +53,8 @@ export class FactCache {
   }
   // Partitions and root operations share the SAME adapter/directory queue. A root
   // clear cancels every child; retiring one identity does not cancel a sibling.
-  dropPartition(identity: string) {
-    return this.run(() => true, async check => {
+  dropPartition(identity: string, current = () => true) {
+    return this.run(current, async check => {
       const dir = await this.partition(identity); check();
       if (await this.disk.exists(dir)) { check(); await this.disk.rmdir(dir, true); }
     });
@@ -61,22 +62,30 @@ export class FactCache {
   private child(path: string, parent: string, pattern: RegExp) {
     return path.startsWith(parent + '/') && pattern.test(path.slice(parent.length + 1));
   }
-  prunePartitions(active: string[] | undefined, current: () => boolean) {
-    return this.run(current, async check => {
-      if (!await this.disk.exists(this.factDirectory)) return;
-      if (!this.disk.list || !this.disk.remove) { if (active) invalid(); return; }
-      const keep = new Set<string>();
-      for (const id of active ?? []) { check(); keep.add(await this.partition(id)); }
+  // Churn while host I/O is stuck replaces one root-owned request, not the
+  // promise tail. Its inventory and execution deadline start at service time.
+  prunePartitions(inventory: () => string[] | undefined, current: () => boolean, onError?: (e: unknown) => void) {
+    const prune = async (check: () => void) => {
+      check(); if (!await this.disk.exists(this.factDirectory) || !this.disk.list || !this.disk.remove) return;
       check(); const { folders, files } = await this.disk.list(this.factDirectory);
-      for (const dir of folders) {
-        check();
-        if (this.child(dir, this.factDirectory, /^[a-f0-9]{64}$/) && !keep.has(dir)) await this.disk.rmdir(dir, true);
+      const ids = inventory(); if (!ids?.length) return;
+      const known = new Set(ids), keep = new Set<string>();
+      for (const id of known) { check(); keep.add(await this.partition(id)); }
+      // Hashing and each deletion yield. A fresh successful inventory must
+      // contain no unaccounted-for identity at the call to destructive I/O.
+      const safe = () => { check(); const live = inventory(); return live?.length && live.every(id => known.has(id)); };
+      for (const dir of folders) if (this.child(dir, this.factDirectory, /^[a-f0-9]{64}$/) && !keep.has(dir)) {
+        if (!safe()) return; await this.disk.rmdir(dir, true);
       }
-      // Native generations predate partition directories. Retire just their files.
-      if (active) for (const file of files) {
-        check();
-        if (this.child(file, this.factDirectory, /^(manifest\.json|\d+\.bin)$/)) await this.disk.remove(file);
+      for (const file of files) if (this.child(file, this.factDirectory, /^(manifest\.json|\d+\.bin)$/)) {
+        if (!safe()) return; await this.disk.remove(file);
       }
+    };
+    if (!onError) return this.run(current, prune);
+    const epoch = this.queue.epoch;
+    void latestWork(this.queue, async () => {
+      const until = performance.now() + this.deadlineMs;
+      await prune(() => { if (!current() || epoch !== this.queue.epoch || performance.now() >= until) throw Error('Saved facts reconciliation stopped'); }).catch(onError);
     });
   }
   load(key: CacheKey, current: () => boolean, identity?: string, budget = { bytes: 0, parts: 0 }): Promise<Map<string, FactRow> | undefined> {
@@ -89,11 +98,14 @@ export class FactCache {
       if (!size || size > FACT_CHUNK) invalid();
       check(); const m: Manifest = JSON.parse(await this.disk.read(path));
       if (m.format !== FACT_FORMAT || m.key !== key) { check(); await this.disk.rmdir(dir, true); check(); return; }
-      if (!Array.isArray(m.parts) || (budget.parts += m.parts.length) > 4096) invalid();
+      if (!Array.isArray(m.parts) || m.parts.length > 4096) invalid();
+      if (budget.parts + m.parts.length > 4096) return;
+      let bytesRead = 0;
       const rows = new Map<string, FactRow>();
       for (let i = 0; i < m.parts.length; i++) {
         check(); const p = m.parts[i]!;
-        if (!Number.isSafeInteger(p.bytes) || p.bytes < 1 || p.bytes > FACT_CHUNK || typeof p.hash !== 'string' || !/^[a-f0-9]{64}$/.test(p.hash) || (budget.bytes += p.bytes) > FACT_BYTES) invalid();
+        if (!Number.isSafeInteger(p.bytes) || p.bytes < 1 || p.bytes > FACT_CHUNK || typeof p.hash !== 'string' || !/^[a-f0-9]{64}$/.test(p.hash) || (bytesRead += p.bytes) > FACT_BYTES) invalid();
+        if (budget.bytes + bytesRead > FACT_BYTES) return;
         const file = `${dir}/${i}.bin`;
         if ((await this.disk.stat(file))?.size !== p.bytes) invalid();
         check(); const bytes = new Uint8Array(await this.disk.readBinary(file));
@@ -108,7 +120,7 @@ export class FactCache {
         }
         await this.yieldNow();
       }
-      check(); return rows;
+      check(); budget.parts += m.parts.length; budget.bytes += bytesRead; return rows;
     });
   }
   save(key: CacheKey, rows: Iterable<FactRow>, current: () => boolean, commitCurrent = current, identity?: string) {

@@ -56,7 +56,7 @@ test('saved native facts never override selected derived verified:false or persi
 // Drive public room discovery and window events, including a cold plugin restart.
 const directory = 'plugin/cache/startup-facts';
 const roomDir = async (id: string) => `${directory}/${await digest(id)}`;
-async function contractFixture(disk = new MemoryAdapter(), firstId = 'ocpf1:room-a', missing?: 'rooms' | 'roomFor') {
+async function contractFixture(disk = new MemoryAdapter(), firstId = 'ocpf1:room-a', missing?: 'rooms' | 'roomFor', prepare?: (source: PropertySource) => void) {
   const { default: GraphPlugin } = await import('../src/main');
   const a = { cacheIdentity: firstId as string | undefined, generation: 1, complete: true, verifiedComplete: true }, b = { ...a, cacheIdentity: 'ocpf1:room-b' };
   const handles = [a, b];
@@ -65,7 +65,7 @@ async function contractFixture(disk = new MemoryAdapter(), firstId = 'ocpf1:room
     const row = live.get(path);
     return row && { source: 'derived', state: 'current', verified: row.verified, frontmatter: { id: path, category: row.category } };
   } };
-  if (missing) delete source[missing];
+  if (missing) delete source[missing]; prepare?.(source);
   const f = fixture(), cleanup: (() => void)[] = [], host = Object.assign(new EventTarget(), { openclast: { propertyFacts: source } });
   const unmounted = new FixtureFile('unmounted.md'); Object.assign(unmounted.stat, { mtime: 100 }); f.files.push(unmounted);
   const plugin = Object.assign(Object.create(GraphPlugin.prototype), { adapter: f.adapter, settings: { debounceMs: 5, ingest: { chunkRows: 1, budgetMs: 8 } },
@@ -76,7 +76,7 @@ async function contractFixture(disk = new MemoryAdapter(), firstId = 'ocpf1:room
   f.adapter.onRoomSettled = (...args) => settledWork = record(...args);
   const settle = async (h = a) => { settledWork = undefined; send('oc:property-facts-settled', { generation: h.generation, cacheIdentity: h.cacheIdentity }); await settledWork; };
   const fill = (path: string) => live.set(path, { category: `Saved ${path}`, verified: true });
-  return { ...f, a, b, handles, source, fill, live, disk, settle, send, close() { cleanup.forEach(fn => fn()); f.dispose(); } };
+  return { ...f, plugin, a, b, handles, source, fill, live, disk, settle, send, close() { cleanup.forEach(fn => fn()); f.dispose(); } };
 }
 async function savedContract() {
   const f = await contractFixture();
@@ -554,4 +554,140 @@ test('value batching counts sparse arrays as their persisted null entries', asyn
   await store.save('key', rows, () => true);
   expect(JSON.parse(await disk.read(`${directory}/manifest.json`)).parts.length).toBe(2);
   expect([...(await store.load('key', () => true))!.values()]).toEqual(JSON.parse(JSON.stringify(rows)));
+});
+
+// Exercise scheduling at real adapter boundaries: storage I/O, window events and worker batch acknowledgement.
+for (const at of ['chunk', 'manifest']) test(`contract: nested mount takes ownership during ${at} publication`, async () => {
+  const f = await contractFixture();
+  try {
+    let nested = false; const note = 'mount/nested/synthetic.md'; f.files[0]!.path = note;
+    f.source.rooms = () => nested ? [f.a, f.b] : [f.a];
+    f.source.roomFor = p => nested && p.startsWith('mount/nested/') ? f.b : p.startsWith('mount/') ? f.a : undefined;
+    f.source.get = p => p === note ? { source: 'derived', state: 'current', verified: true, frontmatter: { id: p } } : undefined;
+    f.send('oc:property-facts-changed'); await f.rows();
+    if (at === 'chunk') { const write = f.disk.writeBinary.bind(f.disk); f.disk.writeBinary = async (p, b) => { await write(p, b); nested = true; }; }
+    else { const write = f.disk.write.bind(f.disk); f.disk.write = async (p, s) => { await write(p, s); nested = true; }; }
+    await f.settle(f.a); expect(nested).toBe(true);
+    expect(await f.disk.exists(await roomDir(f.a.cacheIdentity!) + '/manifest.json')).toBe(false);
+  } finally { f.close(); }
+});
+test('contract: settlement waits for acknowledgement of the replacement worker value', async () => {
+  const f = await contractFixture();
+  try {
+    f.fill('b.md'); f.fill('unmounted.md'); f.live.set('a.md', { category: 'first', verified: false });
+    expect((await f.rows())[0]!.properties.category).toBe('first');
+    let requested!: () => void, release!: () => void; const refresh = new Promise<void>(r => requested = r), hold = new Promise<void>(r => release = r);
+    f.plugin.notify = () => { requested(); return hold; };
+    f.live.set('a.md', { category: 'settled', verified: true }); const settling = f.settle(); await Promise.race([settling, refresh]);
+    expect(f.adapter.factsComplete()).toBe(false); expect(f.disk.writes).toBe(0);
+    f.adapter.index.flush(); const gen = f.adapter.columns(false, { chunkRows: 1, budgetMs: 8 });
+    const next = await gen.next(); expect(next.done).toBeFalsy();
+    expect(unpackRows(next.value!.columns)[0]!.properties.category).toBe('settled');
+    expect(f.adapter.factsComplete()).toBe(false); await gen.next();
+    expect(f.adapter.factsComplete()).toBe(true); release(); await settling; expect(f.disk.writes).toBe(1);
+  } finally { f.close(); }
+});
+test('contract: native display fallback never supplies a derived partition', async () => {
+  const f = await contractFixture();
+  try {
+    f.caches.set('a.md', { frontmatter: { category: 'native only' } });
+    expect((await f.rows())[0]!.properties.category).toBe('native only'); await f.settle(); expect(f.disk.writes).toBe(0);
+  } finally { f.close(); }
+});
+test('contract: readiness after an unverified event does not authorize a save', async () => {
+  const f = await contractFixture();
+  try { f.fill('a.md'); await f.rows(); f.a.verifiedComplete = false; await f.settle(); f.a.verifiedComplete = true;
+    await f.adapter.saveFacts(); expect(f.disk.writes).toBe(0); await f.settle(); expect(f.disk.writes).toBe(1);
+  } finally { f.close(); }
+});
+test('contract: a settlement-triggered view refresh cannot retry another room', async () => {
+  const f = await contractFixture();
+  try {
+    await f.rows(); f.fill('b.md'); await f.settle(f.b); expect(f.disk.writes).toBe(0);
+    let joining: Promise<void> | undefined, release!: () => void; const gate = new Promise<void>(r => release = r);
+    f.plugin.notify = () => joining = (async () => { await gate; f.adapter.index.flush(); await f.rows(); await f.adapter.saveFacts(); })();
+    f.a.cacheIdentity = 'ocpf1:new-a'; const settled = f.settle(); release(); expect(joining).toBeDefined(); await settled; await joining;
+    expect(await f.disk.exists(await roomDir(f.b.cacheIdentity) + '/manifest.json')).toBe(false);
+  } finally { f.close(); }
+});
+test('contract: a mount arriving during listing survives pruning', async () => {
+  const disk = await savedContract(), f = await contractFixture(disk); f.handles.pop(); f.send('oc:property-facts-changed');
+  try {
+    const list = disk.list.bind(disk); let first = true;
+    disk.list = async p => { if (first && p === directory) { first = false; f.handles.push(f.b); f.send('oc:property-facts-changed', { invalidated: false }); } return list(p); };
+    await f.rows(); expect(first).toBe(false); expect(await disk.exists(await roomDir(f.b.cacheIdentity) + '/manifest.json')).toBe(true);
+    expect((await f.rows())[1]!.properties.category).toBe('Saved b.md');
+  } finally { f.close(); }
+});
+test('contract: failed room inventory is not evidence of retirement', async () => {
+  const disk = await savedContract(), f = await contractFixture(disk);
+  try { await f.rows(); const rooms = f.source.rooms; f.source.rooms = () => { throw Error('inventory unavailable'); };
+    f.adapter.syncRooms(); await new FactCache(disk, directory).load('unused', () => true, 'ocpf1:barrier');
+    expect(disk.files.size).toBe(4); f.source.rooms = rooms; expect((await f.rows())[1]!.properties.category).toBe('Saved b.md');
+  } finally { f.close(); }
+});
+test('contract: malformed part counts do not spend a healthy sibling’s load budget', async () => {
+  const disk = await savedContract(), f = await contractFixture(disk);
+  try { const path = await roomDir(f.a.cacheIdentity!) + '/manifest.json', m = JSON.parse(await disk.read(path));
+    m.parts = Array(4097).fill(null); await disk.write(path, JSON.stringify(m));
+    expect((await f.rows())[1]!.properties.category).toBe('Saved b.md'); expect(await disk.exists(path)).toBe(false);
+    expect(await disk.exists(await roomDir(f.b.cacheIdentity) + '/manifest.json')).toBe(true);
+  } finally { f.close(); }
+});
+for (const during of ['stream', 'initial read']) test(`contract: sibling fallback survives reset during ${during}`, async () => {
+  const disk = await savedContract(), f = await contractFixture(disk);
+  try {
+    if (during === 'stream') { const gen = f.adapter.columns(true, { chunkRows: 1, budgetMs: 8 }); await gen.next();
+      f.a.cacheIdentity = undefined; f.send('oc:property-facts-changed', { invalidated: false }); await gen.return(undefined);
+    } else { const read = disk.readBinary.bind(disk); let first = true;
+      disk.readBinary = async p => { const bytes = await read(p); if (first) { first = false; f.fill('a.md'); f.send('oc:property-facts-changed'); } return bytes; };
+      await f.rows(); expect(first).toBe(false);
+    }
+    expect((await f.rows())[1]!.properties.category).toBe('Saved b.md');
+  } finally { f.close(); }
+});
+test('contract: native restore is independent of optional partition listing', async () => {
+  const s = await savedFixture(), f = s.boot(); s.disk.list = async () => { throw Error('list unavailable'); };
+  try { expect(await f.rows()).toEqual(s.rows); expect(s.disk.files.size).toBe(2); } finally { f.dispose(); }
+});
+test('contract: hung storage retains a single reconciliation across identity churn', async () => {
+  const disk = await savedContract(), f = await contractFixture(disk), store = new FactCache(disk, directory);
+  try { await f.rows(); let started!: () => void, release!: () => void;
+    const waiting = new Promise<void>(r => started = r), hold = new Promise<void>(r => release = r), exists = disk.exists.bind(disk);
+    disk.exists = async p => { started(); await hold; return exists(p); };
+    const blocker = store.load('unused', () => true, 'ocpf1:barrier'); await waiting;
+    const queues = (globalThis as any)[Symbol.for('graph-ng.startup-facts.queues')], tails = new Set();
+    for (let i = 0; i < 100; i++) { f.a.cacheIdentity = `ocpf1:changed-${i}`; f.adapter.syncRooms(); tails.add(queues.get(disk).get(directory).work); }
+    release(); await blocker; await store.load('unused', () => true, 'ocpf1:barrier');
+    expect(tails.size).toBe(1); expect(await exists(await roomDir('ocpf1:room-a'))).toBe(false); expect(await exists(await roomDir(f.b.cacheIdentity))).toBe(true);
+  } finally { f.close(); }
+});
+
+test('contract: empty disposed inventory drops fallback but defers disk pruning to a nonempty inventory', async () => {
+  const disk = await savedContract(), f = await contractFixture(disk), a = await roomDir(f.a.cacheIdentity!), b = await roomDir(f.b.cacheIdentity);
+  const barrier = () => new FactCache(disk, directory).load('unused', () => true, 'ocpf1:barrier');
+  try {
+    await f.rows(); f.source.rooms = () => Object.freeze([]); f.source.roomFor = () => undefined;
+    f.send('oc:property-facts-changed'); expect(f.adapter.savedCopy).toBe(false); await f.rows(); await barrier();
+    expect(await disk.exists(a)).toBe(true); expect(await disk.exists(b)).toBe(true);
+    f.source.rooms = () => Object.freeze([f.b]); f.source.roomFor = path => path === 'b.md' ? f.b : undefined;
+    f.send('oc:property-facts-changed'); expect((await f.rows())[1]!.properties.category).toBe('Saved b.md'); await barrier();
+    expect(await disk.exists(a)).toBe(false); expect(await disk.exists(b)).toBe(true);
+  } finally { f.close(); }
+});
+test('contract: discovery and overlapping view opens load frozen room handles one at a time', async () => {
+  const calls: string[] = []; let active = 0, peak = 0, aggregates = 0, release!: () => void;
+  const blocked = new Promise<void>(r => release = r);
+  const room = (name: string) => Object.freeze({ cacheIdentity: `ocpf1:${name}`, generation: 1, verifiedComplete: true,
+    async load() { calls.push(name); peak = Math.max(peak, ++active); try { await blocked; } finally { active--; } } });
+  const handles = Object.freeze([room('a'), room('b')]);
+  const f = await contractFixture(undefined, undefined, undefined, source => {
+    source.rooms = () => handles; source.roomFor = path => path === 'a.md' ? handles[0] : handles[1];
+    source.load = async () => { aggregates++; await Promise.all(handles.map(h => h.load())); };
+  });
+  try {
+    expect(calls).toEqual(['a']); const opens = [f.plugin.loadProperties(), f.plugin.loadProperties()];
+    expect(active).toBe(1); release(); await Promise.all(opens);
+    expect(aggregates).toBe(0); expect(peak).toBe(1); expect(calls).toContain('b'); expect(active).toBe(0);
+  } finally { release(); f.close(); }
 });
