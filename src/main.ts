@@ -6,7 +6,7 @@ import { performanceChoices, performanceSettings, type PerformanceChoice, perfor
 import { stateChip } from './view-state';
 import { disclosure, disclosureBody, panelHelp, iconButton, panelButton } from './panel-help';
 import { workingText } from './working';
-import { LayoutPreview } from './layout-preview';
+import { FrameCadence, LayoutPreview } from './layout-preview';
 import type { CoordinateToken } from './webgl-renderer';
 import { legacySizing, sizingSettings, type NodeSizingValues } from './node-sizing';
 import { generationCurrent, physicsSettings, type PhysicsValues } from './physics-controls';
@@ -789,6 +789,7 @@ export class GraphView extends ItemView {
         if (active()) {
           if (previous) renderer.adoptCamera(previous);
           this.renderer = renderer; this.layoutLabel(true);
+          if (renderer.calmLayout) this.plugin.pipeline.previewWanted?.(revision, false);
         }
         return renderer;
       }, recycle, () => current() && this.presentation === 'nodes', error => {
@@ -1072,6 +1073,16 @@ export class GraphView extends ItemView {
       let token: CoordinateToken | undefined, finish: ((committed: boolean) => void) | undefined, committed = false, working = false, painted = false, streamError: unknown;
       const stopped = this.layoutStopped, previousProgress = this.plugin.pipeline.onProgress, previousStream = this.plugin.pipeline.onPositions, previousEngine = this.plugin.pipeline.onEngine;
       const ready = () => current() && (!token || token.current());
+      const recycle = (p: Float32Array) => this.plugin.pipeline.recycle(p.buffer as ArrayBuffer);
+      const paint = (p: Float32Array) => {
+        if (!current() || !old || streamError || (painted && old.calmLayout)) { recycle(p); return; }
+        try {
+          const previous = old.streamPositions(p, painted ? 'drawing' : true);
+          if (painted) recycle(previous); // the first replaced array belongs to rollback
+          else { painted = true; this.layoutLabel(true); if (old.calmLayout) this.plugin.pipeline.previewWanted?.(revision, false); }
+        } catch (e) { if (old.positions !== p) recycle(p); streamError = e; return false; }
+      };
+      const frames = new FrameCadence(paint, recycle);
       try {
         if (this.closed || !current() || !projection || this.detailGeneration !== revision || this.contentEl?.dataset.mode === 'nodes-building' || this.plugin.settings.projectionFile) throw new Error('Layout unavailable or generation changed');
         const next = physicsSettings(this.plugin.settings, values);
@@ -1082,12 +1093,12 @@ export class GraphView extends ItemView {
         this.plugin.pipeline.onPositions = event => {
           if (event.revision !== revision || !current() || streamError) { this.plugin.pipeline.recycle(event.positions.buffer as ArrayBuffer); return false; }
           this.passSteps(event.iteration, event.total);
-          if (event.iteration > 0 && finish) { try { old!.streamPositions(event.positions, !painted); if (!painted) { this.layoutLabel(true); painted = true; } return old!.layoutPaint; } catch (e) { streamError = e; return false; } }
-          else this.plugin.pipeline.recycle(event.positions.buffer as ArrayBuffer);
+          if (event.iteration > 0 && finish && old) return !painted || old.calmLayout ? paint(event.positions) : frames.push(event.positions, old);
+          recycle(event.positions);
         };
         const result = await this.plugin.pipeline.request<LayoutResult>(revision, { kind: 'recompute', preview: { from: 1, wanted: !!finish }, options: next.layout, layoutEngine: next.layoutEngine, engineChoices: this.plugin.layoutChoices?.(), initial: this.positions!.slice() });
         this.plugin.pipeline.onProgress = previousProgress; this.plugin.pipeline.onPositions = previousStream; this.plugin.pipeline.onEngine = previousEngine;
-        this.plugin.recordLayoutEngine?.(result.engineStatus);
+        frames.clear(); this.plugin.recordLayoutEngine?.(result.engineStatus);
         requireLayout(current); if (streamError) throw streamError;
         this.layoutControl(false); this.statusText = 'Preparing graph';
         if (old && this.contentEl.dataset.mode === 'nodes') token = await old.preparePositions(result.positions, current);
@@ -1108,7 +1119,7 @@ export class GraphView extends ItemView {
           }
         } catch (error) { this.contentEl.dataset.cacheError = String(error); }
       } finally {
-        if (!committed) this.layoutStopped = stopped; this.layoutControl(false); this.plugin.pipeline.onProgress = previousProgress; this.plugin.pipeline.onPositions = previousStream; this.plugin.pipeline.onEngine = previousEngine; token?.discard();
+        frames.clear(); if (!committed) this.layoutStopped = stopped; this.layoutControl(false); this.plugin.pipeline.onProgress = previousProgress; this.plugin.pipeline.onPositions = previousStream; this.plugin.pipeline.onEngine = previousEngine; token?.discard();
         try { finish?.(committed); }
         finally { if (working) { this.layoutWorking = false; this.statusText = !committed ? LAYOUT_FAILED : this.provisional ? pendingText(this.report) : this.idleLayoutText; } }
       }
@@ -1314,7 +1325,7 @@ export class GraphView extends ItemView {
       }, this.renderView());
       if (this.closed || renderRevision !== this.renderRevision) { detail.dispose(); return; }
       this.detailRenderer = detail;
-      const moved = preview && detail.adoptCamera(preview);
+      const moved = detail.adoptCamera(preview);
       preview?.dispose();
       this.plugin.recordPerformance?.({ notes: projection.nodeCount, edges: projection.source.length, labelsMs: this.detailRenderer.timings.labels, labelUploadMs: this.detailRenderer.timings.labelUpload });
       this.renderer = this.detailRenderer; this.contentEl.dataset.mode = 'nodes'; this.detailFallback = ''; this.statusText = this.statusText;

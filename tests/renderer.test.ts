@@ -38,6 +38,37 @@ test('every production shader retains identical tokens after expanding private n
   });
 });
 
+test('submit all five program links before any status read; clean up every handle on partial failure', async () => {
+  const { DetailRenderer } = await import('../src/webgl-renderer');
+  const r: any = Object.create(DetailRenderer.prototype), links: number[] = [], observed: number[] = [], deleted: number[] = [], shaders: number[] = [];
+  let id = 0, shader = 0;
+  Object.assign(r, { programs: [], settings: { workerTimeoutMs: 1000, shaderPollMs: 1 }, timings: {}, gl: {
+    LINK_STATUS: 2, getExtension: () => ({ COMPLETION_STATUS_KHR: 1 }), createProgram: () => ++id, createShader: () => ++shader,
+    shaderSource() {}, compileShader() {}, attachShader() {}, linkProgram(p: number) { links.push(p); },
+    getProgramParameter(p: number, key: number) { observed.push(links.length); return key === 1 || p !== 3; },
+    getProgramInfoLog: () => 'synthetic failure', getUniformLocation() {}, isContextLost: () => false,
+    deleteShader(s: number) { shaders.push(s); }, deleteProgram(p: number) { deleted.push(p); },
+  } });
+  await expect(r.initialize()).rejects.toThrow('synthetic failure');
+  expect(links).toEqual([1, 2, 3, 4, 5]); expect(new Set(observed)).toEqual(new Set([5]));
+  expect(deleted.sort()).toEqual(links); expect(new Set(shaders).size).toBe(10); expect(r.programs).toEqual([]);
+});
+
+test('an interrupted compile batch cannot publish into restored program slots', async () => {
+  const { DetailRenderer } = await import('../src/webgl-renderer');
+  for (const interruption of ['lost', 'restored']) {
+    const r: any = Object.create(DetailRenderer.prototype), slots: unknown[] = [], discarded: number[] = [];
+    let done!: () => void, n = 0, lost = false;
+    const release = new Promise<void>(resolve => { done = resolve; });
+    Object.assign(r, { programs: slots, timings: {}, gl: { isContextLost: () => lost, deleteProgram(p: number) { discarded.push(p); } },
+      async program() { const handle = ++n; await release; return { handle }; } });
+    const init = r.initialize();
+    if (interruption === 'lost') lost = true; else r.programs = [];
+    done(); await expect(init).rejects.toThrow('Renderer superseded');
+    expect(slots).toEqual([]); expect(r.programs).toEqual([]); expect(discarded.sort()).toEqual([1, 2, 3, 4, 5]);
+  }
+});
+
 test('indexed node and curve VAOs preserve triangle order through the segment ceiling and reinitialize', async () => {
   const { DetailRenderer } = await import('../src/webgl-renderer');
   const source = readZoomProbeSource(new URL('../src/webgl-renderer.ts', import.meta.url), 'utf8');
@@ -51,7 +82,7 @@ test('indexed node and curve VAOs preserve triangle order through the segment ce
     projection: { source: new Uint32Array([0]), target: new Uint32Array([1]) }, edgeTier: new Uint8Array(1), lineRanks: new Uint32Array(1), sizes: new Float32Array(2),
     carrierGeometry: { enabled: new Uint8Array(1), ends: new Uint32Array(1), nodes: new Uint32Array(2) }, theme: { palette: new Uint8Array(1024) },
     programs: [], vaos: [], buffers: [], discBuffers: [], async program() { return {}; }, async waitForResize() {}, resize() {}, texture() {}, uploadPalette() {}, uploadLens() {}, uploadView() {}, refresh() {},
-    gl: { ELEMENT_ARRAY_BUFFER: 1, ARRAY_BUFFER: 2, STATIC_DRAW: 3,
+    gl: { isContextLost: () => false, ELEMENT_ARRAY_BUFFER: 1, ARRAY_BUFFER: 2, STATIC_DRAW: 3,
       getParameter() { return 16384; }, createVertexArray() { return {}; }, bindVertexArray(v: object | null) { vao = v; },
       createBuffer() { return {}; }, bindBuffer(target: number, b: object) { if (target === 1) { expect(vao).not.toBeNull(); element = b; elements.set(vao!, b); } },
       bufferData(target: number, bytes: Uint16Array, usage: number) { if (target === 1) { expect(bytes).toBeInstanceOf(Uint16Array); expect(usage).toBe(3); data.set(element!, bytes.slice()); } },

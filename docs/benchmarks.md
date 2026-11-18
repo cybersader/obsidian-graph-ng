@@ -1625,3 +1625,9 @@ Local desktop-class Linux, headless Chromium, real plugin bundle, one real layou
 | Notes switch to first drawn, progressed preview | Not applicable | 248 ms |
 
 In the eager baseline the solve had already finished by the time the member request returned. Its Notes switch took 88 ms to the adopted renderer; that is not a preview measurement. On demand, the Notes control immediately reported `Arranging notes`; preview time ends when the progressed renderer finishes its first draw, not when the worker first emits positions. The preview is not yet pickable. These timings do not establish native-device latency or time to settlement.
+
+## Calmer previews and batched shader setup (2026-11-18)
+
+Three fresh headless Chromium 151 processes per build, discrete desktop GPU, ANGLE/Vulkan, 256 synthetic notes. From `DetailRenderer.create` to its first completed draw call, the serial build took 467, 363 and 385 ms; batched submission took 380, 343 and 337 ms. Medians: 385 and 343 ms. This measures renderer setup, not physical presentation or solver time. Theme setup dominated, driver caches were not cleared, and this driver did not expose `KHR_parallel_shader_compile`; these samples do not isolate a shader speedup.
+
+With a held draw in the deterministic preview fixture, five offered snapshots result in one calm overview or two progressive pictures (first overview and newest waiting snapshot). The adopted result is separate. Cache identity and solver iteration cadence are unchanged.

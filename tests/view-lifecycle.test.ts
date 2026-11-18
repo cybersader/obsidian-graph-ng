@@ -312,7 +312,7 @@ test('late upload-window resize is reconciled before first draw and restoration'
       carrierGeometry: { enabled: new Uint8Array(), ends: new Uint32Array(), nodes: new Uint32Array(1) }, projection: { source: new Uint32Array(), target: new Uint32Array() }, theme: { palette: new Uint8Array(1024) },
       programs: [], vaos: [], buffers: [], discBuffers: [], async program() { return {}; }, texture() {}, uploadPalette() {}, uploadLens() {}, buffer() {}, uploadView() {},
       integer() { if (!resized) { resized = true; container.clientWidth += 400; r.resize(); expect(r.canvas.width).not.toBe(container.clientWidth); } },
-      gl: { SYNC_GPU_COMMANDS_COMPLETE: 1, ALREADY_SIGNALED: 2, CONDITION_SATISFIED: 3, WAIT_FAILED: 4,
+      gl: { isContextLost: () => false, SYNC_GPU_COMMANDS_COMPLETE: 1, ALREADY_SIGNALED: 2, CONDITION_SATISFIED: 3, WAIT_FAILED: 4,
         fenceSync() { return {}; }, flush() {}, clientWaitSync(_fence: unknown, _flags: number, timeout: number) { expect(timeout).toBe(0); return 2; }, deleteSync() {},
         getParameter() { return 2048; }, texImage2D() {}, createVertexArray() { return {}; }, bindVertexArray() {}, enable() {}, blendFunc() {},
         createBuffer() { return {}; }, bindBuffer() {}, bufferData() {}, enableVertexAttribArray() {}, vertexAttribPointer() {}, vertexAttribDivisor() {} },
@@ -390,7 +390,7 @@ test('live layout preview coalesces while opening, recycles superseded frames, a
   const recycled: Float32Array[] = [], updates: Float32Array[] = []; let release!: () => void, disposed = 0, creates = 0;
   const preview = new LayoutPreview(async positions => {
     creates++; await new Promise<void>(resolve => { release = resolve; });
-    const renderer = { positions, streamPositions(next: Float32Array) { const old = renderer.positions; renderer.positions = next; updates.push(next); return old; }, dispose() { disposed++; } }; return renderer;
+    const renderer = { positions, onLayoutPaint(fn: () => void) { fn(); }, streamPositions(next: Float32Array) { const old = renderer.positions; renderer.positions = next; updates.push(next); return old; }, dispose() { disposed++; } }; return renderer;
   }, p => recycled.push(p), () => true, e => { throw e; });
   preview.push(frames[0]!); preview.push(frames[1]!); preview.push(frames[2]!);
   expect(creates).toBe(1); expect(recycled).toEqual([frames[1]!]);
@@ -401,11 +401,40 @@ test('live layout preview coalesces while opening, recycles superseded frames, a
   expect(disposed).toBe(1); expect(new Set(recycled).size).toBe(4); expect(recycled.length).toBe(4);
 });
 
+test('a calm loading renderer holds its first overview; a busy progressive renderer keeps only the newest waiting picture', async () => {
+  const { LayoutPreview } = await import('../src/layout-preview');
+  for (const calmLayout of [false, true]) {
+    const frames = Array.from({ length: 5 }, (_, i) => Float32Array.of(i, i));
+    const uploads: Float32Array[] = [], recycled: Float32Array[] = []; let drawn!: () => void;
+    const preview = new LayoutPreview(async positions => ({ positions, calmLayout, onLayoutPaint(fn: () => void) { return new Promise<void>(r => { drawn = () => { fn(); r(); }; }); },
+      streamPositions(this: { positions: Float32Array }, next: Float32Array) { const old = this.positions; this.positions = next; uploads.push(next); return old; }, dispose() {} }), p => recycled.push(p), () => true, e => { throw e; });
+    await preview.push(frames[0]!);
+    for (const frame of frames.slice(1)) preview.push(frame);
+    expect(uploads).toEqual([]);
+    if (!calmLayout) drawn(); await Promise.resolve();
+    expect(uploads).toEqual(calmLayout ? [] : [frames[4]!]);
+    await preview.finish(); expect(new Set(recycled)).toEqual(new Set(frames)); expect(recycled.length).toBe(frames.length);
+  }
+});
+
+test('a cancelled draw releases its waiting snapshot before a restored renderer gets credit', async () => {
+  const { LayoutPreview } = await import('../src/layout-preview');
+  const frames: Float32Array[] = [0, 1, 2].map(n => Float32Array.of(n, n)), recycled: Float32Array[] = [];
+  let end!: (cancel: boolean) => void;
+  const renderer = { positions: frames[0]!, onLayoutPaint(fn: () => void) { return new Promise<void>(r => { end = cancel => { if (!cancel) fn(); r(); }; }); },
+    streamPositions(next: Float32Array) { const old = this.positions; this.positions = next; return old; }, dispose() {} };
+  const preview = new LayoutPreview(async () => renderer, p => recycled.push(p), () => true, e => { throw e; });
+  await preview.push(frames[0]!);
+  const lost = preview.push(frames[1]!); end(true); await lost; expect(recycled).toEqual([frames[1]!]);
+  const restored = preview.push(frames[2]!); end(false); await restored;
+  expect(renderer.positions).toBe(frames[2]!); await preview.finish(); expect(new Set(recycled)).toEqual(new Set(frames));
+});
+
 test('returning to Notes replaces a preview disposed by Groups', async () => {
   const { LayoutPreview } = await import('../src/layout-preview');
   const recycled: Float32Array[] = []; let creates = 0;
   let renderer: any;
-  const preview = new LayoutPreview(async positions => { creates++; renderer = { positions, usable: true, streamPositions() { throw Error('disposed renderer reused'); }, dispose() { this.usable = false; } }; return renderer; }, p => recycled.push(p), () => true, e => { throw e; });
+  const preview = new LayoutPreview(async positions => { creates++; renderer = { positions, usable: true, onLayoutPaint(fn: () => void) { fn(); }, streamPositions() { throw Error('disposed renderer reused'); }, dispose() { this.usable = false; } }; return renderer; }, p => recycled.push(p), () => true, e => { throw e; });
   const first = new Float32Array(2), next = new Float32Array(2);
   preview.push(first); await new Promise(resolve => setTimeout(resolve, 0)); renderer.dispose();
   preview.push(next); await new Promise(resolve => setTimeout(resolve, 0));
@@ -418,7 +447,7 @@ test('Notes can request a fresh first picture after Groups interrupts renderer s
   let notes = true, cancel!: (e: Error) => void, creates = 0;
   const preview = new LayoutPreview(async positions => {
     if (!creates++) await new Promise<void>((_, reject) => { cancel = reject; });
-    return { positions, streamPositions: () => positions, dispose() {} };
+    return { positions, onLayoutPaint(fn: () => void) { fn(); }, streamPositions: () => positions, dispose() {} };
   }, () => {}, () => notes, () => { throw Error('Obsolete setup should not trigger fallback'); });
   const opening = preview.push(new Float32Array(2)); notes = false; cancel(Error('Renderer superseded')); await opening;
   notes = true; await preview.push(new Float32Array(2)); expect(creates).toBe(2); await preview.finish();
@@ -444,7 +473,7 @@ test('a renderer rejection after returning to Notes keeps demand and admits the 
   const create = DetailRenderer.create;
   DetailRenderer.create = async (_stage, _projection, positions) => {
     if (++creates === 1) await new Promise<never>((_, r) => { reject = r; });
-    return { positions, layoutPaint: Promise.resolve(), streamPositions(next: Float32Array) { const old = this.positions; this.positions = next; return old; }, dispose() {} } as any;
+    return { positions, layoutPaint: Promise.resolve(), onLayoutPaint(this: { layoutPaint: Promise<void> }, fn: () => void) { fn(); return this.layoutPaint; }, streamPositions(next: Float32Array) { const old = this.positions; this.positions = next; return old; }, dispose() {} } as any;
   };
   const work = view.refreshOnce();
   try {
@@ -454,7 +483,10 @@ test('a renderer rejection after returning to Notes keeps demand and admits the 
     view.toGroups(); await view.showDetails(); reject(Error('Renderer superseded')); await opening;
     expect(demand).toEqual([false, true]); expect(view.detailFallback).toBe(''); expect(recycled).toEqual([first.buffer]);
     await push(next); expect(creates).toBe(2); expect(view.renderer.positions).toBe(next);
-    expect(push(new Float32Array(2))).toBe(view.renderer.layoutPaint); // later loading pictures wait for their draw
+    let releaseDraw!: () => void, credited = false;
+    view.renderer.layoutPaint = new Promise<void>(resolve => { releaseDraw = resolve; });
+    const drawing = push(new Float32Array(2)).then(() => { credited = true; });
+    await Promise.resolve(); expect(credited).toBe(false); releaseDraw(); await drawing; expect(credited).toBe(true);
   } finally {
     DetailRenderer.create = create; view.showDetails = async () => {}; finish({ positions: new Float32Array(2), cached: false, milliseconds: 1 }); await work;
   }
@@ -473,7 +505,7 @@ test('obsolete or closed live layout cannot adopt an initializing renderer', asy
   const { LayoutPreview } = await import('../src/layout-preview');
   for (const stop of ['source', 'close']) {
     let active = true, release!: () => void, disposed = 0; const recycled: Float32Array[] = [], first = new Float32Array(2), next = new Float32Array(2);
-    const preview = new LayoutPreview(async positions => { await new Promise<void>(r => { release = r; }); return { positions, streamPositions() { throw Error('obsolete'); }, dispose() { disposed++; } }; }, p => recycled.push(p), () => active, () => { throw Error('obsolete error surfaced'); });
+    const preview = new LayoutPreview(async positions => { await new Promise<void>(r => { release = r; }); return { positions, onLayoutPaint(fn: () => void) { fn(); }, streamPositions() { throw Error('obsolete'); }, dispose() { disposed++; } }; }, p => recycled.push(p), () => active, () => { throw Error('obsolete error surfaced'); });
     preview.push(first); preview.push(next);
     if (stop === 'source') active = false;
     const finish = stop === 'close' ? preview.finish() : undefined;

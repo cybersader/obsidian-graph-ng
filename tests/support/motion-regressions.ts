@@ -51,7 +51,7 @@ test('compiled WebGL and Canvas motion settles to zero queued frames, interrupts
 
 test('finished layout holds painted preview until replacement and recycles late streams once', async () => {
   const first = new Float32Array(2), late = new Float32Array(2), recycled: Float32Array[] = []; let disposed = 0;
-  const preview = new LayoutPreview(async positions => ({ positions, streamPositions() { throw Error('stream after finish'); }, dispose() { disposed++; } }), p => recycled.push(p), () => true, e => { throw e; });
+  const preview = new LayoutPreview(async positions => ({ positions, onLayoutPaint() { throw Error('paint after finish'); }, streamPositions() { throw Error('stream after finish'); }, dispose() { disposed++; } }), p => recycled.push(p), () => true, e => { throw e; });
   preview.push(first); await new Promise(resolve => setTimeout(resolve, 0));
   await preview.finish(true); expect(disposed).toBe(0); expect(recycled).toEqual([]);
   preview.push(late); expect(recycled).toEqual([late]);

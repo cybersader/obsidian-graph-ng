@@ -337,7 +337,8 @@ export class DetailRenderer {
   private moreTotal = 0;
   private media = matchMedia('(prefers-color-scheme: dark)');
   private motionMedia = matchMedia('(prefers-reduced-motion: reduce)');
-  private still() { return devicePerformance.fast(this.settings.performance) || this.settings.visuals.motion !== 'full' || this.motionMedia.matches; }
+  get calmLayout() { return this.settings.visuals.motion !== 'full' || this.motionMedia.matches; }
+  private still() { return devicePerformance.fast(this.settings.performance) || this.calmLayout; }
   private motionChanged = () => this.refresh();
   private programs: Program[] = [];
   private vaos: WebGLVertexArrayObject[] = [];
@@ -357,7 +358,13 @@ export class DetailRenderer {
   /** One outstanding streamed picture. Both draw clocks settle the same receipt. */
   layoutPaint?: Promise<void>;
   private releasePaint?: () => void;
-  private finishPaint() { this.releasePaint?.(); this.releasePaint = this.layoutPaint = undefined; }
+  private beforeLayoutPaint?: () => void;
+  onLayoutPaint(update: () => void) {
+    this.beforeLayoutPaint = update;
+    this.layoutPaint ??= new Promise(resolve => { this.releasePaint = resolve; });
+    this.refresh(); return this.layoutPaint;
+  }
+  private finishPaint() { this.beforeLayoutPaint = undefined; this.releasePaint?.(); this.releasePaint = this.layoutPaint = undefined; }
   private restoreTimer: ReturnType<typeof setTimeout> | undefined;
   private canvasEdges = new Uint32Array();
   private disposed = false;
@@ -677,9 +684,10 @@ export class DetailRenderer {
   private labelsPending = false;
   /** A preview and its replacement have different normalized frames. Preserve world center/scale,
    * including gestures made while the replacement was preparing, and keep follow cancelled. */
-  adoptCamera(previous: DetailRenderer) {
-    this.followLayout = previous.followLayout;
-    if (this.followLayout) return false;
+  adoptCamera(previous?: DetailRenderer) {
+    if (!this.followLayout) return true; // a gesture on the replacement is newer
+    if (!previous || previous.followLayout) return false;
+    this.followLayout = false;
     const f = this.cameraFrame;
     this.setCamera((previous.centerX - f.minX) / f.width, (previous.centerY - f.minY) / f.height, previous.camera.ratio * this.fit / previous.fit);
     return true;
@@ -708,7 +716,7 @@ export class DetailRenderer {
     };
   }
   /** Progressed frames retain the camera frame. Live Apply keeps input attached. */
-  streamPositions(next: Float32Array, paint = false) {
+  streamPositions(next: Float32Array, paint: boolean | 'drawing' = false) {
     if (!(this.view.loading || this.layoutActive) || !this.usable || next.length !== this.positions.length) throw new Error('Layout preview unavailable');
     const previous = this.positions;
     if (this.plainPreview(this.view)) {
@@ -720,8 +728,8 @@ export class DetailRenderer {
     this.positions = next;
     if (this.gl) this.uploadCoordinates();
     this.followExtent();
-    if (paint) this.draw();
-    else { this.layoutPaint ??= new Promise(resolve => { this.releasePaint = resolve; }); this.refresh(); }
+    if (paint === true) this.draw();
+    else if (!paint) { this.layoutPaint ??= new Promise(resolve => { this.releasePaint = resolve; }); this.refresh(); }
     return previous;
   }
   /** Only zoom outward while streaming; a gesture permanently releases this run. */
@@ -804,7 +812,7 @@ export class DetailRenderer {
     while (this.hubLabels.length < Math.min(64, this.hubs.length)) this.hubLabels.push(this.overlay.appendChild(el('div', '', 'graph-ng-hub-label')));
     this.hubLabels.forEach((el, i) => { const h = this.hubs[i]!; el.textContent = `${this.view.groupLabels?.[h.group] ?? ''} (${h.count.toLocaleString()})`; });
   }
-  private async program(vertex: string, fragment: string): Promise<Program> {
+  private async program(vertex: string, fragment: string, current: () => boolean): Promise<Program> {
     const gl = this.gl!, shaders: WebGLShader[] = [], parallel = gl.getExtension('KHR_parallel_shader_compile');
     const handle = gl.createProgram()!;
     try {
@@ -815,12 +823,12 @@ export class DetailRenderer {
       // The extension's completion query is nonblocking; defer status until ready.
       gl.linkProgram(handle); const deadline = performance.now() + this.settings.workerTimeoutMs;
       await yieldTask();
-      if (parallel) while (!gl.getProgramParameter(handle, parallel.COMPLETION_STATUS_KHR)) {
-        if (this.disposed || this.lost) throw new Error('Renderer superseded');
+      for (;;) {
+        if (!current()) throw new Error('Renderer superseded');
+        if (!parallel || gl.getProgramParameter(handle, parallel.COMPLETION_STATUS_KHR)) break;
         if (performance.now() > deadline) throw new Error('GL_COMPILE_TIMEOUT');
         await new Promise<void>(resolve => setTimeout(resolve, this.settings.shaderPollMs));
       }
-      if (this.disposed || this.lost) throw new Error('Renderer superseded');
       if (!gl.getProgramParameter(handle, gl.LINK_STATUS)) throw new Error(`GL_LINK: ${gl.getProgramInfoLog(handle)}`);
       const uniforms: Program['uniforms'] = {};
       for (const name of UNIFORMS) uniforms[name] = gl.getUniformLocation(handle, name);
@@ -848,13 +856,20 @@ export class DetailRenderer {
     if (this.disposed || this.lost) return;
     const gl = this.gl;
     if (!gl) { this.ready = true; this.refresh(); return; }
-    for (const [v, f] of [[edgeVertex, solidFragment], [nodeVertex, nodeFragment], [labelVertex, labelFragment], [discVertex, discFragment], [densityVertex, densityFragment]]) {
-      const started = performance.now(); this.programs.push(await this.program(v!, f!)); this.timings[`program${this.programs.length}`] = performance.now() - started; await yieldTask(); if (this.disposed || this.lost) return;
-    }
+    const slots = this.programs, staged: Program[] = [];
+    const current = () => slots === this.programs && !this.disposed && !this.lost && !gl.isContextLost();
+    let error: unknown;
+    await Promise.all(([[edgeVertex, solidFragment], [nodeVertex, nodeFragment], [labelVertex, labelFragment], [discVertex, discFragment], [densityVertex, densityFragment]] as const).map(async ([v, f], i) => {
+      const start = performance.now();
+      try { staged[i] = await this.program(v, f, () => !error && current()); this.timings[`program${i + 1}`] = performance.now() - start; }
+      catch (e) { error ??= e; }
+    }));
+    if (error || !current()) { staged.forEach(p => gl.deleteProgram(p.handle)); throw error ?? new Error('Renderer superseded'); }
+    slots.push(...staged);
     // ResizeObserver may fire while parallel shader compilation is pending.
     // Resizing that drawing buffer synchronously waits on the driver; apply its
     // latest CSS size only after all program completion polls have finished.
-    await this.waitForResize(); this.resize(true);
+    await this.waitForResize(); if (!current()) throw new Error('Renderer superseded'); this.resize(true);
     const uploadStart = performance.now(), max = gl.getParameter(gl.MAX_TEXTURE_SIZE);
     if (this.positionWidth > max || this.positionHeight > max || this.theme.palette.length / 1024 > max) throw new Error('GL_TEXTURE_LIMIT');
     for (let unit = 0; unit < 6; unit++) this.texture(unit);
@@ -862,7 +877,7 @@ export class DetailRenderer {
     for (let i = 0; i < 2; i++) { const vao = gl.createVertexArray()!; this.vaos.push(vao); gl.bindVertexArray(vao);
       if (i === 0) { this.integer(0, this.projection.source); this.integer(1, this.projection.target); this.integer(2, this.carrierGeometry.enabled); this.integer(3, this.edgeTier); }
       else { this.buffer(this.sizes); this.floatAttribute(0, 1, 0, 0); }
-      await yieldTask(); if (this.disposed || this.lost) return;
+      await yieldTask(); if (!current()) throw new Error('Renderer superseded');
     }
     gl.bindVertexArray(this.vaos[0]!); this.integer(4, this.lineRanks); this.integer(5, this.carrierGeometry.ends);
     gl.bindVertexArray(this.vaos[1]!); this.integer(1, this.carrierGeometry.nodes);
@@ -881,7 +896,7 @@ export class DetailRenderer {
     gl.bindVertexArray(null); this.uploadView();
     this.timings.upload = performance.now() - uploadStart;
     gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-    await this.waitForResize(); this.resize(true); this.ready = true; if (this.gl && deviceTier(undefined, undefined, this.gl.getParameter(this.gl.MAX_TEXTURE_SIZE), /swiftshader|llvmpipe|software/i.test(String(this.gl.getParameter(this.gl.RENDERER)))) === 'low') devicePerformance.tier = 'low'; if (this.atlas) this.uploadLabels(); this.refresh();
+    await this.waitForResize(); if (!current()) throw new Error('Renderer superseded'); this.resize(true); this.ready = true; if (this.gl && deviceTier(undefined, undefined, this.gl.getParameter(this.gl.MAX_TEXTURE_SIZE), /swiftshader|llvmpipe|software/i.test(String(this.gl.getParameter(this.gl.RENDERER)))) === 'low') devicePerformance.tier = 'low'; if (this.atlas) this.uploadLabels(); this.refresh();
   }
   /** Lazy, at most 2048² RGBA8 pixels (16 MiB). CSS resolution avoids multiplying
    * memory by DPR². Reallocate once per size; failed sizes use Blend until resize/restore. */
@@ -1636,7 +1651,9 @@ export class DetailRenderer {
   private draw = () => {
     cancelAnimationFrame(this.frameId); clearTimeout(this.frameTimer); this.frameTimer = undefined;
     this.frameId = 0; if (this.disposed || this.lost || !this.ready) return;
-    this.paint(); this.finishPaint();
+    const update = this.beforeLayoutPaint; this.beforeLayoutPaint = undefined; update?.();
+    if (!this.disposed && !this.lost) this.paint();
+    this.finishPaint();
   };
   private paint() {
     // DPR can change without a CSS-size observer notification; reconcile on the next paint.
@@ -2051,7 +2068,8 @@ export class DetailRenderer {
   private contextRestored = () => {
     if (this.disposed) return; clearTimeout(this.restoreTimer); this.restoreTimer = undefined; this.canvas.style.cursor = 'grab';
     this.lost = false; this.densityBuffer = null; this.densitySize = [0, 0]; this.densityReady = false; this.programs = []; this.vaos = []; this.buffers = []; this.textures = []; this.labelBuffers = []; this.labelVaos = []; this.discBuffers = [null, null];
-    void this.initialize().then(() => { if (!this.disposed && !this.lost) this.canvas.dataset.context = 'restored'; }).catch(() => { if (!this.disposed) { this.canvas.dataset.context = 'failed'; this.onUnavailable(); } });
+    const slots = this.programs, current = () => !this.disposed && !this.lost && slots === this.programs;
+    void this.initialize().then(() => { if (current()) this.canvas.dataset.context = 'restored'; }).catch(() => { if (current()) { this.canvas.dataset.context = 'failed'; this.onUnavailable(); } });
   };
   dispose() { clearTimeout(this.sizingTimer);
     if (this.disposed) return; this.disposed = true; this.finishPaint(); this.labelsRevision++; clearTimeout(this.restoreTimer); this.restoreTimer = undefined; cancelAnimationFrame(this.frameId); clearTimeout(this.frameTimer); this.frameTimer = undefined; this.observer.disconnect(); this.panelObserver?.disconnect(); this.media.removeEventListener('change', this.refreshTheme); this.motionMedia.removeEventListener('change', this.motionChanged);

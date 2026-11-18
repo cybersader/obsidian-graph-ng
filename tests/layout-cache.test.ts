@@ -170,7 +170,7 @@ for (const preview of [false,true]) test(`Groups restore paints immediately with
   const { DetailRenderer } = await import('../src/webgl-renderer'), create = DetailRenderer.create;
   const reached = latch(), resume = latch(), rpc = f.plugin.pipeline, request = rpc.request.bind(rpc);
   base.setState = async () => {}; v.gpu = {available:true,reason:'fixture'}; v.renderView = () => ({});
-  DetailRenderer.create = async (_stage, _projection, positions) => ({ positions, streamPositions(next: Float32Array) { const old = this.positions; this.positions = next; return old; }, dispose() {} } as any);
+  DetailRenderer.create = async (_stage, _projection, positions) => ({ positions, onLayoutPaint(fn: () => void) { fn(); }, streamPositions(next: Float32Array) { const old = this.positions; this.positions = next; return old; }, dispose() {} } as any);
   rpc.request = async (rev: number, r: any) => {
     const running = request(rev,r); if (r.kind !== 'layout') return running;
     if (preview) { rpc.forwardPositions = true; rpc.onPositions({revision:rev,iteration:2,total:40,positions:new Float32Array(N*2)}); await Promise.resolve(); }
@@ -214,7 +214,7 @@ test('member Back withdraws Notes demand before the first layout frame', async (
 test('scoped member rows retire when refresh replaces the dictionary', async () => {
   const f = await transitions(), {v} = f, { DetailRenderer } = await import('../src/webgl-renderer'), create = DetailRenderer.create;
   delete v.showDetails; v.gpu = {available: true, reason: 'fixture'}; v.renderView = () => ({});
-  DetailRenderer.create = async () => ({ dispose() {}, fitAll() {}, beginLayout() {}, timings: {} } as any);
+  DetailRenderer.create = async () => ({ dispose() {}, adoptCamera() { return false; }, fitAll() {}, beginLayout() {}, timings: {} } as any);
   const actions = () => v.panel.querySelectorAll('.graph-ng-member').map((b: ControlElement) => b.getAttribute('aria-label'));
   try {
     await v.refresh(); await v.drill(v.groupGraph.groups.find((g:any) => g.label === 'A').id);

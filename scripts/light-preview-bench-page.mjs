@@ -34,7 +34,7 @@ window.run = async ({n,stop}) => {
       // A task posted inside rAF runs after the browser's rendering opportunity. Not physical scan-out.
       if (queuedInputs.length) { const inputs=queuedInputs; queuedInputs=[]; setTimeout(() => { const end=performance.now(); for (const t of inputs) inputMs.push(end-t); },0); }
     };
-    const original = r.streamPositions; r.streamPositions = function(next) { const t=performance.now(); const prev=original.call(this,next); uploads.push(performance.now()-t); return prev; };
+    const original = r.streamPositions; r.streamPositions = function(...args) { const t=performance.now(); const prev=original.apply(this,args); uploads.push(performance.now()-t); return prev; };
     stage.addEventListener('pointermove', e => { if (e.buttons===1) { queuedInputs.push(e.timeStamp); panStart ??= r.camera.x; } },true);
     window.panReady=true; if(stop) pipe.stopLayout(1); return r;
   }, p => pipe.recycle(p.buffer), () => notes, e => { failed=String(e); });

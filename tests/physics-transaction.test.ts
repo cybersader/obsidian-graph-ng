@@ -93,26 +93,46 @@ test('loading preview attaches pan and zoom while suppressing picking and retain
   r[compiled('streamPositions')](f.next); expect(r.grid.heads).toBeUndefined(); expect(r.grid.positions).toBe(f.next); expect(r.camera).toEqual(moved); expect(r.overlay.hidden).toBe(true);
 });
 
+test('Reduced, Off and system reduced motion hold one Apply overview without losing progress or the user camera', async () => {
+  for (const [motion, system] of [['reduced', false], ['off', false], ['full', true]] as const) {
+    fixtureReducedMotion = system;
+    try {
+      const f = await fixture(), frames = [f.next.slice(), f.next.slice(), f.next.slice()], recycled: ArrayBuffer[] = [];
+      f.plugin.settings.visuals = { ...f.plugin.settings.visuals, motion }; f.view[compiled('provisional')] = false; f.view.report = {};
+      f.plugin.pipeline.recycle = (b: ArrayBuffer) => recycled.push(b);
+      f.plugin.pipeline.request = async () => {
+        frames.forEach((positions, i) => f.plugin.pipeline.onPositions({ revision: 7, iteration: i + 1, total: 8, positions }));
+        expect(f.renderer.positions).toBe(frames[0]); expect(recycled).toEqual(frames.slice(1).map(p => p.buffer));
+        f.plugin.pipeline.onProgress(7, 8); expect(f.view.report.progress.iteration).toBe(7);
+        f.renderer.controls()[compiled('panBy')](20, 30); f.renderer.fitAll = () => { throw Error('Pan was undone'); };
+        return { positions: f.next, milliseconds: 1, looksDone: true };
+      };
+      await f.view[compiled('applyLayout')](values); expect(f.renderer.positions).toBe(f.next); expect(f.view.statusText).toBe('Layout ready');
+    } finally { fixtureReducedMotion = false; }
+  }
+});
+
 test('Notes previews keep arriving on timer-backed draws when animation frames are withheld', async () => {
   const { WorkerPipeline } = await import('../src/pipeline');
   const f = await fixture(), sent: any[] = [], entered = deferred();
   const transport = { onmessage: null as any, onerror: null, terminate() {}, postMessage(m: any) { sent.push(m); if (m.kind === 'recompute') entered.resolve(); } };
   const pipeline = f.plugin.pipeline = new WorkerPipeline(transport, () => 10000);
   const tick = () => new Promise<void>(r => setTimeout(r, 0));
-  const emit = (iteration: number) => transport.onmessage({ data: { kind: 'positions', revision: 7, iteration, total: 100, positions: f.next.slice() } });
+  const emit = (iteration: number) => { const positions = f.next.slice(); transport.onmessage({ data: { kind: 'positions', revision: 7, iteration, total: 100, positions } }); return positions; };
   const credits = () => sent.filter(m => m.kind === 'preview-credit').map(m => m.id);
   const raf = globalThis.requestAnimationFrame, cancel = globalThis.cancelAnimationFrame;
   globalThis.requestAnimationFrame = () => 1; globalThis.cancelAnimationFrame = () => {};
   const work = outcome(f.view[compiled('applyLayout')](values));
   try {
-    await entered.promise; emit(1); await tick();
+    await entered.promise; const first = emit(1); await tick();
     expect(credits()).toEqual([1]); // first picture draws synchronously
-    emit(2); await tick(); expect(credits()).toEqual([1]);
+    emit(2); const newest = emit(3); await tick(); expect(credits()).toEqual([1]);
+    expect(f.renderer.positions).toBe(first); // no upload before the pending draw
     const delayedFrame = frameCallbacks.values().next().value!;
     expect(backstops.size).toBe(1); backstops.values().next().value!(); await tick();
-    expect(credits()).toEqual([1, 1]);
+    expect(credits()).toEqual([1, 1]); expect(f.renderer.positions).toBe(newest);
     delayedFrame(); await tick(); expect(credits()).toEqual([1, 1]); // even a late callback cannot acknowledge twice
-    emit(3); await tick(); expect(credits()).toEqual([1, 1]);
+    emit(4); await tick(); expect(credits()).toEqual([1, 1]);
     transport.onmessage({ data: { id: 1, revision: 7, result: { positions: f.next, milliseconds: 1, cached: false } } });
     const next = pipeline.request(7, { kind: 'layout', preview: { from: 1, wanted: true } });
     backstops.values().next().value!(); await tick();
@@ -2272,7 +2292,7 @@ test('anchored name priorities reuse bounded atlas candidates and put direct not
 });
 
 test('wave12: streaming preview gestures survive final renderer adoption in world coordinates', async () => {
-  for (const gesture of ['panBy', 'zoomAt', 'none']) {
+  for (const gesture of ['panBy', 'zoomAt', 'new-pan', 'none']) {
     const f = await fixture({ loading: true }), r = f.renderer, k = (name: string) => mangle[name] ?? name;
     f.view.detailRenderer = undefined; f.view.panel = new Element();
     f.view.gpu = { available: false, reason: 'synthetic Canvas' };
@@ -2283,9 +2303,10 @@ test('wave12: streaming preview gestures survive final renderer adoption in worl
     Renderer.create = async (...args: any[]) => {
       const final = await create(...args); renderers.push(final);
       // Include gestures made while the replacement renderer is being prepared.
-      if (gesture !== 'none') r.controls()[k(gesture)](...(gesture === 'panBy' ? [40, 20] : [1.5, 120, 80]));
+      const target = gesture === 'new-pan' ? final : r;
+      if (gesture !== 'none') target.controls()[k(gesture === 'new-pan' ? 'panBy' : gesture)](...(gesture === 'zoomAt' ? [1.5, 120, 80] : [40, 20]));
       const fit = final.fitAll.bind(final); final.fitAll = (...args: any[]) => { fits++; return fit(...args); };
-      before = [r[k('centerX')], r[k('centerY')], r[k('scale')]];
+      before = [target[k('centerX')], target[k('centerY')], target[k('scale')]];
       return final;
     };
     try { await f.view[k('showDetails')](); } finally { Renderer.create = create; }
