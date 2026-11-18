@@ -59,6 +59,7 @@ export interface PanelHost {
   camera(): ViewCamera | null;
   restoreCamera(camera: ViewCamera): void;
   persist(): void;
+  layoutActivity?(): void;
   applyLayout(values: PhysicsValues): Promise<void>;
   layoutSettled?(): boolean;
   previewSizing?(values: NodeSizingValues | null): void;
@@ -139,7 +140,7 @@ export class ExplorePanel {
     return disclosureBody(section);
   }
   private physicsError = '';
-  private physicsBusy = false;
+  physicsBusy = false;
   /** Draft before the last preset or reset; `applied` once Apply ran with the preset values. */
   private physicsUndo?: { values: Record<PhysicsKey, string | boolean>; name: string; applied: boolean };
   private disposed = false;
@@ -593,6 +594,14 @@ export class ExplorePanel {
     const update = () => { const reasons = this.host.policy().filter(r => r.includes(effect) || r.includes('software renderer')); box.hidden = !reasons.length; summary.textContent = `${effect[0]!.toUpperCase() + effect.slice(1)} ${reasons.some(r => r.includes('limited')) ? 'limited' : 'turned off'} by the performance guard`; reason.textContent = reasons.join('; '); };
     this.guards.push(update); update();
   }
+  /** Both entry points claim the pass before it enters the serialized worker queue. */
+  async runLayout(values: PhysicsValues, fromPanel = false) {
+    if (this.physicsBusy || this.disposed) return;
+    const update = () => { if (!this.disposed) { this.host.layoutActivity?.(); if (fromPanel || (!this.root.hidden && this.tool === 'layout')) this.render(); } };
+    this.physicsBusy = true;
+    try { update(); await this.host.applyLayout(values); if (fromPanel && this.physicsUndo) this.physicsUndo.applied = true; }
+    finally { this.physicsBusy = false; update(); }
+  }
   private physics(host: HTMLElement) {
     const applied = (): Record<PhysicsKey, string | boolean> => { const l = this.settings.layout; return Object.fromEntries(PHYSICS_FIELDS.map(([key]) => { const v = key === 'iterations' ? l.iterations : l.force[key]; return [key, typeof v === 'boolean' ? v : String(v)]; })) as Record<PhysicsKey, string | boolean>; };
     const draft = this.physicsDraft ??= applied();
@@ -657,11 +666,8 @@ export class ExplorePanel {
         const values = Object.fromEntries(PHYSICS_FIELDS.map(([key]) => { const v = draft[key]; return [key, typeof v === 'boolean' ? v : v.trim() ? Number(v) : NaN]; })) as unknown as PhysicsValues;
         if (this.layoutEngineDraft !== (this.settings.layoutEngine ?? 'auto')) values.layoutEngine = this.layoutEngineDraft;
         physicsSettings(this.settings, values);
-        this.physicsBusy = true; this.physicsError = ''; this.render();
-        await this.host.applyLayout(values);
-        if (this.physicsUndo) this.physicsUndo.applied = true;
-      } catch (e) { this.physicsError = `Not applied: ${e instanceof Error ? e.message : String(e)}`; }
-      finally { this.physicsBusy = false; if (!this.disposed) this.render(); }
+        this.physicsError = ''; await this.runLayout(values, true);
+      } catch (e) { this.physicsError = `Not applied: ${e instanceof Error ? e.message : String(e)}`; if (!this.disposed) this.render(); }
     };
   }
   updateLensControl() {

@@ -114,6 +114,23 @@ function runtime() {
   Object.defineProperty(v, 'statusText', { configurable: true, get() { return this.statusMessage ?? ''; }, set(text: string) { this.statusMessage = text; } });
   return { v, saves: () => saves, calls: () => calls };
 }
+test('canvas and Layout panel share a queued pass and retain unapplied drafts on settlement', async () => {
+  const { v } = runtime(), root = new ControlElement(); delete v.statusText;
+  Object.assign(v, { contentEl: root, app: { workspace: { on() {} } }, registerEvent() {}, view: emptyView(), refresh() {}, layoutStopped: true, layoutSettled: false });
+  Object.assign(root.dataset, { state: 'ready', mode: 'nodes' }); v.plugin.saveSoon = () => {};
+  const render = ExplorePanel.prototype.render; ExplorePanel.prototype.render = () => {};
+  try { await v.onOpen(); } finally { ExplorePanel.prototype.render = render; }
+  const panel = v.explorePanel; panel.render = () => { panel.body.empty(); panel.physics(panel.body); }; panel.show('layout');
+  const spread = () => byLabel({ panel } as any, 'Spread notes'); spread().value = '99'; spread().oninput(); v.statusText = 'Layout not settled';
+  const apply = control(panel.body, 'Keep refining'), canvas = control(v.statusSummary, 'Keep refining');
+  let release!: () => void, runs = 0; v.plugin.work = new Promise<void>(r => { release = r; });
+  v.plugin.pipeline.request = async (_: number, req: any) => { if (req.kind === 'recompute') runs++; return { positions: new Float32Array(2), settled: true }; }; v.plugin.settings.persistLayout = false;
+  try {
+    canvas.click(); const busy = panel.body.querySelector('.mod-cta'); expect(busy.disabled).toBe(true);
+    canvas.click(); apply.click(); release(); await v.plugin.work; await Bun.sleep(0);
+    expect(runs).toBe(1); expect(control(panel.body, 'Apply layout').disabled).toBe(false); expect(panel.body.textContent).not.toContain('Layout not settled'); expect(spread().value).toBe('99'); expect(v.plugin.settings.layout.force.scalingRatio).not.toBe(99);
+  } finally { release(); await v.plugin.work.catch(() => {}); panel.dispose(); }
+});
 test('host runs one layout-only RPC, preserves untouched settings, and commits only successful current generation', async () => {
   const f = runtime(), before = structuredClone(f.v.plugin.settings); await f.v.applyLayout({ ...values, gravity: 0 });
   expect(f.calls()).toBe(1); expect(f.saves()).toBe(1); expect([...f.v.positions]).toEqual([3, 4]);

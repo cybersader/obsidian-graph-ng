@@ -172,6 +172,48 @@ test('Apply rejects seed frames, streams on the same renderer and keeps pan/zoom
   expect(f.renderer.positions).toBe(f.next); expect(f.renderer.camera).toEqual(camera); expect(f.renderer.overlay.hidden).toBe(false);
   expect(f.view[compiled('layoutWorking')]).toBe(false); expect(f.view.statusMessage).toBe('Layout not settled'); expect(f.view[compiled('statusSummary')].querySelector('.graph-ng-working')).toBeFalsy();
 });
+test('Keep refining respects a pan before Explore now without another gesture', async () => {
+  const f = await fixture(), r = f.renderer; let fits = 0, pass = 0;
+  r.fitAll = () => { fits++; }; f.plugin.pipeline.stopLayout = () => {};
+  let camera: unknown;
+  f.plugin.pipeline.request = async (_: number, request: any) => {
+    if (request.kind === 'adoptLayout') return;
+    f.plugin.pipeline.onPositions({ revision: 7, iteration: 20, total: 100, positions: f.next.slice() });
+    if (++pass === 1) { r.controls()[compiled('panBy')](30, 10); camera = { ...r.camera }; control(f.view[compiled('statusSummary')], 'Explore now').click(); }
+    return { positions: f.next.slice(), settled: false };
+  };
+  await f.view[compiled('applyLayout')](values); await f.view[compiled('applyLayout')]({});
+  expect(fits).toBe(0); expect(r.camera).toEqual(camera);
+});
+test('coordinate-only refinement adopts without writing settings', async () => {
+  const f = await fixture(), calls: string[] = [];
+  f.plugin.saveData = async () => { throw Error('Unexpected settings write'); };
+  f.plugin.pipeline.request = async (_: number, request: any) => { calls.push(request.kind); return { positions: f.next, settled: false }; };
+  await f.view[compiled('applyLayout')]({}); expect(calls).toEqual(['recompute', 'adoptLayout']); expect(f.renderer.positions).toBe(f.next);
+});
+test('provisional Apply restores the unverified properties summary without shimmer', async () => {
+  const f = await fixture(); delete f.view.statusText; f.view.status = new ControlElement();
+  f.view.contentEl.dataset.state = 'ready'; f.view.report = { [compiled('provisional')]: true, [compiled('pendingProperties')]: 691 };
+  await f.view[compiled('applyLayout')](values);
+  const summary = f.view[compiled('statusSummary')]; expect(summary.textContent).toContain('691 notes with unverified properties'); expect(summary.querySelector('.graph-ng-working')).toBeFalsy();
+});
+test('failed refinement announces an error rather than graph ready', async () => {
+  const f = await fixture(); delete f.view.statusText; f.view.status = new ControlElement(); f.view.contentEl.dataset.state = 'ready';
+  const live = f.view.stageAnnouncement = new ControlElement(); f.plugin.pipeline.request = async () => { throw Error('Synthetic failure'); };
+  expect(await outcome(f.view[compiled('applyLayout')]({}))).toContain('Synthetic failure'); expect(live.textContent).toBe('Layout update failed');
+});
+test('worker reply retires stopped steps before coordinate preparation', async () => {
+  const f = await fixture(); delete f.view.statusText; f.view.status = new ControlElement(); f.view.contentEl.dataset.state = 'ready';
+  f.view.report = { [compiled('provisional')]: true }; f.plugin.pipeline.stopLayout = () => {};
+  f.plugin.pipeline.request = async (_: number, req: any) => {
+    if (req.kind === 'adoptLayout') return;
+    f.plugin.pipeline.onPositions({ revision: 7, iteration: 90, total: 100, positions: f.next.slice() });
+    control(f.view[compiled('statusSummary')], 'Explore now').click(); return { positions: f.next, settled: false };
+  };
+  const key = compiled('preparePositions'), prepare = f.renderer[key].bind(f.renderer);
+  f.renderer[key] = (...args: any[]) => { expect(f.view.report.progress).toBeUndefined(); const summary = f.view[compiled('statusSummary')].textContent; expect(summary).toContain('Preparing graph'); expect(summary).not.toContain('Stopping layout'); return prepare(...args); };
+  await f.view[compiled('applyLayout')](values);
+});
 test('failed streamed Apply restores last-good geometry without undoing pan/zoom', async () => {
   const f = await fixture(), display = f.renderer.display;
   f.plugin.pipeline.request = async () => {

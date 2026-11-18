@@ -38,7 +38,7 @@ declare const __LAYOUT_WORKER_SOURCE__: string;
 /** One message/check serves each boundary without dropping phase information. */
 function requireLayout(current: () => boolean, phase = '') { if (!current()) throw new Error(`Layout generation changed${phase}`); }
 function cleanupFailure(error: unknown, phase: string, cleanup: unknown) { return new Error(`${error}; ${phase} failed: ${cleanup}. Saved-state recovery uncertain; retry saving before closing.`); }
-const VIEW = 'graph-ng';
+const VIEW = 'graph-ng', LAYOUT_FAILED = 'Layout update failed';
 interface Generation { key: string; identities: string[]; positions: number[]; producer: string; layoutHash?: string; edgeKeys?: string[] }
 interface Data { settings: Settings; generations: Record<string, Generation> }
 /** Assign `next[k]` where `live[k]` still equals `was[k]`, in place; returns the count of keys kept live. */
@@ -270,6 +270,7 @@ export default class GraphPlugin extends Plugin {
     this.writes = this.writes.catch(() => {}).then(async () => {
       requireLayout(current, ' before save');
       const next = physicsSettings(this.settings, values);
+      if (next.layoutEngine === this.settings.layoutEngine && canonical(next.layout) === canonical(this.settings.layout)) { commit(); return; }
       try {
         await this.saveData({ settings: settingsForSave(next) });
         requireLayout(current, ' during save');
@@ -383,6 +384,7 @@ export class GraphView extends ItemView {
   private renderRevision = 0;
   private status!: HTMLElement;
   private statusSummary!: HTMLElement;
+  private stageAnnouncement?: HTMLElement;
   private statusMessage = '';
   private report?: InformationReport;
   private viewFeedbackText = '';
@@ -424,7 +426,7 @@ export class GraphView extends ItemView {
     this.statusSummary.toggleClass('graph-ng-layout-active', active);
     this.layoutStop.disabled = !active;
     this.layoutLabel(false);
-    if (!active) this.layoutTip!.hidePopover?.();
+    if (!active) { this.layoutTip!.hidePopover?.(); if (this.report) delete this.report.progress; }
     this.layoutRing!.setAttribute('stroke-dashoffset', '100'); this.layoutSteps!.textContent = '';
   }
   private layoutLabel(explore: boolean) {
@@ -452,29 +454,34 @@ export class GraphView extends ItemView {
     (this.explorePanel as (ExplorePanel & { updateSummary?(): void }) | undefined)?.updateSummary?.();
     const state = this.contentEl.dataset.state;
     renderInformation(this.status, [text, this.detailFallback, this.plugin.hydrationStatus].filter(Boolean).join(' '), this.layoutWorking ? 'building' : state, this.report, this.explored, this.informationActions, this.loading());
-    const health = state === 'error' ? [text] : this.loading() ? [this.loading()!.stage]
+    const loading = this.loading();
+    const failed = state === 'error' || text === LAYOUT_FAILED;
+    const announcement = failed || loading ? text : state === 'ready' ? 'Graph ready' : '';
+    if (this.stageAnnouncement && this.stageAnnouncement.textContent !== announcement) this.stageAnnouncement.textContent = announcement;
+    const health = failed ? [text] : loading ? [loading.stage]
       : this.plugin.settings.projectionFile ? ['External aggregate, not verified']
       : this.provisional ? [this.plugin.adapter?.savedCopy ? 'Saved copy while host confirms' : pendingText(this.report)] : [];
     const chips = [this.plugin.hydrationStatus, this.viewFeedbackText, this.layoutStopped && !this.loading() && state !== 'error' ? 'Layout stopped' : '', ...health].filter(Boolean), readout = state === 'ready' && !this.provisional && this.report;
     const info = this.statusSummary.querySelector<HTMLElement>('.graph-ng-summary-info') ?? this.statusSummary.createEl('button', { cls: 'graph-ng-summary-info', attr: { 'aria-label': 'Graph information' } });
     info.hidden = !readout && !chips.length;
     info.onclick = () => this.explorePanel?.show('information', info);
-    if (this.loading()) {
+    if (loading) {
       let progress = info.querySelector<HTMLElement>('.graph-ng-summary-progress');
-      if (!progress) { info.empty(); progress = info.createSpan({ cls: 'graph-ng-summary-progress', attr: { 'aria-live': 'polite' } }); }
-      workingText(progress, this.layoutStopped ? 'Stopping layout…' : chips.join(' '), !this.layoutStopped);
+      if (!progress) { info.empty(); progress = info.createSpan({ cls: 'graph-ng-summary-progress' }); }
+      workingText(progress, chips.join(' '), text !== 'Stopping layout…');
     } else {
       info.empty();
       if (readout) renderReadout(info, accounting(readout, this.explored));
       for (const chip of chips) info.createSpan({ cls: 'graph-ng-summary-chip', text: chip });
     }
     const refine = this.statusSummary.querySelector('.graph-ng-refine');
-    if (this.layoutStopped && !this.loading() && state === 'ready' && this.contentEl.dataset.mode === 'nodes') {
-      if (!refine) panelButton(this.statusSummary, 'Keep refining', () => { void this.applyLayout({}).catch(e => new Notice(String(e))); }, false, 'graph-ng-refine');
+    const canRefine = this.positions && !this.layoutSettled && !loading && !this.explorePanel?.physicsBusy && state === 'ready' && this.contentEl.dataset.mode === 'nodes';
+    if (canRefine) {
+      if (!refine) panelButton(this.statusSummary, 'Keep refining', () => { void this.explorePanel?.runLayout({}).catch(e => new Notice(String(e))); }, false, 'graph-ng-refine');
     } else refine?.remove();
     this.statusSummary.querySelector('.graph-ng-summary-help')?.remove();
     if (this.detailFallback) panelHelp(this.statusSummary, 'Notes unavailable', this.detailFallback, 'graph-ng-summary-chip graph-ng-summary-help');
-    this.statusSummary.hidden = !chips.length && !readout && !this.detailFallback; this.statusSummary.title = '';
+    this.statusSummary.hidden = !chips.length && !readout && !this.detailFallback && !canRefine; this.statusSummary.title = '';
   }
   private stage!: HTMLElement;
   private panel!: HTMLElement;
@@ -547,6 +554,7 @@ export class GraphView extends ItemView {
       rank: (query, visible) => this.detailGeneration === this.activeRevision ? this.plugin.pipeline.request<number[]>(this.activeRevision, { kind: 'search', query, visible }) : Promise.resolve([]),
       filter: query => this.setView({ ...this.view, query }),
     });
+    this.stageAnnouncement = this.body.createSpan({ cls: 'graph-ng-sr-only', attr: { 'aria-live': 'polite' } });
     this.statusSummary = this.body.createDiv({ cls: 'graph-ng-summary' });
     this.statusSummary.hidden = true;
     this.status = this.body.createDiv({ cls: 'graph-ng-status' });
@@ -584,7 +592,7 @@ export class GraphView extends ItemView {
       commitSavedView: (saved, expected) => this.plugin.commitSavedView(saved, expected),
       viewCurrent: () => !!this.explored && canonical(this.appliedView) === canonical(this.view),
       savedViewIssue: saved => this.savedViewIssue(saved), openSavedView: saved => this.openSavedView(saved),
-      layoutSettled: () => this.layoutSettled, applyLayout: values => this.applyLayout(values), settings: () => this.plugin.settings, result: () => this.explored, loading: () => this.loading(), mode: () => this.contentEl.dataset.mode ?? 'groups',
+      layoutActivity: () => this.updateHydrationStatus(), layoutSettled: () => this.layoutSettled, applyLayout: values => this.applyLayout(values), settings: () => this.plugin.settings, result: () => this.explored, loading: () => this.loading(), mode: () => this.contentEl.dataset.mode ?? 'groups',
       policy: () => this.detailRenderer?.policy.reasons ?? [], carriers: () => this.detailRenderer?.carrierCount ?? 0, relationshipNotes: () => this.relationshipNotes(), setRelationshipDisplay: nodes => setRelationshipDisplay(this.plugin, nodes), setView: (view, after) => this.setView(view, after), setColors: colors => this.setColors(colors), preview: (expr, context) => this.previewExpression(expr, context),
       namedViewState: () => this.contentEl.dataset.mode === 'groups' ? 'Groups' : this.detailRenderer?.namedViewState ?? 'Notes',
       lens: () => { const r = this.contentEl.dataset.mode === 'nodes' ? this.detailRenderer : undefined; return { active: !!r && r.lensNode >= 0, available: !!r && (r.lensNode >= 0 || r.selected >= 0 || r.hovered >= 0) }; },
@@ -736,11 +744,11 @@ export class GraphView extends ItemView {
       this.layoutControl(true);
       try { layout = await this.plugin.pipeline.request<LayoutResult>(revision, { kind: 'layout' }); }
       catch (error) { if (String(error).includes('Saved identities')) { await this.plugin.store.quarantine(result.meta); } throw error; }
-      finally { this.layoutControl(false); }
-      if (!current()) return;
-      await preview.finish(true);
+      finally { this.plugin.pipeline.onPositions = undefined; this.plugin.pipeline.onEngine = undefined; this.layoutControl(false); }
       if (!current()) return;
       this.statusText = layout.cached || layout.reused === 'all' ? 'Using saved layout' : 'Preparing graph';
+      await preview.finish(true);
+      if (!current()) return;
       this.positions = layout.positions; this.layoutSettled = layout.settled !== false; if (this.layoutSettled) this.layoutStopped = false; this.explorePanel?.render();
       this.cacheTrace.push({ expected: result.meta.key, stored: layout.stored, nodes: result.nodes, ...coverage, valid: layout.cached }); if (this.cacheTrace.length > 16) this.cacheTrace.shift();
       report.engineStatus = layout.engineStatus; this.plugin.recordLayoutEngine?.(layout.engineStatus);
@@ -979,9 +987,9 @@ export class GraphView extends ItemView {
   private layoutSettled = true;
   private async applyLayout(values: PhysicsValues) {
     const revision = this.activeRevision, projection = this.projection, old = this.detailRenderer;
-    const current = generationCurrent(() => [this.closed, this.activeRevision, this.projection, this.positions, this.plugin.settings.layout, canonical(this.plugin.settings.layout), this.renderRevision, this.detailRenderer, this.detailScope, this.visible, this.explored]);
+    const current = generationCurrent(() => [this.closed, this.activeRevision, this.projection, this.positions, this.plugin.settings.layout, canonical(this.plugin.settings.layout), this.plugin.settings.layoutEngine, this.renderRevision, this.detailRenderer, this.detailScope, this.visible, this.explored]);
     await this.plugin.serialize(async () => {
-      let token: CoordinateToken | undefined, finish: ((committed: boolean) => void) | undefined, committed = false, working = false, painted = false, streamError: unknown;
+      let token: CoordinateToken | undefined, finish: ((committed: boolean) => void) | undefined, committed = false, working = false, completed = false, painted = false, streamError: unknown;
       const stopped = this.layoutStopped, previousStream = this.plugin.pipeline.onPositions, previousEngine = this.plugin.pipeline.onEngine;
       const ready = () => current() && (!token || token.current());
       try {
@@ -997,7 +1005,7 @@ export class GraphView extends ItemView {
           else this.plugin.pipeline.recycle(event.positions.buffer as ArrayBuffer);
         };
         const result = await this.plugin.pipeline.request<LayoutResult>(revision, { kind: 'recompute', options: next.layout, layoutEngine: next.layoutEngine, engineChoices: this.plugin.layoutChoices?.(), initial: this.positions!.slice() });
-        this.plugin.pipeline.onPositions = previousStream;
+        this.plugin.pipeline.onPositions = previousStream; this.plugin.pipeline.onEngine = previousEngine;
         this.plugin.recordLayoutEngine?.(result.engineStatus);
         requireLayout(current); if (streamError) throw streamError;
         this.layoutControl(false); this.statusText = 'Preparing graph';
@@ -1017,10 +1025,11 @@ export class GraphView extends ItemView {
             this.contentEl.dataset.cacheError = await this.plugin.cache(generation, () => !this.closed && this.activeRevision === revision && this.positions === result.positions).then(() => '', String);
           }
         }
+        completed = true;
       } finally {
         if (!committed) this.layoutStopped = stopped; this.layoutControl(false); this.plugin.pipeline.onPositions = previousStream; this.plugin.pipeline.onEngine = previousEngine; token?.discard();
         try { finish?.(committed); }
-        finally { if (working) { this.layoutWorking = false; this.statusText = this.provisional ? pendingText(this.report) : this.layoutSettled ? '' : 'Layout not settled'; } }
+        finally { if (working) { this.layoutWorking = false; this.statusText = !completed ? LAYOUT_FAILED : this.provisional ? pendingText(this.report) : this.layoutSettled ? '' : 'Layout not settled'; } }
       }
     });
   }

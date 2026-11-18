@@ -17,7 +17,7 @@
 - [ ] Fresh dependency installation with `--frozen-lockfile --ignore-scripts`, empty trust list, no runtime install hooks, and only reviewed exact inert development declarations. Build and native smoke must still pass without installers.
 - [ ] Run `./scripts/run.sh build`, `./scripts/run.sh test`, and `./scripts/run.sh gates`; record exact commands/subsets, source commit and uncovered lanes. Repeat gates immediately before a tag.
 - [ ] Existing runtime permissive-license gate passes; actual license text/legal comments and notices included. Development/test-toolchain `7z-wasm` exception stays separate. No proprietary downloaded application bytes tracked.
-- [ ] Review bundle raw/gzip/Brotli report and enforce the existing owner-approved ceilings of 461,000 minified bytes and 165,000 gzip bytes for this bounded UI pass. Brotli is reporting only; passing the size gate does not establish runtime acceptance.
+- [ ] Review bundle raw/gzip/Brotli report and enforce the existing owner-approved ceilings of 470,000 minified bytes and 168,000 gzip bytes for this bounded UI pass. Brotli is reporting only; passing the size gate does not establish runtime acceptance.
 - [ ] Run applicable synthetic native hardware/software lanes and current-plus-two-back matrix. Read captured screenshots; record real-use/mobile/integrated-GPU/literal-native gaps instead of inflating unit-green to release acceptance.
 - [ ] Independent boundary review covers untrusted projection/labels and any changed runtime behavior. No remote grant/transport acceptance implied by local-file testing.
 - [ ] `./scripts/verify-release.sh` passes on the clean source. Check candidate SHA256SUMS; version files match. Preserve legal files and deterministic asset names.

@@ -138,6 +138,18 @@ test('graph information retains full diagnostics while healthy summary stays qui
   view.explorePanel.dispose();
 });
 
+test('closed panels retain one polite stage region through ready and error without step counts', async () => {
+  const { GraphView } = await import('../src/main');
+  const view: any = Object.create(GraphView.prototype), root = new ControlElement(), render = ExplorePanel.prototype.render;
+  Object.assign(view, { contentEl: root, view: emptyView(), plugin: { settings: { explore: { panelOpen: false } }, subscribe() {} }, app: { workspace: { on() {} } }, registerEvent() {}, async refresh() {} });
+  ExplorePanel.prototype.render = () => {}; try { await view.onOpen(); } finally { ExplorePanel.prototype.render = render; }
+  root.dataset.state = 'building'; view.layoutControl(true); view.passSteps(20, 100);
+  const live = root.querySelectorAll('*').find(el => el.getAttribute('aria-live') === 'polite' && el.textContent === 'Arranging notes')!;
+  expect(live).toBeDefined(); view.passSteps(80, 100); expect(live.textContent).toBe('Arranging notes');
+  root.dataset.state = 'ready'; view.statusText = ''; expect(root.contains(live)).toBe(true); expect(live.textContent).toMatch(/ready/i);
+  root.dataset.state = 'error'; view.statusText = 'Projection refresh failed: synthetic failure'; expect(live.textContent).toContain('synthetic failure'); view.explorePanel.dispose();
+});
+
 test('public property source changes refresh deferred facts, reject old epochs, and unregister without disposing provider', async () => {
   const { default: GraphPlugin } = await import('../src/main');
   const plugin: any = Object.create(GraphPlugin.prototype), host: any = new EventTarget();
@@ -237,15 +249,16 @@ test('fact groups paint before layout, pending links prevent exact caching, and 
     Object.defineProperty(view, 'statusText', { get: descriptor.get, set(text) { stages.push(text); descriptor.set!.call(view, text); } });
     encoded = 0; pipeline.request = (rev: number, r: any) => r.kind === 'layout' ? { positions: new Float32Array(2), cached: true, settled: true } : request(rev, r);
     await view.refreshOnce(); expect(stages).toContain('Reading notes'); expect(stages).toContain('Preparing graph'); expect(stages).toContain('Using saved layout'); expect(stages).not.toContain('Arranging notes');
-    encoded = 0; pipeline.request = (rev: number, r: any) => {
+    let preparing = ''; view.presentation = 'nodes'; view.showDetails = async () => { preparing = view.statusSummary.textContent + view.status.textContent; };
+    pipeline.stopLayout = () => {}; encoded = 0; pipeline.request = (rev: number, r: any) => {
       if (r.kind !== 'layout') return request(rev, r);
       pipeline.onEngine({ engine: 'graphics', automatic: false, reason: 'manual' }, 15);
       view.passSteps(5, 15);
       pipeline.onEngine({ engine: 'processor', automatic: false, reason: 'failed' }, 15);
       expect(view.statusText).toBe('Arranging notes'); expect(view.layoutSteps.textContent).toBe('5 of 15 steps');
-      return { positions: new Float32Array(2), settled: false };
+      control(view.statusSummary, 'Stop layout').click(); return { positions: new Float32Array(2), settled: false };
     };
-    await view.refreshOnce(); expect(encoded).toBe(0);
+    await view.refreshOnce(); expect(encoded).toBe(0); expect(preparing).toContain('Preparing graph'); expect(preparing).not.toContain('Stopping layout'); expect(preparing).not.toContain('5 of 15 steps'); view.presentation = 'groups';
     for (const interruption of ['replacement', 'close']) {
       view.closed = false; encoded = 0; caches = 0;
       let release!: (v: any) => void, started!: () => void;
@@ -649,12 +662,21 @@ test('layout status updates the same ring, stops shimmer and clears stopped feed
   let stops = 0; view.plugin.pipeline = { stopLayout() { stops++; } };
   button.click(); button.click(); expect(stops).toBe(1);
   expect(view.statusSummary.querySelector('.graph-ng-working')).toBeUndefined();
-  view.layoutControl(false); view.layoutWorking = false; root.dataset.state = 'ready'; root.dataset.mode = 'nodes'; view.statusText = 'Layout not settled';
+  view.layoutControl(false); view.layoutWorking = false; root.dataset.state = 'ready'; root.dataset.mode = 'nodes'; view.positions = new Float32Array(2); view.layoutSettled = false; view.statusText = 'Layout not settled';
   expect(view.statusSummary.textContent).toContain('Layout stopped'); expect(view.statusSummary.querySelector('.graph-ng-working')).toBeUndefined();
-  let applied: unknown; view.applyLayout = async (values: unknown) => { applied = values; };
+  let applied: unknown; view.explorePanel = { async runLayout(values: unknown) { applied = values; } };
   control(view.statusSummary, 'Keep refining').click(); expect(applied).toEqual({});
   view.layoutControl(true); view.layoutWorking = true; view.passSteps(0, 15);
   expect(view.statusSummary.querySelector('.graph-ng-refine')).toBeUndefined();
   expect(view.layoutSteps.textContent).toBe('0 of 15 steps');
   expect(view.statusSummary.textContent).not.toContain('Layout stopped'); expect(view.statusSummary.querySelector('.graph-ng-working')).toBeDefined();
+});
+
+test('idle adopted Notes offers Keep refining after an unstopped pass', async () => {
+  const { GraphView } = await import('../src/main');
+  const view: any = Object.create(GraphView.prototype), root = new ControlElement();
+  Object.assign(view, { contentEl: root, status: new ControlElement(), statusSummary: new ControlElement(), plugin: { settings: {} }, positions: new Float32Array(2), layoutSettled: false });
+  Object.assign(root.dataset, { state: 'ready', mode: 'nodes' }); view.statusText = 'Layout not settled';
+  expect(view.statusSummary.querySelector('.graph-ng-refine')).toBeDefined(); expect(view.statusSummary.hidden).toBe(false);
+  root.dataset.mode = 'groups'; view.statusText = ''; expect(view.statusSummary.querySelector('.graph-ng-refine')).toBeUndefined();
 });

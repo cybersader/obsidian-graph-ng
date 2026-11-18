@@ -682,7 +682,7 @@ export class DetailRenderer {
   beginLayout() {
     const { positions, display, grid, picker, visible, hubs, halos, discData } = this;
     const previous = { positions, display, grid, picker, visible, hubs, halos, discData }, view = this.view, filter = this.filterVisible;
-    this.followLayout = true; this.layoutActive = true; this.labelsRevision++; this.overlay.hidden = true; this.refresh();
+    this.layoutActive = true; this.labelsRevision++; this.overlay.hidden = true; this.refresh();
     return (committed: boolean) => {
       this.layoutActive = false;
       if (this.disposed) return;
