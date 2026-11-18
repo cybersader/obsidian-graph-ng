@@ -12,3 +12,25 @@ export function latestWork(queue: WorkQueue, action: () => Promise<void>) {
   }
   return queue.work;
 }
+
+// Multiple room settlements can observe the same physical view refresh. Attach
+// one handler pair to it, never a Promise.race tail per retired room.
+type Reply = (ok: boolean, error?: unknown) => void;
+const acknowledgements = new WeakMap<Promise<unknown>, Set<Reply>>();
+function replies(work: Promise<unknown>) {
+  let set = acknowledgements.get(work);
+  if (!set) {
+    acknowledgements.set(work, set = new Set());
+    const finish = (ok: boolean, error?: unknown) => { acknowledgements.delete(work); for (const reply of set!) reply(ok, error); };
+    void work.then(() => finish(true), e => finish(false, e));
+  }
+  return set;
+}
+export function waitForView(work: Promise<unknown>, signal: AbortSignal) {
+  const set = replies(work);
+  return new Promise<void>((resolve, reject) => {
+    const reply: Reply = (ok, error) => { set.delete(reply); signal.removeEventListener('abort', cancel); if (ok) resolve(); else reject(error); };
+    const cancel = () => reply(true);
+    if (signal.aborted) resolve(); else { set.add(reply); signal.addEventListener('abort', cancel); }
+  });
+}

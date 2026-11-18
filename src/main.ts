@@ -1,4 +1,4 @@
-import { latestWork, type WorkQueue } from './adapter/latest-work';
+import { latestWork, waitForView, type WorkQueue } from './adapter/latest-work';
 import { devicePerformance, performanceRecords, type PerformanceRecord } from './performance';
 import { DevicePerformanceStore, sharedPerformanceData } from './device-performance';
 import { performanceChoices, performanceSettings, type PerformanceChoice, performanceControls, showPerformanceSuggestions } from './performance-ui';
@@ -153,10 +153,20 @@ export default class GraphPlugin extends Plugin {
     // room-aware aggregate load fans out internally; never call it on that API.
     const key = Symbol.for('graph-ng.property-loads'), queue = (host as unknown as Record<symbol, WorkQueue>)[key] ??= { work: Promise.resolve() };
     let waiting: Promise<void> | undefined, finish: (() => void) | undefined, latest = 0;
+    let queued: WorkQueue['next'], flight: { controller: AbortController; mounted: () => boolean } | undefined;
+    const unlink = () => { if (queue.next === queued) queue.next = undefined; queued = undefined; };
+    const superseded = (source?: PropertySource) => {
+      if (!flight || flight.controller.signal.aborted) return false;
+      try { return source !== this.propertySource || !flight.mounted(); } catch { return true; }
+    };
+    const views = (visit: (view: GraphView) => void) => {
+      for (const leaf of this.app.workspace.getLeavesOfType(VIEW)) if (!leaf.isDeferred && leaf.view instanceof GraphView) visit(leaf.view);
+    };
+    const promote = () => views(view => view.promoteProperties());
     const status = (message: string) => {
       if (!active || message === (this.hydrationStatus || '')) return;
       this.hydrationStatus = message;
-      for (const leaf of this.app.workspace.getLeavesOfType(VIEW)) (leaf.view as GraphView).updateHydrationStatus();
+      views(view => view.updateHydrationStatus());
     };
     this.loadProperties = () => {
       const source = this.propertySource, request = ++latest;
@@ -167,17 +177,25 @@ export default class GraphPlugin extends Plugin {
         const timer = setTimeout(() => { finish?.(); status('Property loading delayed'); }, waitMs);
         finish = () => { clearTimeout(timer); waiting = undefined; finish = undefined; resolve(); };
       });
-      void latestWork(queue, async () => {
+      void latestWork(queue, queued = async () => {
+        queued = undefined;
         const current = () => active && source === this.propertySource;
         let message = '';
         try {
           if (!current()) return;
           if (source.rooms) {
             for (const handle of source.rooms()) {
-              if (!current()) break;
-              if (source.rooms().includes(handle)) try { await handle.load?.(); } catch { message = 'Some room properties could not load'; }
+              if (!current() || request !== latest) break;
+              if (!handle.load || !source.rooms().includes(handle)) continue;
+              const generation = handle.generation, id = handle.cacheIdentity, controller = new AbortController();
+              flight = { controller, mounted: () => !!source.rooms?.().includes(handle) && handle.generation === generation && handle.cacheIdentity === id };
+              try { await handle.load({ signal: controller.signal }); } catch { message = 'Some room properties could not load'; }
+              finally { flight = undefined; }
             }
-          } else if (!source.roomFor && !('room' in source)) await source.load?.();
+          } else if (!source.roomFor && !('room' in source) && source.load) {
+            const controller = new AbortController(); flight = { controller, mounted: () => true };
+            try { await source.load({ signal: controller.signal }); } finally { flight = undefined; }
+          }
         } catch { message = source.rooms ? 'Room inventory unavailable' : 'Property loading unavailable'; }
         finally { if (request === latest && current()) { finish?.(); status(message); } }
       });
@@ -187,7 +205,7 @@ export default class GraphPlugin extends Plugin {
       if (!active || timer !== undefined || verifying) return;
       timer = setTimeout(async () => {
         timer = undefined; verifying = true; pending = false;
-        try { if (await this.adapter.verifyProperties(this.settings.ingest) && active) for (const leaf of this.app.workspace.getLeavesOfType(VIEW)) (leaf.view as GraphView).promoteProperties(); }
+        try { if (await this.adapter.verifyProperties(this.settings.ingest) && active) promote(); }
         finally { verifying = false; if (pending) verify(); }
       }, this.settings.debounceMs);
     };
@@ -195,34 +213,45 @@ export default class GraphPlugin extends Plugin {
     const changed = (event?: Event) => {
       const candidate = (host as typeof globalThis & { openclast?: { propertyFacts?: PropertySource } }).openclast?.propertyFacts;
       const source = typeof candidate?.get === 'function' ? candidate : undefined, previous = this.propertySource;
+      const displaced = superseded(source) ? flight!.controller : undefined;
       if (source === previous) this.adapter.syncRooms?.();
-      if (observed === this.adapter.roomRevision && source === previous && (event as CustomEvent | undefined)?.detail?.invalidated === false) { pending = true; verify(); return; }
+      if (!displaced && observed === this.adapter.roomRevision && source === previous && (event as CustomEvent | undefined)?.detail?.invalidated === false) { pending = true; verify(); return; }
       clearTimeout(timer); timer = undefined; pending = false;
-      if (source !== previous) { if (!source) { ++latest; finish?.(); } status(''); }
+      if (source !== previous) { if (!source) { ++latest; unlink(); finish?.(); } status(''); }
       this.propertySource = source; this.propertyRevision++;
       const moved = observed !== this.adapter.roomRevision;
       this.adapter.setPropertySource(source, !event, moved); observed = this.adapter.roomRevision; this.ingestedHash = '';
-      for (const leaf of this.app.workspace.getLeavesOfType(VIEW)) (leaf.view as GraphView).invalidateSource();
+      views(view => view.invalidateSource());
       this.notify();
-      if (source && (source !== previous || moved)) void this.loadProperties?.();
+      if (source && (source !== previous || moved || displaced)) void this.loadProperties?.();
+      displaced?.abort();
     };
     const settled = (event: Event) => {
       const source = (host as typeof globalThis & { openclast?: { propertyFacts?: PropertySource } }).openclast?.propertyFacts;
       if (source === this.propertySource) this.adapter.syncRooms();
-      if (source !== this.propertySource || observed !== this.adapter.roomRevision) changed(event);
+      if (source !== this.propertySource || observed !== this.adapter.roomRevision || superseded(source)) changed(event);
       const revision = this.propertyRevision;
-      void this.adapter.onRoomSettled((event as CustomEvent).detail, this.settings.ingest, () => this.notify()).then(current => {
-        if (current && active && revision === this.propertyRevision) for (const leaf of this.app.workspace.getLeavesOfType(VIEW)) (leaf.view as GraphView).promoteProperties();
+      void this.adapter.onRoomSettled((event as CustomEvent).detail, this.settings.ingest, signal => this.notify(signal), () => {
+        if (active && revision === this.propertyRevision) promote();
       });
     };
     host.addEventListener?.('oc:property-facts-settled', settled);
     host.addEventListener?.('oc:property-facts-changed', changed);
-    this.register(() => { active = false; finish?.(); clearTimeout(timer); host.removeEventListener?.('oc:property-facts-changed', changed); host.removeEventListener?.('oc:property-facts-settled', settled); });
+    this.register(() => {
+      active = false; unlink(); finish?.(); clearTimeout(timer);
+      host.removeEventListener?.('oc:property-facts-changed', changed); host.removeEventListener?.('oc:property-facts-settled', settled);
+      flight?.controller.abort();
+    });
     changed();
   }
   resetAdapter() { this.adapter?.invalidate(); this.adapter?.index.dispose(); this.adapter = new LocalAdapter(this.app, this, this.linkProducer, this.settings.debounceMs, () => this.notify(), true, this.settings.declaration, this.propertySource); this.adapter.attachFactCache(this.factStore, `${this.deviceNamespace}/${this.manifest.version}/${this.sourceIdentity}`); this.ingestedHash = ''; }
   subscribe(listener: () => void | Promise<void>) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
-  notify() { return Promise.all([...this.listeners].map(fn => fn())); }
+  notify(signal?: AbortSignal) {
+    // The settlement watches a single acknowledgement directly. For multiple
+    // views also detach their individual waits if any view never settles.
+    if (signal && this.listeners.size === 1) return [...this.listeners][0]!() ?? Promise.resolve();
+    return Promise.all([...this.listeners].map(fn => { const work = fn(); return signal && work ? waitForView(work, signal) : work; }));
+  }
   async open() {
     let leaf = this.app.workspace.getLeavesOfType(VIEW)[0];
     if (!leaf) { leaf = this.app.workspace.getLeaf('tab'); await leaf.setViewState({ type: VIEW, active: true }); }
@@ -697,6 +726,7 @@ export class GraphView extends ItemView {
       if (this.presentation === 'nodes') await this.showDetails();
       if (current() && !this.provisional && !source) await this.plugin.adapter.saveFacts?.();
       if (this.plugin.adapter.factError) this.statusText = 'Saved facts unavailable. Using host properties.';
+      else if (this.plugin.adapter.inventoryError) this.statusText = 'Room inventory unavailable';
       if (current() && !this.provisional) this.plugin.recordPerformance?.({ notes: result.nodes, edges: result.edges, ingestMs, projectMs, groupsMs: Number(this.contentEl.dataset.refreshGroupMs), layoutMs: layout.milliseconds, totalMs: performance.now() - start });
       if (layout.settled !== false && settings.persistLayout && this.plugin.store.committed !== result.meta.key && complete && !this.provisional && (!settings.declaration.edges.some(e => e.kind === 'producer') || this.plugin.adapter.linksResolved)) {
         const generation = await this.plugin.pipeline.request<BinaryGeneration>(revision, { kind: 'encode' });

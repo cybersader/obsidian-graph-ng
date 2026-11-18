@@ -158,7 +158,7 @@ test('public property source changes refresh deferred facts, reject old epochs, 
 });
 
 test('verification scheduling keeps one audit active without revising or clearing the view', async () => {
-  const { default: GraphPlugin } = await import('../src/main');
+  const { default: GraphPlugin, GraphView } = await import('../src/main');
   const plugin: any = Object.create(GraphPlugin.prototype), host: any = new EventTarget();
   let resolve!: (v: boolean) => void, started!: () => void, promoted!: () => void;
   const audit = new Promise<boolean>(r => { resolve = r; }), running = new Promise<void>(r => { started = r; }), promotion = new Promise<void>(r => { promoted = r; });
@@ -166,7 +166,7 @@ test('verification scheduling keeps one audit active without revising or clearin
   const source = { get() {} }; host.openclast = { propertyFacts: source };
   Object.assign(plugin, { propertySource: source, propertyRevision: 0, settings: { debounceMs: 1, ingest: { chunkRows: 1, budgetMs: 8 } },
     register: (f: Function) => cleanup.push(f), notify() {}, adapter: { setPropertySource() { resets++; }, async verifyProperties() { audits++; started(); return await audit; } },
-    app: { workspace: { getLeavesOfType: () => [{ view: { invalidateSource() { clears++; }, promoteProperties() { promoted(); } } }] } } });
+    app: { workspace: { getLeavesOfType: () => [{ view: Object.assign(Object.create(GraphView.prototype), { invalidateSource() { clears++; }, promoteProperties() { promoted(); } }) }] } } });
   plugin.watchProperties(host); const revision = plugin.propertyRevision;
   const event = () => host.dispatchEvent(new CustomEvent('oc:property-facts-changed', { detail: { reason: 'live_verified', invalidated: false } }));
   try {

@@ -1,4 +1,3 @@
-import { latestWork, type WorkQueue } from './latest-work';
 import { hashBytes as sha, MAX_CHUNK_BYTES as FACT_CHUNK, type BinaryAdapter } from '../core/binary-layout';
 import type { FactRow } from '../core/projection';
 import { digest } from '../core/declaration';
@@ -11,7 +10,21 @@ type CacheKey = string | ((check: () => void) => Promise<string>);
 interface Part { bytes: number; hash: string }
 interface Manifest { format: number; key: string; parts: Part[] }
 // Retain only a void-valued queue across plugin module reloads, never loaded facts.
-interface Queue extends WorkQueue { epoch: number }
+interface Job { run(): Promise<void>; cancel?(): void }
+interface Queue { work: Promise<void>; epoch: number; jobs?: Map<string | symbol, Job> }
+// Pending operations are removable; only a physically settled operation gives
+// up the writer. Use FIFO even when replacing a room intent across a root clear.
+function enqueue(queue: Queue, key: string | symbol, job: Job) {
+  let jobs = queue.jobs;
+  if (!jobs) {
+    queue.jobs = jobs = new Map();
+    queue.work = queue.work.then(async () => {
+      try { for (const [id, next] of jobs!) { jobs!.delete(id); await next.run(); } }
+      finally { queue.jobs = undefined; }
+    });
+  }
+  jobs.get(key)?.cancel?.(); jobs.delete(key); jobs.set(key, job);
+}
 const queueKey = Symbol.for('graph-ng.startup-facts.queues');
 const queues = (globalThis as unknown as Record<symbol, WeakMap<BinaryAdapter, Map<string, Queue>>>)[queueKey] ??= new WeakMap();
 function bounded(value: unknown, depth = 0) {
@@ -37,12 +50,19 @@ export class FactCache {
     if (!queue) targets.set(factDirectory, queue = { work: Promise.resolve(), epoch: 0 });
     this.queue = queue;
   }
-  private run<T>(current: () => boolean, action: (check: () => void) => Promise<T>): Promise<T> {
+  private run<T>(current: () => boolean, action: (check: () => void) => Promise<T>, key: string | symbol = Symbol()): Promise<T> {
     const queue = this.queue, epoch = queue.epoch, until = performance.now() + this.deadlineMs; let expired = false, timer: ReturnType<typeof setTimeout>;
     const check = () => { if (expired || performance.now() >= until) throw Error('Saved facts deadline exceeded'); if (epoch !== queue.epoch || !current()) throw Error('Saved facts cancelled'); };
-    const next = queue.work.then(() => { check(); return action(check); });
-    queue.work = next.then(() => {}, () => {});
-    return Promise.race([next, new Promise<never>((_, reject) => { timer = setTimeout(() => { expired = true; reject(Error('Saved facts deadline exceeded')); }, this.deadlineMs); })]).finally(() => clearTimeout(timer));
+    return new Promise<T>((resolve, reject) => {
+      const job: Job = {
+        async run() { try { check(); resolve(await action(check)); } catch (error) { reject(error); } finally { clearTimeout(timer); } },
+        cancel() { clearTimeout(timer); reject(Error('Saved facts cancelled')); },
+      };
+      timer = setTimeout(() => {
+        expired = true; if (queue.jobs?.get(key) === job) queue.jobs.delete(key); reject(Error('Saved facts deadline exceeded'));
+      }, this.deadlineMs);
+      enqueue(queue, key, job);
+    });
   }
   clear(pause = false) {
     this.paused ||= pause; this.queue.epoch++;
@@ -83,10 +103,10 @@ export class FactCache {
     };
     if (!onError) return this.run(current, prune);
     const epoch = this.queue.epoch;
-    void latestWork(this.queue, async () => {
+    enqueue(this.queue, Symbol.for('graph-ng.prune-facts'), { run: async () => {
       const until = performance.now() + this.deadlineMs;
       await prune(() => { if (!current() || epoch !== this.queue.epoch || performance.now() >= until) throw Error('Saved facts reconciliation stopped'); }).catch(onError);
-    });
+    } });
   }
   load(key: CacheKey, current: () => boolean, identity?: string, budget = { bytes: 0, parts: 0 }): Promise<Map<string, FactRow> | undefined> {
     return this.run(current, async check => {
@@ -173,7 +193,7 @@ export class FactCache {
       // while this queue still owns the directory, before any subsequent load.
       if (!identity) { check(); return; } // Native publication retains its completed manifest.
       try { commitCheck(); } catch (error) { await this.disk.rmdir(dir, true); throw error; }
-    });
+    }, identity);
   }
 }
 /** Whole-vault resolution namespace, not just declared/excluded Markdown rows.

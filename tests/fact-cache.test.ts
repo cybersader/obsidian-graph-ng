@@ -68,7 +68,7 @@ async function contractFixture(disk = new MemoryAdapter(), firstId = 'ocpf1:room
   if (missing) delete source[missing]; prepare?.(source);
   const f = fixture(), cleanup: (() => void)[] = [], host = Object.assign(new EventTarget(), { openclast: { propertyFacts: source } });
   const unmounted = new FixtureFile('unmounted.md'); Object.assign(unmounted.stat, { mtime: 100 }); f.files.push(unmounted);
-  const plugin = Object.assign(Object.create(GraphPlugin.prototype), { adapter: f.adapter, settings: { debounceMs: 5, ingest: { chunkRows: 1, budgetMs: 8 } },
+  const plugin = Object.assign(Object.create(GraphPlugin.prototype), { adapter: f.adapter, propertyRevision: 0, hydrationStatus: '', settings: { debounceMs: 5, ingest: { chunkRows: 1, budgetMs: 8 } },
     app: { workspace: { getLeavesOfType: () => [] } }, register: (fn: () => void) => cleanup.push(fn), notify() {} });
   f.adapter.attachFactCache(new FactCache(disk, directory), 'device'); plugin.watchProperties(host, waitMs);
   const send = (event: string, detail?: unknown) => host.dispatchEvent(new CustomEvent(event, { detail }));
@@ -784,4 +784,112 @@ test('native parity: metadata notice during manifest publication preserves both 
       expect(restart.adapter.factsComplete()).toBe(false);
     } finally { restart.dispose(); }
   } finally { x.dispose(); }
+});
+
+const hydrationQueue = (f: Awaited<ReturnType<typeof contractFixture>>) => (f.host as any)[Symbol.for('graph-ng.property-loads')];
+
+test('binding: retiring sixteen drains frees their acknowledgements and permits an immediate remount', async () => {
+  const f = await contractFixture(), hold = signal(), { default: GraphPlugin } = await import('../src/main');
+  let entered: ReturnType<typeof signal> | undefined, finished = 0;
+  // Exercise real listener acknowledgement aggregation, not a disposable Promise.race wrapper.
+  f.plugin.listeners = new Set([() => {}, () => { if (entered) { entered.yes(); return hold.done; } }]); f.plugin.notify = GraphPlugin.prototype.notify;
+  let handles: typeof f.handles = [];
+  const mount = (next: typeof handles) => { handles = next; f.send('oc:property-facts-changed'); };
+  try {
+    f.fill('a.md'); await f.rows(); f.source.rooms = () => handles; f.source.roomFor = p => p === 'a.md' ? handles[0] : undefined;
+    for (let i = 0; i < 16; i++) {
+      const h = { ...f.a, cacheIdentity: `ocpf1:synthetic-${i}`, generation: i + 1 }; mount([h]); entered = signal();
+      void f.settle(h).then(() => finished++); await entered.done; entered = undefined;
+    }
+    mount([]); await new Promise(r => setTimeout(r, 0)); expect(finished).toBe(16);
+    const h = { ...f.a, cacheIdentity: 'ocpf1:synthetic-0', generation: 17 }; mount([h]); await f.rows(); await f.settle(h);
+    expect(await f.disk.exists(await roomDir(h.cacheIdentity) + '/manifest.json')).toBe(true);
+    // Direct generation replacement and unload also detach a held logical wait.
+    for (const generation of [18, 19]) { h.generation = generation; mount([h]); entered = signal(); void f.settle(h).then(() => finished++); await entered.done; entered = undefined; }
+    f.close(); await new Promise(r => setTimeout(r, 0)); expect(finished).toBe(18);
+  } finally { hold.yes(); f.close(); }
+});
+
+test('binding: the winning revision promotes its loaded view after the obsolete write', async () => {
+  const f = await contractFixture(), started = signal(), release = signal(), { GraphView } = await import('../src/main');
+  try {
+    for (const file of f.files) f.fill(file.path); await f.rows(); let promotions = 0;
+    const view = Object.assign(Object.create(GraphView.prototype), { promoteProperties() { promotions++; }, invalidateSource() {}, updateHydrationStatus() {} });
+    f.plugin.app.workspace.getLeavesOfType = () => [{ view }]; const write = f.disk.writeBinary.bind(f.disk);
+    f.disk.writeBinary = async (p,b) => { started.yes(); await release.done; return write(p,b); };
+    const old = f.settle(); await started.done; f.live.set('a.md', {category: 'changed', verified: false}); f.send('oc:property-facts-changed');
+    await f.rows(); expect(f.adapter.factsComplete()).toBe(false); f.live.set('a.md', {category: 'changed', verified: true}); await f.settle(); release.yes(); await old;
+    expect(await f.disk.exists(await roomDir(f.a.cacheIdentity!) + '/manifest.json')).toBe(true); expect(f.adapter.factsComplete()).toBe(true); expect(promotions).toBe(1);
+  } finally { release.yes(); f.close(); }
+});
+
+test('binding: six deadlines unlink queued room saves while one physical writer remains', async () => {
+  const f = await contractFixture(), started = signal(), release = signal(), cache = (f.adapter as any).cache;
+  try {
+    f.fill('a.md'); await f.rows(); cache.deadlineMs = 70; let writes = 0; const write = f.disk.writeBinary.bind(f.disk);
+    f.disk.writeBinary = async (p,b) => { writes++; started.yes(); await release.done; return write(p,b); };
+    const first = f.settle(); await started.done; const tails = new Set([cache.queue.work]); await first;
+    for (let i=0;i<5;i++) { await f.settle(); tails.add(cache.queue.work); }
+    expect(tails.size).toBe(1); expect(cache.queue.jobs.size).toBe(0); expect(writes).toBe(1);
+    // A second cache object on this root also replaces (not appends to) a queued intent.
+    const peer = new FactCache(f.disk, directory), id = f.a.cacheIdentity!;
+    const obsolete = peer.save('old', [], () => true, undefined, id).catch(e => String(e));
+    const replacement = peer.save('new', [], () => false, undefined, id).catch(e => String(e));
+    expect(cache.queue.jobs.size).toBe(1); expect(await obsolete).toContain('cancelled');
+    release.yes(); expect(await replacement).toContain('cancelled'); await cache.queue.work; expect(f.disk.writes).toBe(0);
+  } finally { release.yes(); f.close(); }
+});
+
+test('binding: status skips deferred and unrelated leaves and reaches a loaded GraphView', async () => {
+  const f = await contractFixture(), { GraphView } = await import('../src/main');
+  try { await hydrationQueue(f).work; let painted = 0, touched = 0;
+    const view = Object.assign(Object.create(GraphView.prototype), { updateHydrationStatus() { painted++; } });
+    f.plugin.app.workspace.getLeavesOfType = () => [{isDeferred:true, get view() { touched++; return {}; }}, {view:{}}, {view}];
+    f.source.rooms = () => { throw Error('synthetic inventory'); }; await f.plugin.loadProperties(); await hydrationQueue(f).work;
+    expect(f.plugin.hydrationStatus).toBe('Room inventory unavailable'); expect(painted).toBe(1); expect(touched).toBe(0);
+  } finally { f.close(); }
+});
+
+test('binding: unload unlinks only its pending hydration while a legacy load holds the slot', async () => {
+  const hold = signal(), h = {load: () => hold.done}, f = await contractFixture(undefined,undefined,undefined,s => { s.rooms = () => [h]; });
+  try { const queue = hydrationQueue(f), physical = queue.work, caller = f.plugin.loadProperties(); expect(typeof queue.next).toBe('function');
+    f.close(); await caller; expect(queue.next).toBeUndefined(); expect(queue.work).toBe(physical); expect(queue.draining).toBe(true);
+    hold.yes(); await physical; expect(queue.draining).toBe(false);
+  } finally { hold.yes(); }
+
+});
+
+test('binding: inventory recovery clears only its diagnostic and replays saved facts', async () => {
+  const f = await contractFixture(await savedContract());
+  try { await f.rows(); const rooms = f.source.rooms; f.source.rooms = () => { throw Error('synthetic inventory'); }; f.send('oc:property-facts-changed');
+    f.source.rooms = rooms; f.send('oc:property-facts-changed'); await f.plugin.loadProperties(); expect((await f.rows())[0]!.properties.category).toBe('Saved a.md');
+    expect(f.adapter.cacheStatus).toBe('restored'); expect(f.adapter.factError).toBe(''); expect(f.plugin.hydrationStatus).toBe('');
+    f.adapter.factError = 'synthetic disk failure'; f.adapter.syncRooms(); expect(f.adapter.factError).toBe('synthetic disk failure');
+  } finally { f.close(); }
+});
+
+for (const change of ['unload','grant','room']) test(`binding: signal aborts a physical handle on ${change} and never overlaps its replacement`, async () => {
+  const hold = signal(), calls: string[] = []; let physical: AbortSignal | undefined, active = 0, peak = 0;
+  const old = {cacheIdentity:'ocpf1:old', generation:1, async load(opts?: { signal: AbortSignal }) {
+    physical = opts?.signal; calls.push('old'); peak = Math.max(peak, ++active);
+    // Acknowledgement can lag the signal. Hold the physical slot until rejection.
+    try { await hold.done; throw new DOMException('synthetic abort','AbortError'); } finally { active--; }
+  }}, next = {cacheIdentity:old.cacheIdentity, generation:2, async load() { calls.push('next'); peak = Math.max(peak, ++active); active--; }};
+  let handles: Array<typeof old | typeof next> = [old];
+  const f = await contractFixture(undefined,undefined,undefined,s => { s.rooms = () => handles; s.roomFor = () => handles[0]; });
+  try { expect(calls).toEqual(['old']);
+    if (change === 'unload') f.close(); else { handles = [next]; if (change === 'grant') f.host.openclast.propertyFacts = {...f.source}; f.send('oc:property-facts-changed', {invalidated:false}); }
+    expect(physical?.aborted).toBe(true); expect(calls).toEqual(['old']); hold.yes(); await hydrationQueue(f).work;
+    expect(peak).toBe(1); expect(calls).toEqual(change === 'unload' ? ['old'] : ['old','next']); expect(f.adapter.factsComplete()).toBe(false);
+  } finally { hold.yes(); f.close(); }
+});
+
+test('binding: host timeout services newest queued open before obsolete siblings without verifying', async () => {
+  const hold = signal(), calls: string[] = []; let pass = 0;
+  const a = {async load() { calls.push('a'); if (++pass === 1) await hold.done; }}, b = {async load() { calls.push('b'); }};
+  const f = await contractFixture(undefined,undefined,undefined,s => { s.rooms = () => [a,b]; }, 25);
+  try { await f.plugin.loadProperties(); expect(f.plugin.hydrationStatus).toBe('Property loading delayed'); expect(calls).toEqual(['a']);
+    hold.no(Object.assign(Error('synthetic timeout'), {name:'PropertyFactsLoadTimeoutError'})); await hydrationQueue(f).work;
+    expect(calls).toEqual(['a','a','b']); expect(f.plugin.hydrationStatus).toBe(''); expect(f.adapter.factsComplete()).toBe(false); expect(f.disk.writes).toBe(0);
+  } finally { hold.yes(); f.close(); }
 });

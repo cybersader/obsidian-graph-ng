@@ -1,6 +1,7 @@
 import { TFile, type TAbstractFile, type TFolder, type App, type Plugin } from 'obsidian';
 import type { FactRow } from '../core/projection';
 import { FactCache, factKey } from './fact-cache';
+import { waitForView } from './latest-work';
 import { IncrementalIndex } from './index';
 import { hashEdge } from '../core/edge-hash';
 import { digest, folderPath, type GraphDeclaration } from '../core/declaration';
@@ -8,12 +9,17 @@ import { declaredKeys, packRows, type RowColumns } from '../core/columns';
 import { yieldTask, sliced, type IngestOptions } from '../core/scheduler';
 export interface PropertySource {
   get(path: string): { source?: string; state?: string; verified?: boolean; frontmatter?: Record<string, unknown>; parseError?: unknown; truncated?: unknown } | undefined;
-  load?(): Promise<unknown>;
+  load?(options?: { signal: AbortSignal }): Promise<unknown>;
   rooms?(): readonly RoomHandle[];
   roomFor?(path: string): RoomHandle | undefined;
 }
-interface RoomHandle { load?(): Promise<unknown>; cacheIdentity?: string; generation?: number; verifiedComplete?: boolean }
-interface RoomPartition { id: string; generation: number; ready: boolean; permit?: object; loaded?: boolean }
+interface RoomHandle { load?(options: { signal: AbortSignal }): Promise<unknown>; cacheIdentity?: string; generation?: number; verifiedComplete?: boolean }
+interface RoomPartition { id: string; generation: number; ready: boolean; permit?: object; loaded?: boolean; lane?: SettlementLane }
+interface SettlementLane { controller: AbortController; next?: () => Promise<void> }
+function retireLane(room: RoomPartition) {
+  room.permit = undefined;
+  if (room.lane) { room.lane.next = undefined; room.lane.controller.abort(); room.lane = undefined; }
+}
 function validRoom(room: RoomHandle | undefined) {
   return typeof room?.cacheIdentity === 'string' && room.cacheIdentity.startsWith('ocpf1:') && Number.isSafeInteger(room.generation);
 }
@@ -54,9 +60,10 @@ export class LocalAdapter {
   private roomBudget = { bytes: 0, parts: 0 };
   private pruned = false;
   private unknownRooms = false;
+  inventoryError = '';
   private inventory() {
-    try { const handles = this.propertySource?.rooms?.(); return this.partitioned && Array.isArray(handles) ? handles as RoomHandle[] : undefined; }
-    catch (error) { this.storageError(error); return undefined; }
+    try { const handles = this.propertySource?.rooms?.(); this.inventoryError = ''; return this.partitioned && Array.isArray(handles) ? handles as RoomHandle[] : undefined; }
+    catch (error) { this.inventoryError = String(error); return undefined; }
   }
   private prune(background = false) {
     const source = this.propertySource, turn = this.cacheTurn, cache = this.cache!;
@@ -72,14 +79,14 @@ export class LocalAdapter {
       const id = h.cacheIdentity!; active.add(id);
       let room = this.partitions.get(id);
       if (!room || room.generation !== h.generation) {
-        if (room) replaced.add(id); else moved = true;
+        if (room) { retireLane(room); replaced.add(id); } else moved = true;
         this.partitions.set(id, room = { id, generation: h.generation!, ready: false });
       }
       room.ready = h.verifiedComplete === true;
-      if (!room.ready) room.permit = undefined;
+      if (!room.ready) retireLane(room);
     }
-    for (const id of this.partitions.keys()) if (!active.has(id)) {
-      this.partitions.delete(id); moved = retired = true;
+    for (const [id, room] of this.partitions) if (!active.has(id)) {
+      retireLane(room); this.partitions.delete(id); moved = retired = true;
     }
     if ((retired || this.unknownRooms) && handles?.length && this.cache && !this.cache.paused) this.prune(true);
     this.unknownRooms = !handles?.length;
@@ -88,38 +95,37 @@ export class LocalAdapter {
   }
   // The first event owns the drain. Later callers return immediately, replacing
   // one pending action, never attaching another handler to a held acknowledgement.
-  private settlements = new Map<string, { next?: () => Promise<boolean> }>();
-  async onRoomSettled(detail: { cacheIdentity?: unknown; generation?: unknown } | undefined, options: IngestOptions, refresh: () => Promise<unknown>) {
+  async onRoomSettled(detail: { cacheIdentity?: unknown; generation?: unknown } | undefined, options: IngestOptions, refresh: (signal: AbortSignal) => Promise<unknown>, promote: () => void) {
     const room = typeof detail?.cacheIdentity === 'string' ? this.partitions.get(detail.cacheIdentity) : undefined;
     if (!room?.ready || room.generation !== detail?.generation) return;
     const permit = room.permit = {};
     const current = () => this.partitions.get(room.id) === room && room.permit === permit;
-    const action = async () => {
+    const existing = room.lane, lane: SettlementLane = room.lane ??= { controller: new AbortController() };
+    lane.next = async () => {
       let needsAck = this.reloadRequired || this.ingesting, flush = false;
       try {
-        if (!current()) return false;
+        if (!current()) return;
         await sliced([...this.paths], options, path => {
           if (!current() || this.route(path, true) !== room) return;
           if (this.index.hasPending(path)) flush = true;
           else if (!this.dirty.has(path)) this.auditPath(path, false);
           if (this.dirty.has(path) || this.index.hasPending(path)) needsAck = true;
         });
-        if (current() && needsAck) { if (flush) this.index.flush(); await refresh(); }
+        if (current() && needsAck) {
+          if (flush) this.index.flush();
+          const signal = lane.controller.signal, work = current() && refresh(signal);
+          if (work) await waitForView(work, signal);
+        }
         // A reset during the wait changes worker evidence, not room authority.
         // saveRoom checks the current acknowledged stamps in the new worker epoch.
         if (current()) await this.saveRoom(room, current);
-        return current();
-      } catch (error) { if (current()) this.storageError(error); return false; }
+        if (current()) promote();
+      } catch (error) { if (current()) this.storageError(error); }
       finally { if (current()) room.permit = undefined; }
     };
-    let lane = this.settlements.get(room.id);
-    if (lane) { lane.next = action; return; }
-    this.settlements.set(room.id, lane = { next: action });
-    let result = false;
-    try {
-      while (lane.next) { const next: () => Promise<boolean> = lane.next; lane.next = undefined; result = await next(); }
-      return result;
-    } finally { this.settlements.delete(room.id); }
+    if (existing) return;
+    try { while (lane.next) { const next: () => Promise<void> = lane.next; lane.next = undefined; await next(); } }
+    finally { if (room.lane === lane) room.lane = undefined; }
   }
   private route(path: string, strict = false) {
     let h: RoomHandle | undefined;
@@ -132,7 +138,7 @@ export class LocalAdapter {
     this.cacheTurn++; this.factVersion++;
     for (const path of this.savedFacts.keys()) this.index.change(path);
     this.savedFacts.clear(); this.savedOwners.clear(); this.charges.clear(); this.roomBudget = { bytes: 0, parts: 0 };
-    for (const room of this.partitions.values()) room.permit = undefined;
+    for (const room of this.partitions.values()) retireLane(room);
   }
   private purgeFacts() {
     this.retireSaved();
@@ -266,6 +272,7 @@ export class LocalAdapter {
   setPropertySource(source?: PropertySource, startup = false, siblingsCurrent = false) {
     const same = source === this.propertySource, wasPartitioned = this.partitioned;
     if (!same) {
+      for (const room of this.partitions.values()) retireLane(room);
       this.propertySource = source; this.restore = undefined; this.pruned = false;
       if (wasPartitioned && this.partitioned) {
         // Preserve partitions with equal bindings, but do not inherit a settled
