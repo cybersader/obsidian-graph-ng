@@ -1,8 +1,39 @@
 import { expect, test } from 'bun:test';
 import { anchoredLabels, ANCHORED_LABELS, ANCHORED_CANDIDATES, DIRECT_LABELS, middleTruncate, overviewScale, radialLabels, stickyLevel, tierFont, tierType, type LabelItem } from '../src/label-layout';
+import { random } from '../src/core/layout';
 import { LABEL_RATIOS } from '../src/render-data';
+import { labelCandidates } from '../src/render-labels';
 import { labelFade } from '../src/render-effects';
 import { defaultVisuals, validateVisuals } from '../src/settings';
+
+test('exact top-K label candidates match the old full sort including ties and sparse masks', () => {
+  const rng = random(17);
+  for (const n of [0, 1, 9, 1024, 20000, 49000]) {
+    for (const degree of [() => 4, () => Math.floor(rng() * 16), (i: number) => Math.min(i, n - i) % 8192]) {
+      const offsets = new Uint32Array(n + 1);
+      for (let i = 0; i < n; i++) offsets[i + 1] = offsets[i]! + degree(i);
+      for (const density of [0, .02, .6, 1]) {
+        const visible = Uint8Array.from({ length: n }, () => Number(rng() < density));
+        const old = Array.from({ length: n }, (_, i) => i).filter(i => visible[i]);
+        old.sort((a, b) => (offsets[b + 1]! - offsets[b]!) - (offsets[a + 1]! - offsets[a]!) || a - b);
+        const quarter = Math.ceil(old.length / 4);
+        for (const cap of [0, 1, 7, 3264, Math.max(0, quarter - 1), quarter, n + 1]) {
+          expect(labelCandidates(n, visible, offsets, cap)).toEqual(old.slice(0, cap));
+        }
+      }
+    }
+  }
+});
+
+test('top-K cutoff honors unsigned high bytes and the lowest visible ID at a tie', () => {
+  const n = 128, degree = new Uint32Array(n), visible = new Uint8Array(n).fill(1);
+  degree[50] = 0x80000000; degree[80] = 0x10000000;
+  degree[20] = degree[32] = 0x0ffffff0;
+  degree[96] = 0x20000002; visible[96] = 0;
+  const offsets = new Uint32Array(n + 1);
+  for (let i = 0; i < n; i++) offsets[i + 1] = offsets[i]! + degree[i]!;
+  expect(labelCandidates(n, visible, offsets, 3)).toEqual([50, 80, 20]);
+});
 
 test('type scale: focus largest and bold, direct at the label size, 2-hop smaller; scale 1 keeps one size', () => {
   const sizes = [0, 1, 2, 3, 4, 5].map(r => tierType(r, 13, 1.2));

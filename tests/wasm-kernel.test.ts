@@ -90,6 +90,33 @@ test('tree growth disables the kernel without partial publication or step alloca
   expect(kernel.active).toBe(false); expect(forces.every(v => v === 17)).toBe(true);
   expect(pair({ count: n, source: edges, target: edges, initial: p, seed: 7 }, { ...options(true), maxTreeDepth: 52 }).kernelBackend).toBe('js');
 });
+test('copies only live cell prefixes, full owner/positions and only refreshed Morton orders', () => {
+  const count = 20000, solver = new LayoutSolver(kernelFixture(count), options());
+  type Column = Float32Array | Float64Array | Int32Array | Uint32Array;
+  const { kernel, tree } = solver as unknown as { kernel: { views: Record<string, Column> }; tree: BarnesHut };
+  const cells = ['child', 'head', 'next', 'cx', 'cy', 'half', 'mass', 'mx', 'my'];
+  const lengths = new Map<string, number[]>(), refreshes: number[] = [];
+  for (const key of [...cells, 'owner', 'p', 'order']) {
+    const view = kernel.views[key]!, set = view.set.bind(view);
+    lengths.set(key, []);
+    view.set = column => {
+      lengths.get(key)!.push(column.length);
+      if (key === 'order') refreshes.push(solver.iteration + 1);
+      set(column);
+    };
+  }
+  const live: number[] = [];
+  while (!solver.done) { solver.step(); live.push(tree.usedCellCount); }
+  expect(solver.kernelBackend).toBe('wasm-scalar');
+  expect(new Set(live).size).toBeGreaterThan(1);
+  expect(Math.max(...live)).toBeLessThan(tree.kernelStorage().child.length);
+  for (const key of cells) expect(lengths.get(key)).toEqual(live);
+  expect(lengths.get('owner')).toEqual(live.map(() => count));
+  expect(lengths.get('p')).toEqual(live.map(() => count * 2));
+  expect(lengths.get('order')).toEqual([count, count, count]);
+  expect(refreshes).toEqual([1, 9, 17]);
+});
+
 test('linear memory and typed views remain stable across steps', () => {
   const solver = new LayoutSolver(kernelFixture(512), options(true));
   const kernel = (solver as unknown as { kernel: { ex: { memory: WebAssembly.Memory }; views: Record<string, ArrayBufferView> } }).kernel;

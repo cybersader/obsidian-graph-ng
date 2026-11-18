@@ -2,6 +2,29 @@
 
 Results belong to an exact invocation, fixture, source revision and hardware class. They do not establish all-scale acceptance. Original slice-1 source is `041e1382` (2026-11-10); release-readiness baseline is `9b8cc07`. Historical tables below remain dated evidence. The slice-2 section records the new worker/browser/native invocations and unmet targets separately. Raw receipts remain ignored and local; publish only scrubbed summaries without hostnames, usernames, real-vault paths or private projections.
 
+## Live tree copies and exact label top-K (2026-11-18)
+
+Baseline `2fcda43` versus the commit carrying this section. Node 22.23.1, Linux x86-64 desktop class, synthetic 128-note communities with hubs and bridges from `scripts/layout-engine-bench-worker.mjs`, seed 17. No browser, driver, Obsidian or whole-view adoption is measured. Coordinates, integration, step budgets, producer and cache identity are unchanged.
+
+**Processor layout.** The phase probe (three 100-step default runs per version) separates tree/owner/order/position copies into WebAssembly from the repulsion walk; it excludes force clearing and copyback from both phases. At 20k, 57,593 to 64,177 cells were live out of 80,004 reserved (62,322 mean). Copying alone was 0.367 ms per step before and 0.302 ms after; the walk was 9.027 ms before and 9.080 ms after. Copies were only 2.5% of the instrumented baseline step (1.8% to 2.1% in the initial baseline-only probe). Mean cell payload fell from 4.80 MB to 3.74 MB per step; including owner, order and positions, 5.12 MB to 3.99 MB. No reserved memory was removed. This is a small adapter change, not a solver redesign.
+
+| Processor measurement | Before | After | Change |
+| --- | ---: | ---: | ---: |
+| 5,000 notes, default step | 3.078 ms | 3.049 ms | -1.0% |
+| 20,000 notes, default step | 14.133 ms | 13.898 ms | -1.7% |
+| 49,000 notes, default step | 37.976 ms | 37.644 ms | -0.9% |
+| 20,000 notes, first settlement (2,625 steps) | 74.830 s | 75.963 s | +1.5% |
+
+Default step figures are medians of seven alternating 100-step runs per version, excluding solver setup and without per-phase instrumentation. Settlement uses overlap prevention, strong gravity 0.1, scaling 10, and the existing three-step relative quiet criterion. Two samples per version, ordered candidate/baseline/baseline/candidate, include solver construction and stop at the first settled step. All four settled at the same step and produced the same coordinate bytes. These data show lower copy traffic and slightly lower ordinary step times, not faster settlement; the small adapter change is kept without changing any force or unrelated scheduling.
+
+The differential runner compares baseline and candidate position bytes, RMS movement, settlement and iteration after every step. It covers 24 overlap steps at 5k, 20k and 49k, plus all 2,625 steps through first settlement at 20k. A separate 20k case traps after writing the third repulsion chunk of step 10, after the step-9 Morton refresh. Both solvers switch permanently to JS and remain byte-identical through the final step. Unit regressions check all nine live prefix lengths, full per-node columns, refreshes at steps 1/9/17 and the unchanged JS trap and growth behavior.
+
+**Label preparation.** The full `buildLabels` call runs with a Canvas text-metrics shim and real placement/yields, at 1280×800 with default Anchored labels, 3,264 candidates, all notes visible and fixed coordinates. The median of 24 alternating post-warmup calls is 6.373 to 4.383 ms at 20,000 notes (-31.2%) and 10.145 to 4.821 ms at 49,000 notes (-52.5%). Placement node IDs, their order and size factors at all seven levels, and the ordered candidate widths match the baseline. The exact comparator remains descending degree, then ascending node index. For a candidate budget below a quarter of visible notes, up to four byte passes find the cutoff degree; the scan keeps the lowest indices tied at the cutoff and sorts only the winners. Larger candidate budgets retain the full sort. No timing here includes renderer setup, GPU uploads or native font measurement.
+
+The build and unit suite pass: 972 tests pass, one optional browser test is skipped, and zero tests fail across 42 files. Build and tests use `flock -w 3000 -E 75 /tmp/openclast-bun.lock timeout --kill-after=5s 1800s ./scripts/run.sh` with `build` and `test --timeout 10000`. The bundle is 460,721 raw / 160,537 gzip bytes versus 460,119 / 160,252 at baseline (+602 / +285), below the unchanged 461,000 / 165,000 ceilings. Independent review and native acceptance remain separate.
+
+Local receipts are in `graph-ng-perf-livecells/` under the temporary directory, including the Node-only `bench.mjs` runner, baseline snapshot, phase timing, step/settlement samples, byte comparisons, and verification logs. Invocations from the worktree root: `node /tmp/graph-ng-perf-livecells/bench.mjs profile baseline candidate`, then `steps`, `settle`, `parity --settle` and `labels` in place of `profile baseline candidate`. Each command was bounded to nine minutes with `timeout --kill-after=5s 9m`. No new dependencies, network, screenshots or real data are used.
+
 ## Indexed instanced geometry (2026-11-17)
 
 Source: the commit carrying this section, compared with `3d7096b`. Only the node/edge vertex mapping, two static element buffers and their draw calls change. Eight-segment edges reference 18 vertices instead of 48; nodes reference four instead of six. The 32-segment ceiling needs 396 bytes of static GPU index data in total. Positions, triangle order, shader arithmetic after endpoint mapping, fragments, policies and Canvas remain unchanged.

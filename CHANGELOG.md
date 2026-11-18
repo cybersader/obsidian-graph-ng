@@ -7,6 +7,11 @@ The owner-approved bounded download ceilings for this UI pass are **470,000 raw 
 - **Explore now** adopts a progressed Notes pass through the existing Stop action. **Keep refining** is available for any idle, unsettled Notes layout. Both controls share one pass; coordinate-only refinement preserves the camera and does not save settings. Solver steps retire on reply, and stage announcements persist through completion.
 - Loading names the current stage. Layout shows completed steps against this pass's budget instead of an overall percentage; an exact cache hit skips Arranging notes.
 
+## Unreleased: less layout copying and label sorting
+
+- Copy only live Barnes-Hut cell columns into the Processor's scalar WebAssembly kernel and refresh its cached query order only when the tree's order changes. Full node columns, memory limits, JS fallback, coordinates, steps and cache identity stay unchanged.
+- Select the exact best note-label candidates before sorting them when the candidate budget is small. Visible-note eligibility, degree and note-index ordering, and every label choice stay unchanged. Large candidate budgets retain the full sort.
+
 ## Unreleased room-scoped startup facts
 
 - Request one aggregate property load per coalesced burst. OpenClast schedules rooms and takes its own cross-tab lock. When the grant or room set replaces the source, cancel the old call and load the newest source.
