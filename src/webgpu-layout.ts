@@ -28,7 +28,7 @@ export interface ComputeAdapter {
   requestDevice(descriptor?: unknown): Promise<Device>;
 }
 const STORAGE = 128, COPY_DST = 8, COPY_SRC = 4, MAP_READ = 1, UNIFORM = 64;
-export interface GraphicsStep { positions: Float32Array; movement: number; quiet: number }
+export interface GraphicsStep { positions: Float32Array; movement: number; quiet: number; extent: number }
 export interface GraphicsSolver { batch(count: number): Promise<GraphicsStep>; reset(): void; destroy(): void }
 /** All shaders use core WebGPU features. In particular, no timestamp query or f16 is required. */
 export function computeRequirements(input: LayoutInput, options: LayoutOptions): Record<string, number> | undefined {
@@ -194,7 +194,7 @@ export class WebGpuLayout implements GraphicsSolver {
       const data = new Float32Array(read.getMappedRange()), status = new Float32Array(statusRead.getMappedRange()), positions = new Float32Array(n * 2);
       for (let i = 0; i < n; i++) { positions[i * 2] = data[i * 4]!; positions[i * 2 + 1] = data[i * 4 + 1]!; }
       if (!positions.every(Number.isFinite) || !status.every(Number.isFinite)) throw new Error('Graphics produced nonfinite positions');
-      return { positions, movement: status[2]!, quiet: status[1]! };
+      return { positions, movement: status[2]!, quiet: status[1]!, extent: status[3]! };
     } finally { if (!this.dead) { read.unmap(); statusRead.unmap(); } }
   }
   destroy() {

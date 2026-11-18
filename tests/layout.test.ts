@@ -381,3 +381,50 @@ test('Morton radix order is stable, unsigned and handles coincident/degenerate e
   const empty = new MortonOrder(0); empty.update(new Float32Array(), 0, 0, 0, 0);
   expect(empty.indices.length).toBe(0);
 });
+
+
+test('visual completion repeats at the same numerical step and never before four motion observations', async () => {
+  const sample = { count: 2, source: Uint32Array.of(0), target: Uint32Array.of(1), seed: 17 };
+  const o = { ...DEFAULT_LAYOUT, iterations: 4000 };
+  const solve = (finishFully: boolean) => {
+    const solver = new LayoutSolver(sample, { ...o, finishFully });
+    while (!solver.done) { expect(solver.looksDone).toBe(false); solver.step(); }
+    return solver;
+  };
+  const a = solve(false), b = solve(false), full = solve(true);
+  expect(a.looksDone).toBe(true); expect(a.iteration).toBeGreaterThanOrEqual(64); expect(a.iteration).toBeLessThan(o.iterations);
+  expect(b.iteration).toBe(a.iteration); expect(b.positions).toEqual(a.positions); expect(full.iteration).toBe(o.iterations); expect(full.looksDone).toBe(false);
+  const { visualStop } = await import('../src/core/layout');
+  for (const gpu of [false, true]) {
+    const check = visualStop(o, gpu)!;
+    for (let i = 1; i < 128; i++) expect(check(i, i === 64 ? 1 : 0, 1, a.positions)).toBe(false);
+    expect(check(128, 0, 1, a.positions)).toBe(true);
+    const damped = visualStop({ ...o, force: { ...o.force, slowDown: 100, adjustSizes: true } }, gpu)!;
+    for (let i = 16; i <= 3200; i += 16) expect(damped(i, .0001, 1, a.positions)).toBe(false);
+    expect(visualStop({ ...o, finishFully: true }, gpu)).toBeUndefined();
+  }
+});
+
+
+test('long passes distinguish a stable picture from cumulative drift despite similar per-step motion', async () => {
+  const { visualStop } = await import('../src/core/layout');
+  for (const graphics of [false, true]) for (const moving of [false,true]) {
+    const check = visualStop({ ...DEFAULT_LAYOUT, iterations: 25000 }, graphics)!;
+    const p = new Float32Array(512); let fired = 0;
+    for (let i = 16; i <= 24576; i += 16) {
+      if (moving) p.fill(i / 4096);
+      // First frames are noisy. A later low instantaneous reading alone is insufficient.
+      if (check(i, i <= 8192 ? .006 : .0021, 1, p)) { fired = i; break; }
+    }
+    expect(fired).toBe(moving ? 0 : 10240);
+  }
+});
+
+test('disconnected pinned edge cannot finish a moving neighborhood early', () => {
+  const graph = { count: 4, source: Uint32Array.of(0, 2), target: Uint32Array.of(1, 3), seed: 17,
+    initial: Float32Array.of(-100, 0, 100, 0, 30000, 0, 30001, 0), movable: Uint8Array.of(1, 1, 0, 0) };
+  const o = { ...DEFAULT_LAYOUT, relaxIterations: 500, force: { ...DEFAULT_LAYOUT.force, linLogMode: true, gravity: 0, slowDown: 10 } };
+  const solver = new LayoutSolver(graph, o); while (!solver.done) solver.step();
+  expect(solver.iteration).toBe(500); expect(solver.looksDone).toBe(false);
+  expect(solver.positions).toEqual(runLayout(graph, { ...o, finishFully: true }));
+});

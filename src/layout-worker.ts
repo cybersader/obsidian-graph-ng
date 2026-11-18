@@ -1,4 +1,4 @@
-import { layoutIdentity, validateLayout } from './core/layout-options';
+import { layoutIdentity, usesVisualStop, validateLayout } from './core/layout-options';
 import { probeGpu } from './gpu-probe';
 import { renderProjection } from './render-projection';
 import { runLayout, isolateRing, type LayoutInput } from './core/layout';
@@ -23,8 +23,8 @@ let config: PipelineConfig, meta: GenerationMeta, projection: Projection, visibl
 let contracted: ReturnType<typeof contractGroups>, positions: Float32Array | undefined, saved: BinaryLayout | undefined;
 /** Unverified coordinates are same-declaration, in-memory hints only, never a disk generation. */
 let interim: BinaryLayout | undefined;
-let settled = false;
-let preparedLayout: { positions: Float32Array; settled: boolean; options: PipelineConfig['layout']; revision: number; layoutEngine?: LayoutEnginePreference; engineChoices?: EngineTiming[] } | undefined;
+let cacheable = false;
+let preparedLayout: { positions: Float32Array; settled: boolean; looksDone: boolean; options: PipelineConfig['layout']; revision: number; layoutEngine?: LayoutEnginePreference; engineChoices?: EngineTiming[] } | undefined;
 const recycled: ArrayBuffer[] = [];
 const takeBuffer = (length: number) => { const i = recycled.findIndex(b => b.byteLength === length * 4); return i < 0 ? new Float32Array(length) : new Float32Array(recycled.splice(i, 1)[0]!); };
 let complete = true, projectionRevision = -1, colors: Uint32Array = new Uint32Array(), explored: ExploreResult | undefined;
@@ -174,7 +174,7 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       // Resolve the engine once: an omitted override inherits the configured engine
       // for solve, adoption and the saved-layout key alike.
       const layoutEngine = r.layoutEngine ?? config.layoutEngine, engineChoices = r.engineChoices ?? config.engineChoices;
-      const next = await solve({ count: projection.paths.length, source: projection.source, target: projection.target, offsets: projection.offsets, targets: projection.targets, up: projection.up, seed: Number.parseInt(meta.key.slice(0, 8), 16), initial: r.initial ?? positions.slice() }, r.options, revision, control.cancelled, layoutEngine, engineChoices);
+      const next = await solve({ count: projection.paths.length, source: projection.source, target: projection.target, offsets: projection.offsets, targets: projection.targets, up: projection.up, seed: 0, initial: r.initial ?? positions.slice() }, r.options, revision, control.cancelled, layoutEngine, engineChoices);
       preparedLayout = { ...next, options: r.options, revision, layoutEngine, engineChoices };
       return { ...next, positions: next.positions.slice(), milliseconds: performance.now() - start, cached: false };
     }
@@ -187,22 +187,23 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       const nextLayoutHash = await configLayoutHash(options);
       const key = await configKey([...rows.values()], options);
       config = { ...config, layout: options }; declarationHash = nextDeclarationHash; layoutHash = nextLayoutHash;
-      meta = { ...meta, key, declarationHash, layoutHash, layout: options, producer: producer() };
-      positions = pending.positions; settled = pending.settled; preparedLayout = undefined;
+      meta = { ...meta, key, declarationHash, layoutHash, layout: options, producer: producer(), looksDone: pending.looksDone };
+      positions = pending.positions; cacheable = pending.settled || pending.looksDone; preparedLayout = undefined;
       const generation = { meta, identities: projection.identities, positions, edgeKeys: hashes };
-      if (complete && settled) { saved = { ...generation, groups: cacheSummary() }; interim = undefined; }
+      if (complete && cacheable) { saved = { ...generation, groups: cacheSummary() }; interim = undefined; }
       else { saved = undefined; interim = generation; }
-      return meta;
+      return { ...meta, cacheable: complete && cacheable };
     }
     case 'layout': {
       if (revision !== projectionRevision) throw new Error('Projection generation changed');
-      const start = performance.now(), seed = Number.parseInt(meta.key.slice(0, 8), 16);
+      // Visual layouts use options.seed alone. Full-policy generations keep their historical XOR salt.
+      const start = performance.now(), seed = usesVisualStop(config.layout) ? 0 : Number.parseInt(meta.key.slice(0, 8), 16);
       let engineStatus: EngineStatus | undefined;
       // Continue the latest live computation; unchanged saved borrowing creates no interim.
       const prior = interim ?? saved, fromSaved = !!prior && prior === saved, stored = fromSaved ? prior.meta.key : undefined;
       const exact = exactSaved();
       let reused: LayoutResult['reused'] = exact ? fromSaved ? 'all' : 'interim' : undefined;
-      settled = !!exact;
+      let looksDone = exact && prior!.meta.looksDone === true, settled = exact && !looksDone;
       if (exact) positions = prior!.positions;
       else {
         let input: LayoutInput | undefined;
@@ -227,17 +228,19 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
         // A parent-only edit changes no link endpoint. On active-family key misses relax
         // every note, rather than incorrectly treating all existing notes as pinned.
         if (prior === interim || config.layout.force.familyPull && projection.up) input.movable = undefined;
-        if (input.movable && !input.movable.some(Boolean)) { positions = input.initial!; settled = fromSaved; reused = fromSaved ? 'all' : 'interim'; }
-        else { if (input.movable && input.initial) reused = fromSaved ? 'some' : 'interim-some'; const result = await solve(input, config.layout, revision, control.cancelled); positions = result.positions; settled = result.settled; engineStatus = result.engineStatus; }
+        if (input.movable && !input.movable.some(Boolean)) { positions = input.initial!; looksDone = fromSaved && prior!.meta.looksDone === true; settled = fromSaved && !looksDone; reused = fromSaved ? 'all' : 'interim'; }
+        else { if (input.movable && input.initial) reused = fromSaved ? 'some' : 'interim-some'; const result = await solve(input, config.layout, revision, control.cancelled); positions = result.positions; settled = result.settled; looksDone = result.looksDone; engineStatus = result.engineStatus; }
       }
       const milliseconds = performance.now() - start;
       // An exact hit already holds this generation; skip re-contracting its group summary.
-      if (complete && settled && (!exact || prior === interim)) saved = { meta, identities: projection.identities, positions, edgeKeys: hashes, groups: cacheSummary() };
-      interim = complete && settled || fromSaved && reused === 'all' ? undefined : { meta, identities: projection.identities, positions, edgeKeys: hashes };
-      return { positions: positions.slice(), milliseconds, cached: Boolean(exact && fromSaved), reused, stored, settled, engineStatus };
+      cacheable = settled || looksDone; meta = { ...meta, looksDone };
+      if (complete && cacheable && (!exact || prior === interim)) saved = { meta, identities: projection.identities, positions, edgeKeys: hashes, groups: cacheSummary() };
+      interim = complete && cacheable || fromSaved && reused === 'all' ? undefined : { meta, identities: projection.identities, positions, edgeKeys: hashes };
+      return { positions: positions.slice(), milliseconds, cached: Boolean(exact && fromSaved), reused, stored, settled, looksDone, engineStatus };
     }
     case 'encode':
-      if (!positions || !settled) throw new Error('Layout not settled');
+      if (!positions || !cacheable) throw new Error('Layout not settled');
+      if (!complete) throw new Error('Projection incomplete');
       return encodeLayout({ meta, identities: projection.identities, positions, edgeKeys: hashes, groups: saved?.meta.key === meta.key && saved.groups ? saved.groups : cacheSummary() });
     case 'explore': {
       if (revision !== projectionRevision) throw new Error('Projection generation changed');

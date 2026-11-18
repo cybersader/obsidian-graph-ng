@@ -101,6 +101,7 @@ Open **Layout** in graph controls. Numeric changes, checkboxes and presets are d
 | Dissuade hubs, advanced | `layout.force.outboundAttractionDistribution` | High-degree notes pull less, so hubs move to the outside of their cluster. |
 | Prevent overlap, advanced | `layout.force.adjustSizes` | Nodes keep a minimum separation (`layout.nodeRadius`); settles more slowly. |
 | Strong gravity, advanced | `layout.force.strongGravityMode` | Pull to center no longer weakens with distance; use with a small Pull to center. |
+| Finish fully | `layout.finishFully` | Off by default. On uses the full iteration policy instead of stopping when the picture looks ready. |
 | Quality (iterations), advanced | `layout.iterations` | More steps = more settled shapes, slower apply. Integer 1 or more; the worker timeout still applies. |
 | Step slowdown, advanced | `layout.force.slowDown` | Higher = smaller moves per iteration; positive finite. Not damping or animation speed. |
 | Approximation, advanced | `layout.force.barnesHutTheta` | Lower = more accurate, slower repulsion; higher = faster, rougher. Positive finite. |
@@ -297,10 +298,10 @@ The generated [`examples/default-settings.json`](examples/default-settings.json)
 | --- | --- |
 | Event debounce / worker processing deadline / lifetime restarts | 5,000 / 120,000 ms / 2 |
 | Full / incremental FA2 iterations | 100 / 30 |
-| Layout seed / initial radius | 1 / 100; host derives effective seed from generation hash |
+| Layout seed / initial radius | 1 / 100; visual passes use the configured seed; the historical full policy also mixes in the generation hash |
 | Barnes–Hut / theta / maximum tree depth | true / 1.2 / 32 |
 | Layout worker-task iteration budget / stream cadence | 5 / 5 iterations |
-| Convergence RMS threshold / consecutive quiet iterations | 0 (early exit disabled; relative settlement still checked) / 3, capped at the step budget |
+| Convergence RMS threshold / consecutive quiet iterations | 0 (absolute early exit disabled; visual completion and relative settlement checked) / 3, capped at the step budget |
 | Hub gravity / Family pull | 2 / 0 |
 | Layout node radius / size-adjusted force limit | 1 / 10 |
 | Scaling ratio / gravity / slowDown | 2 / 1 / 1 |
@@ -665,6 +666,8 @@ Cold positions use a seeded disc with radius proportional to the square root of 
 
 The graph shows the current stage: **Reading notes**, **Preparing graph**, **Arranging notes**, or **Using saved layout** when it reuses saved positions. During a solve, the step count and ring describe only this pass, not time remaining. **Stop layout** is keyboard reachable from the start of the pass. Once a progressed Notes frame is visible, the same control becomes **Explore now**. It finishes with the last fully integrated positions, which can be newer than the preview. Labels and picking wait for adoption; a camera you moved stays put. **Keep refining** beside the graph starts another pass from the retained positions without changing settings or taking back a camera you moved. Stopped positions are not written to the settled cache.
 
-A run that exhausts its budget without sufficiently quiet movement says **Layout not settled** and offers **Keep refining**. Its coordinates remain usable in memory, but do not become a saved completed generation. Refinement starts from the committed displayed positions; after a successful settings/coordinate transaction the worker adopts them, and settled verified results may persist. Hydration continues the latest live coordinates without pinning unfinished notes. Settlement is a movement criterion, not proof of meaningful clusters.
+By default, sustained small movements can finish an unpinned pass early. The same seed and inputs repeat the stop step on the same engine and device; Processor and Graphics chip may stop at different steps. **Layout ready** can be saved when verified and still offers **Keep refining**. **Finish fully** restores the previous stopping policy without changing the iteration cap.
+
+A run that exhausts its budget without sufficiently quiet movement says **Layout not settled** and offers **Keep refining**. Its coordinates remain usable in memory, but do not become a saved completed generation. Refinement starts from the committed displayed positions; after a successful settings/coordinate transaction the worker adopts them, and verified completed results may persist. Hydration continues the latest live coordinates without pinning unfinished notes. Settlement is a movement criterion, not proof of meaningful clusters.
 
 During Apply, the camera gently follows an expanding layout until a pan or zoom; an untouched camera fits at completion. Motion Reduced/Off and the system reduced-motion preference remain respected. Layout presets use a full-width selector and a separate action at narrow widths. Switching relationship representation from Filters, Appearance or Graph information first shows an inline confirmation; Cancel performs no rebuild.

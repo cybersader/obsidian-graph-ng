@@ -16,6 +16,8 @@ export interface ForceSettings {
   barnesHutTheta: number;
 }
 export interface LayoutOptions {
+  /** Legacy generations without this field used the full iteration policy. */
+  finishFully?: boolean;
   iterations: number;
   relaxIterations: number;
   initialRadius: number;
@@ -33,17 +35,20 @@ export interface LayoutOptions {
   force: ForceSettings;
 }
 export const DEFAULT_LAYOUT: LayoutOptions = {
-  iterations: 100, relaxIterations: 30, initialRadius: 100, seed: 1,
+  finishFully: false, iterations: 100, relaxIterations: 30, initialRadius: 100, seed: 1,
   batchIterations: 5, convergenceThreshold: 0, convergenceIterations: 3,
   maxTreeDepth: 32, nodeRadius: 1, maxForce: 10,
   force: { linLogMode: false, outboundAttractionDistribution: false, adjustSizes: false,
     edgeWeightInfluence: 1, scalingRatio: 2, strongGravityMode: false, gravity: 1, familyPull: 0, hubGravity: 2,
     slowDown: 1, barnesHutOptimize: true, barnesHutTheta: 1.2 },
 };
+export const VISUAL_STRIDE = 16;
+export const usesVisualStop = (o: LayoutOptions) => o.finishFully === false && !o.convergenceThreshold && o.iterations >= 4 * VISUAL_STRIDE;
 /** Omit disabled forces; the active overlap solver has its own numerical revision. */
 export function layoutIdentity(options: LayoutOptions) {
   const { familyPull, hubGravity, ...force } = options.force;
-  return { ...options, ...(force.adjustSizes ? { overlap: 2 } : {}), force: { ...force, ...(familyPull ? { familyPull } : {}), ...(hubGravity ? { hubGravity } : {}) } };
+  const { finishFully, ...numerics } = options;
+  return { ...numerics, ...(usesVisualStop(options) ? { visualStop: 2 } : {}), ...(force.adjustSizes ? { overlap: 2 } : {}), force: { ...force, ...(familyPull ? { familyPull } : {}), ...(hubGravity ? { hubGravity } : {}) } };
 }
 export function validateLayout(options: LayoutOptions): void {
   for (const key of Object.keys(options)) if (!Object.hasOwn(DEFAULT_LAYOUT, key)) throw new Error(`Unknown layout setting: ${key}`);
@@ -52,6 +57,7 @@ export function validateLayout(options: LayoutOptions): void {
   if (options.maxTreeDepth > 52) throw new Error('layout.maxTreeDepth exceeds floating point precision');
   for (const key of ['initialRadius', 'maxForce'] as const) if (!Number.isFinite(options[key]) || options[key] <= 0) throw new Error(`Invalid layout.${key}`);
   for (const key of ['convergenceThreshold', 'nodeRadius'] as const) if (!Number.isFinite(options[key]) || options[key] < 0) throw new Error(`Invalid layout.${key}`);
+  if (options.finishFully !== undefined && typeof options.finishFully !== 'boolean') throw new Error('Invalid layout.finishFully');
   if (!Number.isSafeInteger(options.seed)) throw new Error('Invalid layout.seed');
   if (!options.force || typeof options.force !== 'object') throw new Error('force is required');
   for (const key of Object.keys(options.force)) if (!Object.hasOwn(DEFAULT_LAYOUT.force, key)) throw new Error(`Unknown force setting: ${key}`);

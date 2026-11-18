@@ -1,7 +1,8 @@
-import { LayoutSolver, DEFAULT_LAYOUT, random } from "../src/core/layout";
+import { LayoutSolver, DEFAULT_LAYOUT, initialPositions, random, visualStop, VISUAL_STRIDE } from "../src/core/layout";
 import { LayoutEngineSession } from "../src/layout-engine";
 import { requestComputeAdapter, WebGpuLayout } from "../src/webgpu-layout";
 import { yieldTask } from "../src/core/scheduler";
+import { checkpointTiming, compare } from './layout-engine-bench-metrics.mjs';
 function fixture(n, shape) {
   const source = [], target = [], rng = random(17);
   if (shape === 'scale-free') {
@@ -101,10 +102,6 @@ function quality(input, p) {
   }
   return { edgeStress: 1 - sum * sum / (source.length * sq), graphStress: 1 - ratios * ratios / (pairs * ratioSq), edgeLengthCV: cv, topologicalNeighborPrecision: topologicalHits / 320, near, finite: p.every(Number.isFinite) };
 }
-function compare(a, b) {
-  const nearestOverlap = a.near.reduce((sum, ids, i) => sum + ids.filter((id) => b.near[i].includes(id)).length, 0) / (a.near.length * 10);
-  return {edge: Math.abs(a.edgeStress-b.edgeStress), graph: Math.abs(a.graphStress-b.graphStress), overlap: nearestOverlap};
-}
 const options = (iterations = 100, adjust = true) => ({ ...DEFAULT_LAYOUT, iterations, force: { ...DEFAULT_LAYOUT.force, adjustSizes: adjust } });
 async function benchmark(job) {
   const input = fixture(job.count, job.shape), o = options(job.iterations ?? 100, job.adjust ?? true);
@@ -122,23 +119,44 @@ async function benchmark(job) {
     if (!p.every(Number.isFinite)) throw Error('Nonfinite edgeless layout');
     return {cpuX, gpuX, zeroEdgeCoordinates: [...p]};
   }
-  if (job.kind === "quality") {
-
-    o.iterations = 2e4;
+  if (job.kind === 'quality') {
+    o.finishFully = true; // Observe the baseline endpoint even after the candidate rule fires.
+    o.iterations = job.maxIterations;
     o.force.strongGravityMode = true;
     o.force.gravity = 0.1;
     o.force.scalingRatio = 10;
-    const result = { count: input.count, criterion: "3 consecutive steps: slowdown/damping-compensated RMS movement <= .002 RMS position", maxIterations: o.iterations, layouts: [] };
-    const seeds = [17, 18, 29];
-    for (const seed of seeds) for (const kind of ['cpu', 'gpu']) {
+    const { checkpointMs, seeds } = job;
+    const kinds = job.engine === 'both' ? ['cpu', 'gpu'] : [job.engine];
+    const result = { count: input.count, criterion: '3 consecutive steps: slowdown/damping-compensated RMS movement <= .002 RMS position', maxIterations: o.iterations, layouts: [] };
+    for (const seed of seeds) for (const kind of kinds) {
       const engine = kind + seed; input.seed = seed;
+      const checkpoints = [], trace = [], check = visualStop({ ...o, finishFully: false }, kind === 'gpu');
+      let visualFire = null, atFire;
+      const observe = (iteration, movement, extent, positions) => {
+        if (!checkpointMs || iteration % VISUAL_STRIDE) return;
+        const ms = elapsed(performance.now());
+        trace.push([iteration, ms, movement * o.force.slowDown / (o.force.adjustSizes ? .3 : 1) / Math.max(extent, 1e-30)]);
+        if (!visualFire && check?.(iteration, movement, extent, positions)) { visualFire = { iteration, ms }; if (job.verifyFire) atFire = positions.slice(); }
+      };
+      if (checkpointMs) checkpoints.push({ iteration: 0, ms: 0, quality: quality(input, initialPositions(input.count, seed ^ o.seed, o.initialRadius)) });
+      let scoringMs = 0, nextCheckpoint = checkpointMs;
       const start = performance.now();
+      const elapsed = now => now - start - scoringMs;
+      const sample = (p, iteration) => {
+        const now = performance.now(), ms = elapsed(now);
+        if (ms < nextCheckpoint && iteration !== visualFire?.iteration) return;
+        checkpoints.push({ iteration, ms, quality: quality(input, p) });
+        scoringMs += performance.now() - now;
+        nextCheckpoint = (Math.floor(ms / checkpointMs) + 1) * checkpointMs;
+      };
       let p, iterations = 0, settled = false, movement = 0;
-      if (engine.startsWith("cpu")) {
+      if (kind === 'cpu') {
         const solver = new LayoutSolver(input, o);
         while (!solver.done) {
           solver.step();
+          observe(solver.iteration, solver.movement, solver.extent, solver.positions);
           if (solver.settled) break;
+          if (checkpointMs && !solver.done) sample(solver.positions, solver.iteration);
           if (solver.iteration % 10 === 0) await yieldTask(true);
         }
         p = solver.positions;
@@ -154,24 +172,40 @@ async function benchmark(job) {
             p = step.positions;
             movement = step.movement;
             iterations++;
+            observe(iterations, movement, step.extent, p);
             if (step.quiet >= o.convergenceIterations) {
               settled = true;
               break;
             }
+            if (checkpointMs && iterations < o.iterations) sample(p, iterations);
           }
         } finally {
           gpu.destroy();
         }
       }
-      const ms = performance.now() - start;
+      const ms = elapsed(performance.now());
       const q = quality(input, p);
       const row = { engine, iterations, settled, movement, ms, quality: q };
+      if (checkpointMs) {
+        checkpoints.push({ iteration: iterations, ms, quality: q });
+        row.trace = trace; row.visualFire = visualFire;
+        row.timing = checkpointTiming(checkpoints, q, settled, checkpointMs);
+        row.checkpointScoringMs = scoringMs;
+      }
+      if (atFire) {
+        const preference = kind === 'gpu' ? 'graphics' : 'processor';
+        const actual = await new LayoutEngineSession().run(input, { ...o, finishFully: false }, {
+          preference, stopped: () => false, every: 13, yieldNow: () => yieldTask(true), emit() {}, wantsFrame: () => false,
+        });
+        if (!actual.looksDone || actual.settled || actual.engineStatus.engine !== preference || !actual.positions.every((v, i) => v === atFire[i])) throw Error('Production pass did not return the observed visual stop');
+        row.verifiedFire = true;
+      }
       result.layouts.push(row);
       // Keep the synthetic neighbour samples in stderr until all cyclic pairs can
       // be scored. A partial journal alone never admits a class.
       self.postMessage({ progress: row });
     }
-    result.pairs = seeds.map((seed, i) => {
+    if (job.engine === 'both' && seeds.join(',') === '17,18,29') result.pairs = seeds.map((seed, i) => {
       const q = result.layouts[i * 2].quality;
       return {seed, baselineSeed: seeds[(i + 1) % seeds.length], cpu: compare(q, result.layouts[2 * ((i + 1) % seeds.length)].quality), gpu: compare(q, result.layouts[2*i+1].quality)};
     });

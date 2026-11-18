@@ -12,7 +12,7 @@ const tick = () => new Promise<void>(r => setTimeout(r, 0));
 const run = (preference: 'auto' | 'processor' | 'graphics' = 'auto') => ({ preference, every: 4, stopped: () => false, yieldNow: () => Promise.resolve(), emit() {} });
 function fakeGraphics(i: LayoutInput, o = options()): GraphicsSolver & { destroyed: boolean } {
   let solver = new LayoutSolver(i, o);
-  return { destroyed: false, reset() { solver = new LayoutSolver(i, o); }, async batch(n) { for (let j = 0; j < n; j++) solver.step(); return { positions: solver.positions.slice(), movement: solver.movement, quiet: solver.settled ? 3 : 0 }; }, destroy() { this.destroyed = true; } };
+  return { destroyed: false, reset() { solver = new LayoutSolver(i, o); }, async batch(n) { for (let j = 0; j < n; j++) solver.step(); return { positions: solver.positions.slice(), movement: solver.movement, extent: solver.extent, quiet: solver.settled ? 3 : 0 }; }, destroy() { this.destroyed = true; } };
 }
 const sample = () => ({ bucket: engineBucket(20000), mode: 0, every: 4, batch: 5, iterations: 8, cpuSetup: 4, gpuSetup: 183, cpuStep: 25, gpuStep: 1.5, measuredAt: Date.now() });
 test('Auto projects startup once and per-step work across the actual cold or warm budget', () => {
@@ -93,7 +93,7 @@ test('device/pipeline/validation failures, nonfinite output and watchdog disable
       if (fault === 'pipeline') throw Error('pipeline');
       return { reset() {}, destroy() { destroyed = true; }, async batch() {
         if (fault === 'watchdog') return new Promise(() => {});
-        if (fault === 'nan' || fault === 'inf') return { positions: new Float32Array(64).fill(fault === 'nan' ? NaN : Infinity), movement: 0, quiet: 0 };
+        if (fault === 'nan' || fault === 'inf') return { positions: new Float32Array(64).fill(fault === 'nan' ? NaN : Infinity), movement: 0, extent: 1, quiet: 0 };
         throw Error(fault);
       } };
     } });
@@ -106,7 +106,7 @@ test('device/pipeline/validation failures, nonfinite output and watchdog disable
 test('no display credit never skips GPU validation or changes Processor fallback steps', async () => {
   const i = input(), o = options(); let reads = 0, buffers = 0;
   const session = new LayoutEngineSession({ adapter: async () => adapter, graphics: async () => ({ reset() {}, destroy() {}, async batch() {
-    reads++; return { positions: new Float32Array(i.count * 2).fill(NaN), quiet: 0, movement: 0 };
+    reads++; return { positions: new Float32Array(i.count * 2).fill(NaN), extent: 1, quiet: 0, movement: 0 };
   } }) });
   const result = await session.run(i, o, { ...run('graphics'), wantsFrame: () => false, buffer: n => { buffers++; return new Float32Array(n); } });
   expect(reads).toBe(1); expect(buffers).toBe(0); expect(result.engineStatus.reason).toBe('failed');
@@ -115,7 +115,7 @@ test('no display credit never skips GPU validation or changes Processor fallback
 test('fallback continues from the last validated graphics positions, never a failed readback', async () => {
   const i = input(), o = options(), checkpoint = new Float32Array(i.count * 2).fill(2); let batches = 0;
   const session = new LayoutEngineSession({ adapter: async () => adapter, graphics: async () => ({ reset() {}, destroy() {}, async batch() {
-    if (batches++) throw Error('device lost'); return { positions: checkpoint.slice(), movement: 1, quiet: 0 };
+    if (batches++) throw Error('device lost'); return { positions: checkpoint.slice(), movement: 1, extent: 1, quiet: 0 };
   } }) });
   const result = await session.run(i, o, run('graphics'));
   const expected = new LayoutSolver({ ...i, initial: checkpoint }, { ...o, iterations: 4 }); while (!expected.done) expected.step();
@@ -148,7 +148,7 @@ test('late graphics loss cannot shrink the original quiet criterion', async () =
   const i = input(), o = { ...options(), iterations: 5 }, checkpoint = new Float32Array(i.count * 2);
   let calls = 0;
   const session = new LayoutEngineSession({adapter: async () => adapter, graphics: async () => ({reset(){},destroy(){},async batch(n){
-    if (calls++) throw Error('device loss'); expect(n).toBe(4); return { positions: checkpoint, movement: 1, quiet: 0 };
+    if (calls++) throw Error('device loss'); expect(n).toBe(4); return { positions: checkpoint, movement: 1, extent: 1, quiet: 0 };
   }})});
   const result = await session.run(i, o, run('graphics')); expect(result.engineStatus.reason).toBe('failed'); expect(result.settled).toBe(false);
 });
@@ -187,7 +187,7 @@ test('trial uses production cadence, timing is never published before real succe
   const i = input(5000), o = options(), sizes: number[] = [], statuses: unknown[] = []; o.batchIterations = 3;
   const times = [0,1,2,102,103]; let real = false;
   const session = new LayoutEngineSession({quality: () => true, now: () => times.shift()!, adapter: async () => adapter, graphics: async () => ({
-    reset(){real=true;},destroy(){},async batch(n){if(real) throw Error('real run failed');sizes.push(n);return {positions:new Float32Array(i.count*2), movement:0,quiet:0};}
+    reset(){real=true;},destroy(){},async batch(n){if(real) throw Error('real run failed');sizes.push(n);return {positions:new Float32Array(i.count*2), movement:0,extent:1,quiet:0};}
   })});
   const out = await session.run(i,o,{...run(),status(s){statuses.push(s.timing);}});
   expect(sizes).toEqual([3,1,2,2]); expect(out.engineStatus.reason).toBe('failed'); expect(out.engineStatus.timing).toBeUndefined(); expect(statuses.every(x=>!x)).toBe(true);
@@ -195,7 +195,7 @@ test('trial uses production cadence, timing is never published before real succe
 test('the same stored rates choose differently for short and full budgets', async () => {
   const i = input(5000), t = {...sample(),bucket:1}, o = options();
   let probes = 0;
-  const session = new LayoutEngineSession({quality: () => true, adapter: async () => { probes++; return adapter; }, graphics: async () => ({reset(){}, destroy(){}, async batch(){ return {positions:new Float32Array(i.count*2), quiet:0, movement:1}; }})});
+  const session = new LayoutEngineSession({quality: () => true, adapter: async () => { probes++; return adapter; }, graphics: async () => ({reset(){}, destroy(){}, async batch(){ return {positions:new Float32Array(i.count*2), extent:1,quiet:0, movement:1}; }})});
   const short = await session.run(i,o,{...run(),remembered:[t]});
   expect(short.engineStatus.engine).toBe('processor'); expect(probes).toBe(0);
   const full = await session.run(i,{...o,iterations:100},{...run(),remembered:[t]});
@@ -229,4 +229,49 @@ test('interruptible tree and force chunks keep exact Processor positions and dis
       expect(chunks.iteration).toBe(3); expect(chunks.positions).toEqual(last);
     }
   } finally { performance.now = clock; }
+});
+
+
+test('Graphics visual stop uses real numerical steps across readback and preview cadences', async () => {
+  for (const finishFully of [false, true]) for (const every of [5, 9]) {
+    const i = input(), o = { ...options(), iterations: 130, batchIterations: 7, finishFully }; let steps = 0;
+    const session = new LayoutEngineSession({ adapter: async () => adapter, graphics: async () => ({ reset() {}, destroy() {}, async batch(n) {
+      steps += n; return { positions: new Float32Array(2 * i.count), extent: 10, movement: .001, quiet: 0 };
+    } }) });
+    const result = await session.run(i, o, { ...run('graphics'), every, wantsFrame: () => false });
+    expect(result.engineStatus.engine).toBe('graphics'); expect(steps).toBe(finishFully ? 130 : 64);
+    expect(result.looksDone).toBe(!finishFully); expect(result.settled).toBe(false);
+  }
+});
+
+test('the documented stop step repeats within each engine, not necessarily between engines', async () => {
+  const { visualStop } = await import('../src/core/layout');
+  const { readFileSync } = await import('node:fs');
+  // Replay one seeded picture and the same reduction trace through both engine policies.
+  const replay = (graphics: boolean) => {
+    const solver = new LayoutSolver(input(), options()), check = visualStop({ ...options(), iterations: 2000 }, graphics)!;
+    for (let step = 16; step <= 2000; step += 16) if (check(step, step <= 1120 ? .003 : .0021, 1, solver.positions)) return step;
+  };
+  for (const graphics of [false, true]) expect([replay(graphics), replay(graphics)]).toEqual(Array(2).fill(graphics ? 1248 : 1152));
+  // Run the session twice from the same numerical seed. The Graphics transport is synthetic;
+  // its numerical fixture must not impose the Processor visual policy on the Graphics observer.
+  const graph = { ...input(2), source: Uint32Array.of(0), target: Uint32Array.of(1) }, o = { ...options(), iterations: 4000 };
+  const session = new LayoutEngineSession({ adapter: async () => adapter, graphics: async () => fakeGraphics(graph, { ...o, finishFully: true }) });
+  for (const engine of ['processor', 'graphics'] as const) {
+    const solve = async () => {
+      let last = 0;
+      const result = await session.run(graph, o, { ...run(engine), every: 1, wantsFrame: step => { last = step; return false; } });
+      expect(result.engineStatus.engine).toBe(engine); expect(result.looksDone).toBe(true);
+      return { step: last + 1, positions: result.positions };
+    };
+    expect(await solve()).toEqual(await solve());
+  }
+  expect(readFileSync(new URL('../docs/decisions/ADR-0010-layout-engine.md', import.meta.url), 'utf8')).toContain('Stop steps can differ between engines.');
+});
+
+for (const engine of ['processor', 'graphics'] as const) test(`physical settlement wins a visual stop at the cap on ${engine}`, async () => {
+  const graph = { ...input(2), initial: new Float32Array(4) }, o = { ...options(), iterations: 64, force: { ...DEFAULT_LAYOUT.force, gravity: 0 } };
+  const session = new LayoutEngineSession({ adapter: async () => adapter, graphics: async () => fakeGraphics(graph, o) });
+  const result = await session.run(graph, o, run(engine));
+  expect(result.engineStatus.engine).toBe(engine); expect(result).toMatchObject({ settled: true, looksDone: false });
 });
