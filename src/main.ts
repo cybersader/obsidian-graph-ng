@@ -154,19 +154,31 @@ export default class GraphPlugin extends Plugin {
         finally { verifying = false; if (pending) verify(); }
       }, this.settings.debounceMs);
     };
+    let observed = this.adapter.roomRevision;
     const changed = (event?: Event) => {
       const candidate = (host as typeof globalThis & { openclast?: { propertyFacts?: PropertySource } }).openclast?.propertyFacts;
       const source = typeof candidate?.get === 'function' ? candidate : undefined, previous = this.propertySource;
-      if (source === previous && (event as CustomEvent | undefined)?.detail?.invalidated === false) { pending = true; verify(); return; }
+      if (source === previous) this.adapter.syncRooms?.();
+      if (observed === this.adapter.roomRevision && source === previous && (event as CustomEvent | undefined)?.detail?.invalidated === false) { pending = true; verify(); return; }
       clearTimeout(timer); timer = undefined; pending = false;
       this.propertySource = source; this.propertyRevision++;
-      this.adapter.setPropertySource(source); this.ingestedHash = '';
+      this.adapter.setPropertySource(source, !event, observed !== this.adapter.roomRevision); observed = this.adapter.roomRevision; this.ingestedHash = '';
       for (const leaf of this.app.workspace.getLeavesOfType(VIEW)) (leaf.view as GraphView).invalidateSource();
       this.notify();
       if (source && source !== previous) void Promise.resolve().then(() => active && source === this.propertySource && source.load?.()).catch(() => {});
     };
+    const settled = (event: Event) => {
+      const source = (host as typeof globalThis & { openclast?: { propertyFacts?: PropertySource } }).openclast?.propertyFacts;
+      if (source === this.propertySource) this.adapter.syncRooms();
+      if (source !== this.propertySource || observed !== this.adapter.roomRevision) changed(event);
+      const revision = this.propertyRevision;
+      void this.adapter.onRoomSettled((event as CustomEvent).detail, this.settings.ingest).then(current => {
+        if (current && active && revision === this.propertyRevision) for (const leaf of this.app.workspace.getLeavesOfType(VIEW)) (leaf.view as GraphView).promoteProperties();
+      });
+    };
+    host.addEventListener?.('oc:property-facts-settled', settled);
     host.addEventListener?.('oc:property-facts-changed', changed);
-    this.register(() => { active = false; clearTimeout(timer); host.removeEventListener?.('oc:property-facts-changed', changed); });
+    this.register(() => { active = false; clearTimeout(timer); host.removeEventListener?.('oc:property-facts-changed', changed); host.removeEventListener?.('oc:property-facts-settled', settled); });
     changed();
   }
   resetAdapter() { this.adapter?.invalidate(); this.adapter?.index.dispose(); this.adapter = new LocalAdapter(this.app, this, this.linkProducer, this.settings.debounceMs, () => this.notify(), true, this.settings.declaration, this.propertySource); this.adapter.attachFactCache(this.factStore, `${this.deviceNamespace}/${this.manifest.version}/${this.sourceIdentity}`); this.ingestedHash = ''; }
@@ -644,7 +656,7 @@ export class GraphView extends ItemView {
       this.buildProgress.text(4); this.contentEl.dataset.state = 'ready'; this.statusText = this.provisional ? pendingText(report) : this.layoutSettled ? '' : 'Layout not settled';
       this.contentEl.dataset.layoutMs = String(layout.milliseconds); this.contentEl.dataset.cached = String(layout.cached);
       if (this.presentation === 'nodes') await this.showDetails();
-      if (current() && !this.provisional) await this.plugin.adapter.saveFacts?.();
+      if (current() && (!this.provisional || this.plugin.propertySource)) await this.plugin.adapter.saveFacts?.();
       if (this.plugin.adapter.factError) this.statusText = 'Saved facts unavailable. Using host properties.';
       if (current() && !this.provisional) this.plugin.recordPerformance?.({ notes: result.nodes, edges: result.edges, ingestMs, projectMs, groupsMs: Number(this.contentEl.dataset.refreshGroupMs), layoutMs: layout.milliseconds, totalMs: performance.now() - start });
       if (layout.settled !== false && settings.persistLayout && this.plugin.store.committed !== result.meta.key && complete && !this.provisional && (!settings.declaration.edges.some(e => e.kind === 'producer') || this.plugin.adapter.linksResolved)) {

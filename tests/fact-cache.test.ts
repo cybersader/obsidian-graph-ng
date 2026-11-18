@@ -53,6 +53,132 @@ test('saved native facts never override selected derived verified:false or persi
   } finally { f.dispose(); }
 });
 
+// Drive public room discovery and window events, including a cold plugin restart.
+const directory = 'plugin/cache/startup-facts';
+const roomDir = async (id: string) => `${directory}/${await digest(id)}`;
+async function contractFixture(disk = new MemoryAdapter(), firstId = 'ocpf1:room-a', missing?: 'rooms' | 'roomFor') {
+  const { default: GraphPlugin } = await import('../src/main');
+  const a = { cacheIdentity: firstId as string | undefined, generation: 1, complete: true, verifiedComplete: true }, b = { ...a, cacheIdentity: 'ocpf1:room-b' };
+  const handles = [a, b];
+  const live = new Map<string, { category: string; verified: boolean }>();
+  const source: PropertySource = { rooms: () => handles, roomFor: path => path === 'a.md' ? a : path === 'b.md' ? b : undefined, get(path) {
+    const row = live.get(path);
+    return row && { source: 'derived', state: 'current', verified: row.verified, frontmatter: { id: path, category: row.category } };
+  } };
+  if (missing) delete source[missing];
+  const f = fixture(), cleanup: (() => void)[] = [], host = Object.assign(new EventTarget(), { openclast: { propertyFacts: source } });
+  const unmounted = new FixtureFile('unmounted.md'); Object.assign(unmounted.stat, { mtime: 100 }); f.files.push(unmounted);
+  const plugin = Object.assign(Object.create(GraphPlugin.prototype), { adapter: f.adapter, settings: { debounceMs: 5, ingest: { chunkRows: 1, budgetMs: 8 } },
+    app: { workspace: { getLeavesOfType: () => [] } }, register: (fn: () => void) => cleanup.push(fn), notify() {} });
+  f.adapter.attachFactCache(new FactCache(disk, directory), 'device'); plugin.watchProperties(host);
+  const send = (event: string, detail?: unknown) => host.dispatchEvent(new CustomEvent(event, { detail }));
+  let settledWork: ReturnType<LocalAdapter['onRoomSettled']> | undefined; const record = f.adapter.onRoomSettled.bind(f.adapter);
+  f.adapter.onRoomSettled = (...args) => settledWork = record(...args);
+  const settle = async (h = a) => { settledWork = undefined; send('oc:property-facts-settled', { generation: h.generation, cacheIdentity: h.cacheIdentity }); await settledWork; };
+  const fill = (path: string) => live.set(path, { category: `Saved ${path}`, verified: true });
+  return { ...f, a, b, handles, source, fill, live, disk, settle, send, close() { cleanup.forEach(fn => fn()); f.dispose(); } };
+}
+async function savedContract() {
+  const f = await contractFixture();
+  try { f.fill('a.md'); f.fill('b.md'); await f.rows(); await f.settle(f.a); await f.settle(f.b); expect(f.disk.writes).toBe(2); return f.disk; }
+  finally { f.close(); }
+}
+test('a room settlement saves only its own routed paths even with incomplete siblings', async () => {
+  const f = await contractFixture();
+  try {
+    f.fill('a.md'); f.fill('unmounted.md'); await f.rows(); expect(f.adapter.factsComplete()).toBe(false);
+    await f.settle(f.a); expect(f.disk.files.size).toBe(2);
+    const dir = await roomDir(f.a.cacheIdentity!); expect(await f.disk.exists(`${dir}/manifest.json`)).toBe(true);
+    expect(JSON.parse(await f.disk.read(`${dir}/0.bin`)).map((r: FactRow) => r.path)).toEqual(['a.md']);
+    expect([...f.disk.files.keys()].every(path => !path.includes('ocpf1:'))).toBe(true);
+    expect(await f.disk.exists(await roomDir(f.b.cacheIdentity))).toBe(false);
+  } finally { f.close(); }
+});
+test('cold replay stays provisional across routed rooms, and live host facts always win', async () => {
+  const f = await contractFixture(await savedContract());
+  try {
+    f.a.verifiedComplete = f.b.verifiedComplete = false;
+    expect((await f.rows()).map(r => r.properties.category)).toEqual(['Saved a.md', 'Saved b.md', undefined]);
+    expect(f.adapter.savedCopy).toBe(true); expect(f.adapter.coverage().indexed).toBe(0); expect(f.adapter.factsComplete()).toBe(false);
+    f.live.set('a.md', { category: 'Host now', verified: false }); f.caches.set('b.md', { frontmatter: { category: 'Native now' } });
+    expect((await f.rows()).map(r => r.properties.category)).toEqual(['Host now', 'Native now', undefined]);
+    expect(f.adapter.savedCopy).toBe(false); expect(f.adapter.factsComplete()).toBe(false);
+  } finally { f.close(); }
+});
+test('cold identity mismatch purges the orphan partition without reading it or removing siblings', async () => {
+  const disk = await savedContract(), reads = disk.reads.length, f = await contractFixture(disk, 'ocpf1:new');
+  try {
+    expect((await f.rows()).map(r => r.properties.category)).toEqual([undefined, 'Saved b.md', undefined]);
+    const old = await roomDir('ocpf1:room-a'); expect(await disk.exists(old)).toBe(false); expect(disk.reads.slice(reads)).not.toContain(`${old}/0.bin`);
+  } finally { f.close(); }
+});
+for (const missing of ['rooms', 'roomFor'] as const) test(`old host with no ${missing} cannot replay or save`, async () => {
+  const f = await contractFixture(await savedContract(), 'ocpf1:room-a', missing);
+  try { expect((await f.rows()).every(r => !r.properties.id)).toBe(true); f.fill('a.md'); await f.rows(); await f.settle(f.a); await f.adapter.saveFacts(); expect(f.disk.files.size).toBe(0); }
+  finally { f.close(); }
+});
+test('stale events, transport completion and metadata settlement cannot authorize writes', async () => {
+  const f = await contractFixture();
+  try {
+    f.fill('a.md'); f.fill('b.md'); await f.rows(); f.send('oc:metadata-index-settled', { files: 3, resolvedFiles: 3 });
+    await f.settle({ ...f.a, generation: 0 }); await f.settle({ ...f.a, cacheIdentity: 'ocpf1:other' }); await f.adapter.saveFacts(); expect(f.disk.files.size).toBe(0);
+    f.a.verifiedComplete = false; await f.settle(f.a); await f.adapter.saveFacts(); expect(f.disk.files.size).toBe(0);
+    f.a.verifiedComplete = true; f.a.generation++; await f.adapter.saveFacts(); expect(f.disk.files.size).toBe(0);
+    await f.settle(f.a); expect(f.disk.writes).toBe(1); expect(await f.disk.exists(await roomDir(f.b.cacheIdentity))).toBe(false);
+  } finally { f.close(); }
+});
+for (const replacement of ['ocpf1:replacement', undefined]) test(`live room ${replacement ? 'replacement' : 'inactivity'} retires only its own partition`, async () => {
+  const f = await contractFixture(await savedContract()), old = await roomDir(f.a.cacheIdentity!);
+  try {
+    await f.rows(); f.a.cacheIdentity = replacement; f.send('oc:property-facts-changed', { invalidated: false });
+    expect((await f.rows()).map(r => r.properties.category)).toEqual([undefined, 'Saved b.md', undefined]);
+    // Queue barrier only; no manifest is loaded or purged by this check.
+    await new FactCache(f.disk, directory).dropPartition('ocpf1:unused');
+    expect(await f.disk.exists(old)).toBe(false); expect(await f.disk.exists(await roomDir(f.b.cacheIdentity))).toBe(true);
+  } finally { f.close(); }
+});
+for (const during of ['chunk', 'manifest']) for (const change of ['generation', 'identity', 'verification']) test(`room save drops ${change} change during ${during} write`, async () => {
+  const f = await contractFixture(), disk = f.disk, dir = await roomDir(f.a.cacheIdentity!);
+  try {
+    f.fill('a.md'); await f.rows();
+    let moved = false; const move = () => { moved = true; if (change === 'generation') f.a.generation++; else if (change === 'identity') f.a.cacheIdentity = 'ocpf1:other'; else f.a.verifiedComplete = false; };
+    if (during === 'chunk') { const write = disk.writeBinary.bind(disk); disk.writeBinary = async (p, b) => { await write(p, b); move(); }; }
+    else { const write = disk.write.bind(disk); disk.write = async (p, s) => { await write(p, s); move(); }; }
+    await f.settle(f.a); expect(moved).toBe(true); expect(await disk.exists(`${dir}/manifest.json`)).toBe(false); expect(f.adapter.cacheStatus).not.toBe('saved');
+  } finally { f.close(); }
+});
+
+test('a generation change during load prevents adoption only for that room', async () => {
+  const disk = await savedContract(), f = await contractFixture(disk), own = await roomDir(f.a.cacheIdentity!);
+  const read = disk.readBinary.bind(disk);
+  disk.readBinary = async path => { const bytes = await read(path); if (path.startsWith(own + '/')) f.a.generation++; return bytes; };
+  try { expect((await f.rows()).map(r => r.properties.category)).toEqual([undefined, 'Saved b.md', undefined]); }
+  finally { f.close(); }
+});
+test('a present handle with no valid identity never supplies or saves a partition', async () => {
+  const f = await contractFixture(await savedContract(), 'old-format');
+  try {
+    expect((await f.rows()).map(r => r.properties.category)).toEqual([undefined, 'Saved b.md', undefined]);
+    f.fill('a.md'); await f.rows(); const writes = f.disk.writes; await f.settle(f.a); expect(f.disk.writes).toBe(writes);
+  } finally { f.close(); }
+});
+test('moving a path to another active mount never replays its previous owner’s row', async () => {
+  const f = await contractFixture(await savedContract());
+  try {
+    await f.rows(); f.source.roomFor = () => f.b;
+    expect((await f.rows()).map(r => r.properties.category)).toEqual([undefined, 'Saved b.md', undefined]);
+  } finally { f.close(); }
+});
+test('sibling chunks consume the same bounded byte allowance before a partition can commit', async () => {
+  const disk = new MemoryAdapter(), store = new FactCache(disk, directory), a = 'ocpf1:a', b = 'ocpf1:b';
+  const row = { path: 'note.md', properties: { id: 'x' } };
+  await store.save('one', [row], () => true, () => true, a);
+  const other = await roomDir(a), stat = disk.stat.bind(disk);
+  disk.stat = async path => path === other + '/0.bin' ? { size: 32 * 1024 * 1024 } : stat(path);
+  await expect(store.save('two', [row], () => true, () => true, b)).rejects.toThrow('over limit');
+  expect(await disk.exists(`${other}/manifest.json`)).toBe(true); expect(await disk.exists(`${await roomDir(b)}/manifest.json`)).toBe(false);
+});
+
 test('source, declaration, file stamps and whole-vault namespace mismatches refuse cache', async () => {
   for (const kind of ['source', 'device namespace', 'plugin version', 'producer', 'declaration', 'mtime', 'size', 'namespace']) {
     const saved = await savedFixture(), f = saved.boot(undefined, ['source', 'device namespace', 'plugin version'].includes(kind) ? `other-${kind}` : 'local');
