@@ -777,6 +777,42 @@ test('hydration: aggregate rejection reports failure, does not verify facts and 
   } finally { f.close(); }
 });
 
+test('hydration: a queued retry keeps the physical failure visible through its caller deadline', async () => {
+  const first = signal(), retry = signal(), entered = signal(); let calls = 0;
+  const f = await contractFixture(undefined, undefined, undefined, s => { s.load = async () => {
+    if (++calls === 1) return first.done;
+    entered.yes(); await retry.done;
+  }; }, 30);
+  try {
+    const caller = f.plugin.loadProperties(); first.no(Error('synthetic room failure')); await entered.done;
+    expect(f.plugin.hydrationStatus).toBe('Some room properties could not load');
+    await caller; expect(f.plugin.hydrationStatus).toBe('Some room properties could not load');
+    retry.yes(); await hydrationQueue(f).work; expect(f.plugin.hydrationStatus).toBe('');
+  } finally { retry.yes(); f.close(); }
+});
+
+test('hydration: successful column inventory exposes the masked load failure without a host event', async () => {
+  const f = await contractFixture(undefined, undefined, undefined, s => { s.load = async () => { throw Error('synthetic load failure'); }; });
+  try {
+    await hydrationQueue(f).work; const rooms = f.source.rooms;
+    f.source.rooms = () => { throw Error('synthetic inventory'); }; f.send('oc:property-facts-changed');
+    expect(f.plugin.hydrationStatus).toBe('Room inventory unavailable');
+    f.source.rooms = rooms; await f.rows();
+    expect(f.adapter.inventoryError).toBe(''); expect(f.plugin.hydrationStatus).toBe('Some room properties could not load');
+  } finally { f.close(); }
+});
+
+test('hydration: a room timeout in a resolved aggregate is not success or a caller delay', async () => {
+  const f = await contractFixture(undefined, undefined, undefined, s => { s.load = async () => [
+    { status: 'loaded' }, { status: 'timeout', source: 'fallback', complete: false, reason: 'load_timeout' },
+  ]; });
+  try {
+    await hydrationQueue(f).work; expect(f.plugin.hydrationStatus).toBe('Room property load timed out');
+    f.source.load = async () => [{ status: 'loaded' }]; await f.plugin.loadProperties(); expect(f.plugin.hydrationStatus).toBe('');
+    expect(f.disk.writes).toBe(0);
+  } finally { f.close(); }
+});
+
 test('hydration: the default 15 s caller deadline does not abort or release hung physical work', async () => {
   const hold = signal(), timers: Array<() => void> = [], signals: AbortSignal[] = [];
   const schedule = globalThis.setTimeout;

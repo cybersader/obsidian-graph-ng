@@ -80,6 +80,26 @@ export function visualStop(options: LayoutOptions, graphics = false, masked = fa
     return still >= 4 || (pictures >= 4 ? stable >= 4 : quiet >= 72 && narrow >= (graphics ? 8 : 2));
   };
 }
+/** Shared admission for solving or retaining a stopped warm start, without allocating solver scratch. */
+export function validateLayoutInput(input: LayoutInput, options: LayoutOptions) {
+  validateLayout(options);
+  const n = input.count;
+  if (!Number.isSafeInteger(n) || n < 0 || input.source.length !== input.target.length || (input.initial && input.initial.length !== n * 2) || (input.movable && input.movable.length !== n)) throw new Error('Invalid layout input');
+  for (let e = 0; e < input.source.length; e++) if (input.source[e]! >= n || input.target[e]! >= n) throw new Error('Invalid layout endpoint');
+  if (input.up) {
+    const { offsets, targets } = input.up;
+    if (offsets.length !== n + 1 || offsets[0] !== 0 || offsets[n] !== targets.length) throw new Error('Invalid hierarchy CSR');
+    for (let i = 0; i < n; i++) if (offsets[i]! > offsets[i + 1]!) throw new Error('Invalid hierarchy CSR');
+    for (const parent of targets) if (parent >= n) throw new Error('Invalid hierarchy endpoint');
+  }
+  if (input.offsets || input.targets) {
+    const { offsets, targets } = input;
+    if (!offsets || !targets || offsets.length !== n + 1 || offsets[0] !== 0 || offsets[n] !== targets.length) throw new Error('Invalid layout CSR');
+    for (let i = 0; i < n; i++) if (offsets[i]! > offsets[i + 1]!) throw new Error('Invalid layout CSR');
+    for (const target of targets) if (target >= n) throw new Error('Invalid layout CSR endpoint');
+  }
+  if (input.initial && !input.initial.every(Number.isFinite)) throw new Error('Invalid initial positions');
+}
 /** Persistent ForceAtlas2 integrator over borrowed edge columns and CSR degree.
  * Equations: Jacomy et al., PLOS ONE 2014, doi:10.1371/journal.pone.0098679.
  * Scheduling never resets force/convergence history. Arrays are the only per-node
@@ -107,30 +127,20 @@ export class LayoutSolver {
   private maxRadius = 0;
   /** JS override is an internal differential-test seam, not a saved physics setting. */
   constructor(private input: LayoutInput, private options: LayoutOptions, backend: 'auto' | 'js' = 'auto') {
-    validateLayout(options); this.visual = visualStop(options, false, !!input.movable);
+    validateLayoutInput(input, options); this.visual = visualStop(options, false, !!input.movable);
     const n = input.count;
-    if (!Number.isSafeInteger(n) || n < 0 || input.source.length !== input.target.length || (input.initial && input.initial.length !== n * 2) || (input.movable && input.movable.length !== n)) throw new Error('Invalid layout input');
-    for (let e = 0; e < input.source.length; e++) if (input.source[e]! >= n || input.target[e]! >= n) throw new Error('Invalid layout endpoint');
-    if (input.up) {
-      const { offsets, targets } = input.up;
-      if (offsets.length !== n + 1 || offsets[0] !== 0 || offsets[n] !== targets.length) throw new Error('Invalid hierarchy CSR');
-      for (let i = 0; i < n; i++) if (offsets[i]! > offsets[i + 1]!) throw new Error('Invalid hierarchy CSR');
-      for (const parent of targets) if (parent >= n) throw new Error('Invalid hierarchy endpoint');
-      if (options.force.familyPull) {
-        const degree = this.familyDegree = new Uint32Array(n);
-        for (let i = 0; i < n; i++) degree[i] = offsets[i + 1]! - offsets[i]!;
-        for (const parent of targets) degree[parent]!++;
-      }
+    if (input.up && options.force.familyPull) {
+      const { offsets, targets } = input.up, degree = this.familyDegree = new Uint32Array(n);
+      for (let i = 0; i < n; i++) degree[i] = offsets[i + 1]! - offsets[i]!;
+      for (const parent of targets) degree[parent]!++;
     }
     this.positions = input.initial ? input.initial.slice() : initialPositions(n, input.seed ^ options.seed, options.initialRadius);
-    if (!this.positions.every(Number.isFinite)) throw new Error('Invalid initial positions');
+    if (!input.initial && !this.positions.every(Number.isFinite)) throw new Error('Invalid initial positions');
     this.limit = input.movable ? options.relaxIterations : options.iterations;
     this.mass = new Float32Array(n).fill(1);
-    if (input.offsets || input.targets) {
-      const { offsets, targets } = input;
-      if (!offsets || !targets || offsets.length !== n + 1 || offsets[0] !== 0 || offsets[n] !== targets.length) throw new Error('Invalid layout CSR');
-      for (let i = 0; i < n; i++) { if (offsets[i]! > offsets[i + 1]!) throw new Error('Invalid layout CSR'); this.mass[i]! += offsets[i + 1]! - offsets[i]!; }
-      for (const target of targets) if (target >= n) throw new Error('Invalid layout CSR endpoint');
+    if (input.offsets) {
+      const { offsets } = input;
+      for (let i = 0; i < n; i++) this.mass[i]! += offsets[i + 1]! - offsets[i]!;
     } else for (let e = 0; e < input.source.length; e++) { this.mass[input.source[e]!]!++; this.mass[input.target[e]!]!++; }
     // Default sqrt-degree AREA curve (1x..5x radius), with sqrt-count spacing
     // in layout units. This is a camera-independent proxy, not a pixel guarantee.

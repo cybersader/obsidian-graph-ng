@@ -167,8 +167,10 @@ export default class GraphPlugin extends Plugin {
     const physical = async (source: PropertySource) => {
       if (!source.rooms && (source.roomFor || 'room' in source)) return ''; // Legacy room provider: live reads only.
       const controller = flight = new AbortController();
-      try { await source.load?.({ signal: controller.signal }); return ''; }
-      catch { return controller.signal.aborted ? '' : source.rooms ? 'Some room properties could not load' : 'Property loading unavailable'; }
+      try {
+        const results = await source.load?.({ signal: controller.signal });
+        if (!controller.signal.aborted) return source.rooms && Array.isArray(results) && results.some(r => r?.status === 'timeout') ? 'Room property load timed out' : '';
+      } catch { if (!controller.signal.aborted) return source.rooms ? 'Some room properties could not load' : 'Property loading unavailable'; }
       finally { flight = undefined; }
     };
     const views = (visit: (view: GraphView) => void) => {
@@ -183,13 +185,14 @@ export default class GraphPlugin extends Plugin {
       this.hydrationStatus = message;
       views(view => view.updateHydrationStatus());
     };
+    this.adapter.onInventoryChange = status;
     this.loadProperties = () => {
       const source = this.propertySource, request = ++latest;
       if (!active || !source) return Promise.resolve();
       // Caller completion and host completion have different owners. Never attach
       // timeout races to a permanently unresolved physical promise on each open.
       const caller = waiting ??= new Promise<void>(resolve => {
-        const timer = setTimeout(() => { finish?.(); status('Property loading delayed'); }, waitMs);
+        const timer = setTimeout(() => { finish?.(); if (!loadStatus) status('Property loading delayed'); }, waitMs);
         finish = () => { clearTimeout(timer); waiting = undefined; finish = undefined; resolve(); };
       });
       void latestWork(queue, queued = async () => {
@@ -197,7 +200,10 @@ export default class GraphPlugin extends Plugin {
         const current = () => active && source === this.propertySource;
         if (!current() || request !== latest) return;
         const message = await physical(source);
-        if (request === latest && current()) { finish?.(); status(message); }
+        if (current() && message !== undefined) {
+          if (request === latest) finish?.();
+          status(message); // A queued retry is not yet a new outcome.
+        }
       });
       return caller;
     };
@@ -240,13 +246,19 @@ export default class GraphPlugin extends Plugin {
     host.addEventListener?.('oc:property-facts-settled', settled);
     host.addEventListener?.('oc:property-facts-changed', changed);
     this.register(() => {
-      active = false; unlink(); finish?.(); clearTimeout(timer);
+      active = false; this.adapter.onInventoryChange = undefined; unlink(); finish?.(); clearTimeout(timer);
       host.removeEventListener?.('oc:property-facts-changed', changed); host.removeEventListener?.('oc:property-facts-settled', settled);
       flight?.abort();
     });
     changed();
   }
-  resetAdapter() { this.adapter?.invalidate(); this.adapter?.index.dispose(); this.adapter = new LocalAdapter(this.app, this, this.linkProducer, this.settings.debounceMs, () => this.notify(), true, this.settings.declaration, this.propertySource); this.adapter.attachFactCache(this.factStore, `${this.deviceNamespace}/${this.manifest.version}/${this.sourceIdentity}`); this.ingestedHash = ''; }
+  resetAdapter() {
+    const previous = this.adapter, onInventoryChange = previous?.onInventoryChange;
+    if (previous) { previous.onInventoryChange = undefined; previous.invalidate(); previous.index.dispose(); }
+    this.adapter = new LocalAdapter(this.app, this, this.linkProducer, this.settings.debounceMs, () => this.notify(), true, this.settings.declaration, this.propertySource);
+    this.adapter.attachFactCache(this.factStore, `${this.deviceNamespace}/${this.manifest.version}/${this.sourceIdentity}`);
+    this.ingestedHash = ''; this.adapter.onInventoryChange = onInventoryChange; onInventoryChange?.();
+  }
   subscribe(listener: (fullPass?: boolean) => void | Promise<void>) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   notify(signal?: AbortSignal, fullPass = false) {
     // The settlement watches a single acknowledgement directly. For multiple

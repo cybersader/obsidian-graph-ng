@@ -63,9 +63,12 @@ export class LocalAdapter {
   /** While a source swap advances the cache turn, a requested prune waits until after it. */
   private pruneDeferred?: boolean;
   inventoryError = '';
+  onInventoryChange?: () => void;
   private inventory() {
+    const before = !!this.inventoryError;
     try { const handles = this.propertySource?.rooms?.(); this.inventoryError = ''; return this.partitioned && Array.isArray(handles) ? handles as RoomHandle[] : undefined; }
     catch (error) { this.inventoryError = String(error); return undefined; }
+    finally { if (before !== !!this.inventoryError) this.onInventoryChange?.(); }
   }
   private prune(background = false) {
     const source = this.propertySource, turn = this.cacheTurn, cache = this.cache!;

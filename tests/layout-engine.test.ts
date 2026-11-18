@@ -1,4 +1,4 @@
-import { test, expect } from 'bun:test';
+import { test, expect, spyOn } from 'bun:test';
 import { LayoutEngineSession } from '../src/layout-engine';
 import { chooseLayoutEngine, engineBucket, engineTimings, layoutEngineText } from '../src/layout-engine-policy';
 import { adapterSupports, computeRequirements, type ComputeAdapter, type GraphicsSolver } from '../src/webgpu-layout';
@@ -152,6 +152,18 @@ test('late graphics loss cannot shrink the original quiet criterion', async () =
   }})});
   const result = await session.run(i, o, run('graphics')); expect(result.engineStatus.reason).toBe('failed'); expect(result.settled).toBe(false);
 });
+test('warm Stop validates the borrowed input without copying it for a Processor solver', async () => {
+  const i = input(); i.initial = new Float32Array(i.count * 2);
+  const copy = spyOn(i.initial, 'slice'), session = new LayoutEngineSession(), controls = { ...run('processor'), stopped: () => true };
+  try {
+    const result = await session.run(i, options(), controls);
+    expect(result.positions).toBe(i.initial); expect(result.engineStatus).toMatchObject({ reason: 'unchanged', engine: 'processor' });
+    expect(result.settled).toBe(false); expect(copy).not.toHaveBeenCalled();
+    i.initial[0] = NaN; await expect(session.run(i, options(), controls)).rejects.toThrow('Invalid initial positions');
+    i.initial[0] = 0; i.up = { offsets: new Uint32Array(), targets: new Uint32Array() };
+    await expect(session.run(i, options(), controls)).rejects.toThrow('Invalid hierarchy CSR');
+  } finally { copy.mockRestore(); }
+});
 test('Stop before first readback preserves warm or cold starting coordinates', async () => {
   for (const warm of [true, false]) {
     const i = input(); if (warm) i.initial = new LayoutSolver(i, options()).positions;
@@ -159,7 +171,7 @@ test('Stop before first readback preserves warm or cold starting coordinates', a
     const session = new LayoutEngineSession({adapter: async () => adapter, graphics: async () => ({reset(){},destroy(){},batch(){started(); return new Promise(()=>{});}})});
     const task = session.run(i, options(), {...run('graphics'), stopped: () => stop}); await ready; stop = true; session.stop();
     const result = await task; expect(result.settled).toBe(false);
-    if (warm) expect(result.positions).toBe(i.initial!);
+    if (warm) { expect(result.positions).toBe(i.initial!); expect(result.engineStatus.engine).toBe('graphics'); }
     else expect(result.positions).toEqual(new LayoutSolver(i, options()).positions);
     expect(result.engineStatus.reason).toBe('unchanged');
   }

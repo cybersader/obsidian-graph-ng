@@ -108,21 +108,24 @@ export class BinaryLayoutStore {
       if (expected && m.meta.source !== expected.source) throw new Error('Source/view mismatch');
       // Changed layout settings are not damage: refuse without leaving a retained quarantine artifact.
       if (expected && m.meta.layoutHash !== expected.layoutHash) return;
-      if (expected && m.meta.producer !== expected.producer) throw new Error('Producer mismatch');
+      if (typeof m.meta.producer !== 'string' || !m.meta.producer) throw new Error('Invalid layout producer');
+      const compatible = !expected || m.meta.producer === expected.producer;
       let total = 0; const files: Record<string, Uint8Array> = Object.create(null);
       for (const part of m.parts) {
         if (!['positions', 'identities', 'offsets', 'edgekeys', 'groups'].includes(part.name) || !Number.isSafeInteger(part.bytes) || part.bytes < 0 || !Array.isArray(part.chunks)) throw new Error('Invalid manifest part');
         total += part.bytes; if (total > this.options.maxGenerationBytes || part.chunks.length > Math.ceil(this.options.maxGenerationBytes / 4)) throw new Error('Generation byte budget exceeded');
-        const out = new Uint8Array(part.bytes); let offset = 0;
+        const out = compatible ? new Uint8Array(part.bytes) : undefined; let offset = 0;
         for (let i = 0; i < part.chunks.length; i++) {
           const chunk = part.chunks[i]!, filePath = `${path}/${part.name}.${i}.bin`;
           if (!Number.isSafeInteger(chunk.bytes) || chunk.bytes < 1 || chunk.bytes > MAX_CHUNK_BYTES || offset + chunk.bytes > part.bytes || !id(chunk.hash) || (await this.adapter.stat(filePath))?.size !== chunk.bytes) throw new Error('Invalid or oversized chunk');
           const buffer = new Uint8Array(await this.adapter.readBinary(filePath));
           if (buffer.byteLength !== chunk.bytes || await hashBytes(buffer) !== chunk.hash) throw new Error('Truncated or corrupt chunk');
-          out.set(buffer, offset); offset += buffer.byteLength; await this.yieldNow();
+          out?.set(buffer, offset); offset += buffer.byteLength; await this.yieldNow();
         }
-        if (offset !== part.bytes) throw new Error('Truncated generation'); files[part.name] = out;
+        if (offset !== part.bytes) throw new Error('Truncated generation'); if (out) files[part.name] = out;
       }
+      // The previous Auto producer shared the layout hash. Preserve its intact generation until recompute.
+      if (!compatible) return;
       this.record('loaded', e); this.committed = e.key; return { meta: m.meta, files };
     } catch { await this.quarantine(e); return; }
   }

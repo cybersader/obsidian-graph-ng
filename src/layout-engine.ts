@@ -1,4 +1,4 @@
-import { LayoutSolver, runLayoutStream, visualStop, VISUAL_STRIDE, type LayoutInput, type LayoutOptions } from './core/layout';
+import { LayoutSolver, runLayoutStream, validateLayoutInput, visualStop, VISUAL_STRIDE, type LayoutInput, type LayoutOptions } from './core/layout';
 import { graphicsQuality, chooseLayoutEngine, engineBucket, engineTimings, type EngineStatus, type EngineTiming, type LayoutEnginePreference } from './layout-engine-policy';
 import { adapterSupports, computeRequirements, requestComputeAdapter, WebGpuLayout, type ComputeAdapter, type GraphicsSolver } from './webgpu-layout';
 interface EngineDependencies {
@@ -116,6 +116,10 @@ export class LayoutEngineSession {
         }
       }
       release(); controller.abort();
+      if (!iteration && input.initial && run.stopped()) {
+        validateLayoutInput(input, options);
+        report(status.engine, 'unchanged'); return result();
+      }
       if (!run.stopped() && (status.reason === 'manual' || status.reason === 'small')) run.status?.(status);
       let hintAt = !this.disabled && preference !== 'graphics' && run.status ? this.deps.now() + 8000 : Infinity;
       const checkpoint = () => {

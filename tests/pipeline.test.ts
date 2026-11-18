@@ -31,6 +31,21 @@ async function generation(n = 1, declarationHash = 'a'.repeat(64), key = 'b'.rep
   return encodeLayout({ meta, identities: Array.from({ length: n }, (_, i) => `path:${i}.md`), positions: Float32Array.from({ length: n * 2 }, (_, i) => i / 2), edgeKeys: new Uint32Array(), groups: { groups: [], groupEdges: [] } });
 }
 const options = { directory: 'plugin/cache/local', chunkBytes: 64, maxGenerationBytes: 1024 * 1024 * 8, cachedDeclarations: 1 };
+test('intact old Auto producer is a compatibility miss, but damaged bytes still quarantine', async () => {
+  for (const damaged of [false, true]) {
+    const disk = new MemoryAdapter(), store = new BinaryLayoutStore(disk, options), old = await generation();
+    const current = await generation(1, old.meta.declarationHash, 'c'.repeat(64)); old.meta.producer = 'graph-ng-fa2@4-webgpu';
+    await store.write(old); const files = new Map(disk.files);
+    if (damaged) { const bytes = disk.files.get([...files.keys()].find(p => p.endsWith('/positions.0.bin'))!)!; bytes[0] = bytes[0]! ^ 1; }
+    expect(await store.latest(old.meta.declarationHash, current.meta)).toBeUndefined();
+    if (damaged) expect(store.trace.at(-1)?.action).toBe('quarantined');
+    else {
+      expect(disk.files).toEqual(files); expect((await store.latest(old.meta.declarationHash, old.meta))?.meta).toEqual(old.meta);
+      await store.write(current); expect((await store.latest(current.meta.declarationHash, current.meta))?.meta).toEqual(current.meta);
+      expect([...disk.files.keys()].some(p => p.includes('.corrupt-'))).toBe(false);
+    }
+  }
+});
 test('columnar round trips preserve object projection across seeded scalar/list/missing rows', () => {
   for (let seed = 1; seed <= 20; seed++) {
     const rows: FactRow[] = Array.from({ length: 30 }, (_, i) => ({ path: `${i}.md`, properties: { id: `${seed}:${i}`, group: i % 3, unused: 'not shipped' }, links: { 'fixture@1': [`${(i + seed) % 30}.md`] } }));
