@@ -158,7 +158,8 @@ export default class GraphPlugin extends Plugin {
     const unlink = () => { if (queue.next === queued) queue.next = undefined; queued = undefined; };
     const superseded = (source?: PropertySource) => {
       if (!flight || flight.controller.signal.aborted) return false;
-      try { return source !== this.propertySource || !flight.mounted(); } catch { return true; }
+      // An unreadable inventory is unknown, not proof that the room left.
+      try { return source !== this.propertySource || !flight.mounted(); } catch { return source !== this.propertySource; }
     };
     const views = (visit: (view: GraphView) => void) => {
       for (const leaf of this.app.workspace.getLeavesOfType(VIEW)) if (!leaf.isDeferred && leaf.view instanceof GraphView) visit(leaf.view);
@@ -195,23 +196,25 @@ export default class GraphPlugin extends Plugin {
             else await load(signal);
           } catch (error) { if (!signal.aborted) throw error; }
           finally { flight = undefined; }
+          return signal.aborted;
         };
         try {
           if (!current()) return;
           drainingSource = source;
           if (source.rooms) {
-            let handles = source.rooms(), remaining = 2 * handles.length;
+            // Bound each drain by twice the largest inventory it has observed.
+            let handles = source.rooms(), limit = 2 * handles.length, loads = 0;
             const seen = new Map<typeof handles[number], number | undefined>();
             while (current() && request === latest) {
               const h = handles.find(h => h.load && (!seen.has(h) || seen.get(h) !== h.generation));
               if (!h) break;
-              if (!remaining--) { message ||= 'Property loading delayed'; break; }
+              if (loads++ >= limit) { message ||= 'Property loading delayed'; break; }
               const generation = h.generation, id = h.cacheIdentity;
               seen.set(h, generation);
-              try { await physical(() => !!source.rooms?.().includes(h) && h.generation === generation && h.cacheIdentity === id, signal => h.load!({ signal })); }
+              try { if (await physical(() => { let listed = true; try { listed = !!source.rooms?.().includes(h); } catch { /* Unknown inventory keeps the load. */ } return listed && h.generation === generation && h.cacheIdentity === id; }, signal => h.load!({ signal }))) seen.delete(h); }
               catch { message = 'Some room properties could not load'; }
               if (!current() || request !== latest) break;
-              handles = source.rooms();
+              handles = source.rooms(); limit = Math.max(limit, 2 * handles.length);
             }
           } else if (!source.roomFor && !('room' in source) && source.load) {
             await physical(() => true, signal => source.load!({ signal }));

@@ -973,3 +973,29 @@ test('binding: host timeout services newest queued open before obsolete siblings
     expect(calls).toEqual(['a','a','b']); expect(f.plugin.hydrationStatus).toBe(''); expect(f.adapter.factsComplete()).toBe(false); expect(f.disk.writes).toBe(0);
   } finally { hold.yes(); f.close(); }
 });
+test('room queue: one change that mounts two rooms during a held load loads every room', async () => {
+  const gate = signal(), started = signal(), calls: string[] = [];
+  const room = (name: string, load: () => Promise<void>) => Object.freeze({ cacheIdentity: `ocpf1:${name}`, generation: 1, verifiedComplete: false, load });
+  const a = room('a', async () => { calls.push('a'); started.yes(); await gate.done; }), b = room('b', async () => { calls.push('b'); }), c = room('c', async () => { calls.push('c'); });
+  let rooms: readonly unknown[] = Object.freeze([a]);
+  const f = await contractFixture(undefined, undefined, undefined, s => { s.rooms = () => rooms as any; s.roomFor = (p: string) => (rooms as any)[p === 'b.md' ? 1 : 0]; });
+  try {
+    await started.done; rooms = Object.freeze([a, b, c]); f.send('oc:property-facts-changed'); gate.yes();
+    await (f.host as any)[Symbol.for('graph-ng.property-loads')].work;
+    expect(calls).toEqual(['a', 'b', 'c']); expect(f.plugin.hydrationStatus).toBe('');
+  } finally { gate.yes(); f.close(); }
+});
+test('room queue: one unreadable inventory during a held load does not cancel a mounted room', async () => {
+  const started = signal(), release = signal(); let fail = 0, calls = 0, completed = 0, aborts = 0;
+  const a = Object.freeze({ cacheIdentity: 'ocpf1:a', generation: 1, verifiedComplete: false, async load({ signal: s }: { signal: AbortSignal }) {
+    if (++calls === 1) { started.yes(); await new Promise<void>((resolve, reject) => { s.addEventListener('abort', () => { aborts++; reject(s.reason); }, { once: true }); release.done.then(resolve); }); }
+    completed++;
+  } });
+  const rooms = Object.freeze([a]);
+  const f = await contractFixture(undefined, undefined, undefined, s => { s.rooms = () => { if (fail) { fail--; throw Error('synthetic inventory'); } return rooms as any; }; s.roomFor = () => a as any; });
+  try {
+    await started.done; fail = 1; f.send('oc:property-facts-changed'); release.yes();
+    await (f.host as any)[Symbol.for('graph-ng.property-loads')].work;
+    expect(aborts).toBe(0); expect(completed).toBe(1);
+  } finally { release.yes(); f.close(); }
+});
