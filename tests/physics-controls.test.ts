@@ -163,7 +163,7 @@ test('real worker recompute is finite, layout-only and streams progressed frames
     await p.request(1, { kind: 'rows', reset: true, columns: packRows([{ path: 'a.md', properties: {} }, { path: 'b.md', properties: {} }], s.declaration) });
     await p.request(1, { kind: 'project' }); await p.request(1, { kind: 'layout' });
     const before = await p.request<import('../src/core/binary-layout').BinaryGeneration>(1, { kind: 'encode' }); let streams = 0, groups = 0;
-    p.onPositions = () => streams++; p.onGroups = () => groups++;
+    p.onPositions = () => { streams++; }; p.onGroups = () => groups++;
     const result: any = await p.request(1, { kind: 'recompute', options: { ...options, force: { ...options.force, gravity: 0, scalingRatio: 100000 } } });
     expect(result.positions.length).toBe(4); expect(result.positions.every(Number.isFinite)).toBe(true); expect(result.cached).toBe(false);
     expect(streams).toBe(1); expect(groups).toBe(0);

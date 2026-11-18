@@ -87,10 +87,14 @@ function groupSummary(p: GroupProjection): GroupProjection {
   return { ...p, groupEdges: p.groupEdges.map(e => ({ ...e, carriers: { kind: e.carriers.kind, ids: [] } })) };
 }
 async function solve(input: LayoutInput, options: PipelineConfig['layout'], revision: number, stopped: () => boolean, preference = config.layoutEngine, remembered = config.engineChoices) {
-  const arrange = isolateRing(input);
+  const arrange = isolateRing(input), demand = preview, total = input.movable ? options.relaxIterations : options.iterations;
   const result = await engines.run(input, options, {
     preference, remembered, every: config.streamEveryIterations, stopped, yieldNow: () => yieldTask(true),
-    status: engineStatus => self.postMessage({ kind: 'engine', revision, engineStatus, total: input.movable ? options.relaxIterations : options.iterations }),
+    status: engineStatus => self.postMessage({ kind: 'engine', revision, engineStatus, total }),
+    wantsFrame: demand && (iteration => {
+      if (demand.wanted && credit && iteration >= demand.from) { credit = false; return true; }
+      self.postMessage({ kind: 'progress', revision, iteration, total }); return false;
+    }),
     buffer: takeBuffer,
     emit: (p, iteration, total) => {
       arrange(p);
@@ -278,9 +282,11 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
 let queue = Promise.resolve();
 const evaluations = new Map<string, number>();
 const cancelled = new Set<number>();
-let layoutRequest = -1;
+let layoutRequest = -1, preview: Extract<PipelineRequest, { kind: 'layout' }>['preview'], credit = true;
 self.onmessage = (event: MessageEvent<PipelineRequest & { id: number; revision: number; input?: LayoutInput; options?: any }>) => {
-  const recycle = event.data as unknown as { kind: string; buffer?: ArrayBuffer; id: number };
+  const recycle = event.data as unknown as { kind: string; buffer?: ArrayBuffer; id: number; wanted: boolean };
+  if (recycle.kind === 'preview-credit') { if (recycle.id === layoutRequest) credit = true; return; }
+  if (recycle.kind === 'preview-wanted') { if (recycle.id === layoutRequest && preview) preview.wanted = recycle.wanted; return; }
   if (recycle.kind === 'stop-layout') { if (recycle.id === layoutRequest) { cancelled.add(recycle.id); engines.stop(); } return; }
   if (recycle.kind === 'cancel-evaluation') { if ([...evaluations.values()].includes(recycle.id)) cancelled.add(recycle.id); return; }
   if (recycle.kind === 'recycle') { if (recycle.buffer && recycled.length < 2) recycled.push(recycle.buffer); return; }
@@ -289,7 +295,7 @@ self.onmessage = (event: MessageEvent<PipelineRequest & { id: number; revision: 
   const r = event.data;
   if (evaluation(r)) { const old = evaluations.get(r.kind); if (old !== undefined) cancelled.add(old); evaluations.set(r.kind, r.id); }
   queue = queue.then(async () => {
-    if (r.kind === 'layout' || r.kind === 'recompute') layoutRequest = r.id;
+    if (r.kind === 'layout' || r.kind === 'recompute') { layoutRequest = r.id; preview = r.preview; credit = true; }
     self.postMessage({ kind: 'started', id: r.id, revision: r.revision });
     try { const result = await handle(r, r.revision, { cancelled: () => cancelled.has(r.id), budgetMs: evaluation(r) ? r.budgetMs ?? 120000 : 120000 }); self.postMessage({ id: r.id, revision: r.revision, result }, { transfer: transferables(result) }); }
     catch (error) { self.postMessage({ id: r.id, revision: r.revision, error: String(error) }); }

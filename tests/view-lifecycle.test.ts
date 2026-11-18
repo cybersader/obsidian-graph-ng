@@ -414,6 +414,17 @@ test('returning to Notes replaces a preview disposed by Groups', async () => {
   await preview.finish(); expect(recycled).toEqual([first, next]);
 });
 
+test('Notes can request a fresh first picture after Groups interrupts renderer setup', async () => {
+  const { LayoutPreview } = await import('../src/layout-preview');
+  let notes = true, cancel!: (e: Error) => void, creates = 0;
+  const preview = new LayoutPreview(async positions => {
+    if (!creates++) await new Promise<void>((_, reject) => { cancel = reject; });
+    return { positions, streamPositions: () => positions, dispose() {} };
+  }, () => {}, () => notes, () => { throw Error('Obsolete setup should not trigger fallback'); });
+  const opening = preview.push(new Float32Array(2)); notes = false; cancel(Error('Renderer superseded')); await opening;
+  notes = true; await preview.push(new Float32Array(2)); expect(creates).toBe(2); await preview.finish();
+});
+
 test('completed partial projections do not keep layout busy waiting for host metadata', async () => {
   const { GraphView } = await import('../src/main'); const view: any = Object.create(GraphView.prototype);
   Object.assign(view, { contentEl: { dataset: { state: 'ready' } }, provisional: true, plugin: { settings: { projectionFile: '' } }, report: { linksPending: true, pendingProperties: 4 } });

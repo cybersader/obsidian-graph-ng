@@ -9,27 +9,34 @@ export function adaptiveRadius(radius: number, g: number, ego: boolean, focus: n
   return Math.max(radius, Math.max(5, minSize) * pulse) + pulse;
 }
 
+/** A loading picture needs validated world bounds but no hit-test bins. */
+export class PositionBounds {
+  readonly minX: number;
+  readonly minY: number;
+  readonly width: number;
+  readonly height: number;
+  constructor(readonly positions: Float32Array, readonly visible: Uint8Array, validateHidden = true) {
+    if (positions.length !== visible.length * 2) throw new Error('RENDER_POSITION_COUNT');
+    let x = Infinity, y = Infinity, xx = -Infinity, yy = -Infinity;
+    for (let i = 0; i < visible.length; i++) if (validateHidden || visible[i]) {
+      const a = positions[i * 2]!, b = positions[i * 2 + 1]!;
+      if (!Number.isFinite(a) || !Number.isFinite(b)) throw new Error('RENDER_NONFINITE_POSITION');
+      if (!visible[i]) continue;
+      x = Math.min(x, a); y = Math.min(y, b); xx = Math.max(xx, a); yy = Math.max(yy, b);
+    }
+    this.minX = x === Infinity ? 0 : x; this.minY = y === Infinity ? 0 : y;
+    this.width = Math.max(1, xx - this.minX); this.height = Math.max(1, yy - this.minY);
+  }
+}
 /** Packed grid: one link per node, no objects/strings per node or pointer query. */
-export class PickGrid {
+export class PickGrid extends PositionBounds {
   readonly heads: Int32Array;
   readonly next: Int32Array;
   readonly columns: number;
   readonly rows: number;
   readonly cell: number;
-  readonly minX: number;
-  readonly minY: number;
-  readonly width: number;
-  readonly height: number;
-  constructor(readonly positions: Float32Array, readonly visible: Uint8Array) {
-    if (positions.length !== visible.length * 2) throw new Error('RENDER_POSITION_COUNT');
-    let x = Infinity, y = Infinity, xx = -Infinity, yy = -Infinity;
-    for (let i = 0; i < visible.length; i++) if (visible[i]) {
-      const a = positions[i * 2]!, b = positions[i * 2 + 1]!;
-      if (!Number.isFinite(a) || !Number.isFinite(b)) throw new Error('RENDER_NONFINITE_POSITION');
-      x = Math.min(x, a); y = Math.min(y, b); xx = Math.max(xx, a); yy = Math.max(yy, b);
-    }
-    this.minX = x === Infinity ? 0 : x; this.minY = y === Infinity ? 0 : y;
-    this.width = Math.max(1, xx - this.minX); this.height = Math.max(1, yy - this.minY);
+  constructor(positions: Float32Array, visible: Uint8Array) {
+    super(positions, visible, false);
     this.cell = Math.max(this.width, this.height) / Math.max(1, Math.ceil(Math.sqrt(visible.length / 8)));
     this.columns = Math.ceil(this.width / this.cell) + 1; this.rows = Math.ceil(this.height / this.cell) + 1;
     this.heads = new Int32Array(this.columns * this.rows).fill(-1); this.next = new Int32Array(visible.length).fill(-1);

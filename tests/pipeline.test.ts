@@ -230,6 +230,16 @@ function fakeTransport() {
   const emit = (message: object) => transport.onmessage?.({ data: message } as MessageEvent);
   return { transport, sent, emit };
 }
+test('Groups withdraws recompute demand and cannot resurrect its obsolete renderer', async () => {
+  const fake = fakeTransport(), p = new WorkerPipeline(fake.transport, () => 10000);
+  try {
+    const work = p.request(7, { kind: 'recompute', options: layout, preview: { from: 1, wanted: true } });
+    p.previewWanted(8,false); expect(fake.sent).toHaveLength(1);
+    p.previewWanted(7,false); expect(fake.sent.at(-1)).toEqual({ kind: 'preview-wanted', id: 1, wanted: false });
+    p.previewWanted(7,true); expect(fake.sent).toHaveLength(2);
+    fake.emit({ id: 1, revision: 7, result: 'final' }); expect(await work).toBe('final');
+  } finally { p.dispose(); }
+});
 test('Stop survives a queued recompute and targets only its acknowledged request', async () => {
   const fake = fakeTransport(), p = new WorkerPipeline(fake.transport, () => 10000);
   try {
@@ -436,6 +446,20 @@ test('relationship details: rule names and relationship-note paths per edge row,
   } finally { p.dispose(); }
 });
 
+test('first eligible frame spends the only credit; recycling alone never unlocks another', async () => {
+  const p = pipeline(), frames: number[] = [], steps: number[] = [];
+  let ready!: () => void;
+  p.onPositions = e => { frames.push(e.iteration); steps.push(e.iteration); p.recycle(e.positions.buffer as ArrayBuffer); return new Promise<void>(r => { ready = r; }); };
+  p.onProgress = step => { steps.push(step); };
+  try {
+    await p.request(1, { kind: 'configure', config: { ...config, layout: { ...layout, iterations: 13, convergenceThreshold: 0 }, streamEveryIterations: 2 } });
+    await p.request(1, { kind: 'rows', columns: packRows([{ path: 'a.md', properties: {} }, { path: 'b.md', properties: {} }], declaration), reset: true });
+    await p.request(1, { kind: 'project' });
+    const result = await p.request<LayoutResult>(1, { kind: 'layout', preview: { from: 4, wanted: true } });
+    expect(frames).toEqual([4]); expect(steps).toEqual([2,4,6,8,10,12]); expect(result.positions.every(Number.isFinite)).toBe(true);
+    ready(); // After final, completing setup cannot re-credit a later RPC.
+  } finally { p.dispose(); }
+});
 test('worker position events carry actual cold and warm solver iteration limits', async () => {
   const p = pipeline(), events: [number, number][] = [];
   p.onPositions = event => { events.push([event.iteration, event.total]); p.recycle(event.positions.buffer as ArrayBuffer); };

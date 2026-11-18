@@ -535,12 +535,13 @@ export class GraphView extends ItemView {
   private presentation: 'nodes' | 'groups' = 'groups';
   getState() { return { presentation: this.presentation }; }
   async setState(state: { presentation?: unknown }, result: ViewStateResult) {
-    this.presentation = state?.presentation === 'nodes' ? 'nodes' : 'groups';
+    this.setPresentation(state?.presentation === 'nodes' ? 'nodes' : 'groups');
     const shown = this.contentEl.dataset.mode;
     if (this.positions && this.projection && shown !== this.presentation && shown !== 'nodes-building') { if (this.presentation === 'nodes') await this.showDetails(); else this.toGroups(); }
     await super.setState(state, result);
   }
-  private rememberPresentation(mode: 'nodes' | 'groups') { this.presentation = mode; this.app.workspace.requestSaveLayout(); }
+  private setPresentation(mode: 'nodes' | 'groups') { this.presentation = mode; this.plugin.pipeline?.previewWanted?.(this.activeRevision, mode === 'nodes'); }
+  private rememberPresentation(mode: 'nodes' | 'groups') { this.setPresentation(mode); this.app.workspace.requestSaveLayout(); }
   getViewType() { return VIEW; }
   getDisplayText() { return 'Graph NG'; }
   getIcon() { return 'git-fork'; }
@@ -728,23 +729,27 @@ export class GraphView extends ItemView {
         if (previous) renderer.adoptCamera(previous);
         this.renderer = renderer; if (active()) this.layoutLabel(true); return renderer;
       }, recycle, () => current() && this.presentation === 'nodes', error => {
+        this.plugin.pipeline.previewWanted?.(revision, false);
         this.detailFallback ||= `Layout preview unavailable: ${String(error)}. Showing Groups.`;
         this.showGroups(true); this.statusText = this.statusText;
       });
       this.plugin.pipeline.onEngine = (engineStatus, total) => { if (current()) { report.engineStatus = engineStatus; if (!report.progress) this.passSteps(0, total); this.plugin.recordLayoutEngine?.(engineStatus, true); } };
+      const from = (devicePerformance.fast(settings.performance) ? 1 : 2) * settings.streamEveryIterations;
+      this.plugin.pipeline.onProgress = (step, total) => { if (current()) this.passSteps(step, total); };
       this.plugin.pipeline.onPositions = event => {
         if (event.revision === revision && current()) {
           this.passSteps(event.iteration, event.total);
           // One progressed batch in Fast, otherwise two; never the seed. Labels and picking wait; camera stays live.
-          if (event.iteration >= (devicePerformance.fast(settings.performance) ? 1 : 2) * settings.streamEveryIterations) { preview!.push(event.positions); return; }
+          if (event.iteration >= from) return preview!.push(event.positions);
         }
         recycle(event.positions);
+        if (!current() || event.revision !== revision) return false;
       };
       let layout: LayoutResult;
       this.layoutControl(true);
-      try { layout = await this.plugin.pipeline.request<LayoutResult>(revision, { kind: 'layout' }); }
+      try { layout = await this.plugin.pipeline.request<LayoutResult>(revision, { kind: 'layout', preview: { from, wanted: this.presentation === 'nodes' } }); }
       catch (error) { if (String(error).includes('Saved identities')) { await this.plugin.store.quarantine(result.meta); } throw error; }
-      finally { this.plugin.pipeline.onPositions = undefined; this.plugin.pipeline.onEngine = undefined; this.layoutControl(false); }
+      finally { this.plugin.pipeline.onProgress = undefined; this.plugin.pipeline.onPositions = undefined; this.plugin.pipeline.onEngine = undefined; this.layoutControl(false); }
       if (!current()) return;
       this.statusText = layout.cached || layout.reused === 'all' ? 'Using saved layout' : 'Preparing graph';
       await preview.finish(true);
@@ -990,22 +995,23 @@ export class GraphView extends ItemView {
     const current = generationCurrent(() => [this.closed, this.activeRevision, this.projection, this.positions, this.plugin.settings.layout, canonical(this.plugin.settings.layout), this.plugin.settings.layoutEngine, this.renderRevision, this.detailRenderer, this.detailScope, this.visible, this.explored]);
     await this.plugin.serialize(async () => {
       let token: CoordinateToken | undefined, finish: ((committed: boolean) => void) | undefined, committed = false, working = false, completed = false, painted = false, streamError: unknown;
-      const stopped = this.layoutStopped, previousStream = this.plugin.pipeline.onPositions, previousEngine = this.plugin.pipeline.onEngine;
+      const stopped = this.layoutStopped, previousProgress = this.plugin.pipeline.onProgress, previousStream = this.plugin.pipeline.onPositions, previousEngine = this.plugin.pipeline.onEngine;
       const ready = () => current() && (!token || token.current());
       try {
         if (this.closed || !current() || !projection || this.detailGeneration !== revision || this.plugin.settings.projectionFile) throw new Error('Layout unavailable or generation changed');
         const next = physicsSettings(this.plugin.settings, values);
         this.layoutWorking = working = true; this.progressAt = 0; this.layoutControl(true); this.passSteps(0, next.layout.iterations);
         finish = old?.beginLayout();
+        this.plugin.pipeline.onProgress = (step, total) => { if (current()) this.passSteps(step, total); };
         this.plugin.pipeline.onEngine = engineStatus => { if (current() && this.report) { this.report.engineStatus = engineStatus; this.plugin.recordLayoutEngine?.(engineStatus, true); } };
         this.plugin.pipeline.onPositions = event => {
-          if (event.revision !== revision || !current() || streamError) { this.plugin.pipeline.recycle(event.positions.buffer as ArrayBuffer); return; }
+          if (event.revision !== revision || !current() || streamError) { this.plugin.pipeline.recycle(event.positions.buffer as ArrayBuffer); return false; }
           this.passSteps(event.iteration, event.total);
-          if (event.iteration > 0 && finish) { try { old!.streamPositions(event.positions, !painted); if (!painted) { this.layoutLabel(true); painted = true; } } catch (e) { streamError = e; } }
+          if (event.iteration > 0 && finish) { try { old!.streamPositions(event.positions, !painted); if (!painted) { this.layoutLabel(true); painted = true; } } catch (e) { streamError = e; return false; } }
           else this.plugin.pipeline.recycle(event.positions.buffer as ArrayBuffer);
         };
-        const result = await this.plugin.pipeline.request<LayoutResult>(revision, { kind: 'recompute', options: next.layout, layoutEngine: next.layoutEngine, engineChoices: this.plugin.layoutChoices?.(), initial: this.positions!.slice() });
-        this.plugin.pipeline.onPositions = previousStream; this.plugin.pipeline.onEngine = previousEngine;
+        const result = await this.plugin.pipeline.request<LayoutResult>(revision, { kind: 'recompute', preview: { from: 1, wanted: !!finish }, options: next.layout, layoutEngine: next.layoutEngine, engineChoices: this.plugin.layoutChoices?.(), initial: this.positions!.slice() });
+        this.plugin.pipeline.onProgress = previousProgress; this.plugin.pipeline.onPositions = previousStream; this.plugin.pipeline.onEngine = previousEngine;
         this.plugin.recordLayoutEngine?.(result.engineStatus);
         requireLayout(current); if (streamError) throw streamError;
         this.layoutControl(false); this.statusText = 'Preparing graph';
@@ -1027,7 +1033,7 @@ export class GraphView extends ItemView {
         }
         completed = true;
       } finally {
-        if (!committed) this.layoutStopped = stopped; this.layoutControl(false); this.plugin.pipeline.onPositions = previousStream; this.plugin.pipeline.onEngine = previousEngine; token?.discard();
+        if (!committed) this.layoutStopped = stopped; this.layoutControl(false); this.plugin.pipeline.onProgress = previousProgress; this.plugin.pipeline.onPositions = previousStream; this.plugin.pipeline.onEngine = previousEngine; token?.discard();
         try { finish?.(committed); }
         finally { if (working) { this.layoutWorking = false; this.statusText = !completed ? LAYOUT_FAILED : this.provisional ? pendingText(this.report) : this.layoutSettled ? '' : 'Layout not settled'; } }
       }

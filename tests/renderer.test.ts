@@ -95,6 +95,17 @@ test('packed picking handles negative coordinates, ties, hidden and empty nodes'
   expect(() => new PickGrid(new Float32Array([0]), new Uint8Array([1]))).toThrow('RENDER_POSITION_COUNT');
   expect(() => new PickGrid(new Float32Array([NaN, 0]), new Uint8Array([1]))).toThrow('RENDER_NONFINITE_POSITION');
 });
+test('bin-free preview bounds equal indexed bounds, including empty/hidden extents', async () => {
+  const { PositionBounds } = await import('../src/render-data');
+  const positions = new Float32Array([-15, -12, 30, 54, 700, -800]);
+  for (const mask of [[0,0,0], [1,0,0], [1,1,0], [0,1,1]]) {
+    const visible = Uint8Array.from(mask), bounds = new PositionBounds(positions, visible), grid = new PickGrid(positions, visible);
+    for (const k of ['minX','minY','width','height'] as const) expect(bounds[k]).toBe(grid[k]);
+    expect('heads' in bounds || 'next' in bounds).toBe(false);
+  }
+  positions[5] = Infinity;
+  expect(() => new PositionBounds(positions, new Uint8Array([1,1,0]))).toThrow('RENDER_NONFINITE_POSITION');
+});
 test('packed grid picks agree with a brute-force oracle for seeded synthetic points', () => {
   const positions = new Float32Array(4000), visible = new Uint8Array(2000); let state = 17;
   const random = () => ((state = (Math.imul(state, 1664525) + 1013904223) >>> 0) / 4294967296);

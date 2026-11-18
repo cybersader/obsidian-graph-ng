@@ -85,11 +85,12 @@ async function fixture(renderView: any = {}) {
 test('loading preview attaches pan and zoom while suppressing picking and retains the user camera', async () => {
   const f = await fixture({ loading: true }), r = f.renderer;
   expect(r.canvas.listeners.has('pointerdown')).toBe(true); expect(r.canvas.listeners.has('wheel')).toBe(true);
+  expect(r.grid.heads).toBeUndefined(); expect(r.grid.next).toBeUndefined();
   const before = { ...r.camera }, input = r.controls();
   input[compiled('panBy')](30, 10); input[compiled('zoomAt')](1.2, 0, 0);
   expect(r.camera).not.toEqual(before); const moved = { ...r.camera };
   expect(input.pick(0, 0)).toBe(-1); expect(input[compiled('pickHub')](0, 0)).toBe(-1); expect(input[compiled('pickEdge')](0, 0)).toBe(-1);
-  r[compiled('streamPositions')](f.next); expect(r.camera).toEqual(moved); expect(r.overlay.hidden).toBe(true);
+  r[compiled('streamPositions')](f.next); expect(r.grid.heads).toBeUndefined(); expect(r.grid.positions).toBe(f.next); expect(r.camera).toEqual(moved); expect(r.overlay.hidden).toBe(true);
 });
 
 test('Stop layout remains beside status, sends one active revision and hides without removing its slot', async () => {

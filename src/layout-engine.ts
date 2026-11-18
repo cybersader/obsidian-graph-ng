@@ -15,6 +15,7 @@ export interface EngineRun {
   stopped(): boolean;
   yieldNow(): Promise<void>;
   buffer?(length: number): Float32Array;
+  wantsFrame?(iteration: number): boolean;
   emit(positions: Float32Array, iteration: number, total: number, status: EngineStatus): void;
   status?(status: EngineStatus): void;
 }
@@ -95,7 +96,7 @@ export class LayoutEngineSession {
               positions = step.positions; iteration += n;
               settled = step.quiet >= Math.min(total, options.convergenceIterations);
               if (options.convergenceThreshold > 0 && settled) break;
-              if (iteration % every === 0 && iteration < total) {
+              if (iteration % every === 0 && iteration < total && (!run.wantsFrame || run.wantsFrame(iteration))) {
                 const frame = buffer(positions.length); frame.set(positions); run.emit(frame, iteration, total, status);
               }
               await run.yieldNow();
@@ -112,7 +113,7 @@ export class LayoutEngineSession {
       if (!run.stopped() && (status.reason === 'manual' || status.reason === 'small')) run.status?.(status);
       // Remaining work limits execution, not the original required quiet streak. Restart history conservatively.
       positions = await runLayoutStream(iteration ? { ...input, initial: positions } : input, options, every,
-        (frame, step) => run.emit(frame, iteration + step, total, status), run.yieldNow, buffer, (s, steps) => { settled = s; if (!iteration && !steps && run.stopped()) report('processor', 'unchanged'); }, run.stopped, undefined, total - iteration, iteration);
+        (frame, step) => run.emit(frame, iteration + step, total, status), run.yieldNow, buffer, (s, steps) => { settled = s; if (!iteration && !steps && run.stopped()) report('processor', 'unchanged'); }, run.stopped, undefined, total - iteration, iteration, run.wantsFrame);
       return result();
     } finally { release(); controller.abort(); if (this.abort === controller) this.abort = undefined; }
   }

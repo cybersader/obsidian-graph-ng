@@ -103,6 +103,15 @@ test('device/pipeline/validation failures, nonfinite output and watchdog disable
     if (fault !== 'pipeline') expect(destroyed).toBe(true);
   }
 });
+test('no display credit never skips GPU validation or changes Processor fallback steps', async () => {
+  const i = input(), o = options(); let reads = 0, buffers = 0;
+  const session = new LayoutEngineSession({ adapter: async () => adapter, graphics: async () => ({ reset() {}, destroy() {}, async batch() {
+    reads++; return { positions: new Float32Array(i.count * 2).fill(NaN), quiet: 0, movement: 0 };
+  } }) });
+  const result = await session.run(i, o, { ...run('graphics'), wantsFrame: () => false, buffer: n => { buffers++; return new Float32Array(n); } });
+  expect(reads).toBe(1); expect(buffers).toBe(0); expect(result.engineStatus.reason).toBe('failed');
+  const expected = new LayoutSolver(i,o); while (!expected.done) expected.step(); expect(result.positions).toEqual(expected.positions);
+});
 test('fallback continues from the last validated graphics positions, never a failed readback', async () => {
   const i = input(), o = options(), checkpoint = new Float32Array(i.count * 2).fill(2); let batches = 0;
   const session = new LayoutEngineSession({ adapter: async () => adapter, graphics: async () => ({ reset() {}, destroy() {}, async batch() {

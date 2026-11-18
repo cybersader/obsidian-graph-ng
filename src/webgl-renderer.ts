@@ -4,7 +4,7 @@ import { plural } from './graph-information';
 import { carrierPairs, carrierThrough, carrierFocus, carrierAdmitted } from './carrier-lines';
 import { renderPath, type RenderProjection } from './render-projection';
 import type { Settings } from './settings';
-import { adaptiveRadius, PickGrid, positionTexture, incidentEdges, focusTiers, tintedEdge, edgeBucket, tierNode, tierEdge, tierLabel, segmentDistance, shownTier, shownEdgeTier, tierCounts, tierLift, liftRadius, strongEdge, focusAlpha, offscreenPips, TIERS, ALL_TIERS, PIP_DIRECTIONS, canvasDetailEdges, CanvasLimit, resizeDrawingBuffer, LABEL_RATIOS, PATH_EDGE, pathStroke } from './render-data';
+import { adaptiveRadius, PickGrid, PositionBounds, positionTexture, incidentEdges, focusTiers, tintedEdge, edgeBucket, tierNode, tierEdge, tierLabel, segmentDistance, shownTier, shownEdgeTier, tierCounts, tierLift, liftRadius, strongEdge, focusAlpha, offscreenPips, TIERS, ALL_TIERS, PIP_DIRECTIONS, canvasDetailEdges, CanvasLimit, resizeDrawingBuffer, LABEL_RATIOS, PATH_EDGE, pathStroke } from './render-data';
 import { readTheme, type GraphTheme } from './render-theme';
 import { baseRadius, sizedRadius, sizingSettings, type NodeSizingValues } from './node-sizing';
 import { buildLabels, rankFocus, type LabelAtlas } from './render-labels';
@@ -293,8 +293,7 @@ interface Hub { group: number; x: number; y: number; count: number; radius: numb
 /** Draw directly from projection columns. Camera frames touch uniforms only. */
 export class DetailRenderer {
   readonly canvas: HTMLCanvasElement;
-  /** Fixed camera frame for the lifetime of this renderer. */
-  grid: PickGrid;
+  grid: PositionBounds;
   private cameraFrame: Pick<PickGrid, 'minX' | 'minY' | 'width' | 'height'>;
   private coordinateRevision = 0;
   readonly camera: Camera = { x: .5, y: .5, ratio: 1 };
@@ -372,7 +371,7 @@ export class DetailRenderer {
   private positionHeight = 1;
   private display: Float32Array;
   private filterVisible: Uint8Array;
-  private picker: PickGrid;
+  private picker?: PickGrid;
   private view: RenderView = {};
   private groupCount = 0;
   private groupPalette?: Uint8Array;
@@ -543,10 +542,10 @@ export class DetailRenderer {
   }
   constructor(private container: HTMLElement, readonly projection: RenderProjection, public positions: Float32Array, visible: Uint8Array, private settings: Settings, private onNode: (i: number) => void, private onZoomOut: () => void, colors: Uint32Array, software = false, private onUnavailable = onZoomOut, view: RenderView = {}) {
     let started = performance.now();
-    this.grid = new PickGrid(positions, visible);
+    this.grid = this.makeBounds(positions, visible, view);
     const { minX, minY, width, height } = this.grid; this.cameraFrame = { minX, minY, width, height };
     this.edges = incidentEdges(projection);
-    this.filterVisible = this.baseVisible = visible; this.visible = visible; this.picker = this.grid; this.display = positions; this.colors = colors;
+    this.filterVisible = this.baseVisible = visible; this.visible = visible; this.picker = this.grid instanceof PickGrid ? this.grid : undefined; this.display = positions; this.colors = colors;
     this.carrierCount = projection.carrierNodes.reduce((n, v) => n + +!!v, 0);
     this.labelCarrierSize = settings.visuals.carrierSize;
     this.keep = 1; this.sizes = degreeSizes(projection.offsets, settings.visuals.degreeSizing, settings.visuals.degreeCurve); this.edgeOn = new Uint8Array(projection.source.length).fill(1); this.edgeTier = new Uint8Array(projection.source.length);
@@ -644,9 +643,13 @@ export class DetailRenderer {
     this.refresh();
   }
   /** Pure coordinate derivation shared by ordinary view updates and transactional preparation. */
+  private plainPreview(view: RenderView) { return view.loading && !view.groupCodes && !view.collapsed && this.lensAnchor < 0; }
+  private makeBounds(positions: Float32Array, visible: Uint8Array, view: RenderView) {
+    return this.plainPreview(view) ? new PositionBounds(positions, visible) : new PickGrid(positions, visible);
+  }
   private coordinateState(positions: Float32Array, filterVisible: Uint8Array, view: RenderView) {
     const n = filterVisible.length, count = view.groupLabels?.length ?? 0;
-    const grid = positions === this.positions && filterVisible === this.grid.visible ? this.grid : new PickGrid(positions, filterVisible);
+    const grid = positions === this.grid.positions && filterVisible === this.grid.visible && (this.grid instanceof PickGrid || this.plainPreview(view)) ? this.grid : this.makeBounds(positions, filterVisible, view);
     const codes = view.groupCodes, collapsed = view.collapsed && codes && view.collapsed.some(Boolean) ? view.collapsed : undefined;
     // Collapsed members draw no node; their edges converge on the group centroid.
     const all = codes ? groupHalos(positions, filterVisible, codes, count, count) : [];
@@ -662,7 +665,7 @@ export class DetailRenderer {
     }
     const coherent = Math.max(grid.width, grid.height) * .22;
     const halos = all.filter(h => !collapsed?.[h.group] && h.radius < coherent);
-    return { grid, display, visible: render, hubs, halos, picker: render === grid.visible ? grid : new PickGrid(positions, render) };
+    return { grid, display, visible: render, hubs, halos, picker: render !== grid.visible ? new PickGrid(positions, render) : grid instanceof PickGrid ? grid : undefined };
 
   }
   private layoutActive = false;
@@ -702,11 +705,15 @@ export class DetailRenderer {
   }
   /** Progressed frames retain the camera frame. Live Apply keeps input attached. */
   streamPositions(next: Float32Array, paint = false) {
-    if (!(this.view.loading || this.layoutActive) || !this.usable || next.length !== this.positions.length || !next.every(Number.isFinite)) throw new Error('Layout preview unavailable');
+    if (!(this.view.loading || this.layoutActive) || !this.usable || next.length !== this.positions.length) throw new Error('Layout preview unavailable');
     const previous = this.positions;
-    const geometry = this.coordinateState(next, this.filterVisible, this.view);
+    if (this.plainPreview(this.view)) {
+      this.grid = new PositionBounds(next, this.filterVisible); this.picker = undefined; this.display = next;
+    } else {
+      if (!next.every(Number.isFinite)) throw new Error('Layout preview unavailable');
+      Object.assign(this, this.coordinateState(next, this.filterVisible, this.view)); this.discData = this.discs(this.halos, this.hubs);
+    }
     this.positions = next;
-    Object.assign(this, geometry); this.discData = this.discs(geometry.halos, geometry.hubs);
     if (this.gl) this.uploadCoordinates();
     this.followExtent(); if (paint) this.draw(); else this.refresh(); return previous;
   }
@@ -1226,6 +1233,7 @@ export class DetailRenderer {
   private lineTarget(e: number, through: number) { const end = this.carrierGeometry.ends[e]!; return !(through || this.lineRanks[e]! & 0x2000000) && end ? end >= 0x80000000 ? -1 : end - 1 : this.projection.target[e]!; }
   /** Edge notes folded away by the level of detail are not pickable. */
   pick(x: number, y: number) {
+    if (!this.picker) return -1;
     const w = this.worldPoint(x, y), s = this.sizingSettings(), ink = this.edgeQuiet(2 * Math.max(.5, this.edgeWidth()))[0], adaptive = s.visuals.emphasis === 'adaptive';
     // The graduated focus grows 60% (direct notes 25%): hit targets follow the drawn size.
     const f = s.visuals.hoverHighlight ? this.focusLevel : 0, grow = (n: number) => tierNode(this.stateBytes[n * 4 + 1]! / 255, true, n === this.focusNode, f, 0)[1];
@@ -1272,7 +1280,7 @@ export class DetailRenderer {
     };
     // Lens-displaced notes leave their grid cells: skip them there and test their drawn positions (O(direct connections)).
     const moved = this.lensAnchor >= 0 ? this.lensPoints : undefined;
-    this.picker.visit(w.x, w.y, (2 * px + 4) / this.scale, node => { if (!moved?.has(node)) test(node); });
+    this.picker?.visit(w.x, w.y, (2 * px + 4) / this.scale, node => { if (!moved?.has(node)) test(node); });
     if (moved) for (const node of moved.keys()) test(node);
     return picked;
   }
@@ -1281,6 +1289,7 @@ export class DetailRenderer {
     return -1;
   }
   private pickEdge(x: number, y: number) {
+    if (!this.picker || !(this.grid instanceof PickGrid)) return -1;
     const w = this.worldPoint(x, y), radius = this.grid.cell, p = this.projection, v = this.settings.visuals, mode = v.edgeMode, focus = v.hoverHighlight ? this.focusLevel : 0;
     let best = -1, distance = this.settings.groupEdgeHitRadius / this.scale, budget = 32768;
     // Lines hidden by Edges mode or the shared ink budget are not pickable.

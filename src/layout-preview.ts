@@ -11,8 +11,8 @@ export class LayoutPreview {
   private starting?: Promise<void>;
   private closed = false;
   constructor(private create: (positions: Float32Array, current: () => boolean) => Promise<PreviewRenderer>, private recycle: (positions: Float32Array) => void, private current: () => boolean, private failed: (error: unknown) => void) {}
-  push(positions: Float32Array) {
-    if (this.closed || !this.current()) { this.recycle(positions); return; }
+  push(positions: Float32Array): void | false | Promise<void> {
+    if (this.closed || !this.current()) { this.recycle(positions); return this.closed ? false : undefined; }
     if (this.renderer?.usable === false) { this.recycle(this.renderer.positions); this.renderer = undefined; }
     if (this.renderer) {
       try { this.recycle(this.renderer.streamPositions(positions)); }
@@ -20,7 +20,7 @@ export class LayoutPreview {
     } else {
       if (this.next) this.recycle(this.next);
       this.next = positions;
-      this.starting ??= this.start();
+      return this.starting ??= this.start();
     }
   }
   private async start() {
@@ -30,7 +30,7 @@ export class LayoutPreview {
       this.renderer = await this.create(positions, current);
       if (!current()) { this.renderer.dispose(); this.recycle(this.renderer.positions); this.renderer = undefined; }
       else if (this.next) { const next = this.next; this.next = undefined; this.push(next); }
-    } catch (e) { this.recycle(positions); if (current()) this.failed(e); this.closed = true; }
+    } catch (e) { this.recycle(positions); if (current()) { this.closed = true; this.failed(e); } }
     finally { this.starting = undefined; if (this.next) this.recycle(this.next); this.next = undefined; }
   }
   /** Stop streams first; optionally hold the last painted preview until its replacement is ready. */

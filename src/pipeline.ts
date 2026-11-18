@@ -16,9 +16,9 @@ export type PipelineRequest =
   | { kind: 'rows'; columns: RowColumns; reset?: boolean; removed?: string[] }
   | { kind: 'load'; generation: BinaryGeneration }
   | { kind: 'migrate'; generation: { key: string; identities: string[]; positions: number[]; producer: string; layoutHash?: string; edgeKeys?: string[] }; declarationHash: string }
-  | { kind: 'project'; complete?: boolean } | { kind: 'detail' } | { kind: 'layout' } | { kind: 'encode' }
+  | { kind: 'project'; complete?: boolean } | { kind: 'detail' } | { kind: 'layout'; preview?: PreviewDemand } | { kind: 'encode' }
   | { kind: 'adoptLayout' }
-  | { kind: 'recompute'; options: LayoutOptions; initial?: Float32Array; layoutEngine?: LayoutEnginePreference; engineChoices?: EngineTiming[] }
+  | { kind: 'recompute'; preview?: PreviewDemand; options: LayoutOptions; initial?: Float32Array; layoutEngine?: LayoutEnginePreference; engineChoices?: EngineTiming[] }
   | { kind: 'gpu' }
   | { kind: 'members'; group: string; view: number }
   | { kind: 'expression-count'; expr: string; context: 'filter' | 'group'; budgetMs?: number }
@@ -33,6 +33,7 @@ export interface ProjectResult { invalidSaved?: GenerationMeta; meta: Generation
 export interface EdgeRuleCounts { drawn: number; missing: number; excluded: number; lines: number }
 export interface DetailResult { projection: RenderProjection; visible: Uint8Array; colors: Uint32Array; explore: ExploreResult; view: number }
 export interface ViewResult { explore: ExploreResult; colors: Uint32Array; groups: GroupProjection; view: number }
+interface PreviewDemand { from: number; wanted: boolean }
 export interface LayoutResult { engineStatus?: EngineStatus; positions: Float32Array; milliseconds: number; cached: boolean; settled?: boolean; /** all/some: saved positions, unchanged/short relax; interim variants: memory-only hints. Full runs omit reuse. */ reused?: 'all' | 'some' | 'interim' | 'interim-some'; stored?: string }
 export interface GroupEvent { kind: 'groups'; revision: number; view: number; projection: GroupProjection }
 export interface Transport { postMessage(message: unknown, transfer: Transferable[]): void; terminate(): void; onmessage: ((event: MessageEvent) => void) | null; onerror: ((event: ErrorEvent) => void) | null }
@@ -47,9 +48,12 @@ export class WorkerPipeline {
   private next = 0;
   private pending: Pending[] = [];
   private active?: Pending;
+  private creditPaint?: number;
   private closed = false;
   private restarts = 0;
-  onPositions?: (event: { revision: number; positions: Float32Array; iteration: number; total: number }) => void;
+  /** Resolve after renderer setup; false retires an obsolete display for this request. */
+  onPositions?: (event: { revision: number; positions: Float32Array; iteration: number; total: number }) => void | false | Promise<void>;
+  onProgress?: (iteration: number, total: number) => void;
   onGroups?: (event: GroupEvent) => void;
   onEngine?: (status: EngineStatus, total: number) => void;
   constructor(private worker: Transport, private timeoutMs: () => number, private cleanup = () => {}, private recovery?: Recovery) { this.attach(); }
@@ -60,7 +64,17 @@ export class WorkerPipeline {
       const m = event.data, p = this.active;
       if (!p || m.revision !== p.revision) return;
       if (m.kind === 'engine') { this.onEngine?.(m.engineStatus, m.total); return; }
-      if (m.kind === 'positions') { this.onPositions?.(m); return; }
+      if (m.kind === 'progress') { this.onProgress?.(m.iteration, m.total); return; }
+      if (m.kind === 'positions') {
+        const displayed = this.onPositions?.(m);
+        // A recycled buffer is not a display credit. Wait for setup and the queued paint.
+        if (displayed !== false && 'preview' in p.request && p.request.preview) void Promise.resolve(displayed).then(() => {
+          if (p === this.active) this.creditPaint = requestAnimationFrame(() => {
+            this.creditPaint = undefined; if (p === this.active) worker.postMessage({ kind: 'preview-credit', id: p.id }, []);
+          });
+        });
+        return;
+      }
       if (m.kind === 'groups') { this.onGroups?.(m); return; }
       if (m.id !== p.id) return;
       if (m.kind === 'started') {
@@ -69,7 +83,7 @@ export class WorkerPipeline {
         p.timer = setTimeout(() => this.fail(new Error('Graph worker processing timed out')), this.timeoutMs());
         if (p.stop) this.stopLayout(p.revision); return;
       }
-      clearTimeout(p.timer); this.active = undefined;
+      clearTimeout(p.timer); this.clearCreditPaint(); this.active = undefined;
       if (m.error) p.reject(new Error(m.error)); else p.resolve(m.result);
       this.dispatch();
     };
@@ -80,6 +94,12 @@ export class WorkerPipeline {
     if (this.closed) return Promise.reject(new Error('Worker pipeline closed'));
     if (evaluation(request)) this.pending = this.pending.filter(p => { if (p.request.kind !== request.kind) return true; p.reject(new Error('Expression superseded')); return false; });
     return new Promise((resolve, reject) => { this.pending.push({ id: ++this.next, revision, request, resolve, reject }); this.dispatch(); });
+  }
+  previewWanted(revision: number, wanted: boolean) {
+    for (const p of [this.active, ...this.pending]) if (p?.revision === revision && (p.request.kind === 'layout' || p.request.kind === 'recompute' && !wanted) && p.request.preview) {
+      p.request.preview.wanted = wanted;
+      if (p === this.active) this.worker.postMessage({ kind: 'preview-wanted', id: p.id, wanted }, []);
+    }
   }
   /** Retain Stop on the owning queued request; acknowledge before replaying it. */
   stopLayout(revision: number) {
@@ -104,13 +124,15 @@ export class WorkerPipeline {
     try { this.worker.postMessage({ id: p.id, revision: p.revision, ...p.request, ...(evaluation(p.request) ? { budgetMs: p.request.budgetMs ?? this.timeoutMs() * .9 } : {}) }, transferables(p.request)); }
     catch (error) { this.fail(error instanceof Error ? error : new Error(String(error))); }
   }
+  private clearCreditPaint() { if (this.creditPaint !== undefined) cancelAnimationFrame(this.creditPaint); this.creditPaint = undefined; }
   private rejectAll(error: Error) {
+    this.clearCreditPaint();
     if (this.active) { clearTimeout(this.active.timer); this.active.reject(error); this.active = undefined; }
     for (const p of this.pending) p.reject(error); this.pending = [];
   }
   private fail(error: Error) {
     this.worker.terminate(); this.rejectAll(error);
-    this.onGroups = undefined; this.onPositions = undefined; this.onEngine = undefined;
+    this.onGroups = undefined; this.onProgress = undefined; this.onPositions = undefined; this.onEngine = undefined;
     if (this.recovery && this.restarts < this.recovery.maxRestarts()) {
       this.restarts++;
       try { this.worker = this.recovery.restart(); this.attach(); this.recovery.onRestart?.(); return; }

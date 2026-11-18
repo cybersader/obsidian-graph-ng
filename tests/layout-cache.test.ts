@@ -24,8 +24,10 @@ async function boot(disk: MemoryAdapter, resolved: Record<string, Record<string,
   const app: any = { vault: { getMarkdownFiles: () => files, getAbstractFileByPath: (p: string) => files.find(f => f.path === p), on() {}, read() { throw Error('no bodies'); } },
     metadataCache: { getFileCache: () => ({ frontmatter: {} }), resolvedLinks: resolved, on() {} } };
   const pipeline = new WorkerPipeline(new Worker(new URL('../src/layout-worker.ts', import.meta.url).href) as unknown as Transport, () => 20000);
-  let streamed = 0, inner: any;
-  Object.defineProperty(pipeline, 'onPositions', { get: () => (e: any) => { streamed++; inner?.(e); }, set: fn => { inner = fn; } });
+  let boundaries = 0, inner: any;
+  // Groups wants progress at each original boundary, never coordinate pictures.
+  Object.defineProperty(pipeline, 'onPositions', { get: () => () => { throw Error('Unexpected Groups preview'); }, set() {} });
+  Object.defineProperty(pipeline, 'onProgress', { get: () => (step: number, total: number) => { boundaries++; inner?.(step, total); }, set: fn => { inner = fn; } });
   const plugin: any = Object.create(GraphPlugin.prototype);
   Object.assign(plugin, { settings: initial, propertyRevision: 0, nextRevision: 0, linkProducer: 'p@1', pipeline, generations: Object.create(null), writes: Promise.resolve(),
     ingestedHash: '', viewIdentity: 'local', store: new BinaryLayoutStore(disk, { ...initial.cache, directory: 'plugin/cache/local', cachedDeclarations: initial.cachedDeclarations }) });
@@ -33,14 +35,14 @@ async function boot(disk: MemoryAdapter, resolved: Record<string, Record<string,
   const { GraphView } = await import('../src/main');
   /** One view open (or one refresh after a change): returns what the user would see. */
   async function open() {
-    const view: any = Object.create(GraphView.prototype); streamed = 0; disk.reads = []; disk.writes = 0;
+    const view: any = Object.create(GraphView.prototype); boundaries = 0; disk.reads = []; disk.writes = 0;
     Object.assign(view, { plugin, app, revision: 0, renderRevision: 0, closed: false, members: new Map(), contributions: new Map(), startupTrace: [], cacheTrace: [],
       contributionPage: { clear() {}, suspend() {}, update() {} }, contentEl: { dataset: {} }, status: new ControlElement(), statusSummary: new ControlElement(),
       gpu: { available: false, reason: 'Not probed' }, showGroups() {} });
     await view.refreshOnce();
     expect(view.contentEl.dataset.state).toBe('ready');
     const layout = view.report.layout;
-    return { layout, text: layoutText(layout), streamed, positions: view.positions as Float32Array, verified: view.contentEl.dataset.verified === 'true', cacheError: view.contentEl.dataset.cacheError, trace: view.cacheTrace.at(-1), binReads: disk.reads.filter(p => p.endsWith('.bin')).length };
+    return { layout, text: layoutText(layout), boundaries, positions: view.positions as Float32Array, verified: view.contentEl.dataset.verified === 'true', cacheError: view.contentEl.dataset.cacheError, trace: view.cacheTrace.at(-1), binReads: disk.reads.filter(p => p.endsWith('.bin')).length };
   }
   /** Settings adoption as GraphPlugin.apply does it, minus the data.json save. */
   const apply = (next: any) => { plugin.settings = next; plugin.adapter.configure(next.declaration); };
@@ -51,9 +53,9 @@ const manifests = (disk: MemoryAdapter) => [...disk.files.keys()].filter(p => p.
 test('successive provisional layouts reuse live coordinates without persisting an incomplete generation', async () => {
   const disk = new MemoryAdapter(), app = await boot(disk, {});
   try {
-    const first = await app.open(); expect(first.verified).toBe(false); expect(first.streamed).toBeGreaterThan(0);
+    const first = await app.open(); expect(first.verified).toBe(false); expect(first.boundaries).toBeGreaterThan(0);
     const next = await app.open(); expect(next.verified).toBe(false); expect(next.layout.reused).toBeUndefined();
-    expect(next.positions.every(Number.isFinite)).toBe(true); expect(next.streamed).toBe(11); expect(disk.files.size).toBe(0);
+    expect(next.positions.every(Number.isFinite)).toBe(true); expect(next.boundaries).toBe(11); expect(disk.files.size).toBe(0);
   } finally { app.dispose(); }
 });
 
@@ -61,10 +63,10 @@ test('(a) a second open of an unchanged graph is an exact hit: no layout iterati
   const disk = new MemoryAdapter(), app = await boot(disk, graph());
   try {
     const cold = await app.open();
-    expect(cold.layout.cached).toBe(false); expect(cold.layout.reused).toBeUndefined(); expect(cold.streamed).toBe(11);
+    expect(cold.layout.cached).toBe(false); expect(cold.layout.reused).toBeUndefined(); expect(cold.boundaries).toBe(11);
     expect(cold.text).toMatch(/^Computed layout in \d+\.\d s$/); expect(manifests(disk)).toHaveLength(1);
     const again = await app.open();
-    expect(again.layout.cached).toBe(true); expect(again.streamed).toBe(0); expect(again.text).toBe('Reused saved layout');
+    expect(again.layout.cached).toBe(true); expect(again.boundaries).toBe(0); expect(again.text).toBe('Reused saved layout');
     // The worker still holds this exact generation, so the view skips the chunk reads and SHA-256 checks.
     expect(again.binReads).toBe(0); expect(again.positions).toEqual(cold.positions);
   } finally { app.dispose(); }
@@ -77,7 +79,7 @@ test('(b) Obsidian reload reuses the saved layout, including the provisional bui
   let app = await boot(disk, links);
   try {
     const reopened = await app.open();
-    expect(reopened.layout.cached).toBe(true); expect(reopened.streamed).toBe(0); expect(reopened.binReads).toBeGreaterThan(0); expect(reopened.positions).toEqual(cold);
+    expect(reopened.layout.cached).toBe(true); expect(reopened.boundaries).toBe(0); expect(reopened.binReads).toBeGreaterThan(0); expect(reopened.positions).toEqual(cold);
   } finally { app.dispose(); }
   // Reload while the link resolver has only reached half the notes. Previously this ran a full cold
   // layout (and blocked the worker) before the verified build found the exact generation.
@@ -86,12 +88,12 @@ test('(b) Obsidian reload reuses the saved layout, including the provisional bui
   try {
     const provisional = await app.open();
     expect(provisional.verified).toBe(false); expect(provisional.layout.cached).toBe(false);
-    expect(provisional.layout.reused).toBe('all'); expect(provisional.streamed).toBe(0); expect(provisional.text).toBe('Reused saved layout');
+    expect(provisional.layout.reused).toBe('all'); expect(provisional.boundaries).toBe(0); expect(provisional.text).toBe('Reused saved layout');
     expect(provisional.positions).toEqual(cold);
     expect(manifests(disk)).toHaveLength(1); const before = [...disk.files.keys()].sort();
     Object.assign(resolving, links); app.plugin.adapter.invalidate();
     const verified = await app.open();
-    expect(verified.verified).toBe(true); expect(verified.layout.cached).toBe(true); expect(verified.streamed).toBe(0); expect(verified.positions).toEqual(cold);
+    expect(verified.verified).toBe(true); expect(verified.layout.cached).toBe(true); expect(verified.boundaries).toBe(0); expect(verified.positions).toEqual(cold);
     // A provisional build never overwrites the complete persisted generation.
     expect([...disk.files.keys()].sort()).toEqual(before);
   } finally { app.dispose(); }
@@ -104,7 +106,7 @@ test('(c) a single note edit is a warm start: a short relax, distant notes stay 
     links[name(10)]![name(30)] = 1; app.plugin.adapter.invalidate();
     const edited = await app.open();
     expect(edited.layout.cached).toBe(false); expect(edited.layout.reused).toBe('some');
-    expect(edited.streamed).toBeLessThanOrEqual(12); expect(edited.streamed).toBeGreaterThan(0);
+    expect(edited.boundaries).toBeLessThanOrEqual(12); expect(edited.boundaries).toBeGreaterThan(0);
     expect(edited.text).toMatch(/^Reused saved layout, adjusted in \d+\.\d s$/);
     // Only the new edge's endpoints and their neighbours move.
     const moved = Array.from({ length: N }, (_, i) => edited.positions[i * 2] !== cold.positions[i * 2] || edited.positions[i * 2 + 1] !== cold.positions[i * 2 + 1]).filter(Boolean).length;
@@ -112,7 +114,7 @@ test('(c) a single note edit is a warm start: a short relax, distant notes stay 
     const after = await app.open(); expect(after.layout.cached).toBe(true); expect(after.positions).toEqual(edited.positions);
   } finally { app.dispose(); }
   const reload = await boot(disk, links);
-  try { const r = await reload.open(); expect(r.layout.cached).toBe(true); expect(r.streamed).toBe(0); } finally { reload.dispose(); }
+  try { const r = await reload.open(); expect(r.layout.cached).toBe(true); expect(r.boundaries).toBe(0); } finally { reload.dispose(); }
 });
 
 test('(d) appearance and grouping changes keep the layout: exact for presentation, reused positions for grouping', async () => {
@@ -126,11 +128,11 @@ test('(d) appearance and grouping changes keep the layout: exact for presentatio
       s.declaration.hierarchy = { parentProperty: 'parent' }; s.declaration.interest = { property: 'score' }; s.declaration.groupContext = true;
     }));
     const appearance = await app.open();
-    expect(appearance.layout.cached).toBe(true); expect(appearance.streamed).toBe(0); expect(appearance.positions).toEqual(cold.positions);
+    expect(appearance.layout.cached).toBe(true); expect(appearance.boundaries).toBe(0); expect(appearance.positions).toEqual(cold.positions);
     // Grouping changes the declaration digest and group level but not the drawn topology. Previously a cold layout.
     app.apply(settings(s => { s.declaration.groups = [{ from: 'folder', depth: 1 }, { from: 'key', key: 'category' }]; s.groupLevel = 1; }));
     const regrouped = await app.open();
-    expect(regrouped.layout.cached).toBe(false); expect(regrouped.layout.reused).toBe('all'); expect(regrouped.streamed).toBe(0);
+    expect(regrouped.layout.cached).toBe(false); expect(regrouped.layout.reused).toBe('all'); expect(regrouped.boundaries).toBe(0);
     expect(regrouped.text).toBe('Reused saved layout'); expect(regrouped.positions).toEqual(cold.positions);
     expect(manifests(disk)).toHaveLength(1);
   } finally { app.dispose(); }
@@ -145,14 +147,14 @@ test('(e) layout physics and topology changes invalidate: full computation, neve
     const cold = await app.open();
     app.apply(settings(s => { s.layout = { ...s.layout, force: { ...s.layout.force, gravity: 2 } }; }));
     const physics = await app.open();
-    expect(physics.layout.cached).toBe(false); expect(physics.layout.reused).toBeUndefined(); expect(physics.streamed).toBe(11);
+    expect(physics.layout.cached).toBe(false); expect(physics.layout.reused).toBeUndefined(); expect(physics.boundaries).toBe(11);
     expect(physics.text).toMatch(/^Computed layout in/); expect(physics.positions).not.toEqual(cold.positions);
     // A settings change is not damage: no quarantined copy is left in the (possibly synced) plugin folder.
     expect([...disk.files.keys()].some(p => p.includes('.corrupt-'))).toBe(false); expect(manifests(disk)).toHaveLength(1);
     // Same physics, different edges: the producer is a different source of edges.
     app.apply(settings(s => { s.layout = { ...s.layout, force: { ...s.layout.force, gravity: 2 } }; s.declaration.edges = [{ name: 'parents', kind: 'inline', key: 'parent', type: 'parent' }]; }));
     const topology = await app.open();
-    expect(topology.layout.cached).toBe(false); expect(topology.layout.reused).toBeUndefined(); expect(topology.streamed).toBe(11);
+    expect(topology.layout.cached).toBe(false); expect(topology.layout.reused).toBeUndefined(); expect(topology.boundaries).toBe(11);
   } finally { app.dispose(); }
 });
 
@@ -169,7 +171,7 @@ test('changing identity rules cannot move saved positions to other notes that re
     const changed = await app.open();
     // Every old string is present and there are no changed edges: neither the membership check
     // nor the >50% heuristic can detect this identity-namespace change.
-    expect(changed.layout.reused).toBeUndefined(); expect(changed.streamed).toBe(11);
+    expect(changed.layout.reused).toBeUndefined(); expect(changed.boundaries).toBe(11);
     expect(changed.trace.expected).not.toBe(cold.trace.expected); // isolated-ring geometry is deliberately seed-independent
     expect([...disk.files.keys()].some(p => p.includes('.corrupt-'))).toBe(false);
   } finally { app.dispose(); }
@@ -193,7 +195,7 @@ test('a failed or skipped cache write keeps the drawn graph and is retried by th
     const first = await app.open(); expect(first.layout.cached).toBe(false); expect(manifests(disk)).toHaveLength(0); expect(first.cacheError).toContain('synthetic disk full');
     disk.writeBinary = write; app.plugin.adapter.invalidate();
     // The worker still holds the exact layout, but it was never committed: the write is retried.
-    const second = await app.open(); expect(second.layout.cached).toBe(true); expect(second.streamed).toBe(0); expect(manifests(disk)).toHaveLength(1);
+    const second = await app.open(); expect(second.layout.cached).toBe(true); expect(second.boundaries).toBe(0); expect(manifests(disk)).toHaveLength(1);
     const third = await app.open(); expect(third.layout.cached).toBe(true); expect(disk.writes).toBe(0);
   } finally { app.dispose(); }
 });
@@ -211,7 +213,7 @@ test('a loaded generation rejected by the worker is quarantined and the same key
   const app = await boot(disk, links);
   try {
     const rebuilt = await app.open();
-    expect(rebuilt.layout.cached).toBe(false); expect(rebuilt.streamed).toBe(11);
+    expect(rebuilt.layout.cached).toBe(false); expect(rebuilt.boundaries).toBe(11);
     expect([...disk.files.keys()].some(p => p.includes('.corrupt-'))).toBe(true);
     expect(disk.files.has(`plugin/cache/local/${declarationHash!}/${key!}/manifest.json`)).toBe(true);
     expect(JSON.parse(await disk.read('plugin/cache/local/index.json'))).toEqual([{ declarationHash: declarationHash!, key: key! }]);
@@ -230,7 +232,7 @@ test('known miss: deleting or renaming a note recomputes from scratch (ADR-0004 
     const files = app.plugin.adapter.app.vault.getMarkdownFiles(); files.splice(5, 1); delete links[name(5)];
     app.plugin.adapter.invalidate();
     const deleted = await app.open();
-    expect(deleted.layout.cached).toBe(false); expect(deleted.layout.reused).toBeUndefined(); expect(deleted.streamed).toBe(11);
+    expect(deleted.layout.cached).toBe(false); expect(deleted.layout.reused).toBeUndefined(); expect(deleted.boundaries).toBe(11);
     expect(deleted.text).toMatch(/^Computed layout in/);
   } finally { app.dispose(); }
 });
@@ -251,7 +253,7 @@ test('browser runtime without Node Buffer: the cache writes, and a reload is an 
     const reload = await boot(disk, links);
     try {
       const r = await reload.open();
-      expect(r.text).toBe('Reused saved layout'); expect(r.layout.cached).toBe(true); expect(r.streamed).toBe(0); expect(r.binReads).toBeGreaterThan(0); expect(r.positions).toEqual(cold);
+      expect(r.text).toBe('Reused saved layout'); expect(r.layout.cached).toBe(true); expect(r.boundaries).toBe(0); expect(r.binReads).toBeGreaterThan(0); expect(r.positions).toEqual(cold);
     } finally { reload.dispose(); }
   } finally { if (own) Object.defineProperty(globalThis, 'Buffer', own); else delete (globalThis as any).Buffer; }
 });
@@ -272,7 +274,7 @@ test('review: changed vault restart measures verified churn against saved edges,
     const partial = await reload.open(); expect(partial.verified).toBe(false);
     Object.assign(resolving, links); reload.plugin.adapter.invalidate();
     const verified = await reload.open();
-    expect(verified.layout.reused).toBe('some'); expect(verified.streamed).toBeLessThanOrEqual(12);
+    expect(verified.layout.reused).toBe('some'); expect(verified.boundaries).toBeLessThanOrEqual(12);
     expect(verified.positions).toEqual(expected!);
     const persisted = await boot(disk, links);
     try { const next = await persisted.open(); expect(next.layout.cached).toBe(true); expect(next.positions).toEqual(expected!); }
@@ -287,7 +289,7 @@ test('review: exact interim reuse never reports a saved cache hit or stored key'
     for (let i = 0; i < N; i++) links[name(i)] = {};
     app.plugin.adapter.invalidate();
     const verified = await app.open();
-    expect(verified.verified).toBe(true); expect(verified.positions.every(Number.isFinite)).toBe(true); expect(verified.streamed).toBe(11);
+    expect(verified.verified).toBe(true); expect(verified.positions.every(Number.isFinite)).toBe(true); expect(verified.boundaries).toBe(11);
     expect(verified.layout.cached).toBe(false); expect(verified.layout.reused).toBeUndefined();
     expect(verified.trace.valid).toBe(false); expect(verified.trace.stored).toBeUndefined();
     expect(verified.text).toMatch(/^Computed layout/);
@@ -299,7 +301,7 @@ test('review: a full-budget restart from interim positions reports computation, 
   try {
     await app.open(); Object.assign(links, graph()); app.plugin.adapter.invalidate();
     const verified = await app.open();
-    expect(verified.verified).toBe(true); expect(verified.streamed).toBe(11);
+    expect(verified.verified).toBe(true); expect(verified.boundaries).toBe(11);
     expect(verified.layout.cached).toBe(false); expect(verified.layout.reused).toBeUndefined();
     expect(verified.trace.stored).toBeUndefined(); expect(verified.text).toMatch(/^Computed layout in /);
   } finally { app.dispose(); }
