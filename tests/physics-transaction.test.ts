@@ -1,3 +1,4 @@
+import { performanceRenderer as reviewRenderer } from './support/performance-renderer';
 import { test, expect, afterEach } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
@@ -93,26 +94,46 @@ test('loading preview attaches pan and zoom while suppressing picking and retain
   r[compiled('streamPositions')](f.next); expect(r.grid.heads).toBeUndefined(); expect(r.grid.positions).toBe(f.next); expect(r.camera).toEqual(moved); expect(r.overlay.hidden).toBe(true);
 });
 
+test('Reduced, Off and system reduced motion hold one Apply overview without losing progress or the user camera', async () => {
+  for (const [motion, system] of [['reduced', false], ['off', false], ['full', true]] as const) {
+    fixtureReducedMotion = system;
+    try {
+      const f = await fixture(), frames = [f.next.slice(), f.next.slice(), f.next.slice()], recycled: ArrayBuffer[] = [];
+      f.plugin.settings.visuals = { ...f.plugin.settings.visuals, motion }; f.view[compiled('provisional')] = false; f.view.report = {};
+      f.plugin.pipeline.recycle = (b: ArrayBuffer) => recycled.push(b);
+      f.plugin.pipeline.request = async () => {
+        frames.forEach((positions, i) => f.plugin.pipeline.onPositions({ revision: 7, iteration: i + 1, total: 8, positions }));
+        expect(f.renderer.positions).toBe(frames[0]); expect(recycled).toEqual(frames.slice(1).map(p => p.buffer));
+        f.plugin.pipeline.onProgress(7, 8); expect(f.view.report.progress.iteration).toBe(7);
+        f.renderer.controls()[compiled('panBy')](20, 30); f.renderer.fitAll = () => { throw Error('Pan was undone'); };
+        return { positions: f.next, milliseconds: 1, looksDone: true };
+      };
+      await f.view[compiled('applyLayout')](values); expect(f.renderer.positions).toBe(f.next); expect(f.view.statusText).toBe('Layout ready');
+    } finally { fixtureReducedMotion = false; }
+  }
+});
+
 test('Notes previews keep arriving on timer-backed draws when animation frames are withheld', async () => {
   const { WorkerPipeline } = await import('../src/pipeline');
   const f = await fixture(), sent: any[] = [], entered = deferred();
   const transport = { onmessage: null as any, onerror: null, terminate() {}, postMessage(m: any) { sent.push(m); if (m.kind === 'recompute') entered.resolve(); } };
   const pipeline = f.plugin.pipeline = new WorkerPipeline(transport, () => 10000);
   const tick = () => new Promise<void>(r => setTimeout(r, 0));
-  const emit = (iteration: number) => transport.onmessage({ data: { kind: 'positions', revision: 7, iteration, total: 100, positions: f.next.slice() } });
+  const emit = (iteration: number) => { const positions = f.next.slice(); transport.onmessage({ data: { kind: 'positions', revision: 7, iteration, total: 100, positions } }); return positions; };
   const credits = () => sent.filter(m => m.kind === 'preview-credit').map(m => m.id);
   const raf = globalThis.requestAnimationFrame, cancel = globalThis.cancelAnimationFrame;
   globalThis.requestAnimationFrame = () => 1; globalThis.cancelAnimationFrame = () => {};
   const work = outcome(f.view[compiled('applyLayout')](values));
   try {
-    await entered.promise; emit(1); await tick();
+    await entered.promise; const first = emit(1); await tick();
     expect(credits()).toEqual([1]); // first picture draws synchronously
-    emit(2); await tick(); expect(credits()).toEqual([1]);
+    emit(2); const newest = emit(3); await tick(); expect(credits()).toEqual([1]);
+    expect(f.renderer.positions).toBe(first); // no upload before the pending draw
     const delayedFrame = frameCallbacks.values().next().value!;
     expect(backstops.size).toBe(1); backstops.values().next().value!(); await tick();
-    expect(credits()).toEqual([1, 1]);
+    expect(credits()).toEqual([1, 1]); expect(f.renderer.positions).toBe(newest);
     delayedFrame(); await tick(); expect(credits()).toEqual([1, 1]); // even a late callback cannot acknowledge twice
-    emit(3); await tick(); expect(credits()).toEqual([1, 1]);
+    emit(4); await tick(); expect(credits()).toEqual([1, 1]);
     transport.onmessage({ data: { id: 1, revision: 7, result: { positions: f.next, milliseconds: 1, cached: false } } });
     const next = pipeline.request(7, { kind: 'layout', preview: { from: 1, wanted: true } });
     backstops.values().next().value!(); await tick();
@@ -2272,7 +2293,7 @@ test('anchored name priorities reuse bounded atlas candidates and put direct not
 });
 
 test('wave12: streaming preview gestures survive final renderer adoption in world coordinates', async () => {
-  for (const gesture of ['panBy', 'zoomAt', 'none']) {
+  for (const gesture of ['panBy', 'zoomAt', 'new-pan', 'none']) {
     const f = await fixture({ loading: true }), r = f.renderer, k = (name: string) => mangle[name] ?? name;
     f.view.detailRenderer = undefined; f.view.panel = new Element();
     f.view.gpu = { available: false, reason: 'synthetic Canvas' };
@@ -2283,9 +2304,10 @@ test('wave12: streaming preview gestures survive final renderer adoption in worl
     Renderer.create = async (...args: any[]) => {
       const final = await create(...args); renderers.push(final);
       // Include gestures made while the replacement renderer is being prepared.
-      if (gesture !== 'none') r.controls()[k(gesture)](...(gesture === 'panBy' ? [40, 20] : [1.5, 120, 80]));
+      const target = gesture === 'new-pan' ? final : r;
+      if (gesture !== 'none') target.controls()[k(gesture === 'new-pan' ? 'panBy' : gesture)](...(gesture === 'zoomAt' ? [1.5, 120, 80] : [40, 20]));
       const fit = final.fitAll.bind(final); final.fitAll = (...args: any[]) => { fits++; return fit(...args); };
-      before = [r[k('centerX')], r[k('centerY')], r[k('scale')]];
+      before = [target[k('centerX')], target[k('centerY')], target[k('scale')]];
       return final;
     };
     try { await f.view[k('showDetails')](); } finally { Renderer.create = create; }
@@ -2734,4 +2756,86 @@ test('one Graphics trial overrides only the dispatched pass, never its saved pre
   f.plugin.pipeline.request = async (_: number, req: any) => { engines.push(req.layoutEngine); expect(req.quickStart).toBeFalsy(); return { positions: f.next, milliseconds: 1 }; };
   await f.view[compiled('applyLayout')]({}, true); await f.view[compiled('applyLayout')]({});
   expect(engines).toEqual(['graphics','auto']); expect(f.plugin.settings.layoutEngine).toBe('auto'); expect(f.writes).toHaveLength(0);
+});
+
+
+test('review: live OS preference controls the active worker preview subscription both ways', async () => {
+  const f = await fixture();
+  const h = reviewRenderer(false, { reduced: true });
+  const r = await h.Renderer.create(h.stage, f.view.projection, f.positions, f.view.visible, f.plugin.settings, () => {}, () => {}, new Uint32Array(3), () => true, true);
+  f.view.detailRenderer = f.view.renderer = r;
+  const { WorkerPipeline } = await import('../src/pipeline');
+  const entered = deferred(), sent: any[] = [];
+  const transport = { onmessage: null as any, onerror: null, terminate() {}, postMessage(m: any) { sent.push(m); if (m.kind === 'recompute') entered.resolve(); } };
+  f.plugin.pipeline = new WorkerPipeline(transport, () => 10000);
+  const work = f.view[compiled('applyLayout')](values);
+  try {
+    await entered.promise;
+    transport.onmessage({ data: { kind: 'positions', revision: 7, iteration: 1, total: 100, positions: f.next.slice() } });
+    expect(sent.filter(m => m.kind === 'preview-wanted').map(m => m.wanted)).toEqual([false]);
+    h.reduce(false); h.frame(); await Promise.resolve();
+    expect(r[h.key('calmLayout')]).toBe(false);
+    expect(sent.filter(m => m.kind === 'preview-wanted').map(m => m.wanted)).toEqual([false, true]);
+    h.reduce(true);
+    expect(sent.filter(m => m.kind === 'preview-wanted').map(m => m.wanted)).toEqual([false, true, false]);
+  } finally {
+    transport.onmessage({ data: { id: 1, revision: 7, result: { positions: f.next, milliseconds: 1, cached: false } } });
+    await work; h.dispose(r);
+  }
+});
+
+test('review: first create survives context loss in the yielded VAO upload and accepts restoration', async () => {
+  const h = reviewRenderer(true), k = h.key, s = defaults('fixture'), p = projection();
+  const proto = h.Renderer.prototype, integer = proto[k('integer')];
+  let owner: any, restore: (() => void) | undefined;
+  proto[k('integer')] = function (...args: any[]) {
+    if (!owner) {
+      owner = this;
+      queueMicrotask(() => { owner[k('contextLost')]({ preventDefault() {} }); });
+      restore = () => owner[k('contextRestored')]();
+    }
+    return integer.apply(this, args);
+  };
+  try {
+    // Park the lost context until create's upload continuation has run. The
+    // contextRestored event is still comfortably inside the restore deadline.
+    const opening = h.Renderer.create(h.stage, p, Float32Array.of(0, 0, 1, 2, 3, 4), new Uint8Array(3).fill(1), s, () => {}, () => {}, new Uint32Array(3));
+    const result = await opening.then((r: any) => r, (e: Error) => e.message);
+    expect(owner.canvas.dataset.context).toBe('lost'); restore!();
+    for (let i = 0; i < 100 && owner.canvas.dataset.context === 'lost'; i++) await new Promise(r => setTimeout(r, 2));
+    expect({ opened: result === owner, context: owner.canvas.dataset.context }).toEqual({ opened: true, context: 'restored' });
+  } finally { proto[k('integer')] = integer; h.dispose(owner); }
+});
+
+test('review: a second context loss observed by polling does not consume the restore timeout', async () => {
+  const h = reviewRenderer(true), k = h.key, s = defaults('fixture'); let unavailable = 0;
+  const r = await h.Renderer.create(h.stage, projection(), Float32Array.of(0, 0, 1, 2, 3, 4), new Uint8Array(3).fill(1), s, () => {}, () => {}, new Uint32Array(3), () => true, false, () => { unavailable++; });
+  try {
+    const gl = r.gl; let driverLost = false;
+    r[k('contextLost')]({ preventDefault() {} });
+    gl.isContextLost = () => driverLost;
+    gl.linkProgram = () => { driverLost = true; };
+    r[k('contextRestored')](); // new batch; driver loses this context before its DOM event runs
+    await new Promise(resolve => setTimeout(resolve, 30));
+    expect({ unavailable, failed: r.canvas.dataset.context === 'failed' }).toEqual({ unavailable: 0, failed: false });
+    s.contextRestoreTimeoutMs = 10;
+    r[k('contextLost')]({ preventDefault() {} });
+    await new Promise(resolve => setTimeout(resolve, 30));
+    expect({ unavailable, context: r.canvas.dataset.context }).toEqual({ unavailable: 1, context: 'failed' });
+  } finally { h.dispose(r); }
+});
+
+for (const gpu of [false, true]) test(`review: handoff retains zoom near the limit after extent growth (WebGL=${gpu})`, async () => {
+  const h = reviewRenderer(gpu), k = h.key, s = defaults('fixture');
+  const create = (extent: number, loading: boolean) => h.Renderer.create(h.stage, projection(), Float32Array.of(0, 0, 10, 10, extent, extent), new Uint8Array(3).fill(1), s, () => {}, () => {}, new Uint32Array(3), () => true, !gpu, () => {}, { loading });
+  const preview = await create(100, true), final = await create(200, false);
+  try {
+    preview.controls()[k('zoomAt')](.001, 0, 0);
+    expect(preview.camera.ratio).toBe(s.cameraMinRatio);
+    expect(final[k('adoptCamera')](preview)).toBe(true);
+    expect(final[k('scale')]).toBeCloseTo(preview[k('scale')], 8);
+    expect([final[k('centerX')], final[k('centerY')]]).toEqual([preview[k('centerX')], preview[k('centerY')]]);
+    final.controls()[k('panBy')](10, 10); final.controls()[k('zoomAt')](1, 0, 0);
+    expect(final[k('scale')]).toBeCloseTo(preview[k('scale')], 8);
+  } finally { h.dispose(final); h.dispose(preview); }
 });

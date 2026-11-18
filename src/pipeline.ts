@@ -33,7 +33,7 @@ export interface ProjectResult { exactSaved: boolean; invalidSaved?: GenerationM
 export interface EdgeRuleCounts { drawn: number; missing: number; excluded: number; lines: number }
 export interface DetailResult { projection: RenderProjection; visible: Uint8Array; colors: Uint32Array; explore: ExploreResult; view: number }
 export interface ViewResult { explore: ExploreResult; colors: Uint32Array; groups: GroupProjection; view: number }
-interface PreviewDemand { from: number; wanted: boolean }
+export interface PreviewDemand { from: number; wanted: boolean }
 export interface LayoutResult { budgetDraft?: boolean; engineStatus?: EngineStatus; positions: Float32Array; milliseconds: number; cached: boolean; looksDone?: boolean; settled?: boolean; /** all/some: saved positions, unchanged/short relax; interim variants: memory-only hints. Full runs omit reuse. */ reused?: 'all' | 'some' | 'interim' | 'interim-some'; stored?: string }
 export interface GroupEvent { kind: 'groups'; revision: number; view: number; projection: GroupProjection }
 export interface Transport { postMessage(message: unknown, transfer: Transferable[]): void; terminate(): void; onmessage: ((event: MessageEvent) => void) | null; onerror: ((event: ErrorEvent) => void) | null }
@@ -91,8 +91,8 @@ export class WorkerPipeline {
     if (evaluation(request)) this.pending = this.pending.filter(p => { if (p.request.kind !== request.kind) return true; p.reject(new Error('Expression superseded')); return false; });
     return new Promise((resolve, reject) => { this.pending.push({ id: ++this.next, revision, request, dispatched, resolve, reject }); this.dispatch(); });
   }
-  previewWanted(revision: number, wanted: boolean) {
-    for (const p of [this.active, ...this.pending]) if (p?.revision === revision && (p.request.kind === 'layout' || p.request.kind === 'recompute' && !wanted) && p.request.preview) {
+  previewWanted(revision: number, wanted: boolean, owner?: PreviewDemand) {
+    for (const p of [this.active, ...this.pending]) if (p?.revision === revision && 'preview' in p.request && p.request.preview && (owner ? owner === p.request.preview : p.request.kind === 'layout' || !wanted)) {
       p.request.preview.wanted = wanted;
       if (p === this.active) this.worker.postMessage({ kind: 'preview-wanted', id: p.id, wanted }, []);
     }

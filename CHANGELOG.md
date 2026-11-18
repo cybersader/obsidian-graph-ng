@@ -7,6 +7,12 @@ The owner-approved bounded download ceilings for this UI pass are **480,000 raw 
 - **Quick start** is off by default. A cold Notes pass can open as a memory-only draft after about two seconds. **Keep refining** runs only on request. Unchanged refreshes retain the draft and its status. Toggling Quick start writes only to this device.
 - Long Processor passes can offer **Try Graphics chip** in Layout. It selects Graphics for one requested pass on this device without changing Auto.
 
+## Unreleased: calmer layout previews
+
+- Reduced motion, Off and the system reduced-motion preference hold one progressed Notes overview until the result replaces it. Full motion keeps the newest waiting picture when drawing falls behind. Progress and Stop stay live.
+- Changing the system motion preference during a solve pauses or resumes previews. The final drawing keeps the user's world-space zoom, even at the closest preview zoom.
+- WebGL submits the five Notes programs together on the renderer context. A context lost during upload can still recover. If the loading overview cannot recover by its deadline, Groups remains visible while layout finishes. Opening Groups does not start shader setup.
+
 ## Unreleased: stop when the layout looks ready
 
 - Visual layout seeds now ignore preview and batch cadence. Incremental passes with pinned notes use physical settlement only. Apply follows shared Finish fully changes unless toggled locally and reports cache warnings separately from the committed layout.
