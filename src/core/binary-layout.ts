@@ -103,9 +103,10 @@ export class BinaryLayoutStore {
       if ((await this.adapter.stat(manifestPath))!.size > MAX_CHUNK_BYTES) throw new Error('Oversized manifest');
       const m: Manifest = JSON.parse(await this.adapter.read(manifestPath));
       if (!m.meta || m.meta.format !== CACHE_FORMAT || m.meta.key !== e.key || m.meta.declarationHash !== e.declarationHash || !Array.isArray(m.parts) || m.parts.length !== 5 || new Set(m.parts.map(p => p.name)).size !== 5) throw new Error('Invalid manifest');
-      if (expected && (m.meta.source !== expected.source || m.meta.producer !== expected.producer)) throw new Error('Source/view or producer mismatch');
+      if (expected && m.meta.source !== expected.source) throw new Error('Source/view mismatch');
       // Changed layout settings are not damage: refuse without leaving a retained quarantine artifact.
       if (expected && m.meta.layoutHash !== expected.layoutHash) return;
+      if (expected && m.meta.producer !== expected.producer) throw new Error('Producer mismatch');
       let total = 0; const files: Record<string, Uint8Array> = Object.create(null);
       for (const part of m.parts) {
         if (!['positions', 'identities', 'offsets', 'edgekeys', 'groups'].includes(part.name) || !Number.isSafeInteger(part.bytes) || part.bytes < 0 || !Array.isArray(part.chunks)) throw new Error('Invalid manifest part');

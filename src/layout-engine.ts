@@ -109,13 +109,10 @@ export class LayoutEngineSession {
         }
       }
       release(); controller.abort();
-      if (run.stopped()) {
-        if (input.initial instanceof Float32Array && input.initial.length === input.count * 2 && input.initial.every(Number.isFinite)) return { positions: input.initial, settled: false, engineStatus: { ...status, reason: 'unchanged' as const } };
-        report('processor', 'stopped');
-      } else if (status.reason === 'manual' || status.reason === 'small') run.status?.(status);
+      if (!run.stopped() && (status.reason === 'manual' || status.reason === 'small')) run.status?.(status);
       // Remaining work limits execution, not the original required quiet streak. Restart history conservatively.
       positions = await runLayoutStream(iteration ? { ...input, initial: positions } : input, options, every,
-        (frame, step) => run.emit(frame, iteration + step, total, status), run.yieldNow, buffer, s => { settled = s; }, run.stopped, undefined, total - iteration, iteration);
+        (frame, step) => run.emit(frame, iteration + step, total, status), run.yieldNow, buffer, (s, steps) => { settled = s; if (!iteration && !steps && run.stopped()) report('processor', 'unchanged'); }, run.stopped, undefined, total - iteration, iteration);
       return result();
     } finally { release(); controller.abort(); if (this.abort === controller) this.abort = undefined; }
   }

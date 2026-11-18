@@ -269,15 +269,15 @@ test('overlap migration changes only active layout identity; pinned coordinates 
   expect(await runLayoutStream(warm, on, 3, () => {}, async () => {})).toEqual(expected);
 });
 
-test('Stop during the initial yield returns one computed step, never the cold seed', async () => {
+test('Stop during the initial yield returns validated cold coordinates without a physics step', async () => {
   const { runLayoutStream, runLayout, LayoutSolver, DEFAULT_LAYOUT } = await import('../src/core/layout');
   const input = { count: 2, source: Uint32Array.of(0), target: Uint32Array.of(1), seed: 17 };
   const options = { ...DEFAULT_LAYOUT, iterations: 100, batchIterations: 5 };
   let stopped = false, settled = true;
   const frames: number[] = [];
   const result = await runLayoutStream(input, options, 5, (_p, iteration) => frames.push(iteration), async () => { stopped = true; }, undefined, s => { settled = s; }, () => stopped);
-  expect(result).not.toEqual(new LayoutSolver(input, options).positions);
-  expect(result).toEqual(runLayout(input, { ...options, iterations: 1 }));
+  expect(result).toEqual(new LayoutSolver(input, options).positions);
+  expect(result).not.toEqual(runLayout(input, { ...options, iterations: 1 }));
   expect(frames).toEqual([]); expect(settled).toBe(false); expect(result.every(Number.isFinite)).toBe(true);
 });
 
@@ -301,12 +301,12 @@ test('message-friendly yields bypass boosted scheduler continuations', async () 
   finally { if (descriptor) Object.defineProperty(globalThis, 'scheduler', descriptor); else delete (globalThis as any).scheduler; }
 });
 
-test('long layout batches check Stop after 50 ms of work without changing solver steps', async () => {
+test('long layout batches check Stop after an 8 ms work slice without changing solver steps', async () => {
   const input = { count: 2, source: Uint32Array.of(0), target: Uint32Array.of(1), seed: 17 };
   const options = { ...DEFAULT_LAYOUT, iterations: 1000, batchIterations: 1000, convergenceThreshold: 0 };
   const expected = runLayout(input, { ...options, iterations: 2 }), step = LayoutSolver.prototype.step, now = performance.now;
   let clock = 0, yields = 0, stopped = false, settled = true;
-  LayoutSolver.prototype.step = function () { const value = step.call(this); clock += 30; return value; };
+  LayoutSolver.prototype.step = function () { const value = step.call(this); clock += 5; return value; };
   performance.now = () => clock;
   try {
     const positions = await runLayoutStream(input, options, 1000, () => {}, async () => { if (++yields === 2) stopped = true; }, undefined, value => { settled = value; }, () => stopped);

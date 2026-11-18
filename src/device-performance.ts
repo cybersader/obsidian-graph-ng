@@ -64,7 +64,8 @@ export class DevicePerformanceStore {
     let raw: string | null | undefined;
     try { raw = this.key && this.storage?.getItem(this.key); } catch { this.storage = undefined; }
     // Shared samples may belong to somebody else. Never migrate them, even when opted in.
-    let settings = legacy, log: unknown = [];
+    // Layout engine never had a shared preference. Only a local record may opt in.
+    let settings: unknown = { ...devicePreferences(legacy), layoutEngine: 'auto' }, log: unknown = [];
     if (raw != null) {
       settings = undefined;
       try {

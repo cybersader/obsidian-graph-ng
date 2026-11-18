@@ -126,7 +126,7 @@ export class LayoutSolver {
   step(): void { this.stepParts(false).next(); }
   /** Yield only before position integration. Cancelling abandons force scratch, not half a position column. */
   async stepResponsive(yieldNow: () => Promise<void>, stopped: () => boolean): Promise<boolean> {
-    if (this.input.count < 5000 && this.tree) { this.step(); return true; }
+    if (this.input.count < 512 && this.tree) { this.step(); return true; }
     let last = performance.now();
     for (const _ of this.stepParts(true)) {
       if (performance.now() - last < 8) continue;
@@ -142,7 +142,7 @@ export class LayoutSolver {
     forces.fill(0);
     if (this.tree) {
       yield* this.tree.buildParts(p, mass, o.maxTreeDepth, sliced);
-      const chunk = sliced ? 1024 : n;
+      const chunk = sliced ? (f.barnesHutTheta < .5 ? 256 : 1024) : n;
       let accelerated = !!this.kernel?.active;
       for (let begin = 0; accelerated && begin < n; begin += chunk) {
         if (sliced) yield;
@@ -229,23 +229,22 @@ export function runLayout(input: LayoutInput, options: LayoutOptions): Float32Ar
  * Iteration budgets (rather than wall-clock early exits) preserve determinism.
  * The worker remains terminable by the host deadline even within one iteration.
  */
-export async function runLayoutStream(input: LayoutInput, options: LayoutOptions, every: number, emit: (p: Float32Array, iteration: number, total: number) => void, yieldNow: () => Promise<void>, buffer: (length: number) => Float32Array = length => new Float32Array(length), finished = (_settled: boolean) => {}, stopped = () => false, solver = new LayoutSolver(input, options), steps = solver.limit, offset = 0): Promise<Float32Array> {
+export async function runLayoutStream(input: LayoutInput, options: LayoutOptions, every: number, emit: (p: Float32Array, iteration: number, total: number) => void, yieldNow: () => Promise<void>, buffer: (length: number) => Float32Array = length => new Float32Array(length), finished = (_settled: boolean, _steps: number) => {}, stopped = () => false, solver = new LayoutSolver(input, options), steps = solver.limit, offset = 0): Promise<Float32Array> {
   if (!Number.isSafeInteger(every) || every < 1) throw new Error('Invalid layout stream cadence');
   const send = () => { const p = buffer(solver.positions.length); p.set(solver.positions); emit(p, solver.iteration, solver.limit); };
-  if (!input.count) { finished(true); return solver.positions; }
-  // A seed is not a layout. Even an immediate Stop completes one bounded step.
+  if (!input.count) { finished(!stopped(), 0); return solver.positions; }
+  // Stop can return the validated start, but never publish it as a settled frame.
   await yieldNow();
   let yieldedAt = performance.now();
-  const cancel = () => (!!input.initial || solver.iteration > 0) && stopped();
-  while (!solver.done && solver.iteration < steps && !cancel()) {
-    if (!await solver.stepResponsive(yieldNow, cancel)) break;
+  while (!solver.done && solver.iteration < steps && !stopped()) {
+    if (!await solver.stepResponsive(yieldNow, stopped)) break;
     const index = offset + solver.iteration;
     if (!solver.done && solver.iteration < steps && index % every === 0) send();
     // Small fast steps also admit Stop between batches. Large walks yield inside the step.
-    if (!solver.done && solver.iteration < steps && (index % options.batchIterations === 0 || index % every === 0 || performance.now() - yieldedAt >= 50)) {
+    if (!solver.done && solver.iteration < steps && (index % options.batchIterations === 0 || index % every === 0 || performance.now() - yieldedAt >= 8)) {
       await yieldNow(); if (stopped()) break; yieldedAt = performance.now();
     }
   }
-  finished(!stopped() && solver.settled);
+  finished(!stopped() && solver.settled, solver.iteration);
   return !solver.iteration && input.initial ? input.initial : solver.positions;
 }

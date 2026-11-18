@@ -5,6 +5,7 @@ The owner-approved bounded download ceilings for this UI pass are **450,000 raw 
 ## Unreleased: device-local layout engine
 
 - Add Auto, Processor and Graphics chip to Layout. Gate automatic graphics on paired layout quality and a 1.5× projected win for the actual step budget. Separate setup and steady costs, reject stale timing records, and evict failed graphics choices. Preserve warm coordinates on Stop and the original quiet criterion on fallback. Fix Morton-key collisions and edgeless dispatches. No WebGL solver or runtime package.
+- Do not import a shared Graphics choice. Auto and Processor reopen pre-graphics saved layouts unchanged. Stopping before the first completed step keeps the validated start without streaming or saving it as a solved layout.
 - Align graphics tree opening with the core's square cells and keep its settling criterion. Yield within large Processor walks so Stop can retain the last fully computed positions. See the [benchmark and limits](docs/benchmarks.md#worker-webgpu-layout).
 
 Automatic graphics admission after the paired, first-settled comparison:

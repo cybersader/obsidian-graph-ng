@@ -143,14 +143,16 @@ test('late graphics loss cannot shrink the original quiet criterion', async () =
   }})});
   const result = await session.run(i, o, run('graphics')); expect(result.engineStatus.reason).toBe('failed'); expect(result.settled).toBe(false);
 });
-test('warm Stop before first readback preserves input; cold Stop identifies Processor', async () => {
+test('Stop before first readback preserves warm or cold starting coordinates', async () => {
   for (const warm of [true, false]) {
     const i = input(); if (warm) i.initial = new LayoutSolver(i, options()).positions;
     let started!: () => void, stop = false; const ready = new Promise<void>(r => started = r);
     const session = new LayoutEngineSession({adapter: async () => adapter, graphics: async () => ({reset(){},destroy(){},batch(){started(); return new Promise(()=>{});}})});
     const task = session.run(i, options(), {...run('graphics'), stopped: () => stop}); await ready; stop = true; session.stop();
     const result = await task; expect(result.settled).toBe(false);
-    if (warm) expect(result.positions).toBe(i.initial!); else expect(result.engineStatus.engine).toBe('processor');
+    if (warm) expect(result.positions).toBe(i.initial!);
+    else expect(result.positions).toEqual(new LayoutSolver(i, options()).positions);
+    expect(result.engineStatus.reason).toBe('unchanged');
   }
 });
 test('Processor streams into the transfer pool; detaching frames never detaches solver state', async () => {

@@ -51,6 +51,16 @@ test('numeric drafts survive rerenders; reset restores every recommended value; 
   const apply: any = control(f.panel.body, 'Apply layout'); const pending = apply.onclick(); apply.onclick(); await pending;
   expect(f.applied()).toBe(1); expect(f.settings.layout.force.scalingRatio).toBe(10); expect(f.settings.layout.force.strongGravityMode).toBe(true); f.panel.dispose();
 });
+test('layout engine help describes the shipping policy behind its disclosure', () => {
+  const f = fixture();
+  try {
+    const tip = control(f.panel.body, 'Layout engine').parentElement!.querySelector('.graph-ng-help-popover')!;
+    expect(tip.hidden).toBe(true);
+    expect(tip.textContent).toMatch(/Auto.*Processor.*every graph size/);
+    expect(tip.textContent).toMatch(/Graphics chip.*much faster.*large graphs.*capable GPU/);
+    expect(tip.textContent).not.toMatch(/trial|[\u2014\u00b7]/);
+  } finally { f.panel.dispose(); }
+});
 test('every control has a plain label and an effect hint; advanced controls sit in a collapsed section', () => {
   const f = fixture(), details: any = f.panel.body.querySelector('details');
   expect(details.open).toBeFalsy(); expect(details.textContent).toContain('Advanced layout');

@@ -16,7 +16,7 @@ import { generationKey } from './core/generation';
 import { warmLayout, validSavedLayout } from './core/incremental';
 import { CACHE_FORMAT, decodeLayout, encodeLayout, type BinaryLayout, type GenerationMeta } from './core/binary-layout';
 import { edgeHashes, hashEdge, edgeHashSet } from './core/edge-hash';
-import { LAYOUT_PRODUCER, evaluation, type PipelineRequest, type PipelineConfig, type LayoutResult } from './pipeline';
+import { layoutProducer, evaluation, type PipelineRequest, type PipelineConfig, type LayoutResult } from './pipeline';
 import { carrierHiddenBy, emptyView, explore, groupColumn, hide, relationshipNotes, searchSteps, withoutTypes, type ExploreResult, type ExploreView } from './core/explore';
 const rows = new Map<string, FactRow>();
 let config: PipelineConfig, meta: GenerationMeta, projection: Projection, visible: Uint8Array;
@@ -66,12 +66,17 @@ function* viewSteps(view: ExploreView, rules: PipelineConfig['declaration']['col
 let declarationHash = '', layoutHash = '', hashes: Uint32Array = new Uint32Array();
 /** Same source, producer and layout parameters: positions are valid warm-start hints even when only
  * grouping, display columns or other non-topology declaration fields changed. */
+const producer = () => layoutProducer(config.layoutEngine);
+function configKey(input: FactRow[], layout: PipelineConfig['layout']) {
+  const family = producer() + (config.layoutEngine === 'graphics' ? '/graphics' : '');
+  return generationKey(input, config.declaration, layout, `${family}/stream${config.streamEveryIterations}/group${config.groupLevel}/${config.source}/format${CACHE_FORMAT}`);
+}
 function configLayoutHash(layout: PipelineConfig['layout']) {
   const engine = config.layoutEngine;
-  return digest({ layout: layoutIdentity(layout), streamEveryIterations: config.streamEveryIterations, ...(engine && engine !== 'auto' ? { engine } : {}) });
+  return digest({ layout: layoutIdentity(layout), streamEveryIterations: config.streamEveryIterations, ...(engine === 'graphics' ? { engine } : {}) });
 }
 function compatible(g: GenerationMeta) {
-  return g.format === CACHE_FORMAT && g.layoutHash === layoutHash && g.producer === LAYOUT_PRODUCER && g.source === config.source && g.streamEveryIterations === config.streamEveryIterations && canonical(layoutIdentity(g.layout)) === canonical(layoutIdentity(config.layout));
+  return g.format === CACHE_FORMAT && g.layoutHash === layoutHash && g.producer === producer() && g.source === config.source && g.streamEveryIterations === config.streamEveryIterations && canonical(layoutIdentity(g.layout)) === canonical(layoutIdentity(config.layout));
 }
 /** Exact identity of a persisted generation: compatible, same declaration and group level. */
 const matches = (g: GenerationMeta) => compatible(g) && g.declarationHash === declarationHash && g.groupLevel === config.groupLevel;
@@ -92,7 +97,7 @@ async function solve(input: LayoutInput, options: PipelineConfig['layout'], revi
       self.postMessage({ kind: 'positions', revision, positions: p, iteration, total }, { transfer: [p.buffer] });
     },
   });
-  if (result.positions !== input.initial) arrange(result.positions);
+  if (result.engineStatus.reason !== 'unchanged') arrange(result.positions);
   return result;
 }
 async function handle(r: PipelineRequest, revision: number, control: EvaluationControl): Promise<unknown> {
@@ -129,10 +134,10 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       const old = r.generation;
       if (!config.source.endsWith('/local')) return undefined;
       // Old keys omit source/format; local-only hints can never be stamped for a new view.
-      if (old.producer !== LAYOUT_PRODUCER || !validSavedLayout(old) || old.layoutHash !== await digest(layoutIdentity(config.layout)) || r.declarationHash !== declarationHash) return undefined;
+      if (old.producer !== producer() || !validSavedLayout(old) || old.layoutHash !== await digest(layoutIdentity(config.layout)) || r.declarationHash !== declarationHash) return undefined;
       const keys = new Uint32Array((old.edgeKeys?.length ?? 0) * 2);
       old.edgeKeys?.forEach((key, i) => keys.set(hashEdge(key), i * 2));
-      const m = { format: CACHE_FORMAT, declarationHash, layoutHash, layout: config.layout, key: old.key, producer: LAYOUT_PRODUCER, source: config.source, groupLevel: config.groupLevel, streamEveryIterations: config.streamEveryIterations };
+      const m = { format: CACHE_FORMAT, declarationHash, layoutHash, layout: config.layout, key: old.key, producer: producer(), source: config.source, groupLevel: config.groupLevel, streamEveryIterations: config.streamEveryIterations };
       return encodeLayout({ meta: m, identities: old.identities, positions: Float32Array.from(old.positions), edgeKeys: keys });
     }
     case 'project': {
@@ -145,8 +150,8 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       colors = colorGroups(projection, config.declaration);
       applyView(config.view ?? emptyView());
       self.postMessage({ kind: 'groups', revision, view: viewGeneration, projection: groupSummary(contracted.projection) });
-      const key = await generationKey(input, config.declaration, config.layout, `${LAYOUT_PRODUCER}/${config.layoutEngine ?? 'auto'}/stream${config.streamEveryIterations}/group${config.groupLevel}/${config.source}/format${CACHE_FORMAT}`);
-      meta = { format: CACHE_FORMAT, key, declarationHash, layoutHash, layout: config.layout, producer: LAYOUT_PRODUCER, source: config.source, groupLevel: config.groupLevel, streamEveryIterations: config.streamEveryIterations };
+      const key = await configKey(input, config.layout);
+      meta = { format: CACHE_FORMAT, key, declarationHash, layoutHash, layout: config.layout, producer: producer(), source: config.source, groupLevel: config.groupLevel, streamEveryIterations: config.streamEveryIterations };
       hashes = edgeHashes(projection);
       let invalidSaved;
       if (saved && complete) { const current = new Set(projection.identities); if (saved.identities.some(id => !current.has(id))) { if (matches(saved.meta)) invalidSaved = saved.meta; saved = undefined; } }
@@ -172,9 +177,9 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       config = { ...config, layoutEngine: pending.layoutEngine, engineChoices: pending.engineChoices };
       const nextDeclarationHash = await digest(identityDeclaration(layoutDeclaration(config.declaration, options.force.familyPull > 0)));
       const nextLayoutHash = await configLayoutHash(options);
-      const key = await generationKey([...rows.values()], config.declaration, options, `${LAYOUT_PRODUCER}/${config.layoutEngine ?? 'auto'}/stream${config.streamEveryIterations}/group${config.groupLevel}/${config.source}/format${CACHE_FORMAT}`);
+      const key = await configKey([...rows.values()], options);
       config = { ...config, layout: options }; declarationHash = nextDeclarationHash; layoutHash = nextLayoutHash;
-      meta = { ...meta, key, declarationHash, layoutHash, layout: options };
+      meta = { ...meta, key, declarationHash, layoutHash, layout: options, producer: producer() };
       positions = pending.positions; settled = pending.settled; preparedLayout = undefined;
       const generation = { meta, identities: projection.identities, positions, edgeKeys: hashes };
       if (complete && settled) { saved = { ...generation, groups: cacheSummary() }; interim = undefined; }

@@ -608,7 +608,7 @@ export class ExplorePanel {
     panelButton(presets, 'Use preset', () => fill(select.value === 'Recommended' ? recommended : presetValues(select.value, recommended), select.value), this.physicsBusy);
     this.layoutEngineDraft ??= this.settings.layoutEngine ?? 'auto';
     const engineNames = { auto: 'Auto', processor: 'Processor', graphics: 'Graphics chip' };
-    const engine = settingRow(host, 'Layout engine', 'graph-ng-select', 'Below 5,000 notes, Auto uses Processor. For larger graphs it chooses Graphics chip only if a timed trial, including setup, is at least 1.5 times faster. This choice stays on this device.').createEl('select', { attr: { 'aria-label': 'Layout engine' } });
+    const engine = settingRow(host, 'Layout engine', 'graph-ng-select', 'Auto uses Processor at every graph size. Choose Graphics chip on this device: it can be much faster on large graphs with a capable GPU.').createEl('select', { attr: { 'aria-label': 'Layout engine' } });
     for (const value of LAYOUT_ENGINES) engine.createEl('option', { value, text: engineNames[value] });
     engine.value = this.layoutEngineDraft; engine.disabled = this.physicsBusy;
     engine.onchange = () => { this.layoutEngineDraft = engine.value as LayoutEnginePreference; summarize(); };

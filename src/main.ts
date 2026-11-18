@@ -26,7 +26,7 @@ import { CanvasLimit, canvasDetailEdges } from './render-data';
 import { carrierIndexer, indexCarriers, type GroupProjection } from './core/group-projection';
 import { BinaryLayoutStore, type BinaryGeneration } from './core/binary-layout';
 import { yieldTask, sliced } from './core/scheduler';
-import { WorkerPipeline, LAYOUT_PRODUCER, currentDetailGeneration, type ProjectResult, type DetailResult, type LayoutResult, type ViewResult } from './pipeline';
+import { WorkerPipeline, layoutProducer, currentDetailGeneration, type ProjectResult, type DetailResult, type LayoutResult, type ViewResult } from './pipeline';
 import { groupPages, page } from './core/group-page';
 import { ContributionPage, type ContributionContext } from './contribution-page';
 import { accounting, pendingText, num, plural, renderInformation, renderReadout, sum, type InformationReport } from './graph-information';
@@ -566,7 +566,7 @@ export class GraphView extends ItemView {
       // A worker already holding this exact generation needs no disk read, decode or cached paint.
       if (settings.persistLayout && !hashes.held) {
         await this.plugin.migrate(revision, hashes.declarationHash);
-        const saved = await this.plugin.store.latest(hashes.declarationHash, { source: config.source, layoutHash: hashes.layoutHash, producer: LAYOUT_PRODUCER });
+        const saved = await this.plugin.store.latest(hashes.declarationHash, { source: config.source, layoutHash: hashes.layoutHash, producer: layoutProducer(config.layoutEngine) });
         if (saved) {
           try {
             const cache = await this.plugin.pipeline.request<{ groups?: GroupProjection } | undefined>(revision, { kind: 'load', generation: saved });

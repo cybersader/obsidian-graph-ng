@@ -1,8 +1,9 @@
 import { test, expect } from 'bun:test';
 import { WorkerPipeline, LAYOUT_PRODUCER, currentDetailGeneration, type Transport, type ProjectResult, type LayoutResult, type DetailResult } from '../src/pipeline';
 import { defaultDeclaration, digest } from '../src/core/declaration';
+import { generationKey } from '../src/core/generation';
 import { layoutIdentity } from '../src/core/layout-options';
-import { DEFAULT_LAYOUT } from '../src/core/layout';
+import { DEFAULT_LAYOUT, initialPositions } from '../src/core/layout';
 import { packRows, unpackRows, transferables, encodeStrings, decodeStrings } from '../src/core/columns';
 import { buildProjection, type FactRow } from '../src/core/projection';
 import { sliced } from '../src/core/scheduler';
@@ -108,6 +109,27 @@ test('legacy overlap hashes refuse before reuse while ordinary generations still
     } finally { p.dispose(); }
   }
 });
+test('Auto and Processor reopen a pre-graphics generation exactly; Graphics refuses it', async () => {
+  const rows = [{ path: '0.md', properties: {} }];
+  const key = await generationKey(rows, declaration, layout, `graph-ng-fa2@2/stream1/group0/${config.source}/format${CACHE_FORMAT}`);
+  for (const layoutEngine of ['auto', 'processor', 'graphics'] as const) {
+    const p = pipeline();
+    try {
+      const { declarationHash } = await p.request<{ declarationHash: string }>(1, { kind: 'configure', config: { ...config, layoutEngine } });
+      const expected = Float32Array.of(3, 4), { meta: header } = await generation(1, declarationHash, key);
+      const legacy = encodeLayout({ meta: { ...header, producer: 'graph-ng-fa2@2' }, identities: ['0.md'], positions: expected.slice(), edgeKeys: new Uint32Array() });
+      const loaded = await p.request(1, { kind: 'load', generation: legacy });
+      expect(loaded !== undefined).toBe(layoutEngine !== 'graphics');
+      await p.request(1, { kind: 'rows', reset: true, columns: packRows(rows, declaration) });
+      const { meta } = await p.request<ProjectResult>(1, { kind: 'project' });
+      expect(meta.key === key).toBe(layoutEngine !== 'graphics');
+      if (layoutEngine !== 'graphics') {
+        const result = await p.request<LayoutResult>(1, { kind: 'layout' });
+        expect(result.cached).toBe(true); expect(result.positions).toEqual(expected);
+      }
+    } finally { p.dispose(); }
+  }
+});
 test('worker builds/groups first, transfers detail buffers, reuses exact cache and rejects foreign identities', async () => {
   const p = pipeline(), events: string[] = [];
   p.onGroups = () => events.push('groups'); p.onPositions = e => { expect(e.positions.every(Number.isFinite)).toBe(true); events.push('positions'); };
@@ -136,6 +158,27 @@ test('worker protocol ignores mismatched revision responses and disposes all pen
   transport.onmessage!({ data: { id: 1, revision: 10, result: 10 } } as MessageEvent);
   transport.onmessage!({ data: { id: 1, revision: 11, result: 11 } } as MessageEvent); expect(await promise).toBe(11);
   const pending = p.request(12, { kind: 'project' }); p.dispose(); await expect(pending).rejects.toThrow('closed');
+});
+test('early Stop on a cold worker cannot arrange, stream or persist a seed as a solved layout', async () => {
+  const p = pipeline(), rows = [{ path: 'a.md', properties: {} }];
+  let frames = 0; p.onPositions = () => { frames++; };
+  try {
+    await p.request(1, { kind: 'configure', config });
+    await p.request(1, { kind: 'rows', reset: true, columns: packRows(rows, declaration) });
+    const { meta } = await p.request<ProjectResult>(1, { kind: 'project' });
+    const pending = p.request<LayoutResult>(1, { kind: 'layout' }); p.stopLayout(1);
+    const result = await pending;
+    expect(result.positions).toEqual(initialPositions(1, parseInt(meta.key.slice(0, 8), 16) ^ layout.seed, layout.initialRadius));
+    expect(result.settled).toBe(false); expect(frames).toBe(0);
+    expect(await p.request(1, { kind: 'encode' }).catch(String)).toContain('Layout not settled');
+  } finally { p.dispose(); }
+});
+test('switching engine families skips an intact binary generation without quarantine', async () => {
+  const adapter = new MemoryAdapter(), store = new BinaryLayoutStore(adapter, options), legacy = await generation();
+  await store.write(legacy); adapter.reads = [];
+  expect(await store.latest(legacy.meta.declarationHash, { source: config.source, producer: 'graph-ng-fa2@4-webgpu', layoutHash: await digest({ layout: layoutIdentity(layout), streamEveryIterations: 1, engine: 'graphics' }) })).toBeUndefined();
+  expect(adapter.reads.some(p => p.endsWith('.bin'))).toBe(false);
+  expect((await store.latest(legacy.meta.declarationHash))?.meta.key).toBe(legacy.meta.key);
 });
 test('legacy slice-1 positions are refused after the quality producer migration', async () => {
   const p = pipeline();
