@@ -6,6 +6,7 @@ import { WorkerPipeline, type Transport } from '../src/pipeline';
 import { BinaryLayoutStore } from '../src/core/binary-layout';
 import { defaultDeclaration } from '../src/core/declaration';
 import { defaults } from '../src/settings';
+import { renderPath } from '../src/render-projection';
 import { layoutText } from '../src/graph-information';
 
 /** The real view refresh, layout worker and binary store over a disk that survives a simulated
@@ -21,32 +22,83 @@ async function boot(disk: MemoryAdapter, resolved: Record<string, Record<string,
   const { default: GraphPlugin } = await import('../src/main');
   const { LocalAdapter } = await import('../src/adapter/local');
   const files = Array.from({ length: N }, (_, i) => new FixtureFile(name(i)));
-  const app: any = { vault: { getMarkdownFiles: () => files, getAbstractFileByPath: (p: string) => files.find(f => f.path === p), on() {}, read() { throw Error('no bodies'); } },
+  const app: any = { workspace: { requestSaveLayout() {} }, vault: { getMarkdownFiles: () => files, getAbstractFileByPath: (p: string) => files.find(f => f.path === p), on() {}, read() { throw Error('no bodies'); } },
     metadataCache: { getFileCache: () => ({ frontmatter: {} }), resolvedLinks: resolved, on() {} } };
   const pipeline = new WorkerPipeline(new Worker(new URL('../src/layout-worker.ts', import.meta.url).href) as unknown as Transport, () => 20000);
   let streamed = 0, inner: any;
   Object.defineProperty(pipeline, 'onPositions', { get: () => (e: any) => { streamed++; inner?.(e); }, set: fn => { inner = fn; } });
   const plugin: any = Object.create(GraphPlugin.prototype);
-  Object.assign(plugin, { settings: initial, propertyRevision: 0, nextRevision: 0, linkProducer: 'p@1', pipeline, generations: Object.create(null), writes: Promise.resolve(),
+  Object.assign(plugin, { settings: initial, propertyRevision: 0, nextRevision: 0, linkProducer: 'p@1', pipeline, generations: Object.create(null), writes: Promise.resolve(), work: Promise.resolve(),
     ingestedHash: '', viewIdentity: 'local', store: new BinaryLayoutStore(disk, { ...initial.cache, directory: 'plugin/cache/local', cachedDeclarations: initial.cachedDeclarations }) });
   plugin.adapter = new LocalAdapter(app, { register() {}, registerEvent() {} } as any, 'p@1', 1, () => {}, true, initial.declaration);
   const { GraphView } = await import('../src/main');
   /** One view open (or one refresh after a change): returns what the user would see. */
-  async function open() {
+  function makeView() {
     const view: any = Object.create(GraphView.prototype); streamed = 0; disk.reads = []; disk.writes = 0;
-    Object.assign(view, { plugin, app, revision: 0, renderRevision: 0, closed: false, members: new Map(), contributions: new Map(), startupTrace: [], cacheTrace: [],
+    Object.assign(view, { plugin, app, presentation: 'groups', revision: 0, renderRevision: 0, closed: false, members: new Map(), contributions: new Map(), startupTrace: [], cacheTrace: [],
       contributionPage: { clear() {}, suspend() {}, update() {} }, contentEl: { dataset: {} }, status: new ControlElement(), statusSummary: new ControlElement(),
       gpu: { available: false, reason: 'Not probed' }, showGroups() {} });
-    await view.refreshOnce();
+    return view;
+  }
+  async function open() {
+    const view = makeView(); await view.refreshOnce();
+    // These cache cases explicitly exercise note coordinates even on a miss.
+    await view.deferredLayout?.();
     expect(view.contentEl.dataset.state).toBe('ready');
     const layout = view.report.layout;
     return { layout, text: layoutText(layout), streamed, positions: view.positions as Float32Array, verified: view.contentEl.dataset.verified === 'true', cacheError: view.contentEl.dataset.cacheError, trace: view.cacheTrace.at(-1), binReads: disk.reads.filter(p => p.endsWith('.bin')).length };
   }
   /** Settings adoption as GraphPlugin.apply does it, minus the data.json save. */
   const apply = (next: any) => { plugin.settings = next; plugin.adapter.configure(next.declaration); };
-  return { open, apply, plugin, dispose: () => { plugin.adapter.index.dispose(); pipeline.dispose(); } };
+  return { makeView, open, apply, plugin, dispose: () => { plugin.adapter.index.dispose(); pipeline.dispose(); } };
 }
 const manifests = (disk: MemoryAdapter) => [...disk.files.keys()].filter(p => p.endsWith('/manifest.json'));
+
+test('cold Groups answers members and search before any layout; two Notes clicks start one solve', async () => {
+  const disk = new MemoryAdapter(), app = await boot(disk, graph()), view = app.makeView();
+  const rpc = app.plugin.pipeline, request = rpc.request.bind(rpc), calls: string[] = [];
+  rpc.request = (rev: number, r: any) => { calls.push(r.kind); return request(rev, r); };
+  try {
+    await view.refresh(); expect(view.contentEl.dataset.state).toBe('ready'); expect(view.positions).toBeUndefined();
+    const rev = view.activeRevision, group = view.groupGraph.groups.find((g: any) => g.label === 'A');
+    const members: Uint32Array = await rpc.request(rev, { kind: 'members', group: group.id, view: view.viewGeneration });
+    expect(Array.from(members, i => renderPath(view.projection, i)).sort()).toEqual(Array.from({ length: N / 2 }, (_, i) => name(2 * i + 1)).sort());
+    const hits = await rpc.request(rev, { kind: 'search', query: 'n37', visible: view.visible.slice() });
+    expect(renderPath(view.projection, hits[0])).toBe(name(37)); expect(calls).not.toContain('layout'); expect(manifests(disk)).toHaveLength(0);
+    const first = view.showDetails(); expect(view.statusText).toBe('Arranging notes'); await view.showDetails();
+    // Leave the actual worker running; only stub the renderer for the final adoption.
+    view.showDetails = () => {}; await first;
+    expect(calls.filter(k => k === 'layout')).toHaveLength(1); expect(view.positions).toHaveLength(N * 2); expect(view.report.layout.cached).toBe(false);
+    const again = app.makeView(); await again.refresh(); expect(again.getState().presentation).toBe('groups');
+    expect(again.deferredLayout).toBeUndefined(); expect(again.report.layout.cached).toBe(true); expect(again.positions).toEqual(view.positions);
+  } finally { app.dispose(); }
+});
+
+test('Notes selected during ingestion waits for current detail then starts one layout', async () => {
+  const app = await boot(new MemoryAdapter(), graph()), view = app.makeView(), rpc = app.plugin.pipeline;
+  const request = rpc.request.bind(rpc), calls: string[] = [];
+  let entered!: () => void, resume!: () => void;
+  const reading = new Promise<void>(r => { entered = r; }), hold = new Promise<void>(r => { resume = r; });
+  rpc.request = async (rev: number, r: any) => { calls.push(r.kind); if (r.kind === 'rows') { entered(); await hold; } return request(rev, r); };
+  try {
+    const open = view.refresh(); await reading; await view.showDetails(); expect(view.statusText).toBe('Reading notes'); expect(calls).not.toContain('layout');
+    view.showDetails = () => {}; resume(); await open;
+    expect(calls.filter(k => k === 'layout')).toHaveLength(1); expect(calls.indexOf('layout')).toBeGreaterThan(calls.indexOf('detail')); expect(view.positions).toHaveLength(N * 2);
+  } finally { resume(); app.dispose(); }
+});
+
+test('replacing a source before deferred dispatch never starts or persists the old layout', async () => {
+  const disk = new MemoryAdapter(), app = await boot(disk, graph()), view = app.makeView(), rpc = app.plugin.pipeline;
+  const request = rpc.request.bind(rpc), layouts: number[] = [];
+  rpc.request = (rev: number, r: any) => { if (r.kind === 'layout') layouts.push(rev); return request(rev, r); };
+  try {
+    await view.refresh(); const retired = view.activeRevision;
+    const pending = view.showDetails(); app.plugin.propertyRevision++; view.invalidateSource(); await pending;
+    expect(view.positions).toBeUndefined(); expect(layouts).toEqual([]); expect(manifests(disk)).toHaveLength(0);
+    view.showDetails = () => {}; await view.refresh(); expect(layouts).toEqual([view.activeRevision]); expect(view.activeRevision).toBeGreaterThan(retired);
+    expect(view.positions).toHaveLength(N * 2);
+  } finally { app.dispose(); }
+});
 
 test('successive provisional layouts reuse live coordinates without persisting an incomplete generation', async () => {
   const disk = new MemoryAdapter(), app = await boot(disk, {});

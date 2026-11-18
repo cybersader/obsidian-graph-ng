@@ -81,6 +81,7 @@ function compatible(g: GenerationMeta) {
 /** Exact identity of a persisted generation: compatible, same declaration and group level. */
 const matches = (g: GenerationMeta) => compatible(g) && g.declarationHash === declarationHash && g.groupLevel === config.groupLevel;
 /** Cached paints are the unfiltered declared grouping; a persisted view is reapplied live. */
+function exactSaved() { return !!(complete && !interim && saved && matches(saved.meta) && saved.meta.key === meta.key && saved.identities.length === projection.identities.length && saved.identities.every((id, i) => id === projection.identities[i])); }
 function cacheSummary() { return groupSummary(contractGroups(projection, new Uint8Array(projection.paths.length).fill(1), config.groupLevel).projection); }
 function groupSummary(p: GroupProjection): GroupProjection {
   // Carrier/contribution objects remain worker-owned and are read a page at a time.
@@ -155,7 +156,7 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       hashes = edgeHashes(projection);
       let invalidSaved;
       if (saved && complete) { const current = new Set(projection.identities); if (saved.identities.some(id => !current.has(id))) { if (matches(saved.meta)) invalidSaved = saved.meta; saved = undefined; } }
-      return { invalidSaved, meta, nodes: projection.paths.length, edges: projection.source.length, unresolved: projection.unresolved, quarantined: projection.quarantined, dropped: projection.dropped, missed: projection.missed, rows: projection.carrierPaths.length + projection.quarantined.length, ruleNotes: projection.ruleNotes };
+      return { exactSaved: exactSaved(), invalidSaved, meta, nodes: projection.paths.length, edges: projection.source.length, unresolved: projection.unresolved, quarantined: projection.quarantined, dropped: projection.dropped, missed: projection.missed, rows: projection.carrierPaths.length + projection.quarantined.length, ruleNotes: projection.ruleNotes };
     }
     case 'detail': {
       // Copies are made in the worker only: the renderer borrows transferred buffers;
@@ -190,11 +191,12 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       return meta;
     }
     case 'layout': {
+      if (revision !== projectionRevision) throw new Error('Projection generation changed');
       const start = performance.now(), seed = Number.parseInt(meta.key.slice(0, 8), 16);
       let engineStatus: EngineStatus | undefined;
       // Continue the latest live computation; unchanged saved borrowing creates no interim.
       const prior = interim ?? saved, fromSaved = !!prior && prior === saved, stored = fromSaved ? prior.meta.key : undefined;
-      const exact = complete && fromSaved && prior && matches(prior.meta) && prior.meta.key === meta.key && prior.identities.length === projection.identities.length && prior.identities.every((id, i) => id === projection.identities[i]);
+      const exact = exactSaved();
       let reused: LayoutResult['reused'] = exact ? fromSaved ? 'all' : 'interim' : undefined;
       settled = !!exact;
       if (exact) positions = prior!.positions;
