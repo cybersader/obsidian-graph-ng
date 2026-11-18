@@ -896,3 +896,14 @@ for (const change of ['unload', 'revoke', 'grant replacement', 'room-set replace
     expect(f.plugin.hydrationStatus).toBe(''); expect(f.disk.writes).toBe(0);
   } finally { hold.yes(); f.close(); }
 });
+test('room removal by source replacement purges that room on disk with no view open', async () => {
+  const f = await contractFixture(await savedContract()), oldA = await roomDir(f.a.cacheIdentity!), keptB = await roomDir(f.b.cacheIdentity!);
+  try {
+    await f.rows();
+    const only = Object.freeze([f.b]), next = { ...f.source, rooms: () => only, roomFor: (p: string) => p === 'b.md' ? f.b : undefined } as PropertySource;
+    (f.host as any).openclast.propertyFacts = next; f.send('oc:property-facts-changed', { reason: 'replaced' });
+    await new FactCache(f.disk, directory).dropPartition('ocpf1:unused');
+    await new FactCache(f.disk, directory).dropPartition('ocpf1:unused');
+    expect(await f.disk.exists(oldA)).toBe(false); expect(await f.disk.exists(keptB)).toBe(true);
+  } finally { f.close(); }
+});

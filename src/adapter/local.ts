@@ -60,6 +60,8 @@ export class LocalAdapter {
   private roomBudget = { bytes: 0, parts: 0 };
   private pruned = false;
   private unknownRooms = false;
+  /** While a source swap advances the cache turn, a requested prune waits until after it. */
+  private pruneDeferred?: boolean;
   inventoryError = '';
   private inventory() {
     try { const handles = this.propertySource?.rooms?.(); this.inventoryError = ''; return this.partitioned && Array.isArray(handles) ? handles as RoomHandle[] : undefined; }
@@ -88,7 +90,7 @@ export class LocalAdapter {
     for (const [id, room] of this.partitions) if (!active.has(id)) {
       retireLane(room); this.partitions.delete(id); moved = retired = true;
     }
-    if ((retired || this.unknownRooms) && handles?.length && this.cache && !this.cache.paused) this.prune(true);
+    if ((retired || this.unknownRooms) && handles?.length && this.cache && !this.cache.paused) { if (this.pruneDeferred === undefined) this.prune(true); else this.pruneDeferred = true; }
     this.unknownRooms = !handles?.length;
     if (moved || replaced.size) for (const [path, id] of this.savedOwners) if (!active.has(id) || replaced.has(id)) { this.forget(path); this.index.change(path); }
     if (moved) this.roomRevision++;
@@ -284,8 +286,9 @@ export class LocalAdapter {
       }
     }
     if (same && !siblingsCurrent) for (const room of this.partitions.values()) room.permit = undefined;
-    this.syncRooms();
-    this.invalidate((same || wasPartitioned) && this.partitioned, same && siblingsCurrent);
+    this.pruneDeferred = false;
+    try { this.syncRooms(); this.invalidate((same || wasPartitioned) && this.partitioned, same && siblingsCurrent); }
+    finally { const prune = this.pruneDeferred; this.pruneDeferred = undefined; if (prune && this.cache && !this.cache.paused) this.prune(true); }
   }
   private declaration?: GraphDeclaration;
   private excluded: string[] = [];
