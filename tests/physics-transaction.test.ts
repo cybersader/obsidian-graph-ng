@@ -12,7 +12,7 @@ import { shaderNames } from '../scripts/glsl.mjs';
 
 // Actual production classes; the DOM/driver seam does not establish native rendering/performance.
 const source = readFileSync(new URL('../main.js', import.meta.url), 'utf8');
-const rendererName = source.match(/this\.detailRenderer=await ([\w$]+)\.create\(this\.stage/)?.[1];
+const rendererName = source.match(/await ([\w$]+)\.create\(this\.stage,/)?.[1];
 if (!rendererName) throw new Error('Production renderer seam missing: build before tests');
 const ctx: any = new Proxy({ fillStyle: '#ffffff', measureText: (s: string) => ({ width: s.length * 7 }), getImageData: () => ({ data: new Uint8ClampedArray([80, 90, 100, 255]) }) }, { get: (o: any, k: any) => k in o ? o[k] : () => {} });
 class Element extends ControlElement {

@@ -136,6 +136,11 @@ test('host runs one layout-only RPC, preserves untouched settings, and commits o
   expect(f.calls()).toBe(1); expect(f.saves()).toBe(1); expect([...f.v.positions]).toEqual([3, 4]);
   expect({ ...f.v.plugin.settings, layout: before.layout }).toEqual(before);
 });
+test('Apply cannot commit behind a Notes renderer awaiting its first paint', async () => {
+  const f = runtime(); f.v.contentEl = { dataset: { mode: 'nodes-building' } };
+  await expect(f.v.applyLayout({ gravity: 4 })).rejects.toThrow('generation changed');
+  expect(f.calls()).toBe(0); expect(f.saves()).toBe(0);
+});
 test('host rejects invalid stale disposed and worker-failed apply with prior graph and settings intact', async () => {
   for (const mode of ['invalid', 'closed-before', 'closed-after', 'stale', 'rebuild', 'settings', 'worker']) {
     const f = runtime(), positions = f.v.positions, settings = structuredClone(f.v.plugin.settings);

@@ -1588,3 +1588,16 @@ A produced picture is a worker snapshot buffer obtained for a stream boundary; a
 **Equivalence.** Each full pass completed exactly 80 steps and reported the same 39 boundaries. Final Float32 byte hashes and cache keys matched across all six passes of each size. The initial camera frame, final visible bounds and each comparable intermediate extent matched exactly. First pick after final adoption selected synthetic note 0 at its rendered position in all 12 runs. Separate candidate Stop/Explore-now runs adopted unsettled coordinates at steps 27 (20k) and 25 (49k); their first picks also selected note 0. Unit coverage checks hidden nonfinite inputs, empty masks, a withheld credit through final output, and Graphics validation/fallback even when no preview is wanted.
 
 **Repeat locally.** With installed dependencies and `CHROME_BIN` pointing at a local Chromium, run `flock -w 1800 /tmp/graph-ng-harness.lock node scripts/light-preview-bench.mjs <source-root> <receipt.json> <20000|49000>`. Use a local archive of `fda8c30` as the baseline source root and `.` for the candidate; append `stop` for the adoption-only run. The harness checks at least 8 GiB available before launching. Raw synthetic receipts: `graph-ng-light-previews/final/{before,after}-<size>-<run>.json` and `stop-<size>.json` in the local temporary evidence directory.
+
+## Groups-only cold open and first Notes preview
+
+Local desktop-class Linux, headless Chromium, real plugin bundle, one real layout worker and renderer, synthetic host metadata (not native Obsidian). Three cold opens of each version, interleaved, with the same 20,000 notes in 20 folders, 40,000 directed links, default Processor pass and no saved layout. Timing starts at view open, after the synthetic host is populated. The fixture requests a group as soon as its matching detail dictionary arrives and checks the 1,000-member count, first-page paths and a unique member search. Times are medians.
+
+| User-visible milestone | Eager layout | On-demand layout |
+| --- | ---: | ---: |
+| Open to correct member list | 1,688 ms | 246 ms |
+| Member request to correct list | 1,439 ms | 5 ms |
+| Cold solves before switching to Notes | 1 | 0 |
+| Notes switch to first drawn, progressed preview | Not applicable | 248 ms |
+
+In the eager baseline the solve had already finished by the time the member request returned. Its Notes switch took 88 ms to the adopted renderer; that is not a preview measurement. On demand, the Notes control immediately reported `Arranging notes`; preview time ends when the progressed renderer finishes its first draw, not when the worker first emits positions. The preview is not yet pickable. These timings do not establish native-device latency or time to settlement.

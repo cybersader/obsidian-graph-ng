@@ -6,6 +6,7 @@ import { WorkerPipeline, type Transport } from '../src/pipeline';
 import { BinaryLayoutStore } from '../src/core/binary-layout';
 import { defaultDeclaration } from '../src/core/declaration';
 import { defaults } from '../src/settings';
+import { renderPath } from '../src/render-projection';
 import { layoutText } from '../src/graph-information';
 
 /** The real view refresh, layout worker and binary store over a disk that survives a simulated
@@ -21,38 +22,199 @@ async function boot(disk: MemoryAdapter, resolved: Record<string, Record<string,
   const { default: GraphPlugin } = await import('../src/main');
   const { LocalAdapter } = await import('../src/adapter/local');
   const files = Array.from({ length: N }, (_, i) => new FixtureFile(name(i)));
-  const app: any = { vault: { getMarkdownFiles: () => files, getAbstractFileByPath: (p: string) => files.find(f => f.path === p), on() {}, read() { throw Error('no bodies'); } },
+  const app: any = { workspace: { requestSaveLayout() {} }, vault: { getMarkdownFiles: () => files, getAbstractFileByPath: (p: string) => files.find(f => f.path === p), on() {}, read() { throw Error('no bodies'); } },
     metadataCache: { getFileCache: () => ({ frontmatter: {} }), resolvedLinks: resolved, on() {} } };
   const pipeline = new WorkerPipeline(new Worker(new URL('../src/layout-worker.ts', import.meta.url).href) as unknown as Transport, () => 20000);
-  let boundaries = 0, inner: any, activeView: { presentation: string };
-  // This cache fixture has no renderer. Reject Groups pictures; consume one Notes picture without requesting more.
-  Object.defineProperty(pipeline, 'onPositions', { get: () => ({ positions }: { positions: Float32Array }) => {
-    if (activeView.presentation === 'groups') throw Error('Unexpected Groups preview');
-    pipeline.recycle(positions.buffer as ArrayBuffer); return false;
-  }, set() {} });
+  let boundaries = 0, inner: any, activeView: { presentation: string }, notesRequested = false, viewPositions: any;
+  // This cache fixture has no renderer. Reject pictures before any view requested Notes (a frame already in
+  // flight when a view returns to Groups is legitimate); consume Notes pictures without requesting more,
+  // unless a test opts into the view's own handler with forwardPositions.
+  Object.defineProperty(pipeline, 'onPositions', { get: () => (event: { positions: Float32Array }) => {
+    if (activeView.presentation === 'groups' && !notesRequested) throw Error('Unexpected Groups preview');
+    if ((pipeline as any).forwardPositions) return viewPositions?.(event);
+    pipeline.recycle(event.positions.buffer as ArrayBuffer); return false;
+  }, set: fn => { viewPositions = fn; } });
   Object.defineProperty(pipeline, 'onProgress', { get: () => (step: number, total: number) => { boundaries++; inner?.(step, total); }, set: fn => { inner = fn; } });
   const plugin: any = Object.create(GraphPlugin.prototype);
-  Object.assign(plugin, { settings: initial, propertyRevision: 0, nextRevision: 0, linkProducer: 'p@1', pipeline, generations: Object.create(null), writes: Promise.resolve(),
+  Object.assign(plugin, { settings: initial, propertyRevision: 0, nextRevision: 0, linkProducer: 'p@1', pipeline, generations: Object.create(null), writes: Promise.resolve(), work: Promise.resolve(),
     ingestedHash: '', viewIdentity: 'local', store: new BinaryLayoutStore(disk, { ...initial.cache, directory: 'plugin/cache/local', cachedDeclarations: initial.cachedDeclarations }) });
   plugin.adapter = new LocalAdapter(app, { register() {}, registerEvent() {} } as any, 'p@1', 1, () => {}, true, initial.declaration);
   const { GraphView } = await import('../src/main');
   /** One view open (or one refresh after a change): returns what the user would see. */
-  async function open() {
+  function makeView() {
     const view: any = Object.create(GraphView.prototype); boundaries = 0; disk.reads = []; disk.writes = 0;
     activeView = view;
+    const ensure = view.ensureNotesLayout; view.ensureNotesLayout = (...args: unknown[]) => { notesRequested = true; return ensure.apply(view, args); };
     Object.assign(view, { plugin, app, presentation: 'groups', revision: 0, renderRevision: 0, closed: false, members: new Map(), contributions: new Map(), startupTrace: [], cacheTrace: [],
       contributionPage: { clear() {}, suspend() {}, update() {} }, contentEl: { dataset: {} }, status: new ControlElement(), statusSummary: new ControlElement(),
       gpu: { available: false, reason: 'Not probed' }, showGroups() {} });
-    await view.refreshOnce();
+    return view;
+  }
+  async function open() {
+    const view = makeView(); await view.refreshOnce();
+    // These cache cases explicitly exercise note coordinates even on a miss.
+    await view.ensureNotesLayout();
     expect(view.contentEl.dataset.state).toBe('ready');
     const layout = view.report.layout;
     return { layout, text: layoutText(layout), boundaries, positions: view.positions as Float32Array, verified: view.contentEl.dataset.verified === 'true', cacheError: view.contentEl.dataset.cacheError, trace: view.cacheTrace.at(-1), binReads: disk.reads.filter(p => p.endsWith('.bin')).length };
   }
   /** Settings adoption as GraphPlugin.apply does it, minus the data.json save. */
   const apply = (next: any) => { plugin.settings = next; plugin.adapter.configure(next.declaration); };
-  return { open, apply, plugin, dispose: () => { plugin.adapter.index.dispose(); pipeline.dispose(); } };
+  return { makeView, open, apply, plugin, dispose: () => { plugin.adapter.index.dispose(); pipeline.dispose(); } };
 }
 const manifests = (disk: MemoryAdapter) => [...disk.files.keys()].filter(p => p.endsWith('/manifest.json'));
+
+test('cold Groups answers members and search before any layout; two Notes clicks start one solve', async () => {
+  const disk = new MemoryAdapter(), app = await boot(disk, graph()), view = app.makeView();
+  const rpc = app.plugin.pipeline, request = rpc.request.bind(rpc), calls: string[] = [];
+  rpc.request = (rev: number, r: any) => { calls.push(r.kind); return request(rev, r); };
+  try {
+    await view.refresh(); expect(view.contentEl.dataset.state).toBe('ready'); expect(view.positions).toBeUndefined();
+    const rev = view.activeRevision, group = view.groupGraph.groups.find((g: any) => g.label === 'A');
+    const members: Uint32Array = await rpc.request(rev, { kind: 'members', group: group.id, view: view.viewGeneration });
+    expect(Array.from(members, i => renderPath(view.projection, i)).sort()).toEqual(Array.from({ length: N / 2 }, (_, i) => name(2 * i + 1)).sort());
+    const hits = await rpc.request(rev, { kind: 'search', query: 'n37', visible: view.visible.slice() });
+    expect(renderPath(view.projection, hits[0])).toBe(name(37)); expect(calls).not.toContain('layout'); expect(manifests(disk)).toHaveLength(0);
+    const first = view.showDetails(); expect(view.statusText).toBe('Arranging notes'); await view.showDetails();
+    // Leave the actual worker running; only stub the renderer for the final adoption.
+    view.showDetails = () => {}; await first;
+    expect(calls.filter(k => k === 'layout')).toHaveLength(1); expect(view.positions).toHaveLength(N * 2); expect(view.report.layout.cached).toBe(false);
+    const again = app.makeView(); await again.refresh(); expect(again.getState().presentation).toBe('groups');
+    expect(again.deferredLayout).toBeUndefined(); expect(again.report.layout.cached).toBe(true); expect(again.positions).toEqual(view.positions);
+  } finally { app.dispose(); }
+});
+
+test('Notes selected during ingestion waits for current detail then starts one layout', async () => {
+  const app = await boot(new MemoryAdapter(), graph()), view = app.makeView(), rpc = app.plugin.pipeline;
+  const request = rpc.request.bind(rpc), calls: string[] = [];
+  let entered!: () => void, resume!: () => void;
+  const reading = new Promise<void>(r => { entered = r; }), hold = new Promise<void>(r => { resume = r; });
+  rpc.request = async (rev: number, r: any) => { calls.push(r.kind); if (r.kind === 'rows') { entered(); await hold; } return request(rev, r); };
+  try {
+    const open = view.refresh(); await reading; await view.showDetails(); expect(view.statusText).toBe('Reading notes'); expect(calls).not.toContain('layout');
+    view.showDetails = () => {}; resume(); await open;
+    expect(calls.filter(k => k === 'layout')).toHaveLength(1); expect(calls.indexOf('layout')).toBeGreaterThan(calls.indexOf('detail')); expect(view.positions).toHaveLength(N * 2);
+  } finally { resume(); app.dispose(); }
+});
+
+test('replacing a source before deferred dispatch never starts or persists the old layout', async () => {
+  const disk = new MemoryAdapter(), app = await boot(disk, graph()), view = app.makeView(), rpc = app.plugin.pipeline;
+  const request = rpc.request.bind(rpc), layouts: number[] = [];
+  rpc.request = (rev: number, r: any) => { if (r.kind === 'layout') layouts.push(rev); return request(rev, r); };
+  try {
+    await view.refresh(); const retired = view.activeRevision;
+    const pending = view.showDetails(); app.plugin.propertyRevision++; view.invalidateSource(); await pending;
+    expect(view.positions).toBeUndefined(); expect(layouts).toEqual([]); expect(manifests(disk)).toHaveLength(0);
+    view.showDetails = () => {}; await view.refresh(); expect(layouts).toEqual([view.activeRevision]); expect(view.activeRevision).toBeGreaterThan(retired);
+    expect(view.positions).toHaveLength(N * 2);
+  } finally { app.dispose(); }
+});
+
+/** Keep the worker, save queue and view transitions real; record what reaches the canvas. */
+async function transitions() {
+  const disk = new MemoryAdapter(), app = await boot(disk, graph()), v = app.makeView(), rpc = app.plugin.pipeline;
+  const calls: {rev: number; r: any}[] = [], request = rpc.request.bind(rpc), open = v.showDetails.bind(v);
+  rpc.request = (rev: number, r: any) => { calls.push({rev, r}); return request(rev, r); };
+  Object.assign(v, { panel: new ControlElement(), stage: new ControlElement(),
+    showGroups() { v.panel.empty(); v.renderer?.dispose(); v.renderer = { groups: true, dispose() {} }; v.renderRevision++; v.contentEl.dataset.mode = 'groups'; },
+    showDetails() { if (!v.positions) return open(); v.rememberPresentation('nodes'); v.detailRenderer = v.renderer = { positions: v.positions, dispose() {} }; v.contentEl.dataset.mode = 'nodes'; },
+  });
+  app.plugin.saveData = async () => {};
+  return { ...app, v, disk, calls, solves: () => calls.filter(({r}) => ['layout','recompute'].includes(r.kind)) };
+}
+function latch() { let release!: () => void; const wait = new Promise<void>(r => { release = r; }); return { wait, release }; }
+
+test('cold Apply and immediate Notes commit the displayed coordinates', async () => {
+  const f = await transitions(), {v} = f;
+  try {
+    await v.refresh(); const applying = v.applyLayout({iterations: 40}), opening = v.showDetails();
+    await Promise.all([applying, opening]); await f.plugin.work;
+    expect(v.contentEl.dataset.mode).toBe('nodes'); expect(v.detailRenderer.positions).toBe(v.positions);
+    expect(f.solves()).toHaveLength(1);
+  } finally { f.dispose(); }
+});
+
+test('cold Apply saves without solving and Stop ends the requested pass', async () => {
+  const f = await transitions(), {v} = f;
+  try {
+    await v.refresh(); await v.applyLayout({iterations: 40, layoutEngine: 'graphics'});
+    expect(f.plugin.settings.layout.iterations).toBe(40); expect(f.plugin.settings.layoutEngine).toBe('graphics');
+    expect(f.solves()).toHaveLength(0); expect(manifests(f.disk)).toHaveLength(0);
+    const progress = v.passSteps.bind(v); v.passSteps = (n: number, total: number) => { progress(n,total); if (n === 1) v.layoutStop.click(); };
+    await v.showDetails(); const config = f.calls.filter(({r}) => r.kind === 'configure').at(-1)!.r.config;
+    expect(config.layout.iterations).toBe(40); expect(config.layoutEngine).toBe('graphics');
+    expect(f.solves().map(({r}) => r.kind)).toEqual(['layout']); expect(v.layoutSettled).toBe(false); expect(manifests(f.disk)).toHaveLength(0);
+  } finally { f.dispose(); }
+});
+
+test('cold Notes reacquires worker ownership with the saved physics', async () => {
+  const f = await transitions(), {v} = f;
+  try {
+    await v.refresh(); const old = v.activeRevision; await f.makeView().refresh();
+    await v.applyLayout({iterations: 40}); await v.showDetails();
+    expect(v.activeRevision).toBeGreaterThan(old); expect(f.solves().map(({rev}) => rev)).toEqual([v.activeRevision]);
+    expect(v.detailRenderer.positions).toBe(v.positions); expect(f.plugin.settings.layout.iterations).toBe(40);
+  } finally { f.dispose(); }
+});
+
+for (const preview of [false,true]) test(`Groups restore paints immediately with preview ${preview}`, async () => {
+  const f = await transitions(), {v} = f, base = Object.getPrototypeOf(Object.getPrototypeOf(v)), old = base.setState;
+  const { DetailRenderer } = await import('../src/webgl-renderer'), create = DetailRenderer.create;
+  const reached = latch(), resume = latch(), rpc = f.plugin.pipeline, request = rpc.request.bind(rpc);
+  base.setState = async () => {}; v.gpu = {available:true,reason:'fixture'}; v.renderView = () => ({});
+  DetailRenderer.create = async (_stage, _projection, positions) => ({ positions, streamPositions(next: Float32Array) { const old = this.positions; this.positions = next; return old; }, dispose() {} } as any);
+  rpc.request = async (rev: number, r: any) => {
+    if (r.kind !== 'layout') return request(rev,r);
+    if (preview) { rpc.forwardPositions = true; rpc.onPositions({revision:rev,iteration:2,total:40,positions:new Float32Array(N*2)}); await Promise.resolve(); }
+    reached.release(); await resume.wait; return request(rev,r);
+  };
+  try {
+    await v.refresh(); const solving = v.showDetails(); await reached.wait;
+    const hadPreview = !v.renderer.groups;
+    await v.setState({presentation:'groups'},{}); const immediate = v.renderer, mode = v.contentEl.dataset.mode; resume.release(); await solving;
+    expect(hadPreview).toBe(preview); expect(mode).toBe('groups'); expect(immediate.groups).toBe(true); expect(v.contentEl.dataset.mode).toBe('groups'); expect(v.renderer).toBe(immediate);
+  } finally { resume.release(); DetailRenderer.create = create; if (old) base.setState = old; else delete base.setState; f.dispose(); }
+});
+
+for (const cached of [false,true]) test(`group drill lists then opens scoped Notes with cache ${cached}`, async () => {
+  const f = await transitions(), {v} = f;
+  try {
+    if (cached) await f.open(); await v.refresh(); const group = v.groupGraph.groups.find((g:any) => g.label === 'A');
+    await v.drill(group.id); expect(v.panel.querySelectorAll('.graph-ng-member')).toHaveLength(N/2);
+    expect(v.contentEl.dataset.mode).toBe('groups');
+    const button = v.panel.querySelectorAll('button').find((b:any) => b.textContent === 'Open this group in Notes'); expect(button).toBeDefined();
+    await button.onclick(); expect(v.contentEl.dataset.mode).toBe('nodes');
+    expect(Array.from(v.detailVisible(), (bit,i) => bit ? renderPath(v.projection,i) : '').filter(Boolean).sort()).toEqual(Array.from({length:N/2},(_,i) => name(2*i+1)).sort());
+  } finally { f.dispose(); }
+});
+
+test('promoted cold projection persists its first verified Notes solve', async () => {
+  const f = await transitions(), {v} = f, real = f.plugin.adapter.factsComplete.bind(f.plugin.adapter); let promoted = false;
+  f.plugin.adapter.factsComplete = () => promoted && real();
+  try {
+    await v.refresh(); expect(v.provisional).toBe(true); promoted = true; v.promoteProperties(); await v.showDetails();
+    expect(v.layoutSettled).toBe(true); expect(manifests(f.disk)).toHaveLength(1);
+  } finally { f.dispose(); }
+});
+
+test('saved facts warning survives Notes progress and settlement', async () => {
+  const f = await transitions(), {v} = f; f.plugin.adapter.saveFacts = async () => { f.plugin.adapter.factError = 'fixture'; };
+  try {
+    await v.refresh(); expect(v.status.textContent).toContain('Saved facts unavailable');
+    const solve = v.showDetails(), during = v.status.textContent; await solve;
+    expect(during).toContain('Arranging notes'); expect(during).toContain('Saved facts unavailable'); expect(v.status.textContent).toContain('Saved facts unavailable');
+  } finally { f.dispose(); }
+});
+
+test('early group click keeps Back and fulfills when detail arrives', async () => {
+  const f = await transitions(), {v} = f, rpc = f.plugin.pipeline, request = rpc.request.bind(rpc), reached = latch(), resume = latch();
+  rpc.request = async (rev:number,r:any) => { if (r.kind === 'detail') { reached.release(); await resume.wait; } return request(rev,r); };
+  try {
+    const open = v.refresh(); await reached.wait; const id = v.groupGraph.groups[0].id; await v.drill(id);
+    const pending = v.panel.textContent; resume.release(); await open;
+    expect(pending).toContain('Loading members'); expect(pending).toContain('Back to groups'); expect(v.panel.querySelectorAll('.graph-ng-member')).toHaveLength(N/2);
+  } finally { resume.release(); f.dispose(); }
+});
 
 test('successive provisional layouts reuse live coordinates without persisting an incomplete generation', async () => {
   const disk = new MemoryAdapter(), app = await boot(disk, {});

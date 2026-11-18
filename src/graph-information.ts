@@ -131,7 +131,7 @@ function renderBody(host: HTMLElement, message: string, state: string | undefine
     if (loading?.indexed !== undefined && loading.listed !== undefined) {
       statRow(host, 'files', 'Notes read', num(loading.indexed)); statRow(host, 'loader', 'Notes pending', num(Math.max(0, loading.listed - loading.indexed)));
     }
-    statRow(host, 'timer', 'Layout', r?.progress && (state === 'building' || !r.layout) ? layoutProgress(r.progress) : r?.layout ? layoutText(r.layout) : 'Preparing graph');
+    statRow(host, 'timer', 'Layout', r?.progress && (state === 'building' || !r.layout) ? layoutProgress(r.progress) : r?.layout ? layoutText(r.layout) : state === 'ready' ? 'Starts when requested' : 'Preparing graph');
     if (r) statRow(host, 'spline', 'Relationship notes', r.relationshipNodes ? 'Notes' : 'Lines');
     pendingHelp(host);
     return;
@@ -177,8 +177,8 @@ function renderBody(host: HTMLElement, message: string, state: string | undefine
     }
     panelHelp(display, 'Lines / Notes', 'Lines join endpoints; Notes draw dots. Changing display saves and rebuilds; filters stay active.');
   }
-  const layout = section('layout', 'timer', 'Layout', r.layout?.cached || r.layout?.reused ? 'Reused' : r.layout ? 'Computed' : 'Pending');
-  layout.createDiv({ text: r.layout ? layoutText(r.layout) : r.progress ? layoutProgress(r.progress) : 'Waiting for graph' });
+  const layout = section('layout', 'timer', 'Layout', r.layout?.cached || r.layout?.reused ? 'Reused' : r.layout ? 'Computed' : state === 'ready' ? 'On demand' : 'Pending');
+  layout.createDiv({ text: r.layout ? layoutText(r.layout) : r.progress ? layoutProgress(r.progress) : state === 'ready' ? 'Starts when requested' : 'Waiting for graph' });
 }
 /** Whether the drawn positions came from the saved layout, and how long any computation took. */
 export function layoutText(l: NonNullable<InformationReport['layout']>) {

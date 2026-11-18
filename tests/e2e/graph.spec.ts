@@ -254,9 +254,11 @@ describe('Graph NG synthetic Obsidian path', () => {
       return result;
     });
     await browser.reloadObsidian(); await open();
+    // This is a cache-miss coordinate test, not a Groups-only visit.
+    await $('.graph-ng-toolbar button[aria-label="Notes"]').click();
     await browser.waitUntil(async () => browser.executeObsidian(({ app }) => {
       const view = app.workspace.getLeavesOfType('graph-ng')[0]!.view as any, p = view.projection;
-      if (!p || p.nodeCount !== 601 || view.contentEl.dataset.state !== 'ready') return false;
+      if (!view.positions || !p || p.nodeCount !== 601 || view.contentEl.dataset.state !== 'ready') return false;
       const decoder = new TextDecoder(), expectedPath = 'Warm-Start-Added.md';
       const present = Array.from({ length: p.nodeCount }, (_, i) => decoder.decode(p.paths.bytes.subarray(p.paths.offsets[i], p.paths.offsets[i + 1]))).includes(expectedPath);
       const file = app.vault.getAbstractFileByPath(expectedPath);

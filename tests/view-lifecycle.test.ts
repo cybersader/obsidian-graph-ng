@@ -215,7 +215,7 @@ test('fact groups paint before layout, pending links prevent exact caching, and 
   const source = { get: () => ({ source: 'derived', state: 'current', verified: true, frontmatter: { category: 'Meaningful group' } }) };
   const adapter = new LocalAdapter(app, { register() {}, registerEvent() {} } as any, 'p@1', 1, () => {}, true, declaration, source);
   const settings: any = { ...defaults('p@1'), declaration, persistLayout: true };
-  let encoded = 0, caches = 0, painted = 0, complete = false;
+  let encoded = 0, caches = 0, painted = 0, complete = false, exactSaved = false;
   const pipeline: any = { async request(revision: number, r: any) {
     switch (r.kind) {
       case 'configure': return { declarationHash: 'd', layoutHash: 'l', ingestHash: 'i' };
@@ -225,7 +225,7 @@ test('fact groups paint before layout, pending links prevent exact caching, and 
         const p = buildProjection(rows, declaration), groups = contractGroups(p, new Uint8Array(p.paths.length).fill(1), 0).projection;
         expect(groups.groups[0]!.label).toBe('Meaningful group');
         pipeline.onGroups({ revision, view: 1, projection: groups });
-        return { meta: { key: 'k' }, nodes: 1, edges: 0, unresolved: 0, quarantined: [] };
+        return { exactSaved, meta: { key: 'k' }, nodes: 1, edges: 0, unresolved: 0, quarantined: [] };
       }
       case 'detail': return { projection: {}, visible: new Uint8Array([1]), colors: new Uint32Array(1), explore: { visible: new Uint8Array([1]) }, view: 1 };
       case 'layout': expect(painted).toBeGreaterThan(0); return { positions: new Float32Array(2), milliseconds: 1, cached: false };
@@ -233,7 +233,7 @@ test('fact groups paint before layout, pending links prevent exact caching, and 
     }
   } };
   const plugin: any = { settings, propertySource: source, propertyRevision: 0, sourceIdentity: 'local', nextRevision: 0, linkProducer: 'p@1', adapter, pipeline,
-    async migrate() {}, store: { async latest() {} }, async cache() { caches++; } };
+    async migrate() {}, serialize: (run: () => unknown) => run(), store: { async latest() {} }, async cache() { caches++; } };
   const view: any = Object.create(GraphView.prototype);
   Object.assign(view, { plugin, app, revision: 0, renderRevision: 0, closed: false, members: new Map(), contributions: new Map(), startupTrace: [], cacheTrace: [],
     contributionPage: { clear() {}, suspend() {}, update() {} }, contentEl: { dataset: {} }, status: new ControlElement(), statusSummary: new ControlElement(), gpu: { available: false, reason: 'Not probed' },
@@ -242,14 +242,14 @@ test('fact groups paint before layout, pending links prevent exact caching, and 
     await view.refreshOnce(); expect(painted).toBe(1); expect(complete).toBe(false); expect(caches).toBe(0); expect(encoded).toBe(0);
     expect(view.contentEl.dataset.verified).toBe('false'); expect(view.status.textContent).toContain('Ready, source checks incomplete'); expect(view.statusSummary.textContent).not.toContain('1 note0 edges'); expect(view.statusSummary.textContent).toContain('Ready, source checks incomplete');
     links['a.md'] = {}; adapter.invalidate();
-    await view.refreshOnce(); expect(complete).toBe(true); expect(encoded).toBe(1); expect(caches).toBe(1); expect(view.contentEl.dataset.verified).toBe('true');
+    await view.refreshOnce(); await view.ensureNotesLayout(); expect(complete).toBe(true); expect(encoded).toBe(1); expect(caches).toBe(1); expect(view.contentEl.dataset.verified).toBe('true');
     const request = pipeline.request;
     const stages: string[] = [];
     const descriptor = Object.getOwnPropertyDescriptor(GraphView.prototype, 'statusText')!;
     Object.defineProperty(view, 'statusText', { get: descriptor.get, set(text) { stages.push(text); descriptor.set!.call(view, text); } });
-    encoded = 0; pipeline.request = (rev: number, r: any) => r.kind === 'layout' ? { positions: new Float32Array(2), cached: true, settled: true } : request(rev, r);
+    encoded = 0; exactSaved = true; pipeline.request = (rev: number, r: any) => r.kind === 'layout' ? { positions: new Float32Array(2), cached: true, settled: true } : request(rev, r);
     await view.refreshOnce(); expect(stages).toContain('Reading notes'); expect(stages).toContain('Preparing graph'); expect(stages).toContain('Using saved layout'); expect(stages).not.toContain('Arranging notes');
-    let preparing = ''; view.presentation = 'nodes'; view.showDetails = async () => { preparing = view.statusSummary.textContent + view.status.textContent; };
+    let preparing = ''; exactSaved = false; view.presentation = 'nodes'; view.showDetails = async () => { preparing = view.statusSummary.textContent + view.status.textContent; };
     pipeline.stopLayout = () => {}; encoded = 0; pipeline.request = (rev: number, r: any) => {
       if (r.kind !== 'layout') return request(rev, r);
       pipeline.onEngine({ engine: 'graphics', automatic: false, reason: 'manual' }, 15);
@@ -258,7 +258,7 @@ test('fact groups paint before layout, pending links prevent exact caching, and 
       expect(view.statusText).toBe('Arranging notes'); expect(view.layoutSteps.textContent).toBe('5 of 15 steps');
       control(view.statusSummary, 'Stop layout').click(); return { positions: new Float32Array(2), settled: false };
     };
-    await view.refreshOnce(); expect(encoded).toBe(0); expect(preparing).toContain('Preparing graph'); expect(preparing).not.toContain('Stopping layout'); expect(preparing).not.toContain('5 of 15 steps'); view.presentation = 'groups';
+    await view.refreshOnce(); expect(encoded).toBe(0); expect(preparing).toContain('Preparing graph'); expect(preparing).not.toContain('Stopping layout'); expect(preparing).not.toContain('5 of 15 steps');
     for (const interruption of ['replacement', 'close']) {
       view.closed = false; encoded = 0; caches = 0;
       let release!: (v: any) => void, started!: () => void;
@@ -366,7 +366,7 @@ test('presentation state is per view, validates unknown values and restores only
     const a = make(), b = make(); expect(a.view.getState()).toEqual({ presentation: 'groups' });
     await a.view.setState({ presentation: 'nodes' }, {}); expect(a.shown).toEqual([]);
     expect(a.view.getState()).toEqual({ presentation: 'nodes' }); expect(b.view.getState()).toEqual({ presentation: 'groups' });
-    a.view.positions = new Float32Array(2); a.view.projection = {};
+    a.view.positions = new Float32Array(2); a.view.projection = {}; a.view.groupGraph = {};
     await a.view.setState(a.view.getState(), {}); expect(a.shown).toEqual(['nodes']);
     await a.view.setState({ presentation: 'groups' }, {}); expect(a.shown).toEqual(['nodes', 'groups']);
     for (const state of [null, {}, { presentation: '<untrusted>' }, { presentation: true }]) {
@@ -374,10 +374,10 @@ test('presentation state is per view, validates unknown values and restores only
     }
     expect(inherited).toBe(7);
     // Review 2026-11-16: an already-open leaf re-receiving its own state must not rebuild (camera, selection, drill-in survive).
-    const c = make(); c.view.positions = new Float32Array(2); c.view.projection = {}; c.view.contentEl.dataset.mode = 'nodes';
+    const c = make(); c.view.positions = new Float32Array(2); c.view.projection = {}; c.view.groupGraph = {}; c.view.contentEl.dataset.mode = 'nodes';
     await c.view.setState({ presentation: 'nodes' }, {}); expect(c.shown).toEqual([]);
     c.view.contentEl.dataset.mode = 'groups'; await c.view.setState({ presentation: 'groups' }, {}); expect(c.shown).toEqual([]);
-    c.view.contentEl.dataset.mode = 'nodes-building'; await c.view.setState({ presentation: 'groups' }, {}); expect(c.shown).toEqual([]);
+    c.view.contentEl.dataset.mode = 'nodes-building'; await c.view.setState({ presentation: 'groups' }, {}); expect(c.shown).toEqual(['groups']);
     // A refused admission changes what is shown, never the user's requested presentation.
     const d = make(); d.view.positions = new Float32Array(2); d.view.projection = {}; d.view.visible = new Uint32Array(1);
     d.view.presentation = 'nodes'; d.view.gpu = { available: true, reason: '' }; d.view.admitDetail = () => false; d.view.showGroups = () => { d.view.contentEl.dataset.mode = 'groups'; }; delete d.view.showDetails;
@@ -633,7 +633,7 @@ test('relationship display rebuild settles despite unchanged metadata bursts; re
     }
   } };
   const view: any = new GraphView(null as any, plugin);
-  Object.assign(view, { app, contentEl: { dataset: {} }, status: new ControlElement(), statusSummary: new ControlElement(), showGroups() {} });
+  Object.assign(view, { app, presentation: 'nodes', contentEl: { dataset: {} }, status: new ControlElement(), statusSummary: new ControlElement(), showGroups() {}, showDetails() {} });
   plugin.subscribe(() => running = view.refresh());
   // Flush represents the adapter's 5-second debounce, without wall-clock sleeps.
   let irrelevant = 0;
