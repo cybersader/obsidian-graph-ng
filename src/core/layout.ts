@@ -51,7 +51,7 @@ export function isolateRing(input: LayoutInput) {
  * A visibly still pass gets a short path. Noisy large layouts must sustain the wider band.
  * Full/absolute-threshold runs retain their original stopping semantics and cache identity. */
 export function visualStop(options: LayoutOptions, graphics = false, masked = false) {
-  if (!usesVisualStop(options)) return;
+  if (masked || !usesVisualStop(options)) return;
   const scale = options.force.slowDown / (options.force.adjustSizes ? .3 : 1);
   let quiet = 0, narrow = 0, still = 0, pictures = 0, stable = 0, noisy = false;
   let previous: Float32Array | undefined;
@@ -63,22 +63,19 @@ export function visualStop(options: LayoutOptions, graphics = false, masked = fa
     still = displacement <= .0005 * extent ? still + 1 : 0;
     // A low instantaneous speed can hide coherent drift on a long pass. Compare
     // two actual pictures once that history exists, rather than trusting the dip.
-    // Pinned relaxations use mover-only motion; a sample of fixed notes is not evidence.
-    if (!masked) {
-      noisy ||= displacement > .01 * extent;
-      if (iteration % 2048 === 0) {
-        const n = positions.length / 2, count = Math.min(n, 128);
-        previous ??= new Float32Array(2 * count);
-        let sum = 0;
-        for (let j = 0; j < count; j++) {
-          const at = 2 * Math.floor((j + .5) * n / count);
-          for (let k = 0; k < 2; k++) {
-            const value = positions[at + k]!; sum += (value - previous[2*j+k]!) ** 2; previous[2*j+k] = value;
-          }
+    noisy ||= displacement > .01 * extent;
+    if (iteration % 2048 === 0) {
+      const n = positions.length / 2, count = Math.min(n, 128);
+      previous ??= new Float32Array(2 * count);
+      let sum = 0;
+      for (let j = 0; j < count; j++) {
+        const at = 2 * Math.floor((j + .5) * n / count);
+        for (let k = 0; k < 2; k++) {
+          const value = positions[at + k]!; sum += (value - previous[2*j+k]!) ** 2; previous[2*j+k] = value;
         }
-        stable = pictures > 0 && !noisy && sum * Math.max(1, options.force.slowDown) ** 2 <= count * (.03 * extent) ** 2 ? stable + 1 : 0;
-        pictures++; noisy = false;
       }
+      stable = pictures > 0 && !noisy && sum * Math.max(1, options.force.slowDown) ** 2 <= count * (.03 * extent) ** 2 ? stable + 1 : 0;
+      pictures++; noisy = false;
     }
     return still >= 4 || (pictures >= 4 ? stable >= 4 : quiet >= 72 && narrow >= (graphics ? 8 : 2));
   };
@@ -286,6 +283,7 @@ export async function runLayoutStream(input: LayoutInput, options: LayoutOptions
       await yieldNow(); if (stopped()) break; yieldedAt = performance.now();
     }
   }
-  finished(!stopped() && solver.settled && !solver.looksDone, solver.iteration, !stopped() && solver.looksDone);
+  const visual = solver.looksDone && !(solver.settled && offset + solver.iteration === solver.limit);
+  finished(!stopped() && solver.settled && !visual, solver.iteration, !stopped() && visual);
   return !solver.iteration && input.initial ? input.initial : solver.positions;
 }

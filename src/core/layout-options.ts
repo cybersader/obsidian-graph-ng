@@ -43,12 +43,12 @@ export const DEFAULT_LAYOUT: LayoutOptions = {
     slowDown: 1, barnesHutOptimize: true, barnesHutTheta: 1.2 },
 };
 export const VISUAL_STRIDE = 16;
-export const usesVisualStop = (o: LayoutOptions) => o.finishFully === false && !o.convergenceThreshold && Math.max(o.iterations, o.relaxIterations) >= 4 * VISUAL_STRIDE;
+export const usesVisualStop = (o: LayoutOptions) => o.finishFully === false && !o.convergenceThreshold && o.iterations >= 4 * VISUAL_STRIDE;
 /** Omit disabled forces; the active overlap solver has its own numerical revision. */
 export function layoutIdentity(options: LayoutOptions) {
   const { familyPull, hubGravity, ...force } = options.force;
   const { finishFully, ...numerics } = options;
-  return { ...numerics, ...(usesVisualStop(options) ? { visualStop: 1 } : {}), ...(force.adjustSizes ? { overlap: 2 } : {}), force: { ...force, ...(familyPull ? { familyPull } : {}), ...(hubGravity ? { hubGravity } : {}) } };
+  return { ...numerics, ...(usesVisualStop(options) ? { visualStop: 2 } : {}), ...(force.adjustSizes ? { overlap: 2 } : {}), force: { ...force, ...(familyPull ? { familyPull } : {}), ...(hubGravity ? { hubGravity } : {}) } };
 }
 export function validateLayout(options: LayoutOptions): void {
   for (const key of Object.keys(options)) if (!Object.hasOwn(DEFAULT_LAYOUT, key)) throw new Error(`Unknown layout setting: ${key}`);

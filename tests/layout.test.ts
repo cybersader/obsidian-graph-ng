@@ -419,3 +419,12 @@ test('long passes distinguish a stable picture from cumulative drift despite sim
     expect(fired).toBe(moving ? 0 : 10240);
   }
 });
+
+test('disconnected pinned edge cannot finish a moving neighborhood early', () => {
+  const graph = { count: 4, source: Uint32Array.of(0, 2), target: Uint32Array.of(1, 3), seed: 17,
+    initial: Float32Array.of(-100, 0, 100, 0, 30000, 0, 30001, 0), movable: Uint8Array.of(1, 1, 0, 0) };
+  const o = { ...DEFAULT_LAYOUT, relaxIterations: 500, force: { ...DEFAULT_LAYOUT.force, linLogMode: true, gravity: 0, slowDown: 10 } };
+  const solver = new LayoutSolver(graph, o); while (!solver.done) solver.step();
+  expect(solver.iteration).toBe(500); expect(solver.looksDone).toBe(false);
+  expect(solver.positions).toEqual(runLayout(graph, { ...o, finishFully: true }));
+});

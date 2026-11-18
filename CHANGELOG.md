@@ -4,6 +4,7 @@ The owner-approved bounded download ceilings for this UI pass are **470,000 raw 
 
 ## Unreleased: stop when the layout looks ready
 
+- Visual layout seeds now ignore preview and batch cadence. Incremental passes with pinned notes use physical settlement only. Apply follows shared Finish fully changes unless toggled locally and reports cache warnings separately from the committed layout.
 - Notes now checks for sustained small movements on Processor and Graphics chip. A qualifying pass shows **Layout ready**, can be saved, and leaves **Keep refining** available. **Finish fully** in Layout restores the previous iteration and convergence behavior. Stop, deadlines and an exhausted budget do not grant a visual completion.
 
 ## Unreleased: Groups opens without arranging Notes

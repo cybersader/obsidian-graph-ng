@@ -96,7 +96,7 @@ export class LayoutEngineSession {
               if (step.positions.length !== input.count * 2 || !step.positions.every(Number.isFinite) || !Number.isFinite(step.quiet) || !Number.isFinite(step.movement) || visual && !Number.isFinite(step.extent)) throw Error('Invalid graphics result');
               positions = step.positions; iteration += n;
               settled = step.quiet >= Math.min(total, options.convergenceIterations);
-              looksDone = visual?.(iteration, step.movement, step.extent, positions) ?? false;
+              looksDone = !(settled && iteration === total) && !!visual?.(iteration, step.movement, step.extent, positions);
               if (looksDone || options.convergenceThreshold > 0 && settled) break;
               if (iteration % every === 0 && iteration < total && (!run.wantsFrame || run.wantsFrame(iteration))) {
                 const frame = buffer(positions.length); frame.set(positions); run.emit(frame, iteration, total, status);

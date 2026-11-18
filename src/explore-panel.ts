@@ -601,7 +601,7 @@ export class ExplorePanel {
     if (this.physicsBusy || this.disposed) return;
     const update = () => { if (!this.disposed) { this.host.layoutActivity?.(); if (fromPanel || (!this.root.hidden && this.tool === 'layout')) this.render(); } };
     this.physicsBusy = true;
-    try { update(); await this.host.applyLayout(values); if (fromPanel && this.physicsUndo) this.physicsUndo.applied = true; }
+    try { update(); await this.host.applyLayout(values); if (fromPanel) { this.finishDraft = undefined; if (this.physicsUndo) this.physicsUndo.applied = true; } }
     finally { this.physicsBusy = false; update(); }
   }
   private physics(host: HTMLElement) {
@@ -623,8 +623,8 @@ export class ExplorePanel {
     for (const value of LAYOUT_ENGINES) engine.createEl('option', { value, text: engineNames[value] });
     engine.value = this.layoutEngineDraft; engine.disabled = this.physicsBusy;
     engine.onchange = () => { this.layoutEngineDraft = engine.value as LayoutEnginePreference; summarize(); };
-    const finish = settingRow(host, 'Finish fully', 'graph-ng-toggle', 'Keep arranging until notes stop moving. Slower on large graphs.').querySelector('input')!;
-    finish.checked = this.finishDraft ??= !!this.settings.layout.finishFully; finish.disabled = this.physicsBusy;
+    const finish = settingRow(host, 'Finish fully', 'graph-ng-toggle', 'Skip the visual stop. The step limit still applies.').querySelector('input')!;
+    finish.disabled = this.physicsBusy;
     finish.onchange = () => { this.finishDraft = finish.checked; summarize(); };
     const advice = this.host.layoutAdvice?.();
     if (advice) {
@@ -639,7 +639,8 @@ export class ExplorePanel {
       button.onclick = () => { Object.assign(draft, undo.values); this.physicsUndo = undefined; if (undo.applied) void run(); else this.render(); };
     }
     const summarize = () => {
-      const now = applied(), diff = PHYSICS_FIELDS.filter(([key]) => draft[key] !== now[key]), engineChanged = this.layoutEngineDraft !== (this.settings.layoutEngine ?? 'auto'), finishChanged = this.finishDraft !== !!this.settings.layout.finishFully, count = diff.length + +engineChanged + +finishChanged; changes.empty(); changes.hidden = !count;
+      finish.checked = this.finishDraft ?? !!this.settings.layout.finishFully;
+      const now = applied(), diff = PHYSICS_FIELDS.filter(([key]) => draft[key] !== now[key]), engineChanged = this.layoutEngineDraft !== (this.settings.layoutEngine ?? 'auto'), finishChanged = finish.checked !== !!this.settings.layout.finishFully, count = diff.length + +engineChanged + +finishChanged; changes.empty(); changes.hidden = !count;
       if (count) {
         const details = changes.createEl('details'); disclosure(details, plural(count, 'change')); const body = disclosureBody(details);
         if (finishChanged) statRow(body, 'minus', 'Finish fully', this.finishDraft ? 'off → on' : 'on → off');
@@ -671,7 +672,7 @@ export class ExplorePanel {
       try {
         const values = Object.fromEntries(PHYSICS_FIELDS.map(([key]) => { const v = draft[key]; return [key, typeof v === 'boolean' ? v : v.trim() ? Number(v) : NaN]; })) as unknown as PhysicsValues;
         if (this.layoutEngineDraft !== (this.settings.layoutEngine ?? 'auto')) values.layoutEngine = this.layoutEngineDraft;
-        if (this.finishDraft !== !!this.settings.layout.finishFully) values.finishFully = this.finishDraft;
+        if (this.finishDraft !== undefined) values.finishFully = this.finishDraft;
         physicsSettings(this.settings, values);
         this.physicsError = ''; await this.runLayout(values, true);
       } catch (e) { this.physicsError = `Not applied: ${e instanceof Error ? e.message : String(e)}`; if (!this.disposed) this.render(); }

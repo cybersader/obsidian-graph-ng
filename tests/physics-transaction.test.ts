@@ -182,7 +182,7 @@ test('Apply rejects seed frames, streams on the same renderer and keeps pan/zoom
   const calls: string[] = []; f.plugin.pipeline.stopLayout = () => release.resolve();
   f.plugin.pipeline.recycle = () => recycled++;
   f.plugin.pipeline.request = async (_: number, r: any) => {
-    calls.push(r.kind); if (r.kind === 'adoptLayout') return;
+    calls.push(r.kind); if (r.kind === 'adoptLayout') return { cacheable: false };
     expect(f.view.layoutSteps.textContent).toBe('0 of 100 steps');
     expect(f.renderer.positions).toBe(f.positions); expect(f.renderer.overlay.hidden).toBe(true);
     f.plugin.pipeline.onPositions({ revision: 7, iteration: 0, total: 100, positions: new Float32Array(6) });
@@ -207,7 +207,7 @@ test('Keep refining respects a pan before Explore now without another gesture', 
   r.fitAll = () => { fits++; }; f.plugin.pipeline.stopLayout = () => {};
   let camera: unknown;
   f.plugin.pipeline.request = async (_: number, request: any) => {
-    if (request.kind === 'adoptLayout') return;
+    if (request.kind === 'adoptLayout') return { cacheable: false };
     f.plugin.pipeline.onPositions({ revision: 7, iteration: 20, total: 100, positions: f.next.slice() });
     if (++pass === 1) { r.controls()[compiled('panBy')](30, 10); camera = { ...r.camera }; control(f.view[compiled('statusSummary')], 'Explore now').click(); }
     return { positions: f.next.slice(), settled: false };
@@ -236,7 +236,7 @@ test('worker reply retires stopped steps before coordinate preparation', async (
   const f = await fixture(); delete f.view.statusText; f.view.status = new ControlElement(); f.view.contentEl.dataset.state = 'ready';
   f.view.report = { [compiled('provisional')]: true }; f.plugin.pipeline.stopLayout = () => {};
   f.plugin.pipeline.request = async (_: number, req: any) => {
-    if (req.kind === 'adoptLayout') return;
+    if (req.kind === 'adoptLayout') return { cacheable: false };
     f.plugin.pipeline.onPositions({ revision: 7, iteration: 90, total: 100, positions: f.next.slice() });
     control(f.view[compiled('statusSummary')], 'Explore now').click(); return { positions: f.next, settled: false };
   };
@@ -323,7 +323,7 @@ test('settled Apply adopts only committed positions and persists through encode'
     calls.push(request.kind);
     if (request.kind === 'recompute') return { positions: f.next, settled: true };
     expect(f.view.positions).toBe(f.next); expect(f.writes.length).toBe(1);
-    return generation;
+    return request.kind === 'adoptLayout' ? { cacheable: true } : generation;
   };
   f.plugin.cache = async (value: any, current: () => boolean) => { expect(value).toBe(generation); expect(current()).toBe(true); calls.push('cache'); };
   await f.view[compiled('applyLayout')](values);
@@ -2698,3 +2698,33 @@ test('settlement winning a stop race does not leave stopped feedback', async () 
 });
 
 test('bundled performance UI regressions', () => { execFileSync('node', ['tests/performance-ui-regressions.cjs']); });
+
+test('verification-only promotion does not make an incomplete adopted projection cacheable', async () => {
+  const { WorkerPipeline } = await import('../src/pipeline'), { packRows } = await import('../src/core/columns');
+  const f = await fixture(), config = { declaration: f.plugin.settings.declaration, layout: f.plugin.settings.layout, source: 'synthetic/local', groupLevel: 0, streamEveryIterations: 5 };
+  const p = f.plugin.pipeline = new WorkerPipeline(new Worker(new URL('../src/layout-worker.ts', import.meta.url).href) as any, () => 10000);
+  try {
+    await p.request(7, { kind: 'configure', config });
+    await p.request(7, { kind: 'rows', reset: true, columns: packRows(Array.from({ length: 3 }, (_, i) => ({ path: `${i}.md`, properties: {} })), config.declaration) });
+    await p.request(7, { kind: 'project', complete: false }); await p.request(7, { kind: 'layout' });
+    f.plugin.settings.persistLayout = true; f.view[compiled('provisional')] = true; f.view.groupGraph = {};
+    f.plugin.adapter = { [compiled('factsComplete')]: () => true, [compiled('linksResolved')]: true }; f.view[compiled('promoteProperties')]();
+    expect(f.view.contentEl.dataset.verified).toBe('true');
+    const calls: string[] = [], request = p.request.bind(p); p.request = (revision, req) => { calls.push(req.kind); return request(revision, req); };
+    await f.view[compiled('applyLayout')](values);
+    expect(calls).toEqual(['recompute', 'adoptLayout']); expect(f.writes.length).toBe(1);
+    expect(await request(7, { kind: 'encode' }).catch(String)).toContain('Projection incomplete');
+  } finally { p.dispose(); }
+});
+
+for (const failure of ['adoptLayout', 'encode', 'cache']) test(`post-commit ${failure} error is a cache warning`, async () => {
+  const f = await fixture(); f.view[compiled('provisional')] = false; f.plugin.settings.persistLayout = true; f.plugin.adapter = { [compiled('linksResolved')]: true };
+  f.plugin.pipeline.request = async (_: number, req: any) => {
+    if (req.kind === 'recompute') return { positions: f.next, settled: true };
+    if (req.kind === failure) throw Error('cache unavailable');
+    return { cacheable: true };
+  };
+  f.plugin.cache = async () => { throw Error('cache unavailable'); };
+  await f.view[compiled('applyLayout')](values); expect(f.writes.length).toBe(1); expect(f.view.positions).toBe(f.next);
+  expect(f.view.contentEl.dataset.cacheError).toContain('cache unavailable'); expect(f.view.statusText).not.toContain('failed');
+});

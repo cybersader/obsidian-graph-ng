@@ -625,3 +625,20 @@ test('visual pass adopts, saves and reopens ready to refine; full and legacy gen
     expect(await solve()).toMatchObject({looksDone:false,settled:true,cached:true});
   } finally { p.dispose(); }
 });
+
+test('cold visual layout keeps its stop step and coordinates across preview and batch cadences', async () => {
+  const rows = Array.from({ length: 3 }, (_, i) => ({ path: `${i}.md`, properties: {}, links: { 'fixture@1': i < 2 ? [`${i+1}.md`] : [] } }));
+  async function cold(streamEveryIterations: number, batchIterations: number) {
+    const p = pipeline(), options = { ...DEFAULT_LAYOUT, iterations: 2000, batchIterations };
+    try {
+      await p.request(1, { kind: 'configure', config: { ...config, layout: options, streamEveryIterations } });
+      await p.request(1, { kind: 'rows', reset: true, columns: packRows(rows, declaration) }); await p.request(1, { kind: 'project' });
+      let last = 0; p.onProgress = step => { last = step; };
+      const result = await p.request<LayoutResult>(1, { kind: 'layout', preview: { from: 1, wanted: false } });
+      // No progress event on the terminal step. Each cadence is shorter than the visual stride.
+      return { stop: result.looksDone ? (Math.floor(last / 16) + 1) * 16 : options.iterations, positions: result.positions };
+    } finally { p.dispose(); }
+  }
+  const baseline = await cold(5, 5); expect(baseline.stop).toBeLessThan(2000);
+  expect(await cold(13, 5)).toEqual(baseline); expect(await cold(5, 7)).toEqual(baseline);
+});

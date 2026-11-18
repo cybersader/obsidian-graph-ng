@@ -243,3 +243,35 @@ test('Graphics visual stop uses real numerical steps across readback and preview
     expect(result.looksDone).toBe(!finishFully); expect(result.settled).toBe(false);
   }
 });
+
+test('the documented stop step repeats within each engine, not necessarily between engines', async () => {
+  const { visualStop } = await import('../src/core/layout');
+  const { readFileSync } = await import('node:fs');
+  // Replay one seeded picture and the same reduction trace through both engine policies.
+  const replay = (graphics: boolean) => {
+    const solver = new LayoutSolver(input(), options()), check = visualStop({ ...options(), iterations: 2000 }, graphics)!;
+    for (let step = 16; step <= 2000; step += 16) if (check(step, step <= 1120 ? .003 : .0021, 1, solver.positions)) return step;
+  };
+  for (const graphics of [false, true]) expect([replay(graphics), replay(graphics)]).toEqual(Array(2).fill(graphics ? 1248 : 1152));
+  // Run the session twice from the same numerical seed. The Graphics transport is synthetic;
+  // its numerical fixture must not impose the Processor visual policy on the Graphics observer.
+  const graph = { ...input(2), source: Uint32Array.of(0), target: Uint32Array.of(1) }, o = { ...options(), iterations: 4000 };
+  const session = new LayoutEngineSession({ adapter: async () => adapter, graphics: async () => fakeGraphics(graph, { ...o, finishFully: true }) });
+  for (const engine of ['processor', 'graphics'] as const) {
+    const solve = async () => {
+      let last = 0;
+      const result = await session.run(graph, o, { ...run(engine), every: 1, wantsFrame: step => { last = step; return false; } });
+      expect(result.engineStatus.engine).toBe(engine); expect(result.looksDone).toBe(true);
+      return { step: last + 1, positions: result.positions };
+    };
+    expect(await solve()).toEqual(await solve());
+  }
+  expect(readFileSync(new URL('../docs/decisions/ADR-0010-layout-engine.md', import.meta.url), 'utf8')).toContain('Stop steps can differ between engines.');
+});
+
+for (const engine of ['processor', 'graphics'] as const) test(`physical settlement wins a visual stop at the cap on ${engine}`, async () => {
+  const graph = { ...input(2), initial: new Float32Array(4) }, o = { ...options(), iterations: 64, force: { ...DEFAULT_LAYOUT.force, gravity: 0 } };
+  const session = new LayoutEngineSession({ adapter: async () => adapter, graphics: async () => fakeGraphics(graph, o) });
+  const result = await session.run(graph, o, run(engine));
+  expect(result.engineStatus.engine).toBe(engine); expect(result).toMatchObject({ settled: true, looksDone: false });
+});

@@ -1,4 +1,4 @@
-import { layoutIdentity, validateLayout } from './core/layout-options';
+import { layoutIdentity, usesVisualStop, validateLayout } from './core/layout-options';
 import { probeGpu } from './gpu-probe';
 import { renderProjection } from './render-projection';
 import { runLayout, isolateRing, type LayoutInput } from './core/layout';
@@ -174,7 +174,7 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       // Resolve the engine once: an omitted override inherits the configured engine
       // for solve, adoption and the saved-layout key alike.
       const layoutEngine = r.layoutEngine ?? config.layoutEngine, engineChoices = r.engineChoices ?? config.engineChoices;
-      const next = await solve({ count: projection.paths.length, source: projection.source, target: projection.target, offsets: projection.offsets, targets: projection.targets, up: projection.up, seed: Number.parseInt(meta.key.slice(0, 8), 16), initial: r.initial ?? positions.slice() }, r.options, revision, control.cancelled, layoutEngine, engineChoices);
+      const next = await solve({ count: projection.paths.length, source: projection.source, target: projection.target, offsets: projection.offsets, targets: projection.targets, up: projection.up, seed: 0, initial: r.initial ?? positions.slice() }, r.options, revision, control.cancelled, layoutEngine, engineChoices);
       preparedLayout = { ...next, options: r.options, revision, layoutEngine, engineChoices };
       return { ...next, positions: next.positions.slice(), milliseconds: performance.now() - start, cached: false };
     }
@@ -192,11 +192,12 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       const generation = { meta, identities: projection.identities, positions, edgeKeys: hashes };
       if (complete && cacheable) { saved = { ...generation, groups: cacheSummary() }; interim = undefined; }
       else { saved = undefined; interim = generation; }
-      return meta;
+      return { ...meta, cacheable: complete && cacheable };
     }
     case 'layout': {
       if (revision !== projectionRevision) throw new Error('Projection generation changed');
-      const start = performance.now(), seed = Number.parseInt(meta.key.slice(0, 8), 16);
+      // Visual layouts use options.seed alone. Full-policy generations keep their historical XOR salt.
+      const start = performance.now(), seed = usesVisualStop(config.layout) ? 0 : Number.parseInt(meta.key.slice(0, 8), 16);
       let engineStatus: EngineStatus | undefined;
       // Continue the latest live computation; unchanged saved borrowing creates no interim.
       const prior = interim ?? saved, fromSaved = !!prior && prior === saved, stored = fromSaved ? prior.meta.key : undefined;

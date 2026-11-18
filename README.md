@@ -298,7 +298,7 @@ The generated [`examples/default-settings.json`](examples/default-settings.json)
 | --- | --- |
 | Event debounce / worker processing deadline / lifetime restarts | 5,000 / 120,000 ms / 2 |
 | Full / incremental FA2 iterations | 100 / 30 |
-| Layout seed / initial radius | 1 / 100; host derives effective seed from generation hash |
+| Layout seed / initial radius | 1 / 100; visual passes use the configured seed; the historical full policy also mixes in the generation hash |
 | Barnes–Hut / theta / maximum tree depth | true / 1.2 / 32 |
 | Layout worker-task iteration budget / stream cadence | 5 / 5 iterations |
 | Convergence RMS threshold / consecutive quiet iterations | 0 (absolute early exit disabled; visual completion and relative settlement checked) / 3, capped at the step budget |
@@ -666,7 +666,7 @@ Cold positions use a seeded disc with radius proportional to the square root of 
 
 The graph shows the current stage: **Reading notes**, **Preparing graph**, **Arranging notes**, or **Using saved layout** when it reuses saved positions. During a solve, the step count and ring describe only this pass, not time remaining. **Stop layout** is keyboard reachable from the start of the pass. Once a progressed Notes frame is visible, the same control becomes **Explore now**. It finishes with the last fully integrated positions, which can be newer than the preview. Labels and picking wait for adoption; a camera you moved stays put. **Keep refining** beside the graph starts another pass from the retained positions without changing settings or taking back a camera you moved. Stopped positions are not written to the settled cache.
 
-By default, sustained small movements can finish a pass early. **Layout ready** can be saved when verified and still offers **Keep refining**. **Finish fully** restores the previous stopping policy without changing the iteration cap.
+By default, sustained small movements can finish an unpinned pass early. The same seed and inputs repeat the stop step on the same engine and device; Processor and Graphics chip may stop at different steps. **Layout ready** can be saved when verified and still offers **Keep refining**. **Finish fully** restores the previous stopping policy without changing the iteration cap.
 
 A run that exhausts its budget without sufficiently quiet movement says **Layout not settled** and offers **Keep refining**. Its coordinates remain usable in memory, but do not become a saved completed generation. Refinement starts from the committed displayed positions; after a successful settings/coordinate transaction the worker adopts them, and verified completed results may persist. Hydration continues the latest live coordinates without pinning unfinished notes. Settlement is a movement criterion, not proof of meaningful clusters.
 

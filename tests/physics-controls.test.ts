@@ -283,3 +283,18 @@ test('Finish fully is a draft, defaults off, survives presets and applies explic
     expect(() => physicsSettings(f.settings, { finishFully: 'yes' as any })).toThrow();
   } finally { f.panel.dispose(); }
 });
+
+test('untouched Finish fully follows shared changes before and after a local Apply', async () => {
+  const f = fixture(), toggle = () => byLabel(f, 'Finish fully'), apply = () => (control(f.panel.body, 'Apply layout') as any).onclick();
+  try {
+    f.settings.layout.finishFully = true; input(f, 0, '8'); expect(toggle().checked).toBe(true); await apply(); expect(f.settings.layout.finishFully).toBe(true);
+    expect(toggle().checked).toBe(true); toggle().checked = false; toggle().onchange(); await apply(); expect(f.settings.layout.finishFully).toBe(false);
+    f.settings.layout.finishFully = true; f.panel.render(); expect(toggle().checked).toBe(true);
+  } finally { f.panel.dispose(); }
+});
+
+test('Finish fully help names the step limit', () => {
+  const f = fixture();
+  try { expect(f.panel.body.textContent).toContain('Skip the visual stop. The step limit still applies.'); }
+  finally { f.panel.dispose(); }
+});

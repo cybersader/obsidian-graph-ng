@@ -1060,7 +1060,7 @@ export class GraphView extends ItemView {
     const revision = this.activeRevision, projection = this.projection, old = this.detailRenderer;
     const current = generationCurrent(() => [this.closed, this.activeRevision, this.projection, this.positions, this.plugin.settings.layout, canonical(this.plugin.settings.layout), this.plugin.settings.layoutEngine, this.renderRevision, this.detailRenderer, this.detailScope, this.visible, this.explored]);
     await this.plugin.serialize(async () => {
-      let token: CoordinateToken | undefined, finish: ((committed: boolean) => void) | undefined, committed = false, working = false, completed = false, painted = false, streamError: unknown;
+      let token: CoordinateToken | undefined, finish: ((committed: boolean) => void) | undefined, committed = false, working = false, painted = false, streamError: unknown;
       const stopped = this.layoutStopped, previousProgress = this.plugin.pipeline.onProgress, previousStream = this.plugin.pipeline.onPositions, previousEngine = this.plugin.pipeline.onEngine;
       const ready = () => current() && (!token || token.current());
       try {
@@ -1090,18 +1090,18 @@ export class GraphView extends ItemView {
         });
         // The worker adopts only after settings and visible coordinates commit. A failed
         // derived-cache write must not roll back the already committed renderer.
-        if (result.settled !== undefined) {
-          await this.plugin.pipeline.request(revision, { kind: 'adoptLayout' });
-          if ((result.settled || result.looksDone) && this.plugin.settings.persistLayout && !this.provisional && (!this.plugin.settings.declaration.edges.some(e => e.kind === 'producer') || this.plugin.adapter.linksResolved)) {
+        if (result.settled !== undefined) try {
+          const adoption = await this.plugin.pipeline.request<{ cacheable: boolean }>(revision, { kind: 'adoptLayout' });
+          if (adoption.cacheable && this.plugin.settings.persistLayout && !this.provisional && (!this.plugin.settings.declaration.edges.some(e => e.kind === 'producer') || this.plugin.adapter.linksResolved)) {
             const generation = await this.plugin.pipeline.request<BinaryGeneration>(revision, { kind: 'encode' });
-            this.contentEl.dataset.cacheError = await this.plugin.cache(generation, () => !this.closed && this.activeRevision === revision && this.positions === result.positions).then(() => '', String);
+            await this.plugin.cache(generation, () => !this.closed && this.activeRevision === revision && this.positions === result.positions);
+            this.contentEl.dataset.cacheError = '';
           }
-        }
-        completed = true;
+        } catch (error) { this.contentEl.dataset.cacheError = String(error); }
       } finally {
         if (!committed) this.layoutStopped = stopped; this.layoutControl(false); this.plugin.pipeline.onProgress = previousProgress; this.plugin.pipeline.onPositions = previousStream; this.plugin.pipeline.onEngine = previousEngine; token?.discard();
         try { finish?.(committed); }
-        finally { if (working) { this.layoutWorking = false; this.statusText = !completed ? LAYOUT_FAILED : this.provisional ? pendingText(this.report) : this.idleLayoutText; } }
+        finally { if (working) { this.layoutWorking = false; this.statusText = !committed ? LAYOUT_FAILED : this.provisional ? pendingText(this.report) : this.idleLayoutText; } }
       }
     });
   }
