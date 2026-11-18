@@ -153,6 +153,7 @@ export default class GraphPlugin extends Plugin {
     // room-aware aggregate load fans out internally; never call it on that API.
     const key = Symbol.for('graph-ng.property-loads'), queue = (host as unknown as Record<symbol, WorkQueue>)[key] ??= { work: Promise.resolve() };
     let waiting: Promise<void> | undefined, finish: (() => void) | undefined, latest = 0;
+    let drainingSource: PropertySource | undefined;
     let queued: WorkQueue['next'], flight: { controller: AbortController; mounted: () => boolean } | undefined;
     const unlink = () => { if (queue.next === queued) queue.next = undefined; queued = undefined; };
     const superseded = (source?: PropertySource) => {
@@ -181,23 +182,42 @@ export default class GraphPlugin extends Plugin {
         queued = undefined;
         const current = () => active && source === this.propertySource;
         let message = '';
+        const physical = async (mounted: () => boolean, load: (signal: AbortSignal) => Promise<unknown>) => {
+          const controller = new AbortController(), { signal } = controller;
+          flight = { controller, mounted };
+          try {
+            const locks = host.navigator?.locks;
+            // The host may take its own lock inside load. Hold only our compatibility
+            // lock, through physical settlement, and revalidate after its queue wait.
+            if (locks) await locks.request('graph-ng:openclast-property-load', { signal }, async () => {
+              if (!signal.aborted && current() && request === latest && mounted()) await load(signal);
+            });
+            else await load(signal);
+          } catch (error) { if (!signal.aborted) throw error; }
+          finally { flight = undefined; }
+        };
         try {
           if (!current()) return;
+          drainingSource = source;
           if (source.rooms) {
-            for (const handle of source.rooms()) {
+            let handles = source.rooms(), remaining = 2 * handles.length;
+            const seen = new Map<typeof handles[number], number | undefined>();
+            while (current() && request === latest) {
+              const h = handles.find(h => h.load && (!seen.has(h) || seen.get(h) !== h.generation));
+              if (!h) break;
+              if (!remaining--) { message ||= 'Property loading delayed'; break; }
+              const generation = h.generation, id = h.cacheIdentity;
+              seen.set(h, generation);
+              try { await physical(() => !!source.rooms?.().includes(h) && h.generation === generation && h.cacheIdentity === id, signal => h.load!({ signal })); }
+              catch { message = 'Some room properties could not load'; }
               if (!current() || request !== latest) break;
-              if (!handle.load || !source.rooms().includes(handle)) continue;
-              const generation = handle.generation, id = handle.cacheIdentity, controller = new AbortController();
-              flight = { controller, mounted: () => !!source.rooms?.().includes(handle) && handle.generation === generation && handle.cacheIdentity === id };
-              try { await handle.load({ signal: controller.signal }); } catch { message = 'Some room properties could not load'; }
-              finally { flight = undefined; }
+              handles = source.rooms();
             }
           } else if (!source.roomFor && !('room' in source) && source.load) {
-            const controller = new AbortController(); flight = { controller, mounted: () => true };
-            try { await source.load({ signal: controller.signal }); } finally { flight = undefined; }
+            await physical(() => true, signal => source.load!({ signal }));
           }
         } catch { message = source.rooms ? 'Room inventory unavailable' : 'Property loading unavailable'; }
-        finally { if (request === latest && current()) { finish?.(); status(message); } }
+        finally { drainingSource = undefined; if (request === latest && current()) { finish?.(); status(message); } }
       });
       return caller;
     };
@@ -209,13 +229,19 @@ export default class GraphPlugin extends Plugin {
         finally { verifying = false; if (pending) verify(); }
       }, this.settings.debounceMs);
     };
-    let observed = this.adapter.roomRevision;
+    let observed = this.adapter.roomRevision, binding = this.adapter.loadRevision;
+    const hydrate = (grantChanged = false, moved = false) => {
+      const source = this.propertySource, replaced = binding !== this.adapter.loadRevision;
+      binding = this.adapter.loadRevision;
+      // A live drain already re-enumerates. Do not restart unrelated handles.
+      if (source && (grantChanged || (moved || replaced) && source !== drainingSource)) void this.loadProperties?.();
+    };
     const changed = (event?: Event) => {
       const candidate = (host as typeof globalThis & { openclast?: { propertyFacts?: PropertySource } }).openclast?.propertyFacts;
       const source = typeof candidate?.get === 'function' ? candidate : undefined, previous = this.propertySource;
       const displaced = superseded(source) ? flight!.controller : undefined;
       if (source === previous) this.adapter.syncRooms?.();
-      if (!displaced && observed === this.adapter.roomRevision && source === previous && (event as CustomEvent | undefined)?.detail?.invalidated === false) { pending = true; verify(); return; }
+      if (!displaced && observed === this.adapter.roomRevision && source === previous && (event as CustomEvent | undefined)?.detail?.invalidated === false) { hydrate(); pending = true; verify(); return; }
       clearTimeout(timer); timer = undefined; pending = false;
       if (source !== previous) { if (!source) { ++latest; unlink(); finish?.(); } status(''); }
       this.propertySource = source; this.propertyRevision++;
@@ -223,13 +249,14 @@ export default class GraphPlugin extends Plugin {
       this.adapter.setPropertySource(source, !event, moved); observed = this.adapter.roomRevision; this.ingestedHash = '';
       views(view => view.invalidateSource());
       this.notify();
-      if (source && (source !== previous || moved || displaced)) void this.loadProperties?.();
+      hydrate(source !== previous, moved);
       displaced?.abort();
     };
     const settled = (event: Event) => {
       const source = (host as typeof globalThis & { openclast?: { propertyFacts?: PropertySource } }).openclast?.propertyFacts;
       if (source === this.propertySource) this.adapter.syncRooms();
       if (source !== this.propertySource || observed !== this.adapter.roomRevision || superseded(source)) changed(event);
+      else hydrate();
       const revision = this.propertyRevision;
       void this.adapter.onRoomSettled((event as CustomEvent).detail, this.settings.ingest, signal => this.notify(signal), () => {
         if (active && revision === this.propertyRevision) promote();
