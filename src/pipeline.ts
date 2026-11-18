@@ -16,9 +16,9 @@ export type PipelineRequest =
   | { kind: 'rows'; columns: RowColumns; reset?: boolean; removed?: string[] }
   | { kind: 'load'; generation: BinaryGeneration }
   | { kind: 'migrate'; generation: { key: string; identities: string[]; positions: number[]; producer: string; layoutHash?: string; edgeKeys?: string[] }; declarationHash: string }
-  | { kind: 'project'; complete?: boolean } | { kind: 'detail' } | { kind: 'layout'; quickStart?: boolean; preview?: PreviewDemand } | { kind: 'encode' }
+  | { kind: 'project'; complete?: boolean } | { kind: 'detail' } | { kind: 'layout'; quickStart?: boolean; fullPass?: boolean; preview?: PreviewDemand } | { kind: 'encode' }
   | { kind: 'adoptLayout' }
-  | { kind: 'recompute'; preview?: PreviewDemand; options: LayoutOptions; initial?: Float32Array; layoutEngine?: LayoutEnginePreference; engineChoices?: EngineTiming[] }
+  | { kind: 'recompute'; trial?: boolean; preview?: PreviewDemand; options: LayoutOptions; initial?: Float32Array; layoutEngine?: LayoutEnginePreference; engineChoices?: EngineTiming[] }
   | { kind: 'gpu' }
   | { kind: 'members'; group: string; view: number }
   | { kind: 'expression-count'; expr: string; context: 'filter' | 'group'; budgetMs?: number }
@@ -37,7 +37,7 @@ interface PreviewDemand { from: number; wanted: boolean }
 export interface LayoutResult { budgetDraft?: boolean; engineStatus?: EngineStatus; positions: Float32Array; milliseconds: number; cached: boolean; looksDone?: boolean; settled?: boolean; /** all/some: saved positions, unchanged/short relax; interim variants: memory-only hints. Full runs omit reuse. */ reused?: 'all' | 'some' | 'interim' | 'interim-some'; stored?: string }
 export interface GroupEvent { kind: 'groups'; revision: number; view: number; projection: GroupProjection }
 export interface Transport { postMessage(message: unknown, transfer: Transferable[]): void; terminate(): void; onmessage: ((event: MessageEvent) => void) | null; onerror: ((event: ErrorEvent) => void) | null }
-interface Pending { id: number; revision: number; request: PipelineRequest; resolve(v: any): void; reject(e: Error): void; timer?: ReturnType<typeof setTimeout>; stop?: boolean }
+interface Pending { dispatched?: () => void; id: number; revision: number; request: PipelineRequest; resolve(v: any): void; reject(e: Error): void; timer?: ReturnType<typeof setTimeout>; stop?: boolean }
 export interface Recovery { restart(): Transport; maxRestarts(): number; onRestart?(): void }
 /** A new group projection can arrive before its detail dictionary. Never map new
  * member indices through the previous generation's still-retained dictionary. */
@@ -85,11 +85,11 @@ export class WorkerPipeline {
     };
     worker.onerror = e => { if (worker === this.worker && !this.closed) this.fail(new Error(e.message)); };
   }
-  request<T>(revision: number, request: PipelineRequest): Promise<T> {
+  request<T>(revision: number, request: PipelineRequest, dispatched?: () => void): Promise<T> {
     this.cancelEvaluation(request.kind);
     if (this.closed) return Promise.reject(new Error('Worker pipeline closed'));
     if (evaluation(request)) this.pending = this.pending.filter(p => { if (p.request.kind !== request.kind) return true; p.reject(new Error('Expression superseded')); return false; });
-    return new Promise((resolve, reject) => { this.pending.push({ id: ++this.next, revision, request, resolve, reject }); this.dispatch(); });
+    return new Promise((resolve, reject) => { this.pending.push({ id: ++this.next, revision, request, dispatched, resolve, reject }); this.dispatch(); });
   }
   previewWanted(revision: number, wanted: boolean) {
     for (const p of [this.active, ...this.pending]) if (p?.revision === revision && (p.request.kind === 'layout' || p.request.kind === 'recompute' && !wanted) && p.request.preview) {
@@ -117,7 +117,7 @@ export class WorkerPipeline {
     const p = this.active = this.pending.shift()!;
     // A separate startup/dispatch watchdog covers a worker that never acknowledges.
     p.timer = setTimeout(() => this.fail(new Error('Graph worker did not start processing')), this.timeoutMs());
-    try { this.worker.postMessage({ id: p.id, revision: p.revision, ...p.request, ...(evaluation(p.request) ? { budgetMs: p.request.budgetMs ?? this.timeoutMs() * .9 } : {}) }, transferables(p.request)); }
+    try { this.worker.postMessage({ id: p.id, revision: p.revision, ...p.request, ...(evaluation(p.request) ? { budgetMs: p.request.budgetMs ?? this.timeoutMs() * .9 } : {}) }, transferables(p.request)); p.dispatched?.(); }
     catch (error) { this.fail(error instanceof Error ? error : new Error(String(error))); }
   }
   private rejectAll(error: Error) {

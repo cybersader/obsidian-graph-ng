@@ -22,7 +22,7 @@ const rows = new Map<string, FactRow>();
 let config: PipelineConfig, meta: GenerationMeta, projection: Projection, visible: Uint8Array;
 let contracted: ReturnType<typeof contractGroups>, positions: Float32Array | undefined, saved: BinaryLayout | undefined;
 /** Unverified coordinates are same-declaration, in-memory hints only, never a disk generation. */
-let interim: BinaryLayout | undefined;
+let interim: (BinaryLayout & Pick<LayoutResult, 'budgetDraft' | 'engineStatus'>) | undefined;
 let cacheable = false;
 let preparedLayout: { positions: Float32Array; settled: boolean; looksDone: boolean; options: PipelineConfig['layout']; revision: number; layoutEngine?: LayoutEnginePreference; engineChoices?: EngineTiming[] } | undefined;
 const recycled: ArrayBuffer[] = [];
@@ -81,7 +81,8 @@ function compatible(g: GenerationMeta) {
 /** Exact identity of a persisted generation: compatible, same declaration and group level. */
 const matches = (g: GenerationMeta) => compatible(g) && g.declarationHash === declarationHash && g.groupLevel === config.groupLevel;
 /** Cached paints are the unfiltered declared grouping; a persisted view is reapplied live. */
-function exactSaved() { return !!(complete && !interim && saved && matches(saved.meta) && saved.meta.key === meta.key && saved.identities.length === projection.identities.length && saved.identities.every((id, i) => id === projection.identities[i])); }
+const exactCoordinates = (g: BinaryLayout) => g.meta.key === meta.key && g.identities.length === projection.identities.length && g.identities.every((id, i) => id === projection.identities[i]);
+function exactSaved() { return !!(complete && !interim && saved && matches(saved.meta) && exactCoordinates(saved)); }
 function cacheSummary() { return groupSummary(contractGroups(projection, new Uint8Array(projection.paths.length).fill(1), config.groupLevel).projection); }
 function groupSummary(p: GroupProjection): GroupProjection {
   // Carrier/contribution objects remain worker-owned and are read a page at a time.
@@ -175,7 +176,7 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       // for solve, adoption and the saved-layout key alike.
       const layoutEngine = r.layoutEngine ?? config.layoutEngine, engineChoices = r.engineChoices ?? config.engineChoices;
       const next = await solve({ count: projection.paths.length, source: projection.source, target: projection.target, offsets: projection.offsets, targets: projection.targets, up: projection.up, seed: 0, initial: r.initial ?? positions.slice() }, r.options, revision, control.cancelled, false, layoutEngine, engineChoices);
-      preparedLayout = { ...next, options: r.options, revision, layoutEngine, engineChoices };
+      preparedLayout = r.trial ? undefined : { ...next, options: r.options, revision, layoutEngine, engineChoices };
       return { ...next, positions: next.positions.slice(), milliseconds: performance.now() - start, cached: false };
     }
     case 'adoptLayout': {
@@ -201,6 +202,10 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       let engineStatus: EngineStatus | undefined;
       // Continue the latest live computation; unchanged saved borrowing creates no interim.
       const prior = interim ?? saved, fromSaved = !!prior && prior === saved, stored = fromSaved ? prior.meta.key : undefined;
+      if (!r.fullPass && interim?.budgetDraft && exactCoordinates(interim)) {
+        positions = interim.positions; cacheable = false;
+        return { positions: positions.slice(), milliseconds: performance.now() - start, cached: false, reused: 'interim', settled: false, budgetDraft: true, engineStatus: interim.engineStatus } satisfies LayoutResult;
+      }
       const exact = exactSaved();
       let reused: LayoutResult['reused'] = exact ? fromSaved ? 'all' : 'interim' : undefined;
       let budgetDraft = false, looksDone = exact && prior!.meta.looksDone === true, settled = exact && !looksDone;
@@ -238,7 +243,7 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       // An exact hit already holds this generation; skip re-contracting its group summary.
       cacheable = settled || looksDone; meta = { ...meta, looksDone };
       if (complete && cacheable && (!exact || prior === interim)) saved = { meta, identities: projection.identities, positions, edgeKeys: hashes, groups: cacheSummary() };
-      interim = complete && cacheable || fromSaved && reused === 'all' ? undefined : { meta, identities: projection.identities, positions, edgeKeys: hashes };
+      interim = complete && cacheable || fromSaved && reused === 'all' ? undefined : { budgetDraft, engineStatus, meta, identities: projection.identities, positions, edgeKeys: hashes };
       return { positions: positions.slice(), milliseconds, cached: Boolean(exact && fromSaved), reused, stored, settled, looksDone, budgetDraft, engineStatus };
     }
     case 'encode':

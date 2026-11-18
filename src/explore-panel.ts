@@ -59,8 +59,10 @@ export interface PanelHost {
   camera(): ViewCamera | null;
   restoreCamera(camera: ViewCamera): void;
   persist(): void;
+  persistDevice(): void;
+  canApplyLayout?(trial: boolean): boolean;
   layoutActivity?(): void;
-  applyLayout(values: PhysicsValues, trial?: boolean): Promise<void>;
+  applyLayout(values: PhysicsValues, trial?: boolean, dispatched?: () => void): Promise<void>;
   layoutSettled?(): boolean;
   layoutOutcome?(): string;
   tryGraphics?(): boolean;
@@ -290,6 +292,7 @@ export class ExplorePanel {
     if (this.root.hidden || this.disposed) return;
     const external = Boolean(this.settings.projectionFile);
     this.summary(external, external ? undefined : this.host.result());
+    this.updateLayoutApply();
   }
   render() {
     const external = Boolean(this.settings.projectionFile), r = external ? undefined : this.host.result();
@@ -313,7 +316,7 @@ export class ExplorePanel {
     this.expressionTimers.forEach(clearTimeout); this.expressionTimers.clear();
     for (const [name, section] of this.appearanceSections) { if (section.open) this.appearanceOpen.add(name); else this.appearanceOpen.delete(name); }
     this.appearanceSections.clear();
-    const scroll = this.body.scrollTop; this.body.empty(); this.guards = [];
+    const scroll = this.body.scrollTop; this.applyButton = undefined; this.body.empty(); this.guards = [];
     for (const [id, title] of SECTIONS[this.tool] ?? []) {
       const section = this.body.createEl('section', { cls: `graph-ng-explore-section graph-ng-explore-${id}` });
       // The panel title already names a section that shares it (Appearance, Layout, Saved views).
@@ -603,11 +606,14 @@ export class ExplorePanel {
     if (this.physicsBusy || this.disposed) return;
     const update = () => { if (!this.disposed) { this.host.layoutActivity?.(); if (fromPanel || (!this.root.hidden && this.tool === 'layout')) this.render(); } };
     this.physicsBusy = true;
-    const trial = this.graphicsTrial; this.graphicsTrial = false;
-    try { update(); await this.host.applyLayout(values, trial); if (fromPanel) { this.finishDraft = undefined; if (this.physicsUndo) this.physicsUndo.applied = true; } }
+    const trial = this.graphicsTrial;
+    try { update(); await this.host.applyLayout(values, trial, trial ? () => { this.graphicsTrial = false; } : undefined); if (fromPanel) { this.layoutEngineDraft = undefined; this.finishDraft = undefined; if (this.physicsUndo) this.physicsUndo.applied = true; } }
     finally { this.physicsBusy = false; update(); }
   }
+  private applyButton?: HTMLButtonElement;
+  private updateLayoutApply() { if (this.applyButton) this.applyButton.disabled = this.physicsBusy || this.host.canApplyLayout?.(this.graphicsTrial) === false; }
   updateGraphicsHint() {
+    this.updateLayoutApply();
     const row = this.body.querySelector<HTMLElement>('.graph-ng-graphics-hint');
     if (row) row.hidden = !this.host.tryGraphics?.() || this.graphicsTrial || this.layoutEngineDraft === 'graphics' || this.settings.layoutEngine === 'graphics';
   }
@@ -624,17 +630,17 @@ export class ExplorePanel {
     for (const name of names) select.createEl('option', { text: name, value: name });
     select.value = names.includes(this.physicsUndo?.name ?? '') ? this.physicsUndo!.name : 'Recommended'; select.disabled = this.physicsBusy;
     panelButton(presets, 'Use preset', () => fill(select.value === 'Recommended' ? recommended : presetValues(select.value, recommended), select.value), this.physicsBusy);
-    this.layoutEngineDraft ??= this.settings.layoutEngine ?? 'auto';
+    const savedEngine = () => this.settings.layoutEngine ?? 'auto';
     const engineNames = { auto: 'Auto', processor: 'Processor', graphics: 'Graphics chip' };
     const engine = settingRow(host, 'Layout engine', 'graph-ng-select', 'Auto uses Processor at every graph size. Choose Graphics chip on this device: it can be much faster on large graphs with a capable GPU.').createEl('select', { attr: { 'aria-label': 'Layout engine' } });
     for (const value of LAYOUT_ENGINES) engine.createEl('option', { value, text: engineNames[value] });
-    engine.value = this.graphicsTrial ? 'graphics' : this.layoutEngineDraft; engine.disabled = this.physicsBusy;
+    engine.value = this.graphicsTrial ? 'graphics' : this.layoutEngineDraft ?? savedEngine(); engine.disabled = this.physicsBusy;
     engine.onchange = () => { this.graphicsTrial = false; this.layoutEngineDraft = engine.value as LayoutEnginePreference; this.updateGraphicsHint(); summarize(); };
     const hint = host.createDiv({ cls: 'graph-ng-setting-line graph-ng-graphics-hint' });
-    panelButton(hint, 'Try Graphics chip', () => { this.graphicsTrial = true; this.layoutEngineDraft = this.settings.layoutEngine; engine.value = 'graphics'; this.updateGraphicsHint(); summarize(); });
+    panelButton(hint, 'Try Graphics chip', () => { this.graphicsTrial = true; engine.value = 'graphics'; this.updateGraphicsHint(); summarize(); });
     panelHelp(hint, 'Next pass', 'Can be faster on this device. Positions may differ.'); this.updateGraphicsHint();
     const quick = settingRow(host, 'Quick start', 'graph-ng-toggle', 'Open Notes with a draft after about two seconds of layout work. Refine it when you want.').querySelector('input')!;
-    quick.checked = this.settings.quickStart; quick.onchange = () => { this.settings.quickStart = quick.checked; this.host.persist(); };
+    quick.checked = this.settings.quickStart; quick.onchange = () => { this.settings.quickStart = quick.checked; this.host.persistDevice(); };
     const finish = settingRow(host, 'Finish fully', 'graph-ng-toggle', 'Skip the visual stop. The step limit still applies.').querySelector('input')!;
     finish.disabled = this.physicsBusy;
     finish.onchange = () => { this.finishDraft = finish.checked; summarize(); };
@@ -652,7 +658,7 @@ export class ExplorePanel {
     }
     const summarize = () => {
       finish.checked = this.finishDraft ?? !!this.settings.layout.finishFully;
-      const now = applied(), diff = PHYSICS_FIELDS.filter(([key]) => draft[key] !== now[key]), engineChanged = this.layoutEngineDraft !== (this.settings.layoutEngine ?? 'auto'), finishChanged = finish.checked !== !!this.settings.layout.finishFully, count = diff.length + +engineChanged + +finishChanged; changes.empty(); changes.hidden = !count;
+      const now = applied(), diff = PHYSICS_FIELDS.filter(([key]) => draft[key] !== now[key]), engineChanged = this.layoutEngineDraft && this.layoutEngineDraft !== savedEngine(), finishChanged = finish.checked !== !!this.settings.layout.finishFully, count = diff.length + +!!engineChanged + +finishChanged; changes.empty(); changes.hidden = !count;
       if (count) {
         const details = changes.createEl('details'); disclosure(details, plural(count, 'change')); const body = disclosureBody(details);
         if (finishChanged) statRow(body, 'minus', 'Finish fully', this.finishDraft ? 'off → on' : 'on → off');
@@ -675,15 +681,15 @@ export class ExplorePanel {
     const unsettled = this.host.layoutSettled?.() === false;
     if (unsettled) this.note(host, this.host.layoutOutcome?.() || 'Layout not settled');
     const actions = host.createDiv({ cls: 'graph-ng-layout-actions' });
-    const apply = actions.createEl('button', { cls: 'mod-cta' }); workingText(apply, this.physicsBusy ? 'Recomputing…' : unsettled ? 'Keep refining' : 'Apply layout', this.physicsBusy);
+    const apply = this.applyButton = actions.createEl('button', { cls: 'mod-cta' }); workingText(apply, this.physicsBusy ? 'Recomputing…' : unsettled ? 'Keep refining' : 'Apply layout', this.physicsBusy);
     const changes = actions.createDiv({ cls: 'graph-ng-layout-changes', attr: { 'aria-live': 'polite' } }); summarize();
-    apply.disabled = this.physicsBusy;
+    this.updateLayoutApply();
     apply.onclick = () => run();
     const run = async () => {
       if (this.physicsBusy || this.disposed) return;
       try {
         const values = Object.fromEntries(PHYSICS_FIELDS.map(([key]) => { const v = draft[key]; return [key, typeof v === 'boolean' ? v : v.trim() ? Number(v) : NaN]; })) as unknown as PhysicsValues;
-        if (this.layoutEngineDraft !== (this.settings.layoutEngine ?? 'auto')) values.layoutEngine = this.layoutEngineDraft;
+        if (this.layoutEngineDraft && this.layoutEngineDraft !== savedEngine()) values.layoutEngine = this.layoutEngineDraft;
         if (this.finishDraft !== undefined) values.finishFully = this.finishDraft;
         physicsSettings(this.settings, values);
         this.physicsError = ''; await this.runLayout(values, true);

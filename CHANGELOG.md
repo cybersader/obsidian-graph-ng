@@ -4,7 +4,7 @@ The owner-approved bounded download ceilings for this UI pass are **480,000 raw 
 
 ## Unreleased: layout timing
 
-- **Quick start** is off by default. A cold Notes pass can open as a memory-only draft after about two seconds. **Keep refining** runs only on request.
+- **Quick start** is off by default. A cold Notes pass can open as a memory-only draft after about two seconds. **Keep refining** runs only on request. Unchanged refreshes retain the draft and its status. Toggling Quick start writes only to this device.
 - Long Processor passes can offer **Try Graphics chip** in Layout. It selects Graphics for one requested pass on this device without changing Auto.
 
 ## Unreleased: stop when the layout looks ready

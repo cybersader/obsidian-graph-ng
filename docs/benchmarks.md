@@ -4,9 +4,9 @@ Results belong to an exact invocation, fixture, source revision and hardware cla
 
 ## Layout timing prompts
 
-Quick start is a device preference, not a solver or cache-key change. Its two seconds start at solve entry, not vault open. The next completed Processor step or validated Graphics batch can become a draft; normal completion wins at the same checkpoint. Warm reuse and explicit physics Apply retain their budgets. The synthetic clock checks adoption, refusal to encode a draft, and on-demand refinement; it does not measure native time to interaction.
+Quick start is a device preference, not a solver or cache-key change. Its two seconds start at solve entry, not vault open. The next completed Processor step or validated Graphics batch can become a draft; normal completion wins at the same checkpoint. An unchanged refresh reuses the in-memory draft without solving or encoding it. Explicit physics changes retain their full-pass budget through a failed dispatch or worker result. The synthetic clock checks adoption, refusal to encode a draft, and on-demand refinement; it does not measure native time to interaction.
 
-After eight seconds on Processor, a compatible compute adapter can unlock a one-pass Graphics trial in Layout. The probe does not request a device or change the running solver. No hardware speedup is assumed.
+After eight seconds on Processor, a compatible compute adapter can unlock a one-pass Graphics trial in Layout. The probe does not request a device or change the running solver. Apply waits for usable positions. Dispatch consumes the trial; its coordinates do not replace the ordinary saved layout or the device engine preference. No hardware speedup is assumed.
 
 ## Visual layout completion
 

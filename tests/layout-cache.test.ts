@@ -120,7 +120,7 @@ test('replacing a source before deferred dispatch never starts or persists the o
 async function transitions(quickClock = false) {
   const disk = new MemoryAdapter(), app = await boot(disk, graph(), settings(s => { s.quickStart = quickClock; }), quickClock), v = app.makeView(), rpc = app.plugin.pipeline;
   const calls: {rev: number; r: any}[] = [], request = rpc.request.bind(rpc), open = v.showDetails.bind(v);
-  rpc.request = (rev: number, r: any) => { calls.push({rev, r}); return request(rev, r); };
+  rpc.request = (rev: number, r: any, dispatched?: () => void) => { calls.push({rev, r}); return request(rev, r, dispatched); };
   Object.assign(v, { panel: new ControlElement(), stage: new ControlElement(),
     showGroups() { v.panel.empty(); v.renderer?.dispose(); v.renderer = { groups: true, dispose() {} }; v.renderRevision++; v.contentEl.dataset.mode = 'groups'; },
     showDetails() { if (!v.positions) return open(); v.rememberPresentation('nodes'); v.detailRenderer = v.renderer = { positions: v.positions, dispose() {} }; v.contentEl.dataset.mode = 'nodes'; },
@@ -557,5 +557,58 @@ test('cold Quick start adopts a memory-only draft once, refines on demand and sh
     v.detailRenderer = undefined; await v.applyLayout({}); expect(v.layoutSettled).toBe(true); expect(manifests(f.disk)).toHaveLength(1);
     expect(f.solves().map(({r}) => r.kind)).toEqual(['layout','recompute']);
     f.plugin.settings.quickStart = false; const again = await f.open(); expect(again.layout.cached).toBe(true); expect(again.positions).toEqual(v.positions);
+  } finally { f.dispose(); }
+});
+
+test('review: an unchanged refresh does not silently refine a Quick start draft', async () => {
+  const f = await transitions(true), { v } = f;
+  try {
+    await v.refresh(); await v.showDetails(); expect(v.budgetDraft).toBe(true);
+    const before = v.positions.slice(); v.detailRenderer = undefined; // no GL in this fixture
+    await v.refresh(); // no changed facts, settings, or Keep refining
+    expect({ draft: v.budgetDraft, same: before.every((n: number, i: number) => n === v.positions[i]), manifests: manifests(f.disk).length }).toEqual({draft:true,same:true,manifests:0});
+  } finally { f.dispose(); }
+});
+
+test('review: a Graphics trial does not discard the only reusable Auto cache', async () => {
+  const f = await transitions(), { v } = f;
+  try {
+    await v.refresh(); await v.showDetails(); const prior = manifests(f.disk); expect(prior).toHaveLength(1);
+    v.detailRenderer = undefined; let dispatched = 0;
+    const start = f.calls.length; await v.applyLayout({}, true, () => dispatched++);
+    expect(dispatched).toBe(1); expect(f.calls.slice(start).map(({r}) => r.kind)).toEqual(['recompute']);
+    const retained = f.disk.files.has(prior[0]!); const sameGraph = await f.open();
+    expect({saved:f.plugin.settings.layoutEngine, retained, hit:sameGraph.layout.cached}).toEqual({saved:'auto',retained:true,hit:true});
+  } finally { f.dispose(); }
+});
+
+test('review: retrying a failed explicit physics pass keeps the requested budget', async () => {
+  const f = await transitions(true), { v } = f;
+  try {
+    v.contributionPage.fail = () => {}; await v.refresh(); await v.applyLayout({ iterations:40 });
+    const rpc = f.plugin.pipeline, request = rpc.request.bind(rpc); let once = true; const flags: boolean[] = [];
+    rpc.request = (rev: number, r: any) => { if (r.kind === 'layout') { flags.push(r.quickStart); if (once) { once = false; return Promise.reject(Error('synthetic processing deadline')); } } return request(rev,r); };
+    await v.showDetails(); expect(v.contentEl.dataset.state).toBe('error'); await v.refresh();
+    expect({flags,draft:v.budgetDraft}).toEqual({flags:[false,false],draft:false});
+  } finally { f.dispose(); }
+});
+
+test('review: a provisional Quick start announces that it is a draft', async () => {
+  const f = await transitions(true), { v } = f;
+  try {
+    f.plugin.adapter.factsComplete = () => false; v.stageAnnouncement = new ControlElement();
+    await v.refresh(); await v.showDetails(); expect(v.statusSummary.textContent).toContain('Quick start draft');
+    expect(v.stageAnnouncement.textContent).toContain('Quick start draft');
+    expect(v.stageAnnouncement.textContent).toContain(v.statusText);
+  } finally { f.dispose(); }
+});
+
+test('review: a rejected pass preserves the committed graph engine readout', async () => {
+  const f = await transitions(true), { v } = f;
+  try {
+    await v.refresh(); await v.showDetails(); const prior = v.report.engineStatus; expect(prior.engine).toBe('processor');
+    const rpc = f.plugin.pipeline, request = rpc.request.bind(rpc); rpc.request = (rev: number,r: any) => r.kind === 'recompute' ? Promise.reject(Error('synthetic failure')) : request(rev,r);
+    v.detailRenderer = undefined; await expect(v.applyLayout({},true)).rejects.toThrow('synthetic failure');
+    expect(v.report.engineStatus).toEqual(prior);
   } finally { f.dispose(); }
 });

@@ -13,7 +13,7 @@ function fixture(extra: object = {}) {
   const settings = defaults('links'), root = new ControlElement(); settings.declaration.hierarchy = { parentProperty: 'parentRef' }; let applied = 0;
   const render = ExplorePanel.prototype.render; ExplorePanel.prototype.render = function () {};
   let panel: any;
-  try { panel = new ExplorePanel(root as any, { settings: () => settings, result: () => ({ nodes: 16000, edges: 50000 }), async applyLayout(v: any) { applied++; settings.layout = physicsSettings(settings, v).layout; }, ...extra } as any, emptyView()); }
+  try { panel = new ExplorePanel(root as any, { persistDevice() {}, settings: () => settings, result: () => ({ nodes: 16000, edges: 50000 }), async applyLayout(v: any) { applied++; settings.layout = physicsSettings(settings, v).layout; }, ...extra } as any, emptyView()); }
   finally { ExplorePanel.prototype.render = render; }
   panel.render = () => { panel.body.empty(); panel.physics(panel.body); }; panel.render();
   return { panel, settings, applied: () => applied };
@@ -300,15 +300,70 @@ test('Finish fully help names the step limit', () => {
 });
 
 test('Quick start defaults off and saves without applying physics', () => {
-  let saves = 0; const f = fixture({ persist: () => saves++ });
+  let saves = 0; const f = fixture({ persistDevice: () => saves++ });
   expect(f.settings.quickStart).toBe(false); const quick = byLabel(f, 'Quick start'); quick.checked = true; quick.onchange();
   expect(f.settings.quickStart).toBe(true); expect(saves).toBe(1); expect(f.applied()).toBe(0); f.panel.dispose();
 });
 
 test('Try Graphics chip fills the selector for one explicit pass without changing the saved engine', async () => {
-  const passes: unknown[] = [], f = fixture({ tryGraphics: () => true, applyLayout: async (v: any, trial?: boolean) => passes.push([v.layoutEngine, !!trial]) });
+  const passes: unknown[] = [], f = fixture({ tryGraphics: () => true, applyLayout: async (v: any, trial?: boolean, dispatched?: () => void) => { dispatched?.(); passes.push([v.layoutEngine, !!trial]); } });
   const select = () => f.panel.body.querySelectorAll('select').find((e: any) => e.getAttribute('aria-label') === 'Layout engine');
   control(f.panel.body, 'Try Graphics chip').click(); expect(select().value).toBe('graphics'); expect(passes).toEqual([]); expect(f.settings.layoutEngine).toBe('auto');
   await (control(f.panel.body, 'Apply layout') as any).onclick(); expect(select().value).toBe('auto'); await f.panel.runLayout({});
   expect(passes).toEqual([[undefined, true], [undefined, false]]); expect(f.settings.layoutEngine).toBe('auto'); f.panel.dispose();
+});
+
+test('review: staging a Graphics trial during a slow Processor Apply must not revert the engine preference', async () => {
+  let release!: () => void; const hold = new Promise<void>(r => { release = r; });
+  const sent: any[] = []; const f = fixture({ tryGraphics: () => true });
+  const select = () => f.panel.body.querySelectorAll('select').find((el: any) => el.getAttribute('aria-label') === 'Layout engine');
+  f.panel.host.applyLayout = async (v: any, trial: boolean) => { sent.push([v.layoutEngine, trial]); await hold; if (v.layoutEngine) f.settings.layoutEngine = v.layoutEngine; };
+  try {
+    select().value = 'processor'; select().onchange(); const applying = (control(f.panel.body,'Apply layout') as any).onclick();
+    const hint = control(f.panel.body,'Try Graphics chip'); expect(hint.disabled).toBe(false); expect(hint.parentElement!.hidden).toBe(false); hint.click();
+    release(); await applying; expect(f.settings.layoutEngine).toBe('processor');
+    await (control(f.panel.body,'Apply layout') as any).onclick();
+    expect({sent,saved:f.settings.layoutEngine}).toEqual({sent:[['processor',false],[undefined,true]], saved:'processor'});
+  } finally { release(); f.panel.dispose(); }
+});
+
+test('review: accepting the hint during initial Notes layout does not consume a trial that never ran', async () => {
+  const f = fixture({tryGraphics: () => true});
+  // This is the real initial-view guard: no deferred layout, and no adopted positions until its first reply.
+  const v: any = Object.create(GraphView.prototype); f.panel.host.applyLayout = (values: any, trial: boolean) => v.applyLayout(values, trial);
+  try {
+    control(f.panel.body,'Try Graphics chip').click(); const apply = control(f.panel.body,'Apply layout');
+    expect(apply.disabled).toBe(false); await (apply as any).onclick(); expect(f.panel.physicsError).toContain('Layout unavailable');
+    let dispatched: boolean | undefined; f.panel.host.applyLayout = async (_: any, trial: boolean) => { dispatched = trial; };
+    await (control(f.panel.body,'Apply layout') as any).onclick(); expect(dispatched).toBe(true);
+  } finally { f.panel.dispose(); }
+});
+
+test('review: toggling only Quick start leaves newer room settings untouched', async () => {
+  const { Plugin } = await import('obsidian');
+  const p: any = new GraphPlugin({} as any, {} as any), base = Plugin.prototype as any, original = base.saveData;
+  const { DevicePerformanceStore } = await import('../src/device-performance');
+  let local = ''; p.deviceStore = new DevicePerformanceStore('a'.repeat(32), 'test', () => ({getItem: () => local, setItem: (_, value) => { local = value; }}));
+  const f = fixture({ persist: () => p.saveSoon(), persistDevice: () => p.saveDevice() }); p.settings = f.settings;
+  let roomRadius = p.settings.groupRadius + 1, writes = 0; const before = roomRadius;
+  base.saveData = async (data: any) => { writes++; roomRadius = data.settings.groupRadius; expect(data.settings.quickStart).toBeUndefined(); };
+  try {
+    const quick = byLabel(f,'Quick start'); quick.checked = true; quick.onchange();
+    // Flush the pending 400ms save using the same production method as the timer.
+    if (p.saveTimer !== undefined) await p.save();
+    expect({writes,roomRadius}).toEqual({writes:0,roomRadius:before});
+    expect(JSON.parse(local).settings.quickStart).toBe(true);
+  } finally { clearTimeout(p.saveTimer); if (original) base.saveData = original; else delete base.saveData; f.panel.dispose(); }
+});
+
+test('a staged trial enables Apply only when Notes can dispatch it', () => {
+  const v: any = Object.create(GraphView.prototype);
+  const f = fixture({ tryGraphics: () => true, canApplyLayout: (trial: boolean) => v.canApplyLayout(trial) });
+  try {
+    const apply = control(f.panel.body, 'Apply layout');
+    control(f.panel.body, 'Try Graphics chip').click(); expect(apply.disabled).toBe(true);
+    Object.assign(v, {positions: new Float32Array(2), projection: {}, detailGeneration: 1, activeRevision: 1, contentEl: new ControlElement(), plugin: {settings: f.settings}});
+    v.contentEl.dataset.mode = 'nodes-building'; f.panel.updateGraphicsHint(); expect(apply.disabled).toBe(true);
+    v.contentEl.dataset.mode = 'nodes'; f.panel.updateGraphicsHint(); expect(apply.disabled).toBe(false);
+  } finally { f.panel.dispose(); }
 });
