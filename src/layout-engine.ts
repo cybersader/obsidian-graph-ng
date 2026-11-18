@@ -1,9 +1,10 @@
 import { LayoutSolver, runLayoutStream, type LayoutInput, type LayoutOptions } from './core/layout';
-import { AUTO_LAYOUT_MIN_NODES, chooseLayoutEngine, engineBucket, engineTimings, type EngineStatus, type EngineTiming, type LayoutEnginePreference } from './layout-engine-policy';
+import { graphicsQuality, chooseLayoutEngine, engineBucket, engineTimings, type EngineStatus, type EngineTiming, type LayoutEnginePreference } from './layout-engine-policy';
 import { adapterSupports, computeRequirements, requestComputeAdapter, WebGpuLayout, type ComputeAdapter, type GraphicsSolver } from './webgpu-layout';
 interface EngineDependencies {
   adapter(): Promise<ComputeAdapter | undefined>;
   graphics(adapter: ComputeAdapter, input: LayoutInput, options: LayoutOptions, signal: AbortSignal): Promise<GraphicsSolver>;
+  quality(bucket: number): boolean;
   now(): number;
   watchdogMs: number;
 }
@@ -13,6 +14,7 @@ export interface EngineRun {
   every: number;
   stopped(): boolean;
   yieldNow(): Promise<void>;
+  buffer?(length: number): Float32Array;
   emit(positions: Float32Array, iteration: number, total: number, status: EngineStatus): void;
   status?(status: EngineStatus): void;
 }
@@ -22,7 +24,7 @@ export class LayoutEngineSession {
   private abort?: AbortController;
   private deps: EngineDependencies;
   constructor(dependencies: Partial<EngineDependencies> = {}) {
-    this.deps = { adapter: requestComputeAdapter, graphics: WebGpuLayout.create, now: () => performance.now(), watchdogMs: 5000, ...dependencies };
+    this.deps = { quality: graphicsQuality, adapter: requestComputeAdapter, graphics: WebGpuLayout.create, now: () => performance.now(), watchdogMs: 5000, ...dependencies };
   }
   stop() { this.abort?.abort(); }
   private async bounded<T>(work: Promise<T>, controller: AbortController): Promise<T> {
@@ -42,65 +44,79 @@ export class LayoutEngineSession {
     const total = input.movable ? options.relaxIterations : options.iterations;
     const controller = this.abort = new AbortController();
     let gpu: GraphicsSolver | undefined, positions = input.initial, iteration = 0, settled = false;
-    const report = (next: EngineStatus) => { status = next; run.status?.(status); };
+    const report = (engine: EngineStatus['engine'], reason: EngineStatus['reason'], evictBucket?: number) => {
+      status = { engine, automatic, reason, evictBucket }; run.status?.(status);
+    };
     const release = () => { gpu?.destroy(); gpu = undefined; };
+    const bucket = engineBucket(input.count), mode = +!!input.movable + 2 * +(options.convergenceThreshold > 0);
+    const { every } = run, batch = options.batchIterations;
+    const nextBatch = (i: number, end: number) => Math.min(options.convergenceThreshold > 0 ? 1 : 4, end - i, every - i % every, batch - i % batch);
+    const buffer = run.buffer ?? ((length: number) => new Float32Array(length));
+    let timing: EngineTiming | undefined;
+    const result = () => ({ positions: positions!, settled: !run.stopped() && settled,
+      engineStatus: timing && !run.stopped() ? { ...status, timing } : status });
     try {
-      if (!Number.isSafeInteger(run.every) || run.every < 1) throw Error('Invalid layout stream cadence');
-      if (!run.stopped() && preference !== 'processor' && (!automatic || input.count >= AUTO_LAYOUT_MIN_NODES)) {
+      if (!Number.isSafeInteger(every) || every < 1) throw Error('Invalid layout stream cadence');
+      const record = automatic && engineTimings(run.remembered).find(r => r.bucket === bucket && r.every === every && r.batch === batch && r.mode === mode);
+      if (automatic && bucket && !this.deps.quality(bucket)) report('processor', 'quality');
+      else if (record && chooseLayoutEngine(record, total) === 'processor') report('processor', 'remembered');
+      else if (!run.stopped() && preference !== 'processor' && (!automatic || bucket)) {
         const requirements = computeRequirements(input, options);
-        if (this.disabled || !requirements) report({ engine: 'processor', automatic, reason: this.disabled ? 'failed' : 'unsupported' });
+        if (this.disabled || !requirements) report('processor', this.disabled ? 'failed' : 'unsupported');
         else try {
           const start = this.deps.now(), adapter = await this.bounded(this.deps.adapter(), controller);
-          if (!adapter || !adapterSupports(adapter, requirements)) report({ engine: 'processor', automatic, reason: adapter ? 'unsupported' : 'unavailable' });
+          if (!adapter || !adapterSupports(adapter, requirements)) report('processor', adapter ? 'unsupported' : 'unavailable', record ? bucket : undefined);
           else {
-            const remembered = automatic && engineTimings(run.remembered).find(r => r.bucket === engineBucket(input.count));
-            if (!remembered || remembered.engine === 'graphics') {
-              const creating = this.deps.graphics(adapter, input, options, controller.signal);
-              creating.then(x => { if (controller.signal.aborted) x.destroy(); }, () => {});
-              gpu = await this.bounded(creating, controller);
-            }
-            if (!automatic) report({ engine: 'graphics', automatic, reason: 'manual' });
-            else if (remembered) report({ engine: remembered.engine, automatic, reason: 'remembered' });
+            const creating = this.deps.graphics(adapter, input, options, controller.signal);
+            creating.then(x => { if (controller.signal.aborted) x.destroy(); }, () => {});
+            gpu = await this.bounded(creating, controller);
+            if (!automatic || record) report('graphics', automatic ? 'remembered' : 'manual');
             else {
-              const setupMs = this.deps.now() - start, cpuStart = this.deps.now();
-              const trial = new LayoutSolver(input, options);
-              while (trial.iteration < 8 && !trial.done && !run.stopped()) { if (!await trial.stepResponsive(run.yieldNow, run.stopped)) break; await run.yieldNow(); }
+              const cpuStart = this.deps.now(), gpuSetup = cpuStart - start;
+              const trial = new LayoutSolver(input, options), cpuReady = this.deps.now();
+              await runLayoutStream(input, options, every, () => {}, run.yieldNow, undefined, undefined, run.stopped, trial, Math.min(8, total));
+              const gpuStart = this.deps.now(), iterations = trial.iteration;
+              for (let i = 0; i < iterations && !run.stopped();) {
+                const n = nextBatch(i, iterations); await this.bounded(gpu.batch(n), controller); i += n; await run.yieldNow();
+              }
               if (!run.stopped()) {
-                const cpuMs = this.deps.now() - cpuStart, gpuStart = this.deps.now();
-                for (let step = 0; step < trial.iteration; step += 4)
-                  await this.bounded(gpu!.batch(Math.min(4, trial.iteration - step)), controller);
-                const timing = chooseLayoutEngine(input.count, total, trial.iteration, cpuMs, this.deps.now() - gpuStart, setupMs);
-                if (timing.engine === 'graphics') gpu!.reset();
-                report({ engine: timing.engine, automatic, reason: 'timing', timing });
+                [timing] = engineTimings([{ bucket, mode, batch, every, iterations, cpuSetup: cpuReady - cpuStart, gpuSetup,
+                  cpuStep: (gpuStart - cpuReady) / iterations, gpuStep: (this.deps.now() - gpuStart) / iterations, measuredAt: Date.now() }]);
+                const engine = timing ? chooseLayoutEngine(timing, total) : 'processor';
+                if (engine === 'graphics') gpu.reset();
+                report(engine, 'timing');
               }
             }
           }
           if (gpu && status.engine === 'graphics') {
             while (iteration < total && !run.stopped()) {
-              const batch = Math.min(options.convergenceThreshold > 0 ? 1 : 4, total - iteration, run.every - iteration % run.every);
-              const step = await this.bounded(gpu.batch(batch), controller);
+              const n = nextBatch(iteration, total), step = await this.bounded(gpu.batch(n), controller);
               if (step.positions.length !== input.count * 2 || !step.positions.every(Number.isFinite) || !Number.isFinite(step.quiet) || !Number.isFinite(step.movement)) throw Error('Invalid graphics result');
-              positions = step.positions; iteration += batch;
+              positions = step.positions; iteration += n;
               settled = step.quiet >= Math.min(total, options.convergenceIterations);
               if (options.convergenceThreshold > 0 && settled) break;
-              if (iteration % run.every === 0 && iteration < total) run.emit(positions, iteration, total, status);
+              if (iteration % every === 0 && iteration < total) {
+                const frame = buffer(positions.length); frame.set(positions); run.emit(frame, iteration, total, status);
+              }
               await run.yieldNow();
             }
-            if (iteration) return { positions: positions!, settled: !run.stopped() && settled, engineStatus: status };
+            if (iteration) return result();
           }
         } catch {
-          if (!run.stopped()) { this.disabled = true; report({ engine: 'processor', automatic, reason: 'failed' }); }
-          else if (iteration) return { positions: positions!, settled: false, engineStatus: status };
+          timing = undefined;
+          if (!run.stopped()) { this.disabled = true; report('processor', 'failed', bucket); }
+          else if (iteration) return result();
         }
       }
       release(); controller.abort();
-      if (status.reason === 'manual' || status.reason === 'small') run.status?.(status);
-      // One Processor scheduler, including cold Stop and positive-threshold streaming.
-      const remaining = total - iteration;
-      positions = await runLayoutStream(iteration ? { ...input, initial: positions } : input,
-        iteration ? { ...options, iterations: remaining, relaxIterations: remaining } : options, run.every,
-        (snapshot, step) => run.emit(snapshot, iteration + step, total, status), run.yieldNow, undefined, s => { settled = s; }, run.stopped);
-      return { positions, settled, engineStatus: status };
+      if (run.stopped()) {
+        if (input.initial instanceof Float32Array && input.initial.length === input.count * 2 && input.initial.every(Number.isFinite)) return { positions: input.initial, settled: false, engineStatus: { ...status, reason: 'unchanged' as const } };
+        report('processor', 'stopped');
+      } else if (status.reason === 'manual' || status.reason === 'small') run.status?.(status);
+      // Remaining work limits execution, not the original required quiet streak. Restart history conservatively.
+      positions = await runLayoutStream(iteration ? { ...input, initial: positions } : input, options, every,
+        (frame, step) => run.emit(frame, iteration + step, total, status), run.yieldNow, buffer, s => { settled = s; }, run.stopped, undefined, total - iteration, iteration);
+      return result();
     } finally { release(); controller.abort(); if (this.abort === controller) this.abort = undefined; }
   }
 }

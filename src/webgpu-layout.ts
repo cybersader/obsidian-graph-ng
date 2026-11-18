@@ -137,7 +137,7 @@ export class WebGpuLayout implements GraphicsSolver {
       const b = up.targets[k]!, coefficient = -o.force.familyPull / Math.sqrt(s.familyDegree![a]! * s.familyDegree![b]!);
       add(a, b, coefficient, 0, 1); add(b, a, coefficient, 0, 1);
     }
-    this.buffer('offsets', offsets.byteLength); this.buffer('neighbours', raw.byteLength);
+    this.buffer('offsets', offsets.byteLength); this.buffer('neighbours', Math.max(16, raw.byteLength));
     this.write('offsets', offsets); this.write('neighbours', new Uint8Array(raw));
     const params = new ArrayBuffer(64), pu = new Uint32Array(params), pf = new Float32Array(params), force = o.force;
     pu[0] = n; pu[1] = cells; pf[2] = force.scalingRatio; pf[3] = force.barnesHutTheta ** 2; pf[4] = maxRadius;

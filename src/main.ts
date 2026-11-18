@@ -71,7 +71,10 @@ export default class GraphPlugin extends Plugin {
     this.deviceStore.save(data.settings, this.performanceLog);
   }
   layoutChoices() { return this.deviceStore?.layoutChoices(this.manifest?.version ?? '') ?? []; }
-  recordLayoutEngine(status?: EngineStatus) { if (status?.timing) this.deviceStore?.rememberLayout(this.manifest?.version ?? '', status.timing); }
+  recordLayoutEngine(status?: EngineStatus, progress = false) {
+    const timing = progress ? undefined : status?.timing;
+    if (timing || status?.evictBucket !== undefined) this.deviceStore?.rememberLayout(this.manifest?.version ?? '', timing, status?.evictBucket);
+  }
   refreshPerformance() { for (const leaf of this.app.workspace.getLeavesOfType(VIEW)) (leaf.view as GraphView).performanceChanged(); }
   recordPerformance(sample: Partial<PerformanceRecord>) {
     try {
@@ -624,7 +627,7 @@ export class GraphView extends ItemView {
         this.detailFallback ||= `Layout preview unavailable: ${String(error)}. Showing Groups.`;
         this.showGroups(true); this.statusText = this.statusText;
       });
-      this.plugin.pipeline.onEngine = engineStatus => { if (current()) { report.engineStatus = engineStatus; this.plugin.recordLayoutEngine?.(engineStatus); } };
+      this.plugin.pipeline.onEngine = engineStatus => { if (current()) { report.engineStatus = engineStatus; this.plugin.recordLayoutEngine?.(engineStatus, true); } };
       this.plugin.pipeline.onPositions = event => {
         if (event.revision === revision && current()) {
           report.progress = { iteration: event.iteration, total: event.total }; this.progressText(this.buildProgress.text(2, event.iteration / Math.max(1, event.total)));
@@ -644,7 +647,7 @@ export class GraphView extends ItemView {
       this.statusText = this.buildProgress.text(3);
       this.positions = layout.positions; this.layoutSettled = layout.settled !== false; if (this.layoutSettled) this.layoutStopped = false; this.explorePanel?.render();
       this.cacheTrace.push({ expected: result.meta.key, stored: layout.stored, nodes: result.nodes, ...coverage, valid: layout.cached }); if (this.cacheTrace.length > 16) this.cacheTrace.shift();
-      report.engineStatus = layout.engineStatus;
+      report.engineStatus = layout.engineStatus; this.plugin.recordLayoutEngine?.(layout.engineStatus);
       report.layout = { cached: layout.cached, reused: layout.reused, ms: layout.milliseconds, totalMs: performance.now() - start };
       this.buildProgress.text(4); this.contentEl.dataset.state = 'ready'; this.statusText = this.provisional ? pendingText(report) : this.layoutSettled ? '' : 'Layout not settled';
       this.contentEl.dataset.layoutMs = String(layout.milliseconds); this.contentEl.dataset.cached = String(layout.cached);
@@ -886,7 +889,7 @@ export class GraphView extends ItemView {
         const next = physicsSettings(this.plugin.settings, values);
         this.layoutWorking = working = true; this.layoutStopped = false; (this.buildProgress ??= new BuildProgress()).start(); this.progressAt = 0; this.statusText = this.buildProgress.text(2);
         finish = old?.beginLayout();
-        this.plugin.pipeline.onEngine = engineStatus => { if (current() && this.report) this.report.engineStatus = engineStatus; };
+        this.plugin.pipeline.onEngine = engineStatus => { if (current() && this.report) { this.report.engineStatus = engineStatus; this.plugin.recordLayoutEngine?.(engineStatus, true); } };
         this.plugin.pipeline.onPositions = event => {
           if (event.revision !== revision || !current() || streamError) { this.plugin.pipeline.recycle(event.positions.buffer as ArrayBuffer); return; }
           this.progressText(this.buildProgress.text(2, event.iteration / Math.max(1, event.total)));

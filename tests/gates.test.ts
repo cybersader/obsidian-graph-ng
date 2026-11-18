@@ -24,6 +24,25 @@ test('secret/attribution detectors reject synthetic credentials and metadata, no
   expect(lifecycleHooks({ scripts: { test: 'ok', prepare: 'source-build', postinstall: 'blocked' } })).toEqual({ postinstall: 'blocked' });
 });
 
+test('quality tally requires every shape, all cyclic seed pairs and first settlement', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-ng-quality-test-'));
+  const seeds = [17, 18, 29], count = 20000;
+  const run = {count, maxIterations: 20000,
+    layouts: seeds.flatMap(seed => ['cpu','gpu'].map(engine => ({engine: engine+seed, iterations: 7, ms: 12, quality: {finite: true}, settled: true}))),
+    pairs: seeds.map((seed, i) => ({seed, baselineSeed: seeds[(i+1)%3], cpu: {edge: .25, graph: .25, overlap: .75}, gpu: {edge: .3125, graph: .3125, overlap: .6875}}))};
+  const file = (shape: string) => path.join(dir, `quality-${count}-${shape}.json`);
+  const save = (shape: string) => fs.writeFileSync(file(shape), JSON.stringify({kind: 'quality', count, shape, runs: [run]}));
+  const tally = () => JSON.parse(execFileSync('node', [path.resolve(import.meta.dir, '../scripts/layout-engine-quality.mjs'), dir], {encoding: 'utf8'})).buckets[1];
+  try {
+    save('community'); save('scale-free'); expect(tally().admitted).toBe(false);
+    fs.writeFileSync(file('grid'), ''); expect(tally().admitted).toBe(false);
+    save('grid'); expect(tally().admitted).toBe(true); // equality at 1.25 passes for all three metrics
+    run.pairs[2]!.gpu.overlap = .625; save('grid'); expect(tally().admitted).toBe(false);
+    run.pairs[2]!.gpu.overlap = .6875; run.layouts[5]!.settled = false; save('grid'); expect(tally().admitted).toBe(false);
+    run.layouts[5]!.settled = true; run.pairs[2]!.baselineSeed = 29; save('grid'); expect(tally().admitted).toBe(false);
+  } finally { fs.rmSync(dir, {recursive: true, force: true}); }
+});
+
 function fixture(run: (dir: string, git: (...args: string[]) => string, scan: (...args: string[]) => ReturnType<typeof spawnSync>) => void) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-ng-gate-test-'));
   try {

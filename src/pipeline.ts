@@ -7,7 +7,7 @@ import type { RenderProjection } from './render-projection';
 import type { GroupProjection } from './core/group-projection';
 import type { ExploreResult, ExploreView } from './core/explore';
 import type { EngineStatus, EngineTiming, LayoutEnginePreference } from './layout-engine-policy';
-export const LAYOUT_PRODUCER = 'graph-ng-fa2@3-webgpu';
+export const LAYOUT_PRODUCER = 'graph-ng-fa2@4-webgpu';
 export interface PipelineConfig { layoutEngine?: LayoutEnginePreference; engineChoices?: EngineTiming[]; declaration: GraphDeclaration; layout: LayoutOptions; source: string; groupLevel: number; predicate?: Predicate; view?: ExploreView; facetValues?: number; streamEveryIterations: number }
 export type PipelineRequest =
   | { kind: 'external'; bytes: Uint8Array; maxBytes: number; limits: { groups: number; pairs: number; carriers: number } }

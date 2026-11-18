@@ -14,15 +14,11 @@ function fakeGraphics(i: LayoutInput, o = options()): GraphicsSolver & { destroy
   let solver = new LayoutSolver(i, o);
   return { destroyed: false, reset() { solver = new LayoutSolver(i, o); }, async batch(n) { for (let j = 0; j < n; j++) solver.step(); return { positions: solver.positions.slice(), movement: solver.movement, quiet: solver.settled ? 3 : 0 }; }, destroy() { this.destroyed = true; } };
 }
-test('Auto includes setup, requires 1.5x, rejects small/slow/invalid samples and gates quality', () => {
-  expect(chooseLayoutEngine(20000, 100, 4, 40, 4, 10, true).engine).toBe('graphics');
-  expect(chooseLayoutEngine(4999, 100, 4, 40, 4, 100, true).engine).toBe('processor');
-  expect(chooseLayoutEngine(20000, 100, 4, 40, 40, 100, true).engine).toBe('processor');
-  expect(chooseLayoutEngine(20000, 4, 4, 40, 4, 100, true).engine).toBe('processor');
-  expect(chooseLayoutEngine(20000, 100, 4, 40, 4, 100, false).engine).toBe('processor');
-  expect(chooseLayoutEngine(20000, 1000, 4, 40, 4, 100, true).engine).toBe('processor'); // Never amortize away an expensive setup.
-  for (const bad of [NaN, Infinity, -1]) expect(chooseLayoutEngine(20000, 100, 4, bad, 4, 0, true).engine).toBe('processor');
-  expect(engineBucket(5000)).toBe(engineBucket(9999)); expect(engineBucket(10000)).not.toBe(engineBucket(9999));
+const sample = () => ({ bucket: engineBucket(20000), mode: 0, every: 4, batch: 5, iterations: 8, cpuSetup: 4, gpuSetup: 183, cpuStep: 25, gpuStep: 1.5, measuredAt: Date.now() });
+test('Auto projects startup once and per-step work across the actual cold or warm budget', () => {
+  expect(chooseLayoutEngine(sample(), 100)).toBe('graphics');
+  expect(chooseLayoutEngine(sample(), 8)).toBe('processor');
+  expect(chooseLayoutEngine({...sample(), cpuSetup: 0, gpuSetup: 0, cpuStep: 1.49, gpuStep: 1}, 100)).toBe('processor');
 });
 test('capability admission checks every required limit without adapter identity strings', () => {
   const r = computeRequirements(input(20000), options())!;
@@ -37,8 +33,28 @@ test('small Auto and forced Processor never probe WebGPU', async () => {
   expect((await session.run(input(), options(), run())).engineStatus.engine).toBe('processor');
   await session.run(input(5000), options(), run('processor')); expect(probes).toBe(0);
 });
+test('shipping Auto quality exclusions reject unqualified sizes before probing; manual Graphics remains selectable', async () => {
+  let probes = 0;
+  const session = new LayoutEngineSession({adapter: async () => { probes++; return adapter; }, graphics: async (_, i, o) => fakeGraphics(i, o)});
+  const o = {...options(), iterations: 1};
+  for (const count of [5000, 10000, 20000, 49000, 80000]) {
+    const result = await session.run(input(count), o, run());
+    expect(result.engineStatus.reason).toBe('quality');
+    expect(result.engineStatus.engine).toBe('processor');
+  }
+  expect(probes).toBe(0);
+  expect((await session.run(input(20000), o, run('graphics'))).engineStatus.engine).toBe('graphics');
+});
+test('remembered Processor skips even an available adapter', async () => {
+  let probes = 0;
+  const record = {...sample(), bucket: 1, engine: 'processor' as const, processorMs: 100, graphicsMs: 100, setupMs: 0, cpuStep: 1, gpuStep: 100};
+  const session = new LayoutEngineSession({quality: () => true, adapter: async () => { probes++; return adapter; }});
+  const result = await session.run(input(5000), options(), {...run(), remembered: [record]});
+  expect(result.engineStatus.reason).toBe('remembered');
+  expect(probes).toBe(0);
+});
 test('absent WebGPU falls back without changing Processor coordinates', async () => {
-  const i = input(5000), o = options(), session = new LayoutEngineSession({ adapter: async () => undefined });
+  const i = input(5000), o = options(), session = new LayoutEngineSession({ quality: () => true, adapter: async () => undefined });
   const a = await session.run(i, o, run()), b = await session.run(i, o, run('processor'));
   expect(a.engineStatus.reason).toBe('unavailable'); expect(a.positions).toEqual(b.positions);
 });
@@ -52,13 +68,14 @@ test('manual Graphics uses capability, and reports absent graphics in status', a
 });
 test('Auto races real input and remembers fast/slow outcomes with fake timing', async () => {
   for (const slow of [false, true]) {
-    const times = [0, 10, 10, 110, 110, slow ? 310 : 111]; let calls = 0;
+    const times = [0, 10, 12, 112, slow ? 310 : 114]; let calls = 0, probes = 0;
     const i = input(5000), o = options();
-    const session = new LayoutEngineSession({ adapter: async () => adapter, now: () => times.shift() ?? 400, graphics: async (_, received, actual) => { calls++; expect(received).toBe(i); expect(actual).toBe(o); return fakeGraphics(i, o); } });
+    const session = new LayoutEngineSession({ quality: () => true, adapter: async () => { probes++; return adapter; }, now: () => times.shift() ?? 400, graphics: async (_, received, actual) => { calls++; expect(received).toBe(i); expect(actual).toBe(o); return fakeGraphics(i, o); } });
     const result = await session.run(i, o, run());
     expect(result.engineStatus.engine).toBe(slow ? 'processor' : 'graphics'); expect(calls).toBe(1);
     const again = await session.run(i, o, { ...run(), remembered: [result.engineStatus.timing!] });
     expect(again.engineStatus.engine).toBe(result.engineStatus.engine); expect(calls).toBe(slow ? 1 : 2);
+    expect(probes).toBe(slow ? 1 : 2);
     expect(again.positions).toEqual(result.positions);
   }
 });
@@ -106,7 +123,7 @@ test('Stop aborts a blocked GPU operation promptly and destroys buffers', async 
 test('device cache is numeric-only, bucket/version keyed and never enters shared data', () => {
   const data = new Map<string, string>(), access = () => ({ getItem: (k: string) => data.get(k) ?? null, setItem: (k: string, v: string) => { data.set(k, v); } });
   const s = new DevicePerformanceStore('a'.repeat(32), 'graph-ng', access);
-  const timing = { ...chooseLayoutEngine(20000, 100, 4, 40, 4, 10, true), path: 'Synthetic/Note.md', adapter: 'synthetic identifier' };
+  const timing = { ...sample(), path: 'Synthetic/Note.md', adapter: 'synthetic identifier' };
   s.rememberLayout('0.5.2', timing);
   expect(JSON.parse([...data.values()][0]!).flat().every(Number.isFinite)).toBe(true);
   const next = new DevicePerformanceStore('a'.repeat(32), 'graph-ng', access);
@@ -115,7 +132,72 @@ test('device cache is numeric-only, bucket/version keyed and never enters shared
   expect(Object.keys(sharedPerformanceData({ settings: { layoutEngine: 'graphics' } }).settings)).toEqual([]);
   const denied = new DevicePerformanceStore('b'.repeat(32), 'graph-ng', () => { throw Error('denied'); }); denied.rememberLayout('0.5.2', timing);
   expect(denied.layoutChoices('0.5.2')).toHaveLength(1);
-  expect(engineTimings([{ ...timing, setupMs: Infinity }, { ...timing, bucket: 99 }])).toEqual([]);
+  expect(engineTimings([{ ...timing, cpuSetup: Infinity }, { ...timing, bucket: 99 }])).toEqual([]);
+});
+
+test('late graphics loss cannot shrink the original quiet criterion', async () => {
+  const i = input(), o = { ...options(), iterations: 5 }, checkpoint = new Float32Array(i.count * 2);
+  let calls = 0;
+  const session = new LayoutEngineSession({adapter: async () => adapter, graphics: async () => ({reset(){},destroy(){},async batch(n){
+    if (calls++) throw Error('device loss'); expect(n).toBe(4); return { positions: checkpoint, movement: 1, quiet: 0 };
+  }})});
+  const result = await session.run(i, o, run('graphics')); expect(result.engineStatus.reason).toBe('failed'); expect(result.settled).toBe(false);
+});
+test('warm Stop before first readback preserves input; cold Stop identifies Processor', async () => {
+  for (const warm of [true, false]) {
+    const i = input(); if (warm) i.initial = new LayoutSolver(i, options()).positions;
+    let started!: () => void, stop = false; const ready = new Promise<void>(r => started = r);
+    const session = new LayoutEngineSession({adapter: async () => adapter, graphics: async () => ({reset(){},destroy(){},batch(){started(); return new Promise(()=>{});}})});
+    const task = session.run(i, options(), {...run('graphics'), stopped: () => stop}); await ready; stop = true; session.stop();
+    const result = await task; expect(result.settled).toBe(false);
+    if (warm) expect(result.positions).toBe(i.initial!); else expect(result.engineStatus.engine).toBe('processor');
+  }
+});
+test('Processor streams into the transfer pool; detaching frames never detaches solver state', async () => {
+  const i = input(), o = options(); let pooled: Float32Array | undefined, frames = 0;
+  const result = await new LayoutEngineSession().run(i, o, {...run('processor'), buffer: n => pooled = new Float32Array(n), emit(p) {
+    expect(p).toBe(pooled!); frames++; structuredClone(p, {transfer: [p.buffer]});
+  }});
+  expect(frames).toBe(1); expect(result.positions.length).toBe(i.count * 2);
+});
+test('cache rejects old/forged/expired records; real failure evicts across worker and store restart', async () => {
+  const data = new Map<string,string>(), access = () => ({getItem: (k: string) => data.get(k) ?? null, setItem: (k: string,v:string) => {data.set(k,v);}});
+  const store = () => new DevicePerformanceStore('a'.repeat(32),'graph-ng',access), version = '0.5.2';
+  const t = {...sample(), bucket: 1, gpuSetup: 1}; store().rememberLayout(version,t);
+  const key = [...data.keys()][0]!; data.set(key,JSON.stringify([[1,1,0,10000,5000,0]])); expect(store().layoutChoices(version)).toEqual([]);
+  for (const iterations of [0, .5, 9, Infinity]) expect(engineTimings([{...t,iterations}])).toEqual([]);
+  expect(engineTimings([{...t,measuredAt: Date.now()-8*86400000}])).toEqual([]);
+  expect(chooseLayoutEngine(engineTimings([{...t,engine:'graphics',gpuStep:999}])[0]!,100)).toBe('processor');
+  const device = store(); device.rememberLayout(version,t); const session = new LayoutEngineSession({quality: () => true,adapter: async () => adapter,graphics: async () => {throw Error('lost');}});
+  const result = await session.run(input(5000), options(), {...run(),remembered: device.layoutChoices(version),status(s){if(s.evictBucket !== undefined) device.rememberLayout(version,undefined,s.evictBucket);}});
+  expect(result.engineStatus.reason).toBe('failed'); expect(result.engineStatus.timing).toBeUndefined(); expect(store().layoutChoices(version)).toEqual([]);
+});
+test('trial uses production cadence, timing is never published before real success', async () => {
+  const i = input(5000), o = options(), sizes: number[] = [], statuses: unknown[] = []; o.batchIterations = 3;
+  const times = [0,1,2,102,103]; let real = false;
+  const session = new LayoutEngineSession({quality: () => true, now: () => times.shift()!, adapter: async () => adapter, graphics: async () => ({
+    reset(){real=true;},destroy(){},async batch(n){if(real) throw Error('real run failed');sizes.push(n);return {positions:new Float32Array(i.count*2), movement:0,quiet:0};}
+  })});
+  const out = await session.run(i,o,{...run(),status(s){statuses.push(s.timing);}});
+  expect(sizes).toEqual([3,1,2,2]); expect(out.engineStatus.reason).toBe('failed'); expect(out.engineStatus.timing).toBeUndefined(); expect(statuses.every(x=>!x)).toBe(true);
+});
+test('the same stored rates choose differently for short and full budgets', async () => {
+  const i = input(5000), t = {...sample(),bucket:1}, o = options();
+  let probes = 0;
+  const session = new LayoutEngineSession({quality: () => true, adapter: async () => { probes++; return adapter; }, graphics: async () => ({reset(){}, destroy(){}, async batch(){ return {positions:new Float32Array(i.count*2), quiet:0, movement:1}; }})});
+  const short = await session.run(i,o,{...run(),remembered:[t]});
+  expect(short.engineStatus.engine).toBe('processor'); expect(probes).toBe(0);
+  const full = await session.run(i,{...o,iterations:100},{...run(),remembered:[t]});
+  expect(full.engineStatus.engine).toBe('graphics'); expect(probes).toBe(1);
+});
+test('cached rates are scoped to movable class and cadence; quality exclusion wins over timing', async () => {
+  const i = input(5000), o = options(); i.movable = new Uint8Array(i.count); o.relaxIterations=1;
+  const t = {...sample(),bucket:1,cpuStep:1,gpuStep:100}; let probes=0;
+  for (const [quality, reason] of [[true,'unavailable'],[false,'quality']] as const) {
+    const out=await new LayoutEngineSession({quality:()=>quality,adapter:async()=>{probes++;return undefined;}}).run(i,o,{...run(),remembered:[t]});
+    expect(out.engineStatus.reason).toBe(reason);
+  }
+  expect(probes).toBe(1);
 });
 
 test('interruptible tree and force chunks keep exact Processor positions and discard interrupted scratch', async () => {

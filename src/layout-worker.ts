@@ -86,12 +86,13 @@ async function solve(input: LayoutInput, options: PipelineConfig['layout'], revi
   const result = await engines.run(input, options, {
     preference, remembered, every: config.streamEveryIterations, stopped, yieldNow: () => yieldTask(true),
     status: engineStatus => self.postMessage({ kind: 'engine', revision, engineStatus }),
-    emit: (positions, iteration, total) => {
-      const p = takeBuffer(positions.length); p.set(positions); arrange(p);
+    buffer: takeBuffer,
+    emit: (p, iteration, total) => {
+      arrange(p);
       self.postMessage({ kind: 'positions', revision, positions: p, iteration, total }, { transfer: [p.buffer] });
     },
   });
-  arrange(result.positions);
+  if (result.positions !== input.initial) arrange(result.positions);
   return result;
 }
 async function handle(r: PipelineRequest, revision: number, control: EvaluationControl): Promise<unknown> {

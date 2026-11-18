@@ -2,9 +2,23 @@ import { LayoutSolver, DEFAULT_LAYOUT, random } from "../src/core/layout";
 import { LayoutEngineSession } from "../src/layout-engine";
 import { requestComputeAdapter, WebGpuLayout } from "../src/webgpu-layout";
 import { yieldTask } from "../src/core/scheduler";
-function fixture(n) {
+function fixture(n, shape) {
   const source = [], target = [], rng = random(17);
-  for (let i = 0; i < n; i++) {
+  if (shape === 'scale-free') {
+    // Preferential attachment: uniformly sample existing edge endpoints by degree.
+    source.push(0); target.push(1);
+    for (let i = 2; i < n; i++) {
+      const edges = source.length, links = new Set();
+      while (links.size < Math.min(3, i)) links.add((rng() < .5 ? source : target)[Math.floor(rng() * edges)]);
+      for (const j of links) { source.push(i); target.push(j); }
+    }
+  } else if (shape === 'grid') {
+    const width = Math.ceil(Math.sqrt(n));
+    for (let i = 0; i < n; i++) {
+      if (i + 1 < n && (i + 1) % width) { source.push(i); target.push(i + 1); }
+      if (i + width < n) { source.push(i); target.push(i + width); }
+    }
+  } else for (let i = 0; i < n; i++) {
     const base = Math.floor(i / 128) * 128, end = Math.min(n, base + 128);
     for (const j of [base + (i - base + 1) % (end - base), base + Math.floor(rng() * (end - base)), base]) if (i !== j) {
       source.push(i);
@@ -39,8 +53,9 @@ function quality(input, p) {
   const mean = sum / source.length, cv = Math.sqrt(Math.max(0, sq / source.length - mean * mean)) / mean;
   const near = [];
   let ratios = 0, ratioSq = 0, pairs = 0, topologicalHits = 0;
+  const rng = random(719);
   for (let a = 0; a < 32; a++) {
-    const i = Math.floor(a * n / 32), nearest = [];
+    const i = Math.floor(rng() * n), nearest = [];
     for (let j = 0; j < n; j++) {
       if (i === j) continue;
       const d = (p[2 * i] - p[2 * j]) ** 2 + (p[2 * i + 1] - p[2 * j + 1]) ** 2;
@@ -74,7 +89,7 @@ function quality(input, p) {
         }
       }
       for (let q = 0; q < 512; q++) {
-        const j = Math.floor(q * n / 512);
+        const j = Math.floor(rng() * n);
         if (distance[j] > 0) {
           const ratio = Math.hypot(p[2 * i] - p[2 * j], p[2 * i + 1] - p[2 * j + 1]) / distance[j];
           ratios += ratio;
@@ -87,26 +102,40 @@ function quality(input, p) {
   return { edgeStress: 1 - sum * sum / (source.length * sq), graphStress: 1 - ratios * ratios / (pairs * ratioSq), edgeLengthCV: cv, topologicalNeighborPrecision: topologicalHits / 320, near, finite: p.every(Number.isFinite) };
 }
 function compare(a, b) {
-  const rel = (x, y) => Math.abs(y - x) / Math.max(Math.abs(x), 1e-6);
   const nearestOverlap = a.near.reduce((sum, ids, i) => sum + ids.filter((id) => b.near[i].includes(id)).length, 0) / (a.near.length * 10);
-  const edgeStressRelative = rel(a.edgeStress, b.edgeStress), graphStressRelative = rel(a.graphStress, b.graphStress), cvRelative = rel(a.edgeLengthCV, b.edgeLengthCV);
-  return { edgeStressRelative, graphStressRelative, cvRelative, nearestOverlap, topologicalPrecisionDelta: b.topologicalNeighborPrecision - a.topologicalNeighborPrecision, proposedGate: edgeStressRelative <= 0.03 && graphStressRelative <= 0.03 && cvRelative <= 0.03 && nearestOverlap >= 0.95 && b.finite };
+  return {edge: Math.abs(a.edgeStress-b.edgeStress), graph: Math.abs(a.graphStress-b.graphStress), overlap: nearestOverlap};
 }
 const options = (iterations = 100, adjust = true) => ({ ...DEFAULT_LAYOUT, iterations, force: { ...DEFAULT_LAYOUT.force, adjustSizes: adjust } });
 async function benchmark(job) {
-  const input = fixture(job.count), o = options(job.iterations ?? 100, job.adjust ?? true);
+  const input = fixture(job.count, job.shape), o = options(job.iterations ?? 100, job.adjust ?? true);
+  if (job.kind === 'probe') {
+    const small = {count: 4, source: Uint32Array.of(0), target: Uint32Array.of(2), initial: Float32Array.of(0,0,.6,0,1,0,1e6,0), movable: Uint8Array.of(0,1,0,0), seed: 17};
+    const opts = {...DEFAULT_LAYOUT, force: {...DEFAULT_LAYOUT.force, gravity: 0, hubGravity: 0, barnesHutTheta: .01}};
+    const cpu = new LayoutSolver(small,opts); cpu.step();
+    async function one(i) {
+      const gpu = await WebGpuLayout.create(await requestComputeAdapter(),i,opts,new AbortController().signal);
+      try { return (await gpu.batch(1)).positions; } finally { gpu.destroy(); }
+    }
+    const gpuX = (await one(small))[2], cpuX = cpu.positions[2];
+    if (!(gpuX < 0 && Math.abs(gpuX-cpuX)<.001)) throw Error(`Morton collision: ${gpuX} vs ${cpuX}`);
+    const p = await one({...small, source: new Uint32Array(), target: new Uint32Array()});
+    if (!p.every(Number.isFinite)) throw Error('Nonfinite edgeless layout');
+    return {cpuX, gpuX, zeroEdgeCoordinates: [...p]};
+  }
   if (job.kind === "quality") {
-    const adapter = await requestComputeAdapter();
+
     o.iterations = 2e4;
     o.force.strongGravityMode = true;
     o.force.gravity = 0.1;
     o.force.scalingRatio = 10;
-    const result = { count: input.count, available: !!adapter, criterion: "3 consecutive steps: slowdown/damping-compensated RMS movement <= .002 RMS position", maxIterations: o.iterations, layouts: [] };
-    for (const engine of ["cpu17", "cpu18", "gpu17"]) {
+    const result = { count: input.count, criterion: "3 consecutive steps: slowdown/damping-compensated RMS movement <= .002 RMS position", maxIterations: o.iterations, layouts: [] };
+    const seeds = [17, 18, 29];
+    for (const seed of seeds) for (const kind of ['cpu', 'gpu']) {
+      const engine = kind + seed; input.seed = seed;
       const start = performance.now();
       let p, iterations = 0, settled = false, movement = 0;
       if (engine.startsWith("cpu")) {
-        const solver = new LayoutSolver({ ...input, seed: engine === "cpu18" ? 18 : 17 }, o);
+        const solver = new LayoutSolver(input, o);
         while (!solver.done) {
           solver.step();
           if (solver.settled) break;
@@ -117,7 +146,7 @@ async function benchmark(job) {
         settled = solver.settled;
         movement = solver.movement;
       } else {
-        if (!adapter) break;
+        const adapter = await requestComputeAdapter(); if (!adapter) throw Error('GPU unavailable');
         const gpu = await WebGpuLayout.create(adapter, input, o, new AbortController().signal);
         try {
           while (iterations < o.iterations) {
@@ -136,13 +165,16 @@ async function benchmark(job) {
       }
       const ms = performance.now() - start;
       const q = quality(input, p);
-      result.layouts.push({ engine, iterations, settled, movement, ms, quality: q });
-      console.log(JSON.stringify({ count: input.count, engine, iterations, settled, ms, stress: q.edgeStress }));
+      const row = { engine, iterations, settled, movement, ms, quality: q };
+      result.layouts.push(row);
+      // Keep the synthetic neighbour samples in stderr until all cyclic pairs can
+      // be scored. A partial journal alone never admits a class.
+      self.postMessage({ progress: row });
     }
-    if (result.layouts.length === 3) {
-      result.seedBaseline = compare(result.layouts[0].quality, result.layouts[1].quality);
-      result.graphicsDifference = compare(result.layouts[0].quality, result.layouts[2].quality);
-    }
+    result.pairs = seeds.map((seed, i) => {
+      const q = result.layouts[i * 2].quality;
+      return {seed, baselineSeed: seeds[(i + 1) % seeds.length], cpu: compare(q, result.layouts[2 * ((i + 1) % seeds.length)].quality), gpu: compare(q, result.layouts[2*i+1].quality)};
+    });
     for (const row of result.layouts) delete row.quality.near;
     return result;
   }
@@ -158,11 +190,17 @@ async function benchmark(job) {
     }
   });
   self.onmessage = ({ data }) => { if (data === 'stop') { stop = true; session.stop(); } };
+  const start = performance.now();
   const result = await session.run(input, o, { preference: job.preference, every: 5,
     stopped: () => stop, yieldNow: () => yieldTask(true),
     emit: () => { if (job.kind === 'stop') self.postMessage({ frame: true }); }
   });
-  return { available, engineStatus: result.engineStatus, finite: result.positions.every(Number.isFinite),
+  const milliseconds = performance.now() - start;
+  const probedByLayout = available !== undefined;
+  // A quality-excluded Auto run never asks for an adapter. Observe capability
+  // afterwards, outside the clock, so the default-flags measurement stays cold.
+  const adapterAvailable = available ?? !!(await requestComputeAdapter());
+  return { milliseconds, probedByLayout, adapterAvailable, engineStatus: result.engineStatus, finite: result.positions.every(Number.isFinite),
     settled: result.settled, hash: Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', result.positions)), b => b.toString(16).padStart(2, '0')).join('') };
 }
 self.onmessage = async ({ data }) => {

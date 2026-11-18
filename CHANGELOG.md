@@ -4,8 +4,19 @@ The owner-approved bounded download ceilings for this UI pass are **450,000 raw 
 
 ## Unreleased: device-local layout engine
 
-- Add Auto, Processor and Graphics chip to Layout. Race equal real-graph work including WebGPU setup, retain only numeric bucket samples locally, and resume Processor after a graphics failure. No WebGL solver or runtime package.
+- Add Auto, Processor and Graphics chip to Layout. Gate automatic graphics on paired layout quality and a 1.5× projected win for the actual step budget. Separate setup and steady costs, reject stale timing records, and evict failed graphics choices. Preserve warm coordinates on Stop and the original quiet criterion on fallback. Fix Morton-key collisions and edgeless dispatches. No WebGL solver or runtime package.
 - Align graphics tree opening with the core's square cells and keep its settling criterion. Yield within large Processor walks so Stop can retain the last fully computed positions. See the [benchmark and limits](docs/benchmarks.md#worker-webgpu-layout).
+
+Automatic graphics admission after the paired, first-settled comparison:
+
+| Synthetic notes | Community | Scale-free | Grid | Auto |
+| ---: | --- | --- | --- | --- |
+| 2,000 | Failed graph stress | 0 of 6 layouts settled | 0 of 6 layouts settled | Processor (small) |
+| 20,000 | Passed | 2 of 6 layouts settled | 0 of 6 layouts settled | Processor (quality) |
+| 49,000 | Passed | Passed | 0 of 6 layouts settled | Processor (quality) |
+| Unmeasured classes | Not tested | Not tested | Not tested | Processor |
+
+Manual Graphics chip remains available regardless of this table, subject to adapter capability.
 
 ## Unreleased device-local performance state
 
