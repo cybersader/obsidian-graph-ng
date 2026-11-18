@@ -171,7 +171,8 @@ test('Stop before first readback preserves warm or cold starting coordinates', a
     const session = new LayoutEngineSession({adapter: async () => adapter, graphics: async () => ({reset(){},destroy(){},batch(){started(); return new Promise(()=>{});}})});
     const task = session.run(i, options(), {...run('graphics'), stopped: () => stop}); await ready; stop = true; session.stop();
     const result = await task; expect(result.settled).toBe(false);
-    if (warm) { expect(result.positions).toBe(i.initial!); expect(result.engineStatus.engine).toBe('graphics'); }
+    expect(result.engineStatus.engine).toBe('graphics');
+    if (warm) expect(result.positions).toBe(i.initial!);
     else expect(result.positions).toEqual(new LayoutSolver(i, options()).positions);
     expect(result.engineStatus.reason).toBe('unchanged');
   }

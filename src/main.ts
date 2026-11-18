@@ -177,10 +177,10 @@ export default class GraphPlugin extends Plugin {
       for (const leaf of this.app.workspace.getLeavesOfType(VIEW)) if (!leaf.isDeferred && leaf.view instanceof GraphView) visit(leaf.view);
     };
     const promote = () => views(view => view.promoteProperties());
-    let loadStatus = '';
+    let loadStatus = '', overdue = false;
     const status = (result = loadStatus) => {
       loadStatus = result;
-      const message = this.adapter.inventoryError ? 'Room inventory unavailable' : result;
+      const message = this.adapter.inventoryError ? 'Room inventory unavailable' : result || (overdue ? 'Property loading delayed' : '');
       if (!active || message === (this.hydrationStatus || '')) return;
       this.hydrationStatus = message;
       views(view => view.updateHydrationStatus());
@@ -192,7 +192,7 @@ export default class GraphPlugin extends Plugin {
       // Caller completion and host completion have different owners. Never attach
       // timeout races to a permanently unresolved physical promise on each open.
       const caller = waiting ??= new Promise<void>(resolve => {
-        const timer = setTimeout(() => { finish?.(); if (!loadStatus) status('Property loading delayed'); }, waitMs);
+        const timer = setTimeout(() => { finish?.(); overdue = true; status(); }, waitMs);
         finish = () => { clearTimeout(timer); waiting = undefined; finish = undefined; resolve(); };
       });
       void latestWork(queue, queued = async () => {
@@ -201,7 +201,7 @@ export default class GraphPlugin extends Plugin {
         if (!current() || request !== latest) return;
         const message = await physical(source);
         if (current() && message !== undefined) {
-          if (request === latest) finish?.();
+          if (request === latest) { overdue = false; finish?.(); }
           status(message); // A queued retry is not yet a new outcome.
         }
       });
@@ -226,6 +226,7 @@ export default class GraphPlugin extends Plugin {
       const moved = observed !== this.adapter.roomRevision;
       this.adapter.setPropertySource(source, !event, moved); observed = this.adapter.roomRevision; this.ingestedHash = '';
       if (source !== previous) {
+        overdue = false;
         if (source) void this.loadProperties?.(); else { ++latest; unlink(); finish?.(); }
         flight?.abort();
       }
@@ -775,6 +776,8 @@ export class GraphView extends ItemView {
       }
       if (!current()) return;
       if (!this.provisional && !source) { await this.plugin.adapter.saveFacts?.(); if (current()) this.statusText = this.statusText; }
+      // Maintenance shares the serialized refresh/write lane, but does not precede Groups paint.
+      if (settings.persistLayout) await this.plugin.store.auditMiss?.().catch(error => { this.contentEl.dataset.cacheError = String(error); });
     } catch (error) { fail(error); }
     finally {
       heldLayout?.(false);

@@ -232,14 +232,15 @@ test('fact groups paint before layout, pending links prevent exact caching, and 
       case 'encode': encoded++; return {};
     }
   } };
+  const auditedAfter: number[] = [];
   const plugin: any = { settings, propertySource: source, propertyRevision: 0, sourceIdentity: 'local', nextRevision: 0, linkProducer: 'p@1', adapter, pipeline,
-    async migrate() {}, serialize: (run: () => unknown) => run(), store: { async latest() {} }, async cache() { caches++; } };
+    async migrate() {}, serialize: (run: () => unknown) => run(), store: { async latest() {}, async auditMiss() { auditedAfter.push(painted); } }, async cache() { caches++; } };
   const view: any = Object.create(GraphView.prototype);
   Object.assign(view, { plugin, app, revision: 0, renderRevision: 0, closed: false, members: new Map(), contributions: new Map(), startupTrace: [], cacheTrace: [],
     contributionPage: { clear() {}, suspend() {}, update() {} }, contentEl: { dataset: {} }, status: new ControlElement(), statusSummary: new ControlElement(), gpu: { available: false, reason: 'Not probed' },
     showGroups() { painted++; expect(encoded).toBe(0); } });
   try {
-    await view.refreshOnce(); expect(painted).toBe(1); expect(complete).toBe(false); expect(caches).toBe(0); expect(encoded).toBe(0);
+    await view.refreshOnce(); expect(auditedAfter).toEqual([1]); expect(painted).toBe(1); expect(complete).toBe(false); expect(caches).toBe(0); expect(encoded).toBe(0);
     expect(view.contentEl.dataset.verified).toBe('false'); expect(view.status.textContent).toContain('Ready, source checks incomplete'); expect(view.statusSummary.textContent).not.toContain('1 note0 edges'); expect(view.statusSummary.textContent).toContain('Ready, source checks incomplete');
     links['a.md'] = {}; adapter.invalidate();
     await view.refreshOnce(); await view.ensureNotesLayout(); expect(complete).toBe(true); expect(encoded).toBe(1); expect(caches).toBe(1); expect(view.contentEl.dataset.verified).toBe('true');

@@ -4,8 +4,8 @@ The owner-approved bounded download ceilings for this UI pass are **480,000 raw 
 
 ## Unreleased: room startup and layout cache
 
-- Room load failures stay visible through queued retries. Inventory recovery updates the status immediately, and a room timeout has its own message.
-- Intact older Auto layouts are replaced on recompute without quarantine. Stopping a warm layout keeps its starting coordinates without setting up a Processor solver.
+- Room load failures and overdue warnings stay visible through queued retries. Inventory recovery updates the status immediately, and a room timeout has its own message.
+- Groups can paint before checking the chunks of an older Auto layout. A settled recompute replaces an incompatible cache even if the key is unchanged. Stopping Graphics before its first readback reports Graphics for both warm and cold starts; a warm start keeps its coordinates without setting up a Processor solver.
 
 ## Unreleased: layout timing
 

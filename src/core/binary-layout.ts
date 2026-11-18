@@ -48,6 +48,9 @@ export class BinaryLayoutStore {
   readonly trace: { action: string; declarationHash: string; key: string }[] = [];
   /** Key of the generation this store last committed or loaded; a held layout with another key still needs a write. */
   committed?: string;
+  private missed?: string; // Last incompatible manifest, never a positive hit.
+  auditMiss?: () => Promise<void>;
+  private resetMiss() { this.auditMiss = undefined; this.missed = undefined; }
   constructor(private adapter: BinaryAdapter, readonly options: StoreOptions, private yieldNow: () => Promise<void> = async () => {}) {
     if (!Number.isSafeInteger(options.chunkBytes) || options.chunkBytes < 4 || options.chunkBytes > MAX_CHUNK_BYTES || !Number.isSafeInteger(options.maxGenerationBytes) || options.maxGenerationBytes < options.chunkBytes) throw new Error('Invalid binary store budget');
   }
@@ -61,6 +64,7 @@ export class BinaryLayoutStore {
     } catch { await this.adapter.rename(path, `${path}.corrupt-${Date.now()}`); return []; }
   }
   async write(g: BinaryGeneration) {
+    this.resetMiss();
     try { await this.writeGeneration(g); this.committed = g.meta.key; } finally { await this.pruneArtifacts(); }
   }
   private async writeGeneration(g: BinaryGeneration) {
@@ -95,41 +99,67 @@ export class BinaryLayoutStore {
     }
   }
   private record(action: string, e: Entry) { this.trace.push({ action, ...e }); if (this.trace.length > 100) this.trace.shift(); }
-  async discard() { if (await this.adapter.exists(this.options.directory)) await this.adapter.rmdir(this.options.directory, true); }
+  async discard() { this.resetMiss(); if (await this.adapter.exists(this.options.directory)) await this.adapter.rmdir(this.options.directory, true); }
+  private async indexed(declarationHash: string) {
+    return (await this.entries()).reverse().find(e => e.declarationHash === declarationHash);
+  }
+  private async manifest(path: string) {
+    const file = `${path}/manifest.json`;
+    if ((await this.adapter.stat(file))!.size > MAX_CHUNK_BYTES) throw new Error('Oversized manifest');
+    return this.adapter.read(file);
+  }
   async latest(declarationHash: string, expected?: { source: string; layoutHash: string; producer: string }): Promise<BinaryGeneration | undefined> {
     await this.pruneArtifacts();
-    const e = (await this.entries()).reverse().find(e => e.declarationHash === declarationHash);
+    const e = await this.indexed(declarationHash);
     if (!e) return;
     try {
-      const path = this.path(e), manifestPath = `${path}/manifest.json`;
-      if ((await this.adapter.stat(manifestPath))!.size > MAX_CHUNK_BYTES) throw new Error('Oversized manifest');
-      const m: Manifest = JSON.parse(await this.adapter.read(manifestPath));
+      const path = this.path(e), manifest = await this.manifest(path);
+      const m: Manifest = JSON.parse(manifest);
       if (!m.meta || m.meta.format !== CACHE_FORMAT || m.meta.key !== e.key || m.meta.declarationHash !== e.declarationHash || !Array.isArray(m.parts) || m.parts.length !== 5 || new Set(m.parts.map(p => p.name)).size !== 5) throw new Error('Invalid manifest');
       if (expected && m.meta.source !== expected.source) throw new Error('Source/view mismatch');
       // Changed layout settings are not damage: refuse without leaving a retained quarantine artifact.
       if (expected && m.meta.layoutHash !== expected.layoutHash) return;
       if (typeof m.meta.producer !== 'string' || !m.meta.producer) throw new Error('Invalid layout producer');
-      const compatible = !expected || m.meta.producer === expected.producer;
-      let total = 0; const files: Record<string, Uint8Array> = Object.create(null);
-      for (const part of m.parts) {
-        if (!['positions', 'identities', 'offsets', 'edgekeys', 'groups'].includes(part.name) || !Number.isSafeInteger(part.bytes) || part.bytes < 0 || !Array.isArray(part.chunks)) throw new Error('Invalid manifest part');
-        total += part.bytes; if (total > this.options.maxGenerationBytes || part.chunks.length > Math.ceil(this.options.maxGenerationBytes / 4)) throw new Error('Generation byte budget exceeded');
-        const out = compatible ? new Uint8Array(part.bytes) : undefined; let offset = 0;
-        for (let i = 0; i < part.chunks.length; i++) {
-          const chunk = part.chunks[i]!, filePath = `${path}/${part.name}.${i}.bin`;
-          if (!Number.isSafeInteger(chunk.bytes) || chunk.bytes < 1 || chunk.bytes > MAX_CHUNK_BYTES || offset + chunk.bytes > part.bytes || !id(chunk.hash) || (await this.adapter.stat(filePath))?.size !== chunk.bytes) throw new Error('Invalid or oversized chunk');
-          const buffer = new Uint8Array(await this.adapter.readBinary(filePath));
-          if (buffer.byteLength !== chunk.bytes || await hashBytes(buffer) !== chunk.hash) throw new Error('Truncated or corrupt chunk');
-          out?.set(buffer, offset); offset += buffer.byteLength; await this.yieldNow();
+      if (expected && m.meta.producer !== expected.producer) {
+        if (this.committed === e.key) this.committed = undefined;
+        if (this.missed !== manifest) {
+          this.missed = manifest;
+          this.auditMiss = async () => {
+            this.auditMiss = undefined;
+            try { await this.parts(path, m, false); }
+            catch {
+              // A replacement can reuse the key. Check both the pointer and the exact bounded header.
+              if (this.missed !== manifest) return;
+              this.missed = undefined; // Retry if maintenance cannot confirm the damaged generation.
+              if ((await this.indexed(declarationHash))?.key === e.key && await this.manifest(path) === manifest) await this.quarantine(e);
+            }
+          };
         }
-        if (offset !== part.bytes) throw new Error('Truncated generation'); if (out) files[part.name] = out;
+        return;
       }
-      // The previous Auto producer shared the layout hash. Preserve its intact generation until recompute.
-      if (!compatible) return;
+      const files = await this.parts(path, m, true);
       this.record('loaded', e); this.committed = e.key; return { meta: m.meta, files };
     } catch { await this.quarantine(e); return; }
   }
+  private async parts(path: string, m: Manifest, collect: boolean) {
+    let total = 0; const files: Record<string, Uint8Array> = Object.create(null);
+    for (const part of m.parts) {
+      if (!['positions', 'identities', 'offsets', 'edgekeys', 'groups'].includes(part.name) || !Number.isSafeInteger(part.bytes) || part.bytes < 0 || !Array.isArray(part.chunks)) throw new Error('Invalid manifest part');
+      total += part.bytes; if (total > this.options.maxGenerationBytes || part.chunks.length > Math.ceil(this.options.maxGenerationBytes / 4)) throw new Error('Generation byte budget exceeded');
+      const out = collect ? new Uint8Array(part.bytes) : undefined; let offset = 0;
+      for (let i = 0; i < part.chunks.length; i++) {
+        const chunk = part.chunks[i]!, filePath = `${path}/${part.name}.${i}.bin`;
+        if (!Number.isSafeInteger(chunk.bytes) || chunk.bytes < 1 || chunk.bytes > MAX_CHUNK_BYTES || offset + chunk.bytes > part.bytes || !id(chunk.hash) || (await this.adapter.stat(filePath))?.size !== chunk.bytes) throw new Error('Invalid or oversized chunk');
+        const buffer = new Uint8Array(await this.adapter.readBinary(filePath));
+        if (buffer.byteLength !== chunk.bytes || await hashBytes(buffer) !== chunk.hash) throw new Error('Truncated or corrupt chunk');
+        out?.set(buffer, offset); offset += buffer.byteLength; await this.yieldNow();
+      }
+      if (offset !== part.bytes) throw new Error('Truncated generation'); if (out) files[part.name] = out;
+    }
+    return files;
+  }
   async quarantine(e: Entry) {
+    this.resetMiss();
     // A quarantined generation is no longer on disk: the next build of the same key must write it again.
     if (this.committed === e.key) this.committed = undefined;
     const path = this.path(e);

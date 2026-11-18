@@ -943,3 +943,19 @@ test('room removal by source replacement purges that room on disk with no view o
     expect(await f.disk.exists(oldA)).toBe(false); expect(await f.disk.exists(keptB)).toBe(true);
   } finally { f.close(); }
 });
+
+test('older success cannot hide the overdue caller of a hung retry', async () => {
+  const first = signal(), retry = signal(), entered = signal(); let calls = 0;
+  const f = await contractFixture(undefined, undefined, undefined, s => { s.load = async () => {
+    if (++calls === 1) return first.done;
+    entered.yes(); await retry.done;
+  }; }, 30);
+  try {
+    await f.plugin.loadProperties(); // One deadline for discovery plus this queued open.
+    expect(f.plugin.hydrationStatus).toBe('Property loading delayed');
+    first.yes(); await entered.done;
+    expect(hydrationQueue(f).draining).toBe(true);
+    expect(f.plugin.hydrationStatus).toBe('Property loading delayed');
+    retry.yes(); await hydrationQueue(f).work; expect(f.plugin.hydrationStatus).toBe('');
+  } finally { first.yes(); retry.yes(); f.close(); }
+});

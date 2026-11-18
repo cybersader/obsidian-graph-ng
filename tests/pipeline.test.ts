@@ -38,6 +38,7 @@ test('intact old Auto producer is a compatibility miss, but damaged bytes still 
     await store.write(old); const files = new Map(disk.files);
     if (damaged) { const bytes = disk.files.get([...files.keys()].find(p => p.endsWith('/positions.0.bin'))!)!; bytes[0] = bytes[0]! ^ 1; }
     expect(await store.latest(old.meta.declarationHash, current.meta)).toBeUndefined();
+    await store.auditMiss?.();
     if (damaged) expect(store.trace.at(-1)?.action).toBe('quarantined');
     else {
       expect(disk.files).toEqual(files); expect((await store.latest(old.meta.declarationHash, old.meta))?.meta).toEqual(old.meta);
@@ -657,4 +658,54 @@ test('cold visual layout keeps its stop step and coordinates across preview and 
   }
   const baseline = await cold(5, 5); expect(baseline.stop).toBeLessThan(2000);
   expect(await cold(13, 5)).toEqual(baseline); expect(await cold(5, 7)).toEqual(baseline);
+});
+
+test('rejected producer does not suppress repair of a previously committed key', async () => {
+  const disk = new MemoryAdapter(), store = new BinaryLayoutStore(disk, options), g = await generation();
+  await store.write(g);
+  const path = `${options.directory}/${g.meta.declarationHash}/${g.meta.key}/manifest.json`;
+  const m = JSON.parse(await disk.read(path)); m.meta.producer = 'graph-ng-fa2@4-webgpu';
+  await disk.write(path, JSON.stringify(m)); // Only metadata differs; all chunks remain intact.
+  expect(await store.latest(g.meta.declarationHash, g.meta)).toBeUndefined();
+  // Same settled, complete projection after worker restart. This is the arrangeNotes write guard.
+  if (store.committed !== g.meta.key) await store.write(g);
+  expect((await store.latest(g.meta.declarationHash, g.meta))?.meta.key).toBe(g.meta.key);
+});
+
+test('two Groups cache misses paint before reading chunks and share one integrity audit', async () => {
+  const disk = new MemoryAdapter(), store = new BinaryLayoutStore(disk, options), old = await generation();
+  const expected = { ...old.meta, producer: 'current' };
+  await store.write(old); disk.reads = [];
+  const chunks = [...disk.files.keys()].filter(p => p.endsWith('.bin'));
+  const reads = () => disk.reads.filter(p => p.endsWith('.bin'));
+  for (let pass = 0; pass < 2; pass++) {
+    const before = reads();
+    expect(await store.latest(old.meta.declarationHash, expected)).toBeUndefined();
+    expect(reads()).toEqual(before); // Groups can now paint without decoding saved coordinates.
+    await store.auditMiss?.();
+    expect(reads().sort()).toEqual(chunks.sort());
+  }
+});
+
+test('deferred damage checks do not quarantine a superseded index or a same-key replacement', async () => {
+  for (const change of ['index', 'manifest']) {
+    const disk = new MemoryAdapter(), store = new BinaryLayoutStore(disk, options), old = await generation();
+    const expected = { ...old.meta, producer: 'current' }, path = `${options.directory}/${old.meta.declarationHash}/${old.meta.key}`;
+    await store.write(old);
+    expect(await store.latest(old.meta.declarationHash, expected)).toBeUndefined();
+    // Simulate another writer between the miss and the post-paint audit. Fail the old audit read.
+    const read = disk.readBinary.bind(disk); let once = true;
+    disk.readBinary = async p => {
+      if (once) {
+        once = false;
+        if (change === 'index') await disk.write(`${options.directory}/index.json`, '[]');
+        else { const manifest = JSON.parse(await disk.read(`${path}/manifest.json`)); manifest.meta = expected; await disk.write(`${path}/manifest.json`, JSON.stringify(manifest)); }
+        throw Error('stale read');
+      }
+      return read(p);
+    };
+    await store.auditMiss?.(); expect(once).toBe(false);
+    expect(await disk.exists(path)).toBe(true); expect(store.trace.some(e => e.action === 'quarantined')).toBe(false);
+    if (change === 'manifest') expect((await store.latest(old.meta.declarationHash, expected))?.meta).toEqual(expected);
+  }
 });

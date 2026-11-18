@@ -135,7 +135,7 @@ export class LayoutEngineSession {
       };
       // Remaining work limits execution, not the original required quiet streak. Restart history conservatively.
       positions = await runLayoutStream(iteration ? { ...input, initial: positions } : input, options, every,
-        (frame, step) => run.emit(frame, iteration + step, total, status), run.yieldNow, buffer, (s, steps, visual) => { settled = s; looksDone = visual; if (!iteration && !steps && run.stopped()) report('processor', 'unchanged'); }, run.stopped, undefined, total - iteration, iteration, run.wantsFrame, checkpoint);
+        (frame, step) => run.emit(frame, iteration + step, total, status), run.yieldNow, buffer, (s, steps, visual) => { settled = s; looksDone = visual; if (!iteration && !steps && run.stopped()) report(status.engine, 'unchanged'); }, run.stopped, undefined, total - iteration, iteration, run.wantsFrame, checkpoint);
       return result();
     } finally { active = false; release(); controller.abort(); if (this.abort === controller) this.abort = undefined; }
   }
