@@ -1,3 +1,4 @@
+import { layoutEngineText, type EngineStatus } from './layout-engine-policy';
 import { workingText } from './working';
 import { setIcon } from 'obsidian';
 import { disclosure, disclosureBody, panelHelp, iconButton } from './panel-help';
@@ -8,6 +9,7 @@ import type { Predicate } from './core/declaration';
 /** Structured Graph information for one projected generation. Rendering only; no graph state. */
 export interface InformationReport {
   nodes: number; edges: number; listed: number;
+  engineStatus?: EngineStatus;
   linksPending: boolean; provisional: boolean; unresolved: number; duplicates: number;
   layout?: { cached: boolean; reused?: LayoutResult['reused']; ms: number; totalMs: number };
   progress?: { iteration: number; total: number };
@@ -121,6 +123,9 @@ export function renderInformation(host: HTMLElement, message: string, state: str
 }
 function renderBody(host: HTMLElement, message: string, state: string | undefined, r: InformationReport | undefined, view: Explored | undefined, act: InformationActions, loading?: { indexed?: number; listed?: number }, progress?: HTMLElement | null) {
   if (message) { const label = progress ?? host.createDiv({ cls: 'graph-ng-status-message' }); label.toggleClass('graph-ng-explore-error', state === 'error'); workingText(label, message, state === 'building'); }
+  if (r?.engineStatus) {
+    statRow(host, 'cpu', 'Layout engine', layoutEngineText(r.engineStatus));
+  }
   if (state === 'building' || r?.provisional) {
     if (!message) host.createDiv({ cls: 'graph-ng-coverage-state', attr: { role: 'status' }, text: r?.provisional ? pendingText(r) : 'Counts available when the graph is ready' });
     if (loading?.indexed !== undefined && loading.listed !== undefined) {

@@ -1,16 +1,19 @@
+import { LAYOUT_ENGINES, engineTimings, type LayoutEnginePreference, type EngineTiming } from './layout-engine-policy';
 import { PERFORMANCE_MODES, performanceRecords, type PerformanceMode, type PerformanceRecord } from './performance';
 
 export interface DevicePreferences {
+  layoutEngine: LayoutEnginePreference;
   performance: PerformanceMode;
   performanceDiagnostics: boolean;
   performanceSuggestions: boolean;
   performancePrompted: boolean;
 }
-export const deviceDefaults = (): DevicePreferences => ({ performance: 'auto', performanceDiagnostics: false, performanceSuggestions: true, performancePrompted: false });
+export const deviceDefaults = (): DevicePreferences => ({ layoutEngine: 'auto', performance: 'auto', performanceDiagnostics: false, performanceSuggestions: true, performancePrompted: false });
 export function devicePreferences(input: unknown): DevicePreferences {
   const result = deviceDefaults();
   if (!input || typeof input !== 'object') return result;
   const value = input as Record<string, unknown>;
+  if (LAYOUT_ENGINES.includes(value.layoutEngine as LayoutEnginePreference)) result.layoutEngine = value.layoutEngine as LayoutEnginePreference;
   if (PERFORMANCE_MODES.includes(value.performance as PerformanceMode)) result.performance = value.performance as PerformanceMode;
   for (const key of ['performanceDiagnostics', 'performanceSuggestions', 'performancePrompted'] as const) if (typeof value[key] === 'boolean') result[key] = value[key];
   return result;
@@ -22,12 +25,36 @@ export function sharedPerformanceData<T extends { settings: object }>(data: T) {
   delete (shared as Record<string, unknown>).performanceLog;
   return shared;
 }
+// Fixed numeric tuples only on disk. Reject unknown engine codes and trailing fields.
+function decodeLayoutSamples(input: unknown) {
+  return engineTimings(Array.isArray(input) ? input.slice(-21).flatMap(row =>
+    Array.isArray(row) && row.length === 6 && (row[1] === 0 || row[1] === 1)
+      ? [{ bucket: row[0], engine: row[1] ? 'graphics' : 'processor', processorMs: row[2], graphicsMs: row[3], setupMs: row[4], iterations: row[5] }] : []) : []);
+}
 interface DeviceState { settings: DevicePreferences; performanceLog: PerformanceRecord[] }
 type StorageAccess = () => Pick<Storage, 'getItem' | 'setItem'> | undefined;
 /** Optional device/browser-profile storage, never a host telemetry or authorization boundary. */
 export class DevicePerformanceStore {
   private storage?: ReturnType<StorageAccess>;
   private key?: string;
+  private layoutRecords = new Map<string, EngineTiming[]>();
+  layoutChoices(version: string): EngineTiming[] {
+    if (!/^\d+\.\d+\.\d+(?:-[\w.-]+)?$/.test(version)) return [];
+    let rows = this.layoutRecords.get(version);
+    if (!rows) {
+      try { const raw = this.key && this.storage?.getItem(`${this.key}:layout:${version}`); rows = decodeLayoutSamples(raw && raw.length <= 8192 ? JSON.parse(raw) : []); }
+      catch { rows = []; }
+      this.layoutRecords.clear(); this.layoutRecords.set(version, rows);
+    }
+    return engineTimings(rows);
+  }
+  rememberLayout(version: string, timing: EngineTiming) {
+    const previous = this.layoutChoices(version), rows = engineTimings([...previous, timing]);
+    if (!this.layoutRecords.has(version)) return;
+    this.layoutRecords.set(version, rows);
+    try { if (this.key) this.storage?.setItem(`${this.key}:layout:${version}`, JSON.stringify(rows.map(r => [r.bucket, +(r.engine === 'graphics'), r.processorMs, r.graphicsMs, r.setupMs, r.iterations]))); }
+    catch { this.storage = undefined; }
+  }
   constructor(namespace?: string, pluginId = 'graph-ng', access: StorageAccess = () => globalThis.localStorage) {
     if (!namespace || !/^[0-9a-f]{32}$/.test(namespace)) return;
     this.key = `graph-ng:${encodeURIComponent(pluginId)}:${namespace}:performance:v1`;

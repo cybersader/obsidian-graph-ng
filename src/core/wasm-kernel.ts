@@ -47,20 +47,22 @@ export class ScalarLayoutKernel {
       if (key !== 'p' && key !== 'f') view.set(column);
     }
   }
-  repulse(tree: BarnesHut, positions: Float32Array, forces: Float32Array, scale: number, theta: number, maxRadius: number): boolean {
+  repulse(tree: BarnesHut, positions: Float32Array, forces: Float32Array, scale: number, theta: number, maxRadius: number, begin = 0, end = this.count): boolean {
     if (!this.active) return false;
     try {
       // Existing JS tree growth stays authoritative. No resize or new views in a
       // step: a larger tree permanently selects JS for the remainder of the layout.
       if (!tree.matchesKernelStorage(this.storage)) throw new Error('Tree storage grew');
       const v = this.views, p = this.ptr;
-      for (const key of treeKeys) v[key]!.set(this.storage[key]);
-      if (this.storage.order) v.order!.set(this.storage.order);
-      v.p!.set(positions);
-      // Fixed nodes are skipped by the walk; their force entries must stay zero.
-      v.f!.fill(0);
-      this.ex.repulse(p.p!, p.w!, p.f!, p.owner!, p.child!, p.head!, p.next!, p.cx!, p.cy!, p.half!, p.mass!, p.mx!, p.my!, p.order ?? 0, p.radii ?? 0, p.mask ?? 0, this.count, 0, this.count, scale, theta, maxRadius);
-      forces.set(v.f!);
+      if (!begin) {
+        for (const key of treeKeys) v[key]!.set(this.storage[key]);
+        if (this.storage.order) v.order!.set(this.storage.order);
+        v.p!.set(positions);
+        // Fixed nodes are skipped by the walk; their force entries must stay zero.
+        v.f!.fill(0);
+      }
+      this.ex.repulse(p.p!, p.w!, p.f!, p.owner!, p.child!, p.head!, p.next!, p.cx!, p.cy!, p.half!, p.mass!, p.mx!, p.my!, p.order ?? 0, p.radii ?? 0, p.mask ?? 0, this.count, begin, end, scale, theta, maxRadius);
+      if (end === this.count) forces.set(v.f!);
       return true;
     } catch { this.active = false; return false; }
   }

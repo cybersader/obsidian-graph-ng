@@ -1,3 +1,4 @@
+import { LAYOUT_ENGINES, type LayoutEnginePreference } from './layout-engine-policy';
 import { VIEW_STATES, STATE_HELP, type ViewState } from './view-state';
 import { setIcon } from 'obsidian';
 import { workingText } from './working';
@@ -102,6 +103,7 @@ export class ExplorePanel {
   private viewOrigin?: string;
   private physicsDraft?: Record<PhysicsKey, string | boolean>;
   private physicsAdvanced = false;
+  private layoutEngineDraft?: LayoutEnginePreference;
   private sizingDraft?: Record<keyof NodeSizingValues, string>;
   private sizingMessage = '';
   private sizingBusy = false;
@@ -594,7 +596,7 @@ export class ExplorePanel {
   private physics(host: HTMLElement) {
     const applied = (): Record<PhysicsKey, string | boolean> => { const l = this.settings.layout; return Object.fromEntries(PHYSICS_FIELDS.map(([key]) => { const v = key === 'iterations' ? l.iterations : l.force[key]; return [key, typeof v === 'boolean' ? v : String(v)]; })) as Record<PhysicsKey, string | boolean>; };
     const draft = this.physicsDraft ??= applied();
-    const fill = (values: Required<PhysicsValues>, name: string) => { this.physicsUndo = { values: { ...draft }, name, applied: false }; for (const [key] of PHYSICS_FIELDS) { const v = values[key]; draft[key] = typeof v === 'boolean' ? v : String(v); } this.physicsError = ''; this.render(); };
+    const fill = (values: Required<Omit<PhysicsValues, 'layoutEngine'>>, name: string) => { this.physicsUndo = { values: { ...draft }, name, applied: false }; for (const [key] of PHYSICS_FIELDS) { const v = values[key]; draft[key] = typeof v === 'boolean' ? v : String(v); } this.physicsError = ''; this.render(); };
     const size = this.host.result(), recommended = recommendedPhysics(size?.nodes ?? 1000, size?.edges ?? 3000);
     panelHelp(host, 'How changes apply', 'Apply layout saves these changes and recomputes note positions. The graph stays framed until you pan or zoom.');
     const presets = settingRow(host, 'Presets', 'graph-ng-presets', 'Groups apart loosens the layout; Fill the screen tightens it. Faster uses fewer steps; presets stay drafts until Apply.').createDiv({ cls: 'graph-ng-setting-line', attr: { role: 'group', 'aria-label': 'Layout presets' } });
@@ -604,11 +606,17 @@ export class ExplorePanel {
     for (const name of names) select.createEl('option', { text: name, value: name });
     select.value = names.includes(this.physicsUndo?.name ?? '') ? this.physicsUndo!.name : 'Recommended'; select.disabled = this.physicsBusy;
     panelButton(presets, 'Use preset', () => fill(select.value === 'Recommended' ? recommended : presetValues(select.value, recommended), select.value), this.physicsBusy);
+    this.layoutEngineDraft ??= this.settings.layoutEngine ?? 'auto';
+    const engineNames = { auto: 'Auto', processor: 'Processor', graphics: 'Graphics chip' };
+    const engine = settingRow(host, 'Layout engine', 'graph-ng-select', 'Below 5,000 notes, Auto uses Processor. For larger graphs it chooses Graphics chip only if a timed trial, including setup, is at least 1.5 times faster. This choice stays on this device.').createEl('select', { attr: { 'aria-label': 'Layout engine' } });
+    for (const value of LAYOUT_ENGINES) engine.createEl('option', { value, text: engineNames[value] });
+    engine.value = this.layoutEngineDraft; engine.disabled = this.physicsBusy;
+    engine.onchange = () => { this.layoutEngineDraft = engine.value as LayoutEnginePreference; summarize(); };
     const advice = this.host.layoutAdvice?.();
     if (advice) {
       // Keeps every other draft value; only turns Strong gravity on with a measured pull.
       const suggestion = host.createDiv({ cls: 'graph-ng-setting-line' });
-      panelButton(suggestion, PULL_IN, () => fill({ ...draft, strongGravityMode: true, gravity: advice.gravity } as unknown as Required<PhysicsValues>, PULL_IN), this.physicsBusy);
+      panelButton(suggestion, PULL_IN, () => fill({ ...draft, strongGravityMode: true, gravity: advice.gravity } as unknown as Required<Omit<PhysicsValues, 'layoutEngine'>>, PULL_IN), this.physicsBusy);
       panelHelp(suggestion, 'Why pull them in?', advice.reason);
     }
     const undo = this.physicsUndo;
@@ -617,9 +625,10 @@ export class ExplorePanel {
       button.onclick = () => { Object.assign(draft, undo.values); this.physicsUndo = undefined; if (undo.applied) void run(); else this.render(); };
     }
     const summarize = () => {
-      const now = applied(), diff = PHYSICS_FIELDS.filter(([key]) => draft[key] !== now[key]); changes.empty(); changes.hidden = !diff.length;
-      if (diff.length) {
-        const details = changes.createEl('details'); disclosure(details, plural(diff.length, 'change')); const body = disclosureBody(details);
+      const now = applied(), diff = PHYSICS_FIELDS.filter(([key]) => draft[key] !== now[key]), engineChanged = this.layoutEngineDraft !== (this.settings.layoutEngine ?? 'auto'), count = diff.length + +engineChanged; changes.empty(); changes.hidden = !count;
+      if (count) {
+        const details = changes.createEl('details'); disclosure(details, plural(count, 'change')); const body = disclosureBody(details);
+        if (engineChanged) statRow(body, 'cpu', 'Layout engine', `${engineNames[this.settings.layoutEngine ?? 'auto']} → ${engineNames[this.layoutEngineDraft!]}`);
         const show = (v: string | boolean) => typeof v === 'boolean' ? (v ? 'on' : 'off') : v;
         for (const [key, title] of diff) statRow(body, 'minus', title, `${show(now[key])} → ${show(draft[key])}`);
       }
@@ -646,6 +655,7 @@ export class ExplorePanel {
       if (this.physicsBusy || this.disposed) return;
       try {
         const values = Object.fromEntries(PHYSICS_FIELDS.map(([key]) => { const v = draft[key]; return [key, typeof v === 'boolean' ? v : v.trim() ? Number(v) : NaN]; })) as unknown as PhysicsValues;
+        if (this.layoutEngineDraft !== (this.settings.layoutEngine ?? 'auto')) values.layoutEngine = this.layoutEngineDraft;
         physicsSettings(this.settings, values);
         this.physicsBusy = true; this.physicsError = ''; this.render();
         await this.host.applyLayout(values);

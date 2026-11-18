@@ -104,7 +104,7 @@ test('mangled bundle properties are private to the main bundle', async () => {
   for (const file of [...fs.readdirSync(lib).filter(f => /^lib\..*\.d\.ts$/.test(f)).map(f => path.join(lib, f)), path.join(import.meta.dir, '../node_modules/obsidian/obsidian.d.ts')]) for (const id of ids(read(file))) reserved.add(id);
   const src = path.join(import.meta.dir, '../src'), dir = (d: string) => fs.readdirSync(d).filter(f => /\.m?ts$/.test(f)).map(f => path.join(d, f));
   // Worker-bundle sources and harness/e2e code may cross the bundle boundary by property name.
-  const crossing = [...dir(path.join(src, 'core')), ...['layout-worker.ts', 'pipeline.ts', 'render-projection.ts', 'gpu-probe.ts'].map(f => path.join(src, f)), ...dir(path.join(import.meta.dir, 'e2e')), ...dir(path.join(import.meta.dir, '../scripts'))];
+  const crossing = [...dir(path.join(src, 'core')), ...['layout-worker.ts', 'pipeline.ts', 'render-projection.ts', 'gpu-probe.ts', 'layout-engine.ts', 'layout-engine-policy.ts', 'webgpu-layout.ts', 'webgpu-layout-shaders.ts'].map(f => path.join(src, f)), ...dir(path.join(import.meta.dir, 'e2e')), ...dir(path.join(import.meta.dir, '../scripts'))];
   for (const file of crossing) for (const id of ids(read(file))) reserved.add(id);
   const literals = new Set<string>();
   for (const file of [...dir(src), ...dir(path.join(src, 'adapter'))]) for (const m of read(file).matchAll(/['"`]([A-Za-z_]\w*)['"`]/g)) literals.add(m[1]!);
@@ -136,10 +136,10 @@ test('property mangling excludes every declared settings and node-sizing schema 
 test('UI pass download ceilings remain exactly bounded and active documentation agrees', () => {
   const root = path.resolve(import.meta.dirname, '..');
   const gate = fs.readFileSync(path.join(root, 'scripts/bundle-size.mjs'), 'utf8');
-  expect(gate).toContain('zeroDependencyTargetBytes: 430000, zeroDependencyTargetGzipBytes: 148000');
+  expect(gate).toContain('zeroDependencyTargetBytes: 450000, zeroDependencyTargetGzipBytes: 165000');
   for (const name of ['README.md', 'CONTRIBUTING.md', 'docs/publish-checklist.md', 'CHANGELOG.md']) {
     const doc = fs.readFileSync(path.join(root, name), 'utf8');
-    expect(doc).toContain('430,000'); expect(doc).toContain('148,000');
+    expect(doc).toContain('450,000'); expect(doc).toContain('165,000');
   }
 });
 

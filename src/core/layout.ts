@@ -118,21 +118,45 @@ export class LayoutSolver {
       if (this.radii) for (const radius of this.radii) this.maxRadius = Math.max(this.maxRadius, radius);
     }
   }
+  /** Borrowed numeric inputs for optional compute adapters; never a second graph authority. */
+  get adapterColumns() { return { mass: this.mass, radii: this.radii, compensation: this.compensation, hubMass: this.hubMass, familyDegree: this.familyDegree }; }
   get kernelBackend(): 'wasm-scalar' | 'js' { return this.kernel?.active ? 'wasm-scalar' : 'js'; }
   get settled(): boolean { return !this.input.count || this.quiet >= Math.min(this.limit, this.options.convergenceIterations); }
   get done(): boolean { return !this.input.count || this.iteration >= this.limit || (this.options.convergenceThreshold > 0 && this.settled); }
-  step(): void {
+  step(): void { this.stepParts(false).next(); }
+  /** Yield only before position integration. Cancelling abandons force scratch, not half a position column. */
+  async stepResponsive(yieldNow: () => Promise<void>, stopped: () => boolean): Promise<boolean> {
+    if (this.input.count < 5000 && this.tree) { this.step(); return true; }
+    let last = performance.now();
+    for (const _ of this.stepParts(true)) {
+      if (performance.now() - last < 8) continue;
+      await yieldNow(); if (stopped()) return false; last = performance.now();
+    }
+    return true;
+  }
+  private *stepParts(sliced: boolean) {
     if (this.done) return;
     const { count: n, source, target, movable } = this.input, o = this.options, f = o.force, p = this.positions, mass = this.mass;
     const old = this.oldForces; this.oldForces = this.forces; this.forces = old;
     const forces = this.forces, history = this.oldForces;
     forces.fill(0);
     if (this.tree) {
-      this.tree.build(p, mass, o.maxTreeDepth);
-      if (!this.kernel?.repulse(this.tree, p, forces, f.scalingRatio, f.barnesHutTheta, this.maxRadius)) this.tree.repulse(p, mass, forces, f.scalingRatio, f.barnesHutTheta, movable, this.radii);
+      yield* this.tree.buildParts(p, mass, o.maxTreeDepth, sliced);
+      const chunk = sliced ? 1024 : n;
+      let accelerated = !!this.kernel?.active;
+      for (let begin = 0; accelerated && begin < n; begin += chunk) {
+        if (sliced) yield;
+        accelerated = this.kernel!.repulse(this.tree, p, forces, f.scalingRatio, f.barnesHutTheta, this.maxRadius, begin, Math.min(n, begin + chunk));
+      }
+      // A trapped kernel publishes no unfinished forces. Replay the whole walk in JS.
+      if (!accelerated) for (let begin = 0; begin < n; begin += chunk) {
+        if (sliced) yield;
+        this.tree.repulse(p, mass, forces, f.scalingRatio, f.barnesHutTheta, movable, this.radii, begin, Math.min(n, begin + chunk), this.maxRadius);
+      }
     }
     else {
       for (let i = 0; i < n; i++) for (let j = 0; j < i; j++) {
+        if (sliced && j % 8192 === 0 && (j || i % 16 === 0)) yield;
         const dx = p[2 * i]! - p[2 * j]!, dy = p[2 * i + 1]! - p[2 * j + 1]!;
         let d = Math.sqrt(dx * dx + dy * dy), factor = 0;
         if (this.radii) d = Math.max(d * .5, d - this.radii[i]! - this.radii[j]!);
@@ -214,9 +238,9 @@ export async function runLayoutStream(input: LayoutInput, options: LayoutOptions
   await yieldNow();
   let yieldedAt = performance.now();
   while (!solver.done && (!solver.iteration || !stopped())) {
-    solver.step();
+    if (!await solver.stepResponsive(yieldNow, () => solver.iteration > 0 && stopped())) break;
     if (!solver.done && solver.iteration % every === 0) send();
-    // Large configured batches still admit Stop between steps; a single step is atomic.
+    // Small fast steps also admit Stop between batches. Large walks yield inside the step.
     if (!solver.done && (solver.iteration % options.batchIterations === 0 || solver.iteration % every === 0 || performance.now() - yieldedAt >= 50)) {
       await yieldNow(); if (stopped()) break; yieldedAt = performance.now();
     }
