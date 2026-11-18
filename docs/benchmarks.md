@@ -2,6 +2,30 @@
 
 Results belong to an exact invocation, fixture, source revision and hardware class. They do not establish all-scale acceptance. Original slice-1 source is `041e1382` (2026-11-10); release-readiness baseline is `9b8cc07`. Historical tables below remain dated evidence. The slice-2 section records the new worker/browser/native invocations and unmet targets separately. Raw receipts remain ignored and local; publish only scrubbed summaries without hostnames, usernames, real-vault paths or private projections.
 
+## Visual layout completion
+
+On 2026-11-18, the visual rule stopped 13 of 18 synthetic seed-17 trajectories. None stopped before the first sampled point from which both stress measures stayed within 5% of their initial gap to the endpoint. All five runs that reached physical settlement stopped visually first. The biggest saving was 5,000 community notes on Processor: 23.6 s to `Layout ready` instead of 300.9 s to settlement. The smallest was 10,000 community notes on Graphics chip: about 0.3 s. These are long-pass results, not a speedup claim for the default 100-step pass: only the nearly motionless branch can qualify within 100 steps, and no branch can qualify before step 64.
+
+**Seconds: visual stop / sustained 95% endpoint stress agreement / physical settlement.** `cap` gives the observation end time instead of a settlement time. For those 13 runs, the reference was the last allowed step, not a known settled layout. `No fire` means the live rule did not qualify through that cap.
+
+| Synthetic shape | Notes | Processor (s) | Graphics chip (s) |
+|---|---:|---:|---:|
+| Community | 5,000 | 23.6 / 12.0 / 300.9 | no fire / 139.0 / cap 152.3 |
+| Community | 10,000 | 25.2 / 22.3 / 28.6 | 7.9 / 6.5 / 8.1 |
+| Community | 20,000 | 48.6 / 47.8 / 59.7 | 7.7 / 7.5 / 8.8 |
+| Scale-free | 5,000 | 198.8 / 21.0 / cap 364.1 | 65.7 / 41.0 / cap 147.3 |
+| Scale-free | 10,000 | 569.9 / 88.0 / cap 585.6 | 84.7 / 40.0 / cap 154.4 |
+| Scale-free | 20,000 | no fire / 576.0 / cap 864.6 | no fire / 49.0 / cap 171.1 |
+| Grid | 5,000 | 194.7 / 141.0 / cap 284.7 | 96.0 / 70.0 / cap 148.6 |
+| Grid | 10,000 | no fire / 120.0 / cap 447.4 | no fire / 146.0 / cap 156.4 |
+| Grid | 20,000 | 717.3 / 465.0 / cap 750.2 | 83.4 / 45.0 / cap 165.8 |
+
+**Method.** Linux x86-64 desktop with discrete graphics, synthetic Chromium workers, WebGPU explicitly enabled. Community, preferential attachment and grid inputs used the fixed topologies, overlap prevention, strong gravity 0.1 and scaling 10 from the [engine benchmark](#worker-webgpu-layout). Each reference run kept the historical policy and stopped at the original first physical settlement or its cap. The clock includes solver setup and numerical work but excludes checkpoint quality scoring. Five-thousand-note caps were 60,000 steps; larger noncommunity caps were 40,000 / 30,000 on Processor and 60,000 on Graphics chip. Up to three Processor workers and one Graphics worker shared one locked browser; compare times **within** a row and engine, not across engines as isolated throughput. Quality samples were spaced 1 s apart (250 ms on 10k/20k community) plus endpoint; crossing times are observations, not interpolations. Stress agreement is not exact neighbor agreement or a human assessment.
+
+**Why compare pictures as well as motion?** A motion-only candidate stopped the 20k Processor scale-free graph at 295.7 s, before sustained agreement at 576.0 s. Comparing a bounded sample of note positions rejected that stop. The final rule was replayed against each long trajectory using numerical step, normalized motion and sampled coordinate drift, matching endpoint stresses and step counts across replays. Separate calls through the production engine checked the selected engine, completion flags and exact fire coordinates on the five settled community cases and the 20k Graphics chip grid (step 30,720, before its cap). Calibration and these direct checks took about 54 minutes elapsed. A 10k community holdout with initial-position seed 29 qualified on Graphics chip at 9.260 s (95% at 6.752 s, settled at 9.288 s); it did not qualify by first physical settlement on Processor (95% at 18.756 s, settled at 25.691 s). This is not universal early-stopping evidence, native-app acceptance or a change to Auto graphics admission.
+
+**Reproduce one case:** `flock -w 1800 /tmp/graph-ng-harness.lock node scripts/layout-engine-bench.mjs enabled quality 20000 grid --engine gpu --seeds 17 --max-iterations 60000 --checkpoint-ms 1000 --verify-fire`. Use `cpu` for Processor. The harness checks available memory before browser launch. `--verify-fire` repeats a qualifying pass with production batching. Receipts are local under `graph-ng-looks-done/`: `summary.json`, `long-*.json`, `drift-*.json`, `verify-*.json`. See the [live rule and limitations](decisions/ADR-0010-layout-engine.md#visual-stopping-policy).
+
 ## Live tree copies and exact label top-K (2026-11-18)
 
 Baseline `2fcda43` versus the commit carrying this section. Node 22.23.1, Linux x86-64 desktop class, synthetic 128-note communities with hubs and bridges from `scripts/layout-engine-bench-worker.mjs`, seed 17. No browser, driver, Obsidian or whole-view adoption is measured. Coordinates, integration, step budgets, producer and cache identity are unchanged.

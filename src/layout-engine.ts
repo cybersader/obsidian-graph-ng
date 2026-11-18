@@ -1,4 +1,4 @@
-import { LayoutSolver, runLayoutStream, type LayoutInput, type LayoutOptions } from './core/layout';
+import { LayoutSolver, runLayoutStream, visualStop, VISUAL_STRIDE, type LayoutInput, type LayoutOptions } from './core/layout';
 import { graphicsQuality, chooseLayoutEngine, engineBucket, engineTimings, type EngineStatus, type EngineTiming, type LayoutEnginePreference } from './layout-engine-policy';
 import { adapterSupports, computeRequirements, requestComputeAdapter, WebGpuLayout, type ComputeAdapter, type GraphicsSolver } from './webgpu-layout';
 interface EngineDependencies {
@@ -44,17 +44,18 @@ export class LayoutEngineSession {
     let status: EngineStatus = { engine: 'processor', automatic, reason: automatic ? 'small' : 'manual' };
     const total = input.movable ? options.relaxIterations : options.iterations;
     const controller = this.abort = new AbortController();
-    let gpu: GraphicsSolver | undefined, positions = input.initial, iteration = 0, settled = false;
+    let gpu: GraphicsSolver | undefined, positions = input.initial, iteration = 0, settled = false, looksDone = false;
+    const visual = visualStop(options, true, !!input.movable);
     const report = (engine: EngineStatus['engine'], reason: EngineStatus['reason'], evictBucket?: number) => {
       status = { engine, automatic, reason, evictBucket }; run.status?.(status);
     };
     const release = () => { gpu?.destroy(); gpu = undefined; };
     const bucket = engineBucket(input.count), mode = +!!input.movable + 2 * +(options.convergenceThreshold > 0);
     const { every } = run, batch = options.batchIterations;
-    const nextBatch = (i: number, end: number) => Math.min(options.convergenceThreshold > 0 ? 1 : 4, end - i, every - i % every, batch - i % batch);
+    const nextBatch = (i: number, end: number) => Math.min(options.convergenceThreshold > 0 ? 1 : 4, visual ? VISUAL_STRIDE - i % VISUAL_STRIDE : Infinity, end - i, every - i % every, batch - i % batch);
     const buffer = run.buffer ?? ((length: number) => new Float32Array(length));
     let timing: EngineTiming | undefined;
-    const result = () => ({ positions: positions!, settled: !run.stopped() && settled,
+    const result = () => ({ positions: positions!, settled: !run.stopped() && settled && !looksDone, looksDone: !run.stopped() && looksDone,
       engineStatus: timing && !run.stopped() ? { ...status, timing } : status });
     try {
       if (!Number.isSafeInteger(every) || every < 1) throw Error('Invalid layout stream cadence');
@@ -92,10 +93,11 @@ export class LayoutEngineSession {
           if (gpu && status.engine === 'graphics') {
             while (iteration < total && !run.stopped()) {
               const n = nextBatch(iteration, total), step = await this.bounded(gpu.batch(n), controller);
-              if (step.positions.length !== input.count * 2 || !step.positions.every(Number.isFinite) || !Number.isFinite(step.quiet) || !Number.isFinite(step.movement)) throw Error('Invalid graphics result');
+              if (step.positions.length !== input.count * 2 || !step.positions.every(Number.isFinite) || !Number.isFinite(step.quiet) || !Number.isFinite(step.movement) || visual && !Number.isFinite(step.extent)) throw Error('Invalid graphics result');
               positions = step.positions; iteration += n;
               settled = step.quiet >= Math.min(total, options.convergenceIterations);
-              if (options.convergenceThreshold > 0 && settled) break;
+              looksDone = visual?.(iteration, step.movement, step.extent, positions) ?? false;
+              if (looksDone || options.convergenceThreshold > 0 && settled) break;
               if (iteration % every === 0 && iteration < total && (!run.wantsFrame || run.wantsFrame(iteration))) {
                 const frame = buffer(positions.length); frame.set(positions); run.emit(frame, iteration, total, status);
               }
@@ -113,7 +115,7 @@ export class LayoutEngineSession {
       if (!run.stopped() && (status.reason === 'manual' || status.reason === 'small')) run.status?.(status);
       // Remaining work limits execution, not the original required quiet streak. Restart history conservatively.
       positions = await runLayoutStream(iteration ? { ...input, initial: positions } : input, options, every,
-        (frame, step) => run.emit(frame, iteration + step, total, status), run.yieldNow, buffer, (s, steps) => { settled = s; if (!iteration && !steps && run.stopped()) report('processor', 'unchanged'); }, run.stopped, undefined, total - iteration, iteration, run.wantsFrame);
+        (frame, step) => run.emit(frame, iteration + step, total, status), run.yieldNow, buffer, (s, steps, visual) => { settled = s; looksDone = visual; if (!iteration && !steps && run.stopped()) report('processor', 'unchanged'); }, run.stopped, undefined, total - iteration, iteration, run.wantsFrame);
       return result();
     } finally { release(); controller.abort(); if (this.abort === controller) this.abort = undefined; }
   }

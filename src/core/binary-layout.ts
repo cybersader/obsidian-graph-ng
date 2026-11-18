@@ -1,9 +1,10 @@
 import { encodeStrings, decodeStrings } from './columns';
-import type { LayoutOptions } from './layout';
+import { usesVisualStop, type LayoutOptions } from './layout-options';
 // Keyed group summaries are not dictionary-compatible with slice-2 cached paint.
 export const CACHE_FORMAT = 3;
 export const MAX_CHUNK_BYTES = 1024 * 1024;
 export interface GenerationMeta {
+  looksDone?: boolean;
   format: number; declarationHash: string; key: string; layoutHash: string; layout: LayoutOptions;
   producer: string; source: string; groupLevel: number; streamEveryIterations: number;
 }
@@ -25,6 +26,7 @@ export function decodeLayout(g: BinaryGeneration): BinaryLayout {
   validateLayout(layout); return layout;
 }
 export function validateLayout(g: BinaryLayout) {
+  if (g.meta.looksDone !== undefined && (typeof g.meta.looksDone !== 'boolean' || g.meta.looksDone && !usesVisualStop(g.meta.layout))) throw new Error('Invalid visual completion');
   if (g.meta.format !== CACHE_FORMAT || g.positions.length !== g.identities.length * 2 || !g.positions.every(Number.isFinite) || new Set(g.identities).size !== g.identities.length || g.edgeKeys.length % 2) throw new Error('Invalid binary layout');
 }
 export interface BinaryAdapter {

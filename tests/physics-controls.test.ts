@@ -272,3 +272,14 @@ test('family control needs a declaration; pending count lives beside Apply and e
   const legacy = JSON.parse(JSON.stringify(f.settings)); delete legacy.layout.force.familyPull;
   expect(upgradeSettings(legacy, 'links').layout.force.familyPull).toBe(0); f.panel.dispose();
 });
+
+
+test('Finish fully is a draft, defaults off, survives presets and applies explicitly', async () => {
+  const f = fixture(), toggle = () => byLabel(f, 'Finish fully');
+  try {
+    expect(toggle().checked).toBe(false); toggle().checked = true; toggle().onchange();
+    choose(f, 'Fill the screen'); expect(toggle().checked).toBe(true); expect(f.settings.layout.finishFully).toBe(false);
+    await (control(f.panel.body, 'Apply layout') as any).onclick(); expect(f.settings.layout.finishFully).toBe(true);
+    expect(() => physicsSettings(f.settings, { finishFully: 'yes' as any })).toThrow();
+  } finally { f.panel.dispose(); }
+});

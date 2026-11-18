@@ -57,6 +57,7 @@
     ]
   },
   "layout": {
+    "finishFully": false,
     "iterations": 100,
     "relaxIterations": 30,
     "initialRadius": 100,

@@ -1,5 +1,5 @@
 import { validateSettings, type Settings } from './settings';
-import type { PhysicsValues } from './physics-controls';
+import type { PhysicsPreset } from './physics-controls';
 /** Shape statistics of the loaded projection. Ontology-neutral: counts only. */
 /** `outside`: notes not in the largest connected component (needs the edge columns). */
 export interface GraphStats { nodes: number; edges: number; carriers: number; groups: number; averageDegree: number; maxDegree: number; hubRatio: number; outside?: number }
@@ -82,7 +82,7 @@ export function recommend(t: GraphStats, s: Settings): Suggestion[] {
  * planted-group separation; they do not infer private-vault meaning. The 300..1000 step budget
  * grows with sqrt(notes + edges), under the existing terminable-worker deadline. Exhaustion
  * is not settlement: callers expose Keep refining rather than silently persisting it. */
-export function recommendedPhysics(nodes: number, edges: number): Required<Omit<PhysicsValues, 'layoutEngine'>> {
+export function recommendedPhysics(nodes: number, edges: number): PhysicsPreset {
   const n = Math.max(1, nodes), size = n + Math.max(0, edges);
   return {
     familyPull: 0, hubGravity: 2, scalingRatio: 10, slowDown: 1, strongGravityMode: true, linLogMode: false, outboundAttractionDistribution: false, adjustSizes: false,

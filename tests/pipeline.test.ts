@@ -600,3 +600,28 @@ for (const count of [500, 20000]) test(`mid-layout and refinement Stop return un
     }
   } finally { p.dispose(); }
 });
+
+
+test('visual pass adopts, saves and reopens ready to refine; full and legacy generation identities stay isolated', async () => {
+  const p = pipeline(), rows = [{ path:'alone.md', properties:{} }];
+  const o = { ...DEFAULT_LAYOUT, iterations: 100, force: { ...DEFAULT_LAYOUT.force, gravity: 0 } };
+  const configure = (finishFully: boolean) => p.request(1, {kind:'configure',config:{...config,layout:{...o,finishFully}}});
+  const project = () => p.request<ProjectResult>(1, {kind:'project'}), solve = () => p.request<LayoutResult>(1, {kind:'layout'});
+  try {
+    await configure(false); await p.request(1, {kind:'rows',reset:true,columns:packRows(rows,declaration)}); const visual = await project();
+    expect(await solve()).toMatchObject({looksDone:true,settled:false,cached:false});
+    expect(await p.request(1, {kind:'recompute',options:o})).toMatchObject({looksDone:true,settled:false});
+    await p.request(1, {kind:'adoptLayout'}); const early = await p.request<BinaryGeneration>(1, {kind:'encode'});
+    expect(early.meta.looksDone).toBe(true); await configure(true);
+    expect(await p.request(1, {kind:'load', generation:structuredClone(early)})).toBeUndefined();
+    const full = await project(); expect(full.meta.key).not.toBe(visual.meta.key); expect(full.meta.layoutHash).not.toBe(visual.meta.layoutHash);
+    expect(await solve()).toMatchObject({looksDone:false,settled:true,cached:false});
+    const legacy = await p.request<BinaryGeneration>(1, {kind:'encode'}); delete legacy.meta.layout.finishFully; delete legacy.meta.looksDone;
+    expect(() => decodeLayout({ ...legacy, meta: { ...legacy.meta, looksDone:true } })).toThrow('Invalid visual completion');
+    await configure(false); expect(await p.request(1,{kind:'load',generation:structuredClone(legacy)})).toBeUndefined();
+    expect(await p.request(1,{kind:'load',generation:early})).toBeDefined(); expect((await project()).exactSaved).toBe(true);
+    expect(await solve()).toMatchObject({looksDone:true,settled:false,cached:true});
+    await configure(true); expect(await p.request(1,{kind:'load',generation:legacy})).toBeDefined(); expect((await project()).exactSaved).toBe(true);
+    expect(await solve()).toMatchObject({looksDone:false,settled:true,cached:true});
+  } finally { p.dispose(); }
+});

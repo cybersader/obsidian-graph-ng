@@ -36,7 +36,7 @@ test('family pull accepts cycles and multiple parents, rejects malformed CSR and
 });
 test('family off keeps historical bytes and saved positions; active family invalidates parent-only changes', async () => {
   const fixture = familyFixture(100), d = fixture.declaration, rows = fixture.rows;
-  const legacy: any = structuredClone(options); delete legacy.force.familyPull; delete legacy.force.hubGravity;
+  const legacy: any = structuredClone(options); delete legacy.finishFully; delete legacy.force.familyPull; delete legacy.force.hubGravity;
   const legacyDeclaration = layoutDeclaration(d);
   const historical = await digest({ declaration: identityDeclaration(legacyDeclaration), layout: legacy, producer: 'fixture', rows: declaredFacts(rows, legacyDeclaration) });
   expect(await generationKey(rows, d, options, 'fixture')).toBe(historical);

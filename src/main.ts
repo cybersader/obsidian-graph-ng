@@ -459,12 +459,12 @@ export class GraphView extends ItemView {
     if (adapter?.inventoryError && this.plugin.hydrationStatus !== 'Room inventory unavailable') this.status.createDiv({ text: 'Room inventory unavailable' });
     const loading = this.loading();
     const failed = state === 'error' || text === LAYOUT_FAILED;
-    const announcement = failed || loading ? text : state === 'ready' ? 'Graph ready' : '';
+    const announcement = failed || loading || text === 'Layout ready' ? text : state === 'ready' ? 'Graph ready' : '';
     if (this.stageAnnouncement && this.stageAnnouncement.textContent !== announcement) this.stageAnnouncement.textContent = announcement;
     const health = failed ? [text] : loading ? [loading.stage]
       : this.plugin.settings.projectionFile ? ['External aggregate, not verified']
       : this.provisional ? [this.plugin.adapter?.savedCopy ? 'Saved copy while host confirms' : pendingText(this.report)] : [];
-    const chips = [this.plugin.hydrationStatus, this.viewFeedbackText, this.layoutStopped && !this.loading() && state !== 'error' ? 'Layout stopped' : '', ...health].filter(Boolean), readout = state === 'ready' && !this.provisional && this.report;
+    const chips = [this.plugin.hydrationStatus, this.viewFeedbackText, this.layoutStopped && !this.loading() && state !== 'error' ? 'Layout stopped' : '', text === 'Layout ready' && !loading && !failed ? text : '', ...health].filter(Boolean), readout = state === 'ready' && !this.provisional && this.report;
     const info = this.statusSummary.querySelector<HTMLElement>('.graph-ng-summary-info') ?? this.statusSummary.createEl('button', { cls: 'graph-ng-summary-info', attr: { 'aria-label': 'Graph information' } });
     info.hidden = !readout && !chips.length;
     info.onclick = () => this.explorePanel?.show('information', info);
@@ -600,7 +600,7 @@ export class GraphView extends ItemView {
       commitSavedView: (saved, expected) => this.plugin.commitSavedView(saved, expected),
       viewCurrent: () => !!this.explored && canonical(this.appliedView) === canonical(this.view),
       savedViewIssue: saved => this.savedViewIssue(saved), openSavedView: saved => this.openSavedView(saved),
-      layoutActivity: () => this.updateHydrationStatus(), layoutSettled: () => this.layoutSettled, applyLayout: values => this.applyLayout(values), settings: () => this.plugin.settings, result: () => this.explored, loading: () => this.loading(), mode: () => this.contentEl.dataset.mode ?? 'groups',
+      layoutActivity: () => this.updateHydrationStatus(), layoutSettled: () => this.layoutSettled, looksDone: () => this.looksDone, applyLayout: values => this.applyLayout(values), settings: () => this.plugin.settings, result: () => this.explored, loading: () => this.loading(), mode: () => this.contentEl.dataset.mode ?? 'groups',
       policy: () => this.detailRenderer?.policy.reasons ?? [], carriers: () => this.detailRenderer?.carrierCount ?? 0, relationshipNotes: () => this.relationshipNotes(), setRelationshipDisplay: nodes => setRelationshipDisplay(this.plugin, nodes), setView: (view, after) => this.setView(view, after), setColors: colors => this.setColors(colors), preview: (expr, context) => this.previewExpression(expr, context),
       namedViewState: () => this.contentEl.dataset.mode === 'groups' ? 'Groups' : this.detailRenderer?.namedViewState ?? 'Notes',
       lens: () => { const r = this.contentEl.dataset.mode === 'nodes' ? this.detailRenderer : undefined; return { active: !!r && r.lensNode >= 0, available: !!r && (r.lensNode >= 0 || r.selected >= 0 || r.hovered >= 0) }; },
@@ -626,7 +626,7 @@ export class GraphView extends ItemView {
     if (this.closed || this.plugin.settings.projectionFile || !this.groupGraph || this.detailGeneration !== this.activeRevision) return;
     this.provisional = !this.plugin.adapter.factsComplete(); this.contentEl.dataset.verified = String(!this.provisional);
     if (this.report) { this.report.provisional = this.provisional; this.report.linksPending = this.plugin.adapter.linksPending(); this.report.pendingProperties = this.plugin.adapter.pendingProperties(); }
-    this.statusText = this.layoutWorking || this.contentEl.dataset.state === 'building' ? this.statusText : this.provisional ? pendingText(this.report) : this.layoutSettled ? '' : 'Layout not settled';
+    this.statusText = this.layoutWorking || this.contentEl.dataset.state === 'building' ? this.statusText : this.provisional ? pendingText(this.report) : this.idleLayoutText;
   }
   async onClose() { this.deferredLayout = undefined; this.plugin.pipeline?.stopLayout?.(this.activeRevision); this.explorePanel?.dispose(); this.contributionPage.clear(); this.closed = true; this.renderRevision++; this.revision++; this.renderer?.dispose(); this.unsubscribe?.(); }
   refresh(): Promise<void> {
@@ -653,7 +653,7 @@ export class GraphView extends ItemView {
     this.carrierLookup = undefined; this.renderRevision++; this.provisional = true; this.contentEl.dataset.verified = 'false';
     this.report = undefined; this.explored = undefined; this.positions = undefined; this.deferredLayout = undefined;
     delete this.contentEl.dataset.layoutMs; delete this.contentEl.dataset.cached;
-    this.layoutSettled = true; this.layoutStopped = false; this.progressAt = 0; this.readProgress = undefined; this.contentEl.dataset.state = 'building'; this.statusText = 'Reading notes';
+    this.layoutSettled = true; this.looksDone = this.layoutStopped = false; this.progressAt = 0; this.readProgress = undefined; this.contentEl.dataset.state = 'building'; this.statusText = 'Reading notes';
     // Hold the last useful layout, without stale captions, until a progressed replacement exists.
     const heldLayout = this.presentation === 'nodes' ? this.detailRenderer?.beginLayout() : undefined;
     if (this.presentation === 'nodes') this.contentEl.dataset.mode = 'nodes-building';
@@ -815,7 +815,7 @@ export class GraphView extends ItemView {
       this.statusText = layout.cached || layout.reused === 'all' ? 'Using saved layout' : 'Preparing graph';
       await preview.finish(true);
       if (!current()) return;
-      this.positions = layout.positions; this.layoutSettled = layout.settled !== false; if (this.layoutSettled) this.layoutStopped = false; this.explorePanel?.render();
+      this.acceptPositions(layout); this.explorePanel?.render();
       this.cacheTrace.push({ expected: result.meta.key, stored: layout.stored, nodes: result.nodes, ...coverage, valid: layout.cached }); if (this.cacheTrace.length > 16) this.cacheTrace.shift();
       report.engineStatus = layout.engineStatus; this.plugin.recordLayoutEngine?.(layout.engineStatus);
       report.layout = { cached: layout.cached, reused: layout.reused, ms: layout.milliseconds, totalMs: performance.now() - start };
@@ -823,9 +823,9 @@ export class GraphView extends ItemView {
       this.contentEl.dataset.layoutMs = String(layout.milliseconds); this.contentEl.dataset.cached = String(layout.cached);
       if (this.presentation === 'nodes') await this.showDetails(this.detailVisible(), !this.detailScope);
       this.layoutWorking = false; if (!current()) return;
-      this.statusText = this.provisional ? pendingText(report) : this.layoutSettled ? '' : 'Layout not settled';
+      this.statusText = this.provisional ? pendingText(report) : this.idleLayoutText;
       if (current() && !this.provisional) this.plugin.recordPerformance?.({ notes: result.nodes, edges: result.edges, ingestMs, projectMs, groupsMs: Number(this.contentEl.dataset.refreshGroupMs), layoutMs: layout.milliseconds, totalMs: performance.now() - start });
-      if (layout.settled !== false && settings.persistLayout && this.plugin.store.committed !== result.meta.key && complete && !this.provisional && (!settings.declaration.edges.some(e => e.kind === 'producer') || this.plugin.adapter.linksResolved)) {
+      if ((layout.settled !== false || layout.looksDone) && settings.persistLayout && this.plugin.store.committed !== result.meta.key && complete && !this.provisional && (!settings.declaration.edges.some(e => e.kind === 'producer') || this.plugin.adapter.linksResolved)) {
         const generation = await this.plugin.pipeline.request<BinaryGeneration>(revision, { kind: 'encode' });
         if (!current()) return;
         // A failed cache write costs the next open a recompute; it must not fail the drawn graph.
@@ -1046,7 +1046,14 @@ export class GraphView extends ItemView {
     for (const r of items) { const item = root.createDiv({ cls: 'graph-ng-contribution' }); item.createSpan({ text: `${r.source} → ${r.target} [${r.type}] ` }); if (r.carrier) item.createEl('button', { text: r.carrier }).onclick = () => this.openPath(r.carrier!); }
   }
   /** Prepare CPU coordinates, persist, then commit on the existing renderer/context. */
+  private looksDone = false;
   private layoutSettled = true;
+  private get idleLayoutText() { return this.looksDone ? 'Layout ready' : this.layoutSettled ? '' : 'Layout not settled'; }
+  private acceptPositions(result: LayoutResult) {
+    this.positions = result.positions; this.looksDone = !!result.looksDone;
+    this.layoutSettled = !this.looksDone && result.settled !== false;
+    if (this.layoutSettled || this.looksDone) this.layoutStopped = false;
+  }
   private async applyLayout(values: PhysicsValues) {
     if (this.deferredLayout) return this.ensureNotesLayout(values);
     if (this.closed || !this.positions) throw new Error('Layout unavailable or generation changed');
@@ -1078,14 +1085,14 @@ export class GraphView extends ItemView {
         await this.plugin.commitLayout(values, ready, () => {
           token?.commit();
           if (this.report) { this.report.engineStatus = result.engineStatus; this.report.layout = { cached: false, ms: result.milliseconds }; }
-          this.positions = result.positions; this.layoutSettled = result.settled !== false; if (this.layoutSettled) this.layoutStopped = false;
+          this.acceptPositions(result);
           committed = true;
         });
         // The worker adopts only after settings and visible coordinates commit. A failed
         // derived-cache write must not roll back the already committed renderer.
         if (result.settled !== undefined) {
           await this.plugin.pipeline.request(revision, { kind: 'adoptLayout' });
-          if (result.settled && this.plugin.settings.persistLayout && !this.provisional && (!this.plugin.settings.declaration.edges.some(e => e.kind === 'producer') || this.plugin.adapter.linksResolved)) {
+          if ((result.settled || result.looksDone) && this.plugin.settings.persistLayout && !this.provisional && (!this.plugin.settings.declaration.edges.some(e => e.kind === 'producer') || this.plugin.adapter.linksResolved)) {
             const generation = await this.plugin.pipeline.request<BinaryGeneration>(revision, { kind: 'encode' });
             this.contentEl.dataset.cacheError = await this.plugin.cache(generation, () => !this.closed && this.activeRevision === revision && this.positions === result.positions).then(() => '', String);
           }
@@ -1094,7 +1101,7 @@ export class GraphView extends ItemView {
       } finally {
         if (!committed) this.layoutStopped = stopped; this.layoutControl(false); this.plugin.pipeline.onProgress = previousProgress; this.plugin.pipeline.onPositions = previousStream; this.plugin.pipeline.onEngine = previousEngine; token?.discard();
         try { finish?.(committed); }
-        finally { if (working) { this.layoutWorking = false; this.statusText = !completed ? LAYOUT_FAILED : this.provisional ? pendingText(this.report) : this.layoutSettled ? '' : 'Layout not settled'; } }
+        finally { if (working) { this.layoutWorking = false; this.statusText = !completed ? LAYOUT_FAILED : this.provisional ? pendingText(this.report) : this.idleLayoutText; } }
       }
     });
   }

@@ -3,8 +3,9 @@ import { validateSettings, type Settings } from './settings';
 import { DEFAULT_LAYOUT, type ForceSettings } from './core/layout-options';
 type Force = Settings['layout']['force'];
 /** Basic numbers are required; advanced engine knobs are optional so older callers keep untouched values. */
-export type PhysicsValues = Partial<Pick<Force, 'scalingRatio' | 'gravity' | 'slowDown' | 'familyPull' | 'hubGravity' | 'linLogMode' | 'outboundAttractionDistribution' | 'adjustSizes' | 'strongGravityMode' | 'barnesHutTheta'>> & { iterations?: number; layoutEngine?: LayoutEnginePreference };
-export type PhysicsKey = Exclude<keyof PhysicsValues, 'layoutEngine'>;
+export type PhysicsValues = Partial<Pick<Force, 'scalingRatio' | 'gravity' | 'slowDown' | 'familyPull' | 'hubGravity' | 'linLogMode' | 'outboundAttractionDistribution' | 'adjustSizes' | 'strongGravityMode' | 'barnesHutTheta'>> & { iterations?: number; finishFully?: boolean; layoutEngine?: LayoutEnginePreference };
+export type PhysicsKey = Exclude<keyof PhysicsValues, 'layoutEngine' | 'finishFully'>;
+export type PhysicsPreset = Required<Pick<PhysicsValues, PhysicsKey>>;
 /** [key, label, visible effect, advanced]. Values remain drafts until explicit Apply. */
 export const PHYSICS_FIELDS: readonly [PhysicsKey, string, string, boolean][] = [
   ['scalingRatio', 'Spread notes', 'Pushes every note away from the others. Higher = more space between notes and clusters; lower = a denser picture.', false],
@@ -21,8 +22,8 @@ export const PHYSICS_FIELDS: readonly [PhysicsKey, string, string, boolean][] = 
 ];
 const FORCE_KEYS = PHYSICS_FIELDS.map(([key]) => key).filter(key => key !== 'iterations') as (keyof ForceSettings)[];
 /** Defaults for every exposed control; unexposed layout settings are never part of a preset. */
-export function physicsDefaults(): Required<Omit<PhysicsValues, 'layoutEngine'>> {
-  return { ...Object.fromEntries(FORCE_KEYS.map(key => [key, DEFAULT_LAYOUT.force[key]])), iterations: DEFAULT_LAYOUT.iterations } as Required<Omit<PhysicsValues, 'layoutEngine'>>;
+export function physicsDefaults(): PhysicsPreset {
+  return { ...Object.fromEntries(FORCE_KEYS.map(key => [key, DEFAULT_LAYOUT.force[key]])), iterations: DEFAULT_LAYOUT.iterations } as PhysicsPreset;
 }
 type Scaled = 'scalingRatio' | 'gravity' | 'slowDown' | 'iterations' | 'barnesHutTheta';
 /** Every preset result stays inside the slider ranges, so no preset can produce an extreme value. */
@@ -37,7 +38,7 @@ export const PHYSICS_PRESETS: readonly [string, Partial<Record<Scaled, number>>]
   ['Fill the screen', { gravity: 3 }],
   ['Faster', { iterations: .5, barnesHutTheta: 1.3 }],
 ];
-export function presetValues(name: string, base: Required<Omit<PhysicsValues, 'layoutEngine'>> = physicsDefaults()): Required<Omit<PhysicsValues, 'layoutEngine'>> {
+export function presetValues(name: string, base: PhysicsPreset = physicsDefaults()): PhysicsPreset {
   const preset = PHYSICS_PRESETS.find(([label]) => label === name);
   if (!preset) throw new Error(`Unknown layout preset: ${name}`);
   const out = { ...base };
@@ -51,8 +52,8 @@ export function presetValues(name: string, base: Required<Omit<PhysicsValues, 'l
 export function physicsSettings(settings: Settings, values: PhysicsValues): Settings {
   const force: Force = { ...settings.layout.force };
   for (const key of FORCE_KEYS) if (values[key as PhysicsKey] !== undefined) (force as unknown as Record<string, unknown>)[key] = values[key as PhysicsKey];
-  for (const key of Object.keys(values)) if (!FORCE_KEYS.includes(key as keyof ForceSettings) && key !== 'iterations' && key !== 'layoutEngine') throw new Error(`Unknown layout control: ${key}`);
-  const next = { ...settings, ...(values.layoutEngine === undefined ? {} : { layoutEngine: values.layoutEngine }), layout: { ...settings.layout, ...(values.iterations === undefined ? {} : { iterations: values.iterations }), force } };
+  for (const key of Object.keys(values)) if (!FORCE_KEYS.includes(key as keyof ForceSettings) && key !== 'iterations' && key !== 'layoutEngine' && key !== 'finishFully') throw new Error(`Unknown layout control: ${key}`);
+  const next = { ...settings, ...(values.layoutEngine === undefined ? {} : { layoutEngine: values.layoutEngine }), layout: { ...settings.layout, ...(values.finishFully === undefined ? {} : { finishFully: values.finishFully }), ...(values.iterations === undefined ? {} : { iterations: values.iterations }), force } };
   validateSettings(next); return next;
 }
 

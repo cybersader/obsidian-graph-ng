@@ -5,7 +5,7 @@ import { workingText } from './working';
 import { RELATIONSHIP_HELP, panelHelp, disclosure, disclosureBody, settingRow, settingSelect, panelButton, iconButton } from './panel-help';
 import { everythingView, folderPredicate, folderView } from './saved-views';
 import { sizingValues, sizingSettings, MAX_NODE_RADIUS, type NodeSizingValues } from './node-sizing';
-import { physicsSettings, presetValues, PHYSICS_FIELDS, PHYSICS_PRESETS, type PhysicsKey, type PhysicsValues } from './physics-controls';
+import { physicsSettings, presetValues, PHYSICS_FIELDS, PHYSICS_PRESETS, type PhysicsKey, type PhysicsPreset, type PhysicsValues } from './physics-controls';
 import { editAsExpression, builderPredicate, checked } from './core/expr/engine';
 import { validate } from './core/expr/syntax';
 import { filterSummary, setToggles, toggleable, toggledValues } from './filter-summary';
@@ -62,6 +62,7 @@ export interface PanelHost {
   layoutActivity?(): void;
   applyLayout(values: PhysicsValues): Promise<void>;
   layoutSettled?(): boolean;
+  looksDone?(): boolean;
   previewSizing?(values: NodeSizingValues | null): void;
   applySizing?(values: NodeSizingValues): Promise<void>;
   sizingReadout?(): string;
@@ -104,6 +105,7 @@ export class ExplorePanel {
   private viewOrigin?: string;
   private physicsDraft?: Record<PhysicsKey, string | boolean>;
   private physicsAdvanced = false;
+  private finishDraft?: boolean;
   private layoutEngineDraft?: LayoutEnginePreference;
   private sizingDraft?: Record<keyof NodeSizingValues, string>;
   private sizingMessage = '';
@@ -605,7 +607,7 @@ export class ExplorePanel {
   private physics(host: HTMLElement) {
     const applied = (): Record<PhysicsKey, string | boolean> => { const l = this.settings.layout; return Object.fromEntries(PHYSICS_FIELDS.map(([key]) => { const v = key === 'iterations' ? l.iterations : l.force[key]; return [key, typeof v === 'boolean' ? v : String(v)]; })) as Record<PhysicsKey, string | boolean>; };
     const draft = this.physicsDraft ??= applied();
-    const fill = (values: Required<Omit<PhysicsValues, 'layoutEngine'>>, name: string) => { this.physicsUndo = { values: { ...draft }, name, applied: false }; for (const [key] of PHYSICS_FIELDS) { const v = values[key]; draft[key] = typeof v === 'boolean' ? v : String(v); } this.physicsError = ''; this.render(); };
+    const fill = (values: PhysicsPreset, name: string) => { this.physicsUndo = { values: { ...draft }, name, applied: false }; for (const [key] of PHYSICS_FIELDS) { const v = values[key]; draft[key] = typeof v === 'boolean' ? v : String(v); } this.physicsError = ''; this.render(); };
     const size = this.host.result(), recommended = recommendedPhysics(size?.nodes ?? 1000, size?.edges ?? 3000);
     panelHelp(host, 'How changes apply', 'Apply layout saves these changes and recomputes note positions. The graph stays framed until you pan or zoom.');
     const presets = settingRow(host, 'Presets', 'graph-ng-presets', 'Groups apart loosens the layout; Fill the screen tightens it. Faster uses fewer steps; presets stay drafts until Apply.').createDiv({ cls: 'graph-ng-setting-line', attr: { role: 'group', 'aria-label': 'Layout presets' } });
@@ -621,11 +623,14 @@ export class ExplorePanel {
     for (const value of LAYOUT_ENGINES) engine.createEl('option', { value, text: engineNames[value] });
     engine.value = this.layoutEngineDraft; engine.disabled = this.physicsBusy;
     engine.onchange = () => { this.layoutEngineDraft = engine.value as LayoutEnginePreference; summarize(); };
+    const finish = settingRow(host, 'Finish fully', 'graph-ng-toggle', 'Keep arranging until notes stop moving. Slower on large graphs.').querySelector('input')!;
+    finish.checked = this.finishDraft ??= !!this.settings.layout.finishFully; finish.disabled = this.physicsBusy;
+    finish.onchange = () => { this.finishDraft = finish.checked; summarize(); };
     const advice = this.host.layoutAdvice?.();
     if (advice) {
       // Keeps every other draft value; only turns Strong gravity on with a measured pull.
       const suggestion = host.createDiv({ cls: 'graph-ng-setting-line' });
-      panelButton(suggestion, PULL_IN, () => fill({ ...draft, strongGravityMode: true, gravity: advice.gravity } as unknown as Required<Omit<PhysicsValues, 'layoutEngine'>>, PULL_IN), this.physicsBusy);
+      panelButton(suggestion, PULL_IN, () => fill({ ...draft, strongGravityMode: true, gravity: advice.gravity } as unknown as PhysicsPreset, PULL_IN), this.physicsBusy);
       panelHelp(suggestion, 'Why pull them in?', advice.reason);
     }
     const undo = this.physicsUndo;
@@ -634,9 +639,10 @@ export class ExplorePanel {
       button.onclick = () => { Object.assign(draft, undo.values); this.physicsUndo = undefined; if (undo.applied) void run(); else this.render(); };
     }
     const summarize = () => {
-      const now = applied(), diff = PHYSICS_FIELDS.filter(([key]) => draft[key] !== now[key]), engineChanged = this.layoutEngineDraft !== (this.settings.layoutEngine ?? 'auto'), count = diff.length + +engineChanged; changes.empty(); changes.hidden = !count;
+      const now = applied(), diff = PHYSICS_FIELDS.filter(([key]) => draft[key] !== now[key]), engineChanged = this.layoutEngineDraft !== (this.settings.layoutEngine ?? 'auto'), finishChanged = this.finishDraft !== !!this.settings.layout.finishFully, count = diff.length + +engineChanged + +finishChanged; changes.empty(); changes.hidden = !count;
       if (count) {
         const details = changes.createEl('details'); disclosure(details, plural(count, 'change')); const body = disclosureBody(details);
+        if (finishChanged) statRow(body, 'minus', 'Finish fully', this.finishDraft ? 'off → on' : 'on → off');
         if (engineChanged) statRow(body, 'cpu', 'Layout engine', `${engineNames[this.settings.layoutEngine ?? 'auto']} → ${engineNames[this.layoutEngineDraft!]}`);
         const show = (v: string | boolean) => typeof v === 'boolean' ? (v ? 'on' : 'off') : v;
         for (const [key, title] of diff) statRow(body, 'minus', title, `${show(now[key])} → ${show(draft[key])}`);
@@ -654,7 +660,7 @@ export class ExplorePanel {
     }
     host.createDiv({ cls: 'graph-ng-explore-error', text: this.physicsError, attr: { role: 'alert' } });
     const unsettled = this.host.layoutSettled?.() === false;
-    if (unsettled) this.note(host, 'Layout not settled');
+    if (unsettled) this.note(host, this.host.looksDone?.() ? 'Layout ready' : 'Layout not settled');
     const actions = host.createDiv({ cls: 'graph-ng-layout-actions' });
     const apply = actions.createEl('button', { cls: 'mod-cta' }); workingText(apply, this.physicsBusy ? 'Recomputing…' : unsettled ? 'Keep refining' : 'Apply layout', this.physicsBusy);
     const changes = actions.createDiv({ cls: 'graph-ng-layout-changes', attr: { 'aria-live': 'polite' } }); summarize();
@@ -665,6 +671,7 @@ export class ExplorePanel {
       try {
         const values = Object.fromEntries(PHYSICS_FIELDS.map(([key]) => { const v = draft[key]; return [key, typeof v === 'boolean' ? v : v.trim() ? Number(v) : NaN]; })) as unknown as PhysicsValues;
         if (this.layoutEngineDraft !== (this.settings.layoutEngine ?? 'auto')) values.layoutEngine = this.layoutEngineDraft;
+        if (this.finishDraft !== !!this.settings.layout.finishFully) values.finishFully = this.finishDraft;
         physicsSettings(this.settings, values);
         this.physicsError = ''; await this.runLayout(values, true);
       } catch (e) { this.physicsError = `Not applied: ${e instanceof Error ? e.message : String(e)}`; if (!this.disposed) this.render(); }

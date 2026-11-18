@@ -727,3 +727,13 @@ test('idle adopted Notes offers Keep refining after an unstopped pass', async ()
   expect(view.statusSummary.querySelector('.graph-ng-refine')).toBeDefined(); expect(view.statusSummary.hidden).toBe(false);
   root.dataset.mode = 'groups'; view.statusText = ''; expect(view.statusSummary.querySelector('.graph-ng-refine')).toBeUndefined();
 });
+
+
+test('visual completion announces Layout ready and keeps the one-pass refinement action', async () => {
+  const { GraphView } = await import('../src/main');
+  const view: any = Object.create(GraphView.prototype), root = new ControlElement(); let runs = 0;
+  Object.assign(view, { contentEl: root, status: new ControlElement(), statusSummary: new ControlElement(), plugin: { settings: {} }, layoutStopped:true, explorePanel:{ async runLayout(){ runs++; } } });
+  Object.assign(root.dataset, { state:'ready', mode:'nodes' }); view.acceptPositions({ positions:new Float32Array(2), looksDone:true, settled:false }); view.statusText = view.idleLayoutText;
+  expect(view.statusSummary.textContent).toContain('Layout ready'); expect(view.statusSummary.textContent).not.toContain('Layout stopped');
+  control(view.statusSummary, 'Keep refining').click(); expect(runs).toBe(1);
+});

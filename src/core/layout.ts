@@ -1,7 +1,7 @@
-import { DEFAULT_LAYOUT, validateLayout, type LayoutOptions } from './layout-options';
+import { DEFAULT_LAYOUT, validateLayout, usesVisualStop, VISUAL_STRIDE, type LayoutOptions } from './layout-options';
 import { BarnesHut } from './barnes-hut';
 import { scalarLayoutKernel, type ScalarLayoutKernel } from './wasm-kernel';
-export { DEFAULT_LAYOUT, type LayoutOptions } from './layout-options';
+export { DEFAULT_LAYOUT, VISUAL_STRIDE, type LayoutOptions } from './layout-options';
 export interface LayoutInput {
   count: number;
   source: Uint32Array;
@@ -47,6 +47,42 @@ export function isolateRing(input: LayoutInput) {
     });
   };
 }
+/** Observe the existing RMS reductions on fixed numerical steps, never on a timer or preview.
+ * A visibly still pass gets a short path. Noisy large layouts must sustain the wider band.
+ * Full/absolute-threshold runs retain their original stopping semantics and cache identity. */
+export function visualStop(options: LayoutOptions, graphics = false, masked = false) {
+  if (!usesVisualStop(options)) return;
+  const scale = options.force.slowDown / (options.force.adjustSizes ? .3 : 1);
+  let quiet = 0, narrow = 0, still = 0, pictures = 0, stable = 0, noisy = false;
+  let previous: Float32Array | undefined;
+  return (iteration: number, movement: number, extent: number, positions: Float32Array) => {
+    if (iteration % VISUAL_STRIDE) return false;
+    const displacement = movement * scale;
+    quiet = displacement <= .004 * extent ? quiet + 1 : 0;
+    narrow = displacement <= .00235 * extent ? narrow + 1 : 0;
+    still = displacement <= .0005 * extent ? still + 1 : 0;
+    // A low instantaneous speed can hide coherent drift on a long pass. Compare
+    // two actual pictures once that history exists, rather than trusting the dip.
+    // Pinned relaxations use mover-only motion; a sample of fixed notes is not evidence.
+    if (!masked) {
+      noisy ||= displacement > .01 * extent;
+      if (iteration % 2048 === 0) {
+        const n = positions.length / 2, count = Math.min(n, 128);
+        previous ??= new Float32Array(2 * count);
+        let sum = 0;
+        for (let j = 0; j < count; j++) {
+          const at = 2 * Math.floor((j + .5) * n / count);
+          for (let k = 0; k < 2; k++) {
+            const value = positions[at + k]!; sum += (value - previous[2*j+k]!) ** 2; previous[2*j+k] = value;
+          }
+        }
+        stable = pictures > 0 && !noisy && sum * Math.max(1, options.force.slowDown) ** 2 <= count * (.03 * extent) ** 2 ? stable + 1 : 0;
+        pictures++; noisy = false;
+      }
+    }
+    return still >= 4 || (pictures >= 4 ? stable >= 4 : quiet >= 72 && narrow >= (graphics ? 8 : 2));
+  };
+}
 /** Persistent ForceAtlas2 integrator over borrowed edge columns and CSR degree.
  * Equations: Jacomy et al., PLOS ONE 2014, doi:10.1371/journal.pone.0098679.
  * Scheduling never resets force/convergence history. Arrays are the only per-node
@@ -56,7 +92,10 @@ export class LayoutSolver {
   readonly positions: Float32Array;
   readonly limit: number;
   iteration = 0;
+  extent = 0;
   movement = Infinity;
+  looksDone = false;
+  private visual: ReturnType<typeof visualStop>;
   private quiet = 0;
   private mass: Float32Array;
   private radii?: Float32Array;
@@ -71,7 +110,7 @@ export class LayoutSolver {
   private maxRadius = 0;
   /** JS override is an internal differential-test seam, not a saved physics setting. */
   constructor(private input: LayoutInput, private options: LayoutOptions, backend: 'auto' | 'js' = 'auto') {
-    validateLayout(options);
+    validateLayout(options); this.visual = visualStop(options, false, !!input.movable);
     const n = input.count;
     if (!Number.isSafeInteger(n) || n < 0 || input.source.length !== input.target.length || (input.initial && input.initial.length !== n * 2) || (input.movable && input.movable.length !== n)) throw new Error('Invalid layout input');
     for (let e = 0; e < input.source.length; e++) if (input.source[e]! >= n || input.target[e]! >= n) throw new Error('Invalid layout endpoint');
@@ -122,7 +161,7 @@ export class LayoutSolver {
   get adapterColumns() { return { mass: this.mass, radii: this.radii, compensation: this.compensation, hubMass: this.hubMass, familyDegree: this.familyDegree }; }
   get kernelBackend(): 'wasm-scalar' | 'js' { return this.kernel?.active ? 'wasm-scalar' : 'js'; }
   get settled(): boolean { return !this.input.count || this.quiet >= Math.min(this.limit, this.options.convergenceIterations); }
-  get done(): boolean { return !this.input.count || this.iteration >= this.limit || (this.options.convergenceThreshold > 0 && this.settled); }
+  get done(): boolean { return this.looksDone || !this.input.count || this.iteration >= this.limit || (this.options.convergenceThreshold > 0 && this.settled); }
   step(): void { this.stepParts(false).next(); }
   /** Yield only before position integration. Cancelling abandons force scratch, not half a position column. */
   async stepResponsive(yieldNow: () => Promise<void>, stopped: () => boolean): Promise<boolean> {
@@ -216,7 +255,9 @@ export class LayoutSolver {
     for (const value of p) extent += value * value;
     // A budget ending is not convergence. Compensate step damping as well as
     // slowdown so tiny integration steps cannot manufacture a settled report.
-    const threshold = o.convergenceThreshold || .002 * Math.sqrt(extent / Math.max(1, n));
+    this.extent = Math.sqrt(extent / Math.max(1, n));
+    this.looksDone = this.visual?.(this.iteration, this.movement, this.extent, p) ?? false;
+    const threshold = o.convergenceThreshold || .002 * this.extent;
     this.quiet = this.movement * (o.convergenceThreshold ? 1 : f.slowDown / (f.adjustSizes ? .3 : 1)) <= threshold ? this.quiet + 1 : 0;
   }
 }
@@ -229,10 +270,10 @@ export function runLayout(input: LayoutInput, options: LayoutOptions): Float32Ar
  * Iteration budgets (rather than wall-clock early exits) preserve determinism.
  * The worker remains terminable by the host deadline even within one iteration.
  */
-export async function runLayoutStream(input: LayoutInput, options: LayoutOptions, every: number, emit: (p: Float32Array, iteration: number, total: number) => void, yieldNow: () => Promise<void>, buffer: (length: number) => Float32Array = length => new Float32Array(length), finished = (_settled: boolean, _steps: number) => {}, stopped = () => false, solver = new LayoutSolver(input, options), steps = solver.limit, offset = 0, wantsFrame?: (iteration: number) => boolean): Promise<Float32Array> {
+export async function runLayoutStream(input: LayoutInput, options: LayoutOptions, every: number, emit: (p: Float32Array, iteration: number, total: number) => void, yieldNow: () => Promise<void>, buffer: (length: number) => Float32Array = length => new Float32Array(length), finished = (_settled: boolean, _steps: number, _looksDone: boolean) => {}, stopped = () => false, solver = new LayoutSolver(input, options), steps = solver.limit, offset = 0, wantsFrame?: (iteration: number) => boolean): Promise<Float32Array> {
   if (!Number.isSafeInteger(every) || every < 1) throw new Error('Invalid layout stream cadence');
   const send = () => { const p = buffer(solver.positions.length); p.set(solver.positions); emit(p, solver.iteration, solver.limit); };
-  if (!input.count) { finished(!stopped(), 0); return solver.positions; }
+  if (!input.count) { finished(!stopped(), 0, false); return solver.positions; }
   // Stop can return the validated start, but never publish it as a settled frame.
   await yieldNow();
   let yieldedAt = performance.now();
@@ -245,6 +286,6 @@ export async function runLayoutStream(input: LayoutInput, options: LayoutOptions
       await yieldNow(); if (stopped()) break; yieldedAt = performance.now();
     }
   }
-  finished(!stopped() && solver.settled, solver.iteration);
+  finished(!stopped() && solver.settled && !solver.looksDone, solver.iteration, !stopped() && solver.looksDone);
   return !solver.iteration && input.initial ? input.initial : solver.positions;
 }
