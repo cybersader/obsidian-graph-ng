@@ -11,7 +11,7 @@ interface Exports {
   repulse: (...args: number[]) => void;
   attract: (...args: number[]) => void;
 }
-const treeKeys = ['owner', 'child', 'head', 'next', 'cx', 'cy', 'half', 'mass', 'mx', 'my'] as const;
+const cellKeys = ['child', 'head', 'next', 'cx', 'cy', 'half', 'mass', 'mx', 'my'] as const;
 
 /** Failure is sticky for this layout. Force writes are published only after a
  * complete call; a trap cannot leak a partly accumulated force into JS recovery. */
@@ -21,6 +21,7 @@ export class ScalarLayoutKernel {
   private readonly storage: KernelTree;
   private readonly ptr: Record<string, number> = {};
   private readonly views: Record<string, NumericArray> = {};
+  private orderRevision = -1;
   constructor(tree: BarnesHut, private readonly count: number, source: Uint32Array, target: Uint32Array, weights: Float32Array, radii?: Float32Array, mask?: Uint8Array) {
     if (typeof WebAssembly === 'undefined') throw new Error('WebAssembly unavailable');
     compiled ??= new WebAssembly.Module(scalarKernelBytes);
@@ -55,8 +56,15 @@ export class ScalarLayoutKernel {
       if (!tree.matchesKernelStorage(this.storage)) throw new Error('Tree storage grew');
       const v = this.views, p = this.ptr;
       if (!begin) {
-        for (const key of treeKeys) v[key]!.set(this.storage[key]);
-        if (this.storage.order) v.order!.set(this.storage.order);
+        // All cell links and node owners address only the current live prefix.
+        const used = tree.usedCellCount;
+        for (const key of cellKeys) v[key]!.set(this.storage[key].subarray(0, used));
+        v.owner!.set(this.storage.owner);
+        const revision = tree.orderRevision;
+        if (this.storage.order && this.orderRevision !== revision) {
+          v.order!.set(this.storage.order);
+          this.orderRevision = revision;
+        }
         v.p!.set(positions);
         // Fixed nodes are skipped by the walk; their force entries must stay zero.
         v.f!.fill(0);

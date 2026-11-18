@@ -32,6 +32,44 @@ export function rankFocus(focus: number, near: readonly number[], state: Uint8Ar
   }
   return { list, direct };
 }
+/** Exact prefix of the degree-descending, node-index-ascending order. */
+export function labelCandidates(count: number, visible: ArrayLike<number>, offsets: Uint32Array, cap: number): number[] {
+  const nodes: number[] = [], degree = (i: number) => offsets[i + 1]! - offsets[i]!;
+  let max = 0;
+  for (let i = 0; i < count; i++) if (visible[i]) {
+    nodes.push(i);
+    const d = degree(i); max = d >= 0 ? Math.max(max, d) : NaN;
+  }
+  const k = Math.min(cap, nodes.length);
+  if (k === 0) return [];
+  if (max >= 0 && k * 4 < nodes.length) {
+    // Find the cutoff degree in at most four byte passes over the u32 degrees.
+    const bins = new Uint32Array(256);
+    let cutoff = 0, tied = k, shift = 24;
+    while (shift && !(max >>> shift)) shift -= 8;
+    for (; shift >= 0; shift -= 8) {
+      bins.fill(0);
+      for (const node of nodes) {
+        const prefix = degree(node) >>> shift;
+        if ((prefix >>> 8) === cutoff) bins[prefix & 255]!++;
+      }
+      let b = 255;
+      while (tied > bins[b]!) tied -= bins[b--]!;
+      cutoff = cutoff * 256 + b;
+    }
+    // Ascending node indices retain precisely the first `tied` notes at cutoff.
+    let write = 0;
+    for (const node of nodes) {
+      const d = degree(node);
+      if (d > cutoff || (d === cutoff && tied-- > 0)) nodes[write++] = node;
+    }
+    nodes.length = k;
+  }
+  nodes.sort((a, b) => degree(b) - degree(a) || a - b);
+  nodes.length = k;
+  return nodes;
+}
+
 /** Rasterize codepoints once, then place bounded lists at each LOD. No per-frame text work. */
 export async function buildLabels(p: RenderProjection, grid: Pick<PickGrid, 'positions' | 'visible' | 'minX' | 'minY' | 'width' | 'height'>, s: Settings, width: number, height: number, font: string, current: () => boolean, visible = grid.visible): Promise<LabelAtlas> {
   // Anchored names use DOM text. Keep the identical ranking/metrics, not an unused raster or GPU quads.
@@ -51,10 +89,8 @@ export async function buildLabels(p: RenderProjection, grid: Pick<PickGrid, 'pos
   };
   glyph('?');
   const budget = Math.max(1, Math.min(s.labelsMaxPerViewport, Math.floor(width * height / (s.labelGridCellSize ** 2) * s.labelDensity)));
-  const candidates = Array.from({ length: p.nodeCount }, (_, i) => i).filter(i => visible[i]);
-  candidates.sort((a, b) => (p.offsets[b + 1]! - p.offsets[b]!) - (p.offsets[a + 1]! - p.offsets[a]!) || a - b);
-  // Candidate work and atlas size are bounded independently of graph cardinality.
-  candidates.length = Math.min(candidates.length, budget * s.labelCandidateMultiplier);
+  // The atlas only receives the best candidates within the existing viewport budget.
+  const candidates = labelCandidates(p.nodeCount, visible, p.offsets, budget * s.labelCandidateMultiplier);
   const strings = new Map<number, string>(), widths = new Map<number, number>();
   for (let i = 0; i < candidates.length; i++) {
     const node = candidates[i]!, path = renderPath(p, node), text = path.slice(path.lastIndexOf('/') + 1).replace(/\.md$/, '').slice(0, 128);

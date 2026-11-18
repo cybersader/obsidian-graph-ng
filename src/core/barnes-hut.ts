@@ -1,4 +1,5 @@
 import { MortonOrder } from './morton';
+const ORDER_REFRESH = 8;
 /** Borrowed numeric columns for the optional scalar kernel; never insertion authority. */
 export interface KernelTree {
   owner: Int32Array; child: Int32Array; head: Int32Array; next: Int32Array;
@@ -37,6 +38,8 @@ export class BarnesHut {
     const { owner, child, head, next, cx, cy, half, mass, mx, my } = this;
     return { owner, child, head, next, cx, cy, half, mass, mx, my, ...(this.queryOrder ? { order: this.queryOrder.indices } : {}) };
   }
+  get usedCellCount(): number { return this.used; }
+  get orderRevision(): number { return Math.ceil(this.builds / ORDER_REFRESH); }
   matchesKernelStorage(storage: KernelTree): boolean { return storage.child === this.child && storage.order === this.queryOrder?.indices; }
   private allocate(cx: number, cy: number, half: number, next: number): number {
     const c = this.used++;
@@ -60,7 +63,7 @@ export class BarnesHut {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (let i = 0; i < p.length; i += 2) { minX = Math.min(minX, p[i]!); maxX = Math.max(maxX, p[i]!); minY = Math.min(minY, p[i + 1]!); maxY = Math.max(maxY, p[i + 1]!); }
     // Refresh before steps 1, 9, 17...; retained order affects locality, not forces.
-    if (this.queryOrder && this.builds++ % 8 === 0) this.queryOrder.update(p, minX, minY, maxX, maxY);
+    if (this.queryOrder && this.builds++ % ORDER_REFRESH === 0) this.queryOrder.update(p, minX, minY, maxX, maxY);
     this.allocate((minX + maxX) / 2, (minY + maxY) / 2, Math.max(maxX - minX, maxY - minY, 1e-6) / 2, -1);
     for (let i = 0; i < weights.length; i++) {
       if (sliced && i % 2048 === 0) yield;
