@@ -18,13 +18,13 @@ function settings(change: (s: any) => void = () => {}) {
   const s: any = { ...defaults('p@1'), declaration: structuredClone(declaration), persistLayout: true, streamEveryIterations: 1 };
   s.layout = { ...s.layout, iterations: 60, relaxIterations: 12, convergenceThreshold: 1e20, convergenceIterations: 12 }; change(s); return s;
 }
-async function boot(disk: MemoryAdapter, resolved: Record<string, Record<string, number>>, initial = settings()) {
+async function boot(disk: MemoryAdapter, resolved: Record<string, Record<string, number>>, initial = settings(), quickClock = false) {
   const { default: GraphPlugin } = await import('../src/main');
   const { LocalAdapter } = await import('../src/adapter/local');
   const files = Array.from({ length: N }, (_, i) => new FixtureFile(name(i)));
   const app: any = { workspace: { requestSaveLayout() {} }, vault: { getMarkdownFiles: () => files, getAbstractFileByPath: (p: string) => files.find(f => f.path === p), on() {}, read() { throw Error('no bodies'); } },
     metadataCache: { getFileCache: () => ({ frontmatter: {} }), resolvedLinks: resolved, on() {} } };
-  const worker = new Worker(new URL('../src/layout-worker.ts', import.meta.url).href), transport = worker as unknown as Transport;
+  const worker = new Worker(new URL(quickClock ? './support/quick-clock-worker.ts' : '../src/layout-worker.ts', import.meta.url).href), transport = worker as unknown as Transport;
   const views = new Set<{activeRevision: number; presentation: string}>(), send = transport.postMessage.bind(transport);
   const wantsNotes = (rev: number) => [...views].some(v => v.activeRevision === rev && v.presentation === 'nodes');
   let solve: {id: number; revision: number; requested: boolean} | undefined;
@@ -117,8 +117,8 @@ test('replacing a source before deferred dispatch never starts or persists the o
 });
 
 /** Keep the worker, save queue and view transitions real; record what reaches the canvas. */
-async function transitions() {
-  const disk = new MemoryAdapter(), app = await boot(disk, graph()), v = app.makeView(), rpc = app.plugin.pipeline;
+async function transitions(quickClock = false) {
+  const disk = new MemoryAdapter(), app = await boot(disk, graph(), settings(s => { s.quickStart = quickClock; }), quickClock), v = app.makeView(), rpc = app.plugin.pipeline;
   const calls: {rev: number; r: any}[] = [], request = rpc.request.bind(rpc), open = v.showDetails.bind(v);
   rpc.request = (rev: number, r: any) => { calls.push({rev, r}); return request(rev, r); };
   Object.assign(v, { panel: new ControlElement(), stage: new ControlElement(),
@@ -130,13 +130,13 @@ async function transitions() {
 }
 function latch() { let release!: () => void; const wait = new Promise<void>(r => { release = r; }); return { wait, release }; }
 
-test('cold Apply and immediate Notes commit the displayed coordinates', async () => {
-  const f = await transitions(), {v} = f;
+test('cold Apply and immediate Notes commit the displayed coordinates with the full budget', async () => {
+  const f = await transitions(true), {v} = f;
   try {
     await v.refresh(); const applying = v.applyLayout({iterations: 40}), opening = v.showDetails();
     await Promise.all([applying, opening]); await f.plugin.work;
     expect(v.contentEl.dataset.mode).toBe('nodes'); expect(v.detailRenderer.positions).toBe(v.positions);
-    expect(f.solves()).toHaveLength(1);
+    expect(f.solves()).toHaveLength(1); expect(f.solves()[0]!.r.quickStart).toBe(false); expect(v.layoutSettled).toBe(true);
   } finally { f.dispose(); }
 });
 
@@ -542,4 +542,20 @@ test('review: a full-budget restart from interim positions reports computation, 
     expect(verified.layout.cached).toBe(false); expect(verified.layout.reused).toBeUndefined();
     expect(verified.trace.stored).toBeUndefined(); expect(verified.text).toMatch(/^Computed layout in /);
   } finally { app.dispose(); }
+});
+
+test('cold Quick start adopts a memory-only draft once, refines on demand and shares settled cache identity', async () => {
+  const f = await transitions(true), {v} = f;
+  try {
+    await v.refresh(); await v.showDetails();
+    expect(f.solves().map(({r}) => r.kind)).toEqual(['layout']); expect(v.detailRenderer.positions).toBe(v.positions);
+    expect(v.statusSummary.textContent).toContain('Quick start draft'); expect(v.statusSummary.textContent).not.toContain('Layout stopped');
+    expect(v.statusSummary.querySelector('.graph-ng-refine')).toBeDefined(); expect(manifests(f.disk)).toHaveLength(0);
+    const refusal = await f.plugin.pipeline.request(v.activeRevision, {kind:'encode'}).then(() => '', String);
+    expect(refusal).toContain('Layout not settled');
+    // Use the real worker adoption and cache paths; the fixture has no GL renderer.
+    v.detailRenderer = undefined; await v.applyLayout({}); expect(v.layoutSettled).toBe(true); expect(manifests(f.disk)).toHaveLength(1);
+    expect(f.solves().map(({r}) => r.kind)).toEqual(['layout','recompute']);
+    f.plugin.settings.quickStart = false; const again = await f.open(); expect(again.layout.cached).toBe(true); expect(again.positions).toEqual(v.positions);
+  } finally { f.dispose(); }
 });

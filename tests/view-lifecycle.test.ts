@@ -736,3 +736,11 @@ test('visual completion announces Layout ready and keeps the one-pass refinement
   expect(view.statusSummary.textContent).toContain('Layout ready'); expect(view.statusSummary.textContent).not.toContain('Layout stopped');
   control(view.statusSummary, 'Keep refining').click(); expect(runs).toBe(1);
 });
+
+test('advanced settings reserve a full pass only for explicit physics or engine changes', async () => {
+  const { default: GraphPlugin } = await import('../src/main'), { defaults } = await import('../src/settings');
+  const plugin: any = new GraphPlugin({} as any, {} as any); plugin.settings = defaults('p@1'); plugin.adapter = {configure() {}}; plugin.resetStore = () => {}; plugin.saveData = async () => {};
+  const full: boolean[] = []; plugin.subscribe((flag: boolean) => { full.push(flag); });
+  await plugin.apply({...plugin.settings, quickStart:true}); await plugin.apply({...plugin.settings, layout:{...plugin.settings.layout, iterations:25}}); await plugin.apply({...plugin.settings, layoutEngine:'graphics'});
+  expect(full).toEqual([false,true,true]);
+});

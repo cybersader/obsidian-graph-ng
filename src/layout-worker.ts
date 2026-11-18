@@ -87,10 +87,10 @@ function groupSummary(p: GroupProjection): GroupProjection {
   // Carrier/contribution objects remain worker-owned and are read a page at a time.
   return { ...p, groupEdges: p.groupEdges.map(e => ({ ...e, carriers: { kind: e.carriers.kind, ids: [] } })) };
 }
-async function solve(input: LayoutInput, options: PipelineConfig['layout'], revision: number, stopped: () => boolean, preference = config.layoutEngine, remembered = config.engineChoices) {
+async function solve(input: LayoutInput, options: PipelineConfig['layout'], revision: number, stopped: () => boolean, quickStart = false, preference = config.layoutEngine, remembered = config.engineChoices) {
   const arrange = isolateRing(input), demand = preview, total = input.movable ? options.relaxIterations : options.iterations;
   const result = await engines.run(input, options, {
-    preference, remembered, every: config.streamEveryIterations, stopped, yieldNow: () => yieldTask(true),
+    quickStart, preference, remembered, every: config.streamEveryIterations, stopped, yieldNow: () => yieldTask(true),
     status: engineStatus => self.postMessage({ kind: 'engine', revision, engineStatus, total }),
     wantsFrame: demand && (iteration => {
       if (demand.wanted && credit && iteration >= demand.from) { credit = false; return true; }
@@ -174,7 +174,7 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       // Resolve the engine once: an omitted override inherits the configured engine
       // for solve, adoption and the saved-layout key alike.
       const layoutEngine = r.layoutEngine ?? config.layoutEngine, engineChoices = r.engineChoices ?? config.engineChoices;
-      const next = await solve({ count: projection.paths.length, source: projection.source, target: projection.target, offsets: projection.offsets, targets: projection.targets, up: projection.up, seed: 0, initial: r.initial ?? positions.slice() }, r.options, revision, control.cancelled, layoutEngine, engineChoices);
+      const next = await solve({ count: projection.paths.length, source: projection.source, target: projection.target, offsets: projection.offsets, targets: projection.targets, up: projection.up, seed: 0, initial: r.initial ?? positions.slice() }, r.options, revision, control.cancelled, false, layoutEngine, engineChoices);
       preparedLayout = { ...next, options: r.options, revision, layoutEngine, engineChoices };
       return { ...next, positions: next.positions.slice(), milliseconds: performance.now() - start, cached: false };
     }
@@ -203,7 +203,7 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       const prior = interim ?? saved, fromSaved = !!prior && prior === saved, stored = fromSaved ? prior.meta.key : undefined;
       const exact = exactSaved();
       let reused: LayoutResult['reused'] = exact ? fromSaved ? 'all' : 'interim' : undefined;
-      let looksDone = exact && prior!.meta.looksDone === true, settled = exact && !looksDone;
+      let budgetDraft = false, looksDone = exact && prior!.meta.looksDone === true, settled = exact && !looksDone;
       if (exact) positions = prior!.positions;
       else {
         let input: LayoutInput | undefined;
@@ -229,14 +229,17 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
         // every note, rather than incorrectly treating all existing notes as pinned.
         if (prior === interim || config.layout.force.familyPull && projection.up) input.movable = undefined;
         if (input.movable && !input.movable.some(Boolean)) { positions = input.initial!; looksDone = fromSaved && prior!.meta.looksDone === true; settled = fromSaved && !looksDone; reused = fromSaved ? 'all' : 'interim'; }
-        else { if (input.movable && input.initial) reused = fromSaved ? 'some' : 'interim-some'; const result = await solve(input, config.layout, revision, control.cancelled); positions = result.positions; settled = result.settled; looksDone = result.looksDone; engineStatus = result.engineStatus; }
+        else {
+          if (input.movable && input.initial) reused = fromSaved ? 'some' : 'interim-some';
+          ({ positions, settled, looksDone, budgetDraft, engineStatus } = await solve(input, config.layout, revision, control.cancelled, !input.initial && r.quickStart));
+        }
       }
       const milliseconds = performance.now() - start;
       // An exact hit already holds this generation; skip re-contracting its group summary.
       cacheable = settled || looksDone; meta = { ...meta, looksDone };
       if (complete && cacheable && (!exact || prior === interim)) saved = { meta, identities: projection.identities, positions, edgeKeys: hashes, groups: cacheSummary() };
       interim = complete && cacheable || fromSaved && reused === 'all' ? undefined : { meta, identities: projection.identities, positions, edgeKeys: hashes };
-      return { positions: positions.slice(), milliseconds, cached: Boolean(exact && fromSaved), reused, stored, settled, looksDone, engineStatus };
+      return { positions: positions.slice(), milliseconds, cached: Boolean(exact && fromSaved), reused, stored, settled, looksDone, budgetDraft, engineStatus };
     }
     case 'encode':
       if (!positions || !cacheable) throw new Error('Layout not settled');

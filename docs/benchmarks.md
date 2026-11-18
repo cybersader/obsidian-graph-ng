@@ -2,6 +2,12 @@
 
 Results belong to an exact invocation, fixture, source revision and hardware class. They do not establish all-scale acceptance. Original slice-1 source is `041e1382` (2026-11-10); release-readiness baseline is `9b8cc07`. Historical tables below remain dated evidence. The slice-2 section records the new worker/browser/native invocations and unmet targets separately. Raw receipts remain ignored and local; publish only scrubbed summaries without hostnames, usernames, real-vault paths or private projections.
 
+## Layout timing prompts
+
+Quick start is a device preference, not a solver or cache-key change. Its two seconds start at solve entry, not vault open. The next completed Processor step or validated Graphics batch can become a draft; normal completion wins at the same checkpoint. Warm reuse and explicit physics Apply retain their budgets. The synthetic clock checks adoption, refusal to encode a draft, and on-demand refinement; it does not measure native time to interaction.
+
+After eight seconds on Processor, a compatible compute adapter can unlock a one-pass Graphics trial in Layout. The probe does not request a device or change the running solver. No hardware speedup is assumed.
+
 ## Visual layout completion
 
 On 2026-11-18, the visual rule stopped 13 of 18 synthetic seed-17 trajectories. None stopped before the first sampled point from which both stress measures stayed within 5% of their initial gap to the endpoint. All five runs that reached physical settlement stopped visually first. The biggest saving was 5,000 community notes on Processor: 23.6 s to `Layout ready` instead of 300.9 s to settlement. The smallest was 10,000 community notes on Graphics chip: about 0.3 s. These runs calibrated unpinned passes only. Stop-step repeatability is within an engine on the same device, not between engines. These are long-pass results, not a speedup claim for the default 100-step pass: only the nearly motionless branch can qualify within 100 steps, and no branch can qualify before step 64.

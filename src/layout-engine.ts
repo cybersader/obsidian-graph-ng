@@ -9,6 +9,7 @@ interface EngineDependencies {
   watchdogMs: number;
 }
 export interface EngineRun {
+  quickStart?: boolean;
   preference?: LayoutEnginePreference;
   remembered?: EngineTiming[];
   every: number;
@@ -55,7 +56,10 @@ export class LayoutEngineSession {
     const nextBatch = (i: number, end: number) => Math.min(options.convergenceThreshold > 0 ? 1 : 4, visual ? VISUAL_STRIDE - i % VISUAL_STRIDE : Infinity, end - i, every - i % every, batch - i % batch);
     const buffer = run.buffer ?? ((length: number) => new Float32Array(length));
     let timing: EngineTiming | undefined;
-    const result = () => ({ positions: positions!, settled: !run.stopped() && settled && !looksDone, looksDone: !run.stopped() && looksDone,
+    const deadline = run.quickStart ? this.deps.now() + 2000 : Infinity;
+    let budgetDraft = false, active = true;
+    const budget = () => budgetDraft = !!run.quickStart && !run.stopped() && this.deps.now() >= deadline;
+    const result = () => ({ positions: positions!, budgetDraft, settled: !budgetDraft && !run.stopped() && settled && !looksDone, looksDone: !budgetDraft && !run.stopped() && looksDone,
       engineStatus: timing && !run.stopped() ? { ...status, timing } : status });
     try {
       if (!Number.isSafeInteger(every) || every < 1) throw Error('Invalid layout stream cadence');
@@ -97,7 +101,7 @@ export class LayoutEngineSession {
               positions = step.positions; iteration += n;
               settled = step.quiet >= Math.min(total, options.convergenceIterations);
               looksDone = !(settled && iteration === total) && !!visual?.(iteration, step.movement, step.extent, positions);
-              if (looksDone || options.convergenceThreshold > 0 && settled) break;
+              if (looksDone || options.convergenceThreshold > 0 && settled || iteration < total && budget()) break;
               if (iteration % every === 0 && iteration < total && (!run.wantsFrame || run.wantsFrame(iteration))) {
                 const frame = buffer(positions.length); frame.set(positions); run.emit(frame, iteration, total, status);
               }
@@ -113,10 +117,22 @@ export class LayoutEngineSession {
       }
       release(); controller.abort();
       if (!run.stopped() && (status.reason === 'manual' || status.reason === 'small')) run.status?.(status);
+      let hintAt = !this.disabled && preference !== 'graphics' && run.status ? this.deps.now() + 8000 : Infinity;
+      const checkpoint = () => {
+        if (budget()) return true;
+        if (hintAt !== Infinity && this.deps.now() >= hintAt) {
+          hintAt = Infinity;
+          const limits = computeRequirements(input, options);
+          if (limits) void this.deps.adapter().then(adapter => {
+            if (active && !run.stopped() && adapter && adapterSupports(adapter, limits)) { status = { ...status, tryGraphics: true }; run.status?.(status); }
+          }).catch(() => {}); // Optional help must never delay or fail the solve.
+        }
+        return false;
+      };
       // Remaining work limits execution, not the original required quiet streak. Restart history conservatively.
       positions = await runLayoutStream(iteration ? { ...input, initial: positions } : input, options, every,
-        (frame, step) => run.emit(frame, iteration + step, total, status), run.yieldNow, buffer, (s, steps, visual) => { settled = s; looksDone = visual; if (!iteration && !steps && run.stopped()) report('processor', 'unchanged'); }, run.stopped, undefined, total - iteration, iteration, run.wantsFrame);
+        (frame, step) => run.emit(frame, iteration + step, total, status), run.yieldNow, buffer, (s, steps, visual) => { settled = s; looksDone = visual; if (!iteration && !steps && run.stopped()) report('processor', 'unchanged'); }, run.stopped, undefined, total - iteration, iteration, run.wantsFrame, checkpoint);
       return result();
-    } finally { release(); controller.abort(); if (this.abort === controller) this.abort = undefined; }
+    } finally { active = false; release(); controller.abort(); if (this.abort === controller) this.abort = undefined; }
   }
 }

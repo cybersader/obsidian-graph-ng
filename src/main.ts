@@ -38,7 +38,7 @@ declare const __LAYOUT_WORKER_SOURCE__: string;
 /** One message/check serves each boundary without dropping phase information. */
 function requireLayout(current: () => boolean, phase = '') { if (!current()) throw new Error(`Layout generation changed${phase}`); }
 function cleanupFailure(error: unknown, phase: string, cleanup: unknown) { return new Error(`${error}; ${phase} failed: ${cleanup}. Saved-state recovery uncertain; retry saving before closing.`); }
-const VIEW = 'graph-ng', LAYOUT_FAILED = 'Layout update failed';
+const VIEW = 'graph-ng', LAYOUT_FAILED = 'Layout update failed', QUICK_DRAFT = 'Quick start draft';
 interface Generation { key: string; identities: string[]; positions: number[]; producer: string; layoutHash?: string; edgeKeys?: string[] }
 interface Data { settings: Settings; generations: Record<string, Generation> }
 /** Assign `next[k]` where `live[k]` still equals `was[k]`, in place; returns the count of keys kept live. */
@@ -93,7 +93,7 @@ export default class GraphPlugin extends Plugin {
   }
   adapter!: LocalAdapter;
   generations: Record<string, Generation> = Object.create(null);
-  private listeners = new Set<() => void | Promise<void>>();
+  private listeners = new Set<(fullPass?: boolean) => void | Promise<void>>();
   private writes: Promise<void> = Promise.resolve();
   private work: Promise<unknown> = Promise.resolve();
   pipeline!: WorkerPipeline;
@@ -245,12 +245,12 @@ export default class GraphPlugin extends Plugin {
     changed();
   }
   resetAdapter() { this.adapter?.invalidate(); this.adapter?.index.dispose(); this.adapter = new LocalAdapter(this.app, this, this.linkProducer, this.settings.debounceMs, () => this.notify(), true, this.settings.declaration, this.propertySource); this.adapter.attachFactCache(this.factStore, `${this.deviceNamespace}/${this.manifest.version}/${this.sourceIdentity}`); this.ingestedHash = ''; }
-  subscribe(listener: () => void | Promise<void>) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
-  notify(signal?: AbortSignal) {
+  subscribe(listener: (fullPass?: boolean) => void | Promise<void>) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
+  notify(signal?: AbortSignal, fullPass = false) {
     // The settlement watches a single acknowledgement directly. For multiple
     // views also detach their individual waits if any view never settles.
-    if (signal && this.listeners.size === 1) return [...this.listeners][0]!() ?? Promise.resolve();
-    return Promise.all([...this.listeners].map(fn => { const work = fn(); return signal && work ? waitForView(work, signal) : work; }));
+    if (signal && this.listeners.size === 1) return [...this.listeners][0]!(fullPass) ?? Promise.resolve();
+    return Promise.all([...this.listeners].map(fn => { const work = fn(fullPass); return signal && work ? waitForView(work, signal) : work; }));
   }
   async open() {
     let leaf = this.app.workspace.getLeavesOfType(VIEW)[0];
@@ -357,11 +357,13 @@ export default class GraphPlugin extends Plugin {
   onunload() { if (this.saveTimer !== undefined) void this.save(); }
   async apply(settings: Settings) {
     settings = { ...settings, nodeSizing: settings.nodeSizing ?? legacySizing(), declaration: migrateDeclaration(settings.declaration) }; validateSettings(settings); settings.explore = canonicalExplore(settings.explore);
+    let fullPass = false;
     await this.serialize(async () => {
+      fullPass = this.settings.layoutEngine !== settings.layoutEngine || canonical(this.settings.layout) !== canonical(settings.layout);
       this.settings = settings; this.adapter.configure(settings.declaration); this.resetStore();
       // Event registrations are owned by the original adapter; use its debounce only after reload.
       await this.save();
-    }); await this.notify();
+    }); await this.notify(undefined, fullPass);
   }
   async cache(generation: BinaryGeneration, current = () => true) {
     if (!this.settings.persistLayout) return;
@@ -422,7 +424,7 @@ export class GraphView extends ItemView {
       ring.setAttribute('class', 'graph-ng-layout-ring'); ring.setAttribute('pathLength', '100');
       button.onclick = () => { this.plugin.pipeline.stopLayout(this.activeRevision); this.layoutStopped = true; button.disabled = true; this.statusText = 'Stopping layout…'; };
     }
-    if (active) this.layoutStopped = false;
+    if (active) { this.layoutStopped = false; if (this.report) delete this.report.engineStatus; this.explorePanel?.updateGraphicsHint?.(); }
     this.statusSummary.toggleClass('graph-ng-layout-active', active);
     this.layoutStop.disabled = !active;
     this.layoutLabel(false);
@@ -459,12 +461,13 @@ export class GraphView extends ItemView {
     if (adapter?.inventoryError && this.plugin.hydrationStatus !== 'Room inventory unavailable') this.status.createDiv({ text: 'Room inventory unavailable' });
     const loading = this.loading();
     const failed = state === 'error' || text === LAYOUT_FAILED;
-    const announcement = failed || loading || text === 'Layout ready' ? text : state === 'ready' ? 'Graph ready' : '';
+    const completion = text === 'Layout ready' || text === QUICK_DRAFT;
+    const announcement = failed || loading || completion ? text : state === 'ready' ? 'Graph ready' : '';
     if (this.stageAnnouncement && this.stageAnnouncement.textContent !== announcement) this.stageAnnouncement.textContent = announcement;
     const health = failed ? [text] : loading ? [loading.stage]
       : this.plugin.settings.projectionFile ? ['External aggregate, not verified']
       : this.provisional ? [this.plugin.adapter?.savedCopy ? 'Saved copy while host confirms' : pendingText(this.report)] : [];
-    const chips = [this.plugin.hydrationStatus, this.viewFeedbackText, this.layoutStopped && !this.loading() && state !== 'error' ? 'Layout stopped' : '', text === 'Layout ready' && !loading && !failed ? text : '', ...health].filter(Boolean), readout = state === 'ready' && !this.provisional && this.report;
+    const chips = [this.plugin.hydrationStatus, this.viewFeedbackText, this.layoutStopped && !this.loading() && state !== 'error' ? 'Layout stopped' : '', !loading && !failed ? this.budgetDraft ? QUICK_DRAFT : completion ? text : '' : '', ...health].filter(Boolean), readout = state === 'ready' && !this.provisional && this.report;
     const info = this.statusSummary.querySelector<HTMLElement>('.graph-ng-summary-info') ?? this.statusSummary.createEl('button', { cls: 'graph-ng-summary-info', attr: { 'aria-label': 'Graph information' } });
     info.hidden = !readout && !chips.length;
     info.onclick = () => this.explorePanel?.show('information', info);
@@ -602,7 +605,7 @@ export class GraphView extends ItemView {
       commitSavedView: (saved, expected) => this.plugin.commitSavedView(saved, expected),
       viewCurrent: () => !!this.explored && canonical(this.appliedView) === canonical(this.view),
       savedViewIssue: saved => this.savedViewIssue(saved), openSavedView: saved => this.openSavedView(saved),
-      layoutActivity: () => this.updateHydrationStatus(), layoutSettled: () => this.layoutSettled, looksDone: () => this.looksDone, applyLayout: values => this.applyLayout(values), settings: () => this.plugin.settings, result: () => this.explored, loading: () => this.loading(), mode: () => this.contentEl.dataset.mode ?? 'groups',
+      layoutActivity: () => this.updateHydrationStatus(), layoutSettled: () => this.layoutSettled, layoutOutcome: () => this.idleLayoutText, tryGraphics: () => !!this.report?.engineStatus?.tryGraphics, applyLayout: (values, trial) => this.applyLayout(values, trial), settings: () => this.plugin.settings, result: () => this.explored, loading: () => this.loading(), mode: () => this.contentEl.dataset.mode ?? 'groups',
       policy: () => this.detailRenderer?.policy.reasons ?? [], carriers: () => this.detailRenderer?.carrierCount ?? 0, relationshipNotes: () => this.relationshipNotes(), setRelationshipDisplay: nodes => setRelationshipDisplay(this.plugin, nodes), setView: (view, after) => this.setView(view, after), setColors: colors => this.setColors(colors), preview: (expr, context) => this.previewExpression(expr, context),
       namedViewState: () => this.contentEl.dataset.mode === 'groups' ? 'Groups' : this.detailRenderer?.namedViewState ?? 'Notes',
       lens: () => { const r = this.contentEl.dataset.mode === 'nodes' ? this.detailRenderer : undefined; return { active: !!r && r.lensNode >= 0, available: !!r && (r.lensNode >= 0 || r.selected >= 0 || r.hovered >= 0) }; },
@@ -613,7 +616,7 @@ export class GraphView extends ItemView {
     }, this.view, this.toolbar);
     // Creating even a probe GL context can block; the initial group view needs no GPU.
     this.registerEvent(this.app.workspace.on('css-change', () => this.renderer?.refreshTheme?.()));
-    this.unsubscribe = this.plugin.subscribe(() => this.refresh());
+    this.unsubscribe = this.plugin.subscribe(fullPass => { if (fullPass) this.fullColdPass = true; return this.refresh(); });
     void this.plugin.loadProperties?.();
     await this.refresh();
   }
@@ -657,7 +660,7 @@ export class GraphView extends ItemView {
     this.carrierLookup = undefined; this.renderRevision++; this.provisional = true; this.contentEl.dataset.verified = 'false';
     this.report = undefined; this.explored = undefined; this.positions = undefined; this.deferredLayout = undefined;
     delete this.contentEl.dataset.layoutMs; delete this.contentEl.dataset.cached;
-    this.layoutSettled = true; this.looksDone = this.layoutStopped = false; this.progressAt = 0; this.readProgress = undefined; this.contentEl.dataset.state = 'building'; this.statusText = 'Reading notes';
+    this.layoutSettled = true; this.budgetDraft = this.looksDone = this.layoutStopped = false; this.progressAt = 0; this.readProgress = undefined; this.contentEl.dataset.state = 'building'; this.statusText = 'Reading notes';
     // Hold the last useful layout, without stale captions, until a progressed replacement exists.
     const heldLayout = this.presentation === 'nodes' ? this.detailRenderer?.beginLayout() : undefined;
     if (this.presentation === 'nodes') this.contentEl.dataset.mode = 'nodes-building';
@@ -745,7 +748,7 @@ export class GraphView extends ItemView {
         // Release the serialized refresh and worker slot. Resume only this projection on demand.
         const readyAt = performance.now();
         this.deferredLayout = async values => {
-          if (values) return this.plugin.commitLayout(values, current, () => {});
+          if (values) return this.plugin.commitLayout(values, current, () => { this.fullColdPass = true; });
           if (!current()) return;
           // Worker ownership, layout options and cache eligibility belong to this projection.
           const optionsChanged = settings !== this.plugin.settings || config.layout !== settings.layout || config.layoutEngine !== settings.layoutEngine;
@@ -799,7 +802,7 @@ export class GraphView extends ItemView {
         const attempt = ++this.renderRevision;
         return () => attempt === this.renderRevision;
       });
-      this.plugin.pipeline.onEngine = (engineStatus, total) => { if (current()) { report.engineStatus = engineStatus; if (!report.progress) this.passSteps(0, total); this.plugin.recordLayoutEngine?.(engineStatus, true); } };
+      this.plugin.pipeline.onEngine = (engineStatus, total) => { if (current()) { report.engineStatus = engineStatus; this.explorePanel?.updateGraphicsHint?.(); if (!report.progress) this.passSteps(0, total); this.plugin.recordLayoutEngine?.(engineStatus, true); } };
       const from = (devicePerformance.fast(settings.performance) ? 1 : 2) * settings.streamEveryIterations;
       this.plugin.pipeline.onProgress = (step, total) => { if (current()) this.passSteps(step, total); };
       this.plugin.pipeline.onPositions = event => {
@@ -813,7 +816,8 @@ export class GraphView extends ItemView {
       };
       let layout: LayoutResult;
       this.layoutControl(true);
-      try { layout = await this.plugin.pipeline.request<LayoutResult>(revision, { kind: 'layout', preview: { from, wanted: this.presentation === 'nodes' } }); }
+      const quickStart = settings.quickStart && !this.fullColdPass && this.presentation === 'nodes'; this.fullColdPass = false;
+      try { layout = await this.plugin.pipeline.request<LayoutResult>(revision, { kind: 'layout', quickStart, preview: { from, wanted: this.presentation === 'nodes' } }); }
       catch (error) { if (String(error).includes('Saved identities')) { await this.plugin.store.quarantine(result.meta); } throw error; }
       finally { this.plugin.pipeline.onProgress = undefined; this.plugin.pipeline.onPositions = undefined; this.plugin.pipeline.onEngine = undefined; this.layoutControl(false); }
       if (!current()) return;
@@ -1055,15 +1059,17 @@ export class GraphView extends ItemView {
     for (const r of items) { const item = root.createDiv({ cls: 'graph-ng-contribution' }); item.createSpan({ text: `${r.source} → ${r.target} [${r.type}] ` }); if (r.carrier) item.createEl('button', { text: r.carrier }).onclick = () => this.openPath(r.carrier!); }
   }
   /** Prepare CPU coordinates, persist, then commit on the existing renderer/context. */
+  private budgetDraft = false;
+  private fullColdPass = false;
   private looksDone = false;
   private layoutSettled = true;
-  private get idleLayoutText() { return this.looksDone ? 'Layout ready' : this.layoutSettled ? '' : 'Layout not settled'; }
+  private get idleLayoutText() { return this.budgetDraft ? QUICK_DRAFT : this.looksDone ? 'Layout ready' : this.layoutSettled ? '' : 'Layout not settled'; }
   private acceptPositions(result: LayoutResult) {
-    this.positions = result.positions; this.looksDone = !!result.looksDone;
+    this.positions = result.positions; this.budgetDraft = !!result.budgetDraft; this.looksDone = !!result.looksDone;
     this.layoutSettled = !this.looksDone && result.settled !== false;
-    if (this.layoutSettled || this.looksDone) this.layoutStopped = false;
+    if (this.layoutSettled || this.looksDone || this.budgetDraft) this.layoutStopped = false;
   }
-  private async applyLayout(values: PhysicsValues) {
+  private async applyLayout(values: PhysicsValues, trial = false) {
     if (this.deferredLayout) return this.ensureNotesLayout(values);
     if (this.closed || !this.positions) throw new Error('Layout unavailable or generation changed');
     const revision = this.activeRevision, projection = this.projection, old = this.detailRenderer;
@@ -1078,14 +1084,14 @@ export class GraphView extends ItemView {
         this.layoutWorking = working = true; this.progressAt = 0; this.layoutControl(true); this.passSteps(0, next.layout.iterations);
         finish = old?.beginLayout();
         this.plugin.pipeline.onProgress = (step, total) => { if (current()) this.passSteps(step, total); };
-        this.plugin.pipeline.onEngine = engineStatus => { if (current() && this.report) { this.report.engineStatus = engineStatus; this.plugin.recordLayoutEngine?.(engineStatus, true); } };
+        this.plugin.pipeline.onEngine = engineStatus => { if (current() && this.report) { this.report.engineStatus = engineStatus; this.explorePanel?.updateGraphicsHint?.(); this.plugin.recordLayoutEngine?.(engineStatus, true); } };
         this.plugin.pipeline.onPositions = event => {
           if (event.revision !== revision || !current() || streamError) { this.plugin.pipeline.recycle(event.positions.buffer as ArrayBuffer); return false; }
           this.passSteps(event.iteration, event.total);
           if (event.iteration > 0 && finish) { try { old!.streamPositions(event.positions, !painted); if (!painted) { this.layoutLabel(true); painted = true; } return old!.layoutPaint; } catch (e) { streamError = e; return false; } }
           else this.plugin.pipeline.recycle(event.positions.buffer as ArrayBuffer);
         };
-        const result = await this.plugin.pipeline.request<LayoutResult>(revision, { kind: 'recompute', preview: { from: 1, wanted: !!finish }, options: next.layout, layoutEngine: next.layoutEngine, engineChoices: this.plugin.layoutChoices?.(), initial: this.positions!.slice() });
+        const result = await this.plugin.pipeline.request<LayoutResult>(revision, { kind: 'recompute', preview: { from: 1, wanted: !!finish }, options: next.layout, layoutEngine: trial ? 'graphics' : next.layoutEngine, engineChoices: this.plugin.layoutChoices?.(), initial: this.positions!.slice() });
         this.plugin.pipeline.onProgress = previousProgress; this.plugin.pipeline.onPositions = previousStream; this.plugin.pipeline.onEngine = previousEngine;
         this.plugin.recordLayoutEngine?.(result.engineStatus);
         requireLayout(current); if (streamError) throw streamError;

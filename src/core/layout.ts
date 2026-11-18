@@ -267,7 +267,7 @@ export function runLayout(input: LayoutInput, options: LayoutOptions): Float32Ar
  * Iteration budgets (rather than wall-clock early exits) preserve determinism.
  * The worker remains terminable by the host deadline even within one iteration.
  */
-export async function runLayoutStream(input: LayoutInput, options: LayoutOptions, every: number, emit: (p: Float32Array, iteration: number, total: number) => void, yieldNow: () => Promise<void>, buffer: (length: number) => Float32Array = length => new Float32Array(length), finished = (_settled: boolean, _steps: number, _looksDone: boolean) => {}, stopped = () => false, solver = new LayoutSolver(input, options), steps = solver.limit, offset = 0, wantsFrame?: (iteration: number) => boolean): Promise<Float32Array> {
+export async function runLayoutStream(input: LayoutInput, options: LayoutOptions, every: number, emit: (p: Float32Array, iteration: number, total: number) => void, yieldNow: () => Promise<void>, buffer: (length: number) => Float32Array = length => new Float32Array(length), finished = (_settled: boolean, _steps: number, _looksDone: boolean) => {}, stopped = () => false, solver = new LayoutSolver(input, options), steps = solver.limit, offset = 0, wantsFrame?: (iteration: number) => boolean, endAtCheckpoint?: () => boolean): Promise<Float32Array> {
   if (!Number.isSafeInteger(every) || every < 1) throw new Error('Invalid layout stream cadence');
   const send = () => { const p = buffer(solver.positions.length); p.set(solver.positions); emit(p, solver.iteration, solver.limit); };
   if (!input.count) { finished(!stopped(), 0, false); return solver.positions; }
@@ -276,6 +276,7 @@ export async function runLayoutStream(input: LayoutInput, options: LayoutOptions
   let yieldedAt = performance.now();
   while (!solver.done && solver.iteration < steps && !stopped()) {
     if (!await solver.stepResponsive(yieldNow, stopped)) break;
+    if (!solver.done && solver.iteration < steps && endAtCheckpoint?.()) break;
     const index = offset + solver.iteration;
     if (!solver.done && solver.iteration < steps && index % every === 0 && (!wantsFrame || wantsFrame(index))) send();
     // Small fast steps also admit Stop between batches. Large walks yield inside the step.

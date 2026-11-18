@@ -275,3 +275,23 @@ for (const engine of ['processor', 'graphics'] as const) test(`physical settleme
   const result = await session.run(graph, o, run(engine));
   expect(result.engineStatus.engine).toBe(engine); expect(result).toMatchObject({ settled: true, looksDone: false });
 });
+
+for (const preference of ['processor', 'graphics'] as const) test(`Quick start adopts the first completed ${preference} checkpoint past its soft budget`, async () => {
+  const i = input(), o = { ...options(), batchIterations: 1, finishFully: true }, oracle = new LayoutSolver(i, o); oracle.step();
+  let now = 0;
+  const engine = new LayoutEngineSession({ now: () => now, adapter: async () => adapter, graphics: async () => {
+    const gpu = fakeGraphics(i, o), batch = gpu.batch.bind(gpu); gpu.batch = n => { now = 2500; return batch(n); }; return gpu;
+  } });
+  const solve = (quickStart: boolean, steps = 8) => { now = 0; return engine.run(i, { ...o, iterations: steps }, { ...run(preference), quickStart, yieldNow: async () => { now = 2500; }, wantsFrame: () => false }); };
+  const draft = await solve(true); expect(draft.budgetDraft).toBe(true); expect(draft.settled || draft.looksDone).toBe(false); expect(draft.positions).toEqual(oracle.positions);
+  expect((await solve(true, 1)).budgetDraft).toBeFalsy(); expect((await solve(false)).budgetDraft).toBeFalsy();
+});
+
+test('long Processor pass offers Graphics only after a capable adapter answers, without starting Graphics', async () => {
+  for (const available of [true, false]) {
+    let now = 0, probes = 0, offered = false;
+    const engine = new LayoutEngineSession({ now: () => now, adapter: async () => { probes++; return available ? adapter : undefined; }, graphics: async () => { throw Error('unexpected switch'); } });
+    const result = await engine.run(input(), { ...options(), batchIterations: 1 }, { ...run(), status: s => { if (s.tryGraphics) { expect(now).toBeGreaterThanOrEqual(8000); offered = true; } }, yieldNow: async () => { now += 2000; } });
+    expect(probes).toBe(1); expect(offered).toBe(available); expect(result.engineStatus.engine).toBe('processor');
+  }
+});

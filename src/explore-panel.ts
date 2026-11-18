@@ -60,9 +60,10 @@ export interface PanelHost {
   restoreCamera(camera: ViewCamera): void;
   persist(): void;
   layoutActivity?(): void;
-  applyLayout(values: PhysicsValues): Promise<void>;
+  applyLayout(values: PhysicsValues, trial?: boolean): Promise<void>;
   layoutSettled?(): boolean;
-  looksDone?(): boolean;
+  layoutOutcome?(): string;
+  tryGraphics?(): boolean;
   previewSizing?(values: NodeSizingValues | null): void;
   applySizing?(values: NodeSizingValues): Promise<void>;
   sizingReadout?(): string;
@@ -106,6 +107,7 @@ export class ExplorePanel {
   private physicsDraft?: Record<PhysicsKey, string | boolean>;
   private physicsAdvanced = false;
   private finishDraft?: boolean;
+  private graphicsTrial = false;
   private layoutEngineDraft?: LayoutEnginePreference;
   private sizingDraft?: Record<keyof NodeSizingValues, string>;
   private sizingMessage = '';
@@ -601,8 +603,13 @@ export class ExplorePanel {
     if (this.physicsBusy || this.disposed) return;
     const update = () => { if (!this.disposed) { this.host.layoutActivity?.(); if (fromPanel || (!this.root.hidden && this.tool === 'layout')) this.render(); } };
     this.physicsBusy = true;
-    try { update(); await this.host.applyLayout(values); if (fromPanel) { this.finishDraft = undefined; if (this.physicsUndo) this.physicsUndo.applied = true; } }
+    const trial = this.graphicsTrial; this.graphicsTrial = false;
+    try { update(); await this.host.applyLayout(values, trial); if (fromPanel) { this.finishDraft = undefined; if (this.physicsUndo) this.physicsUndo.applied = true; } }
     finally { this.physicsBusy = false; update(); }
+  }
+  updateGraphicsHint() {
+    const row = this.body.querySelector<HTMLElement>('.graph-ng-graphics-hint');
+    if (row) row.hidden = !this.host.tryGraphics?.() || this.graphicsTrial || this.layoutEngineDraft === 'graphics' || this.settings.layoutEngine === 'graphics';
   }
   private physics(host: HTMLElement) {
     const applied = (): Record<PhysicsKey, string | boolean> => { const l = this.settings.layout; return Object.fromEntries(PHYSICS_FIELDS.map(([key]) => { const v = key === 'iterations' ? l.iterations : l.force[key]; return [key, typeof v === 'boolean' ? v : String(v)]; })) as Record<PhysicsKey, string | boolean>; };
@@ -621,8 +628,13 @@ export class ExplorePanel {
     const engineNames = { auto: 'Auto', processor: 'Processor', graphics: 'Graphics chip' };
     const engine = settingRow(host, 'Layout engine', 'graph-ng-select', 'Auto uses Processor at every graph size. Choose Graphics chip on this device: it can be much faster on large graphs with a capable GPU.').createEl('select', { attr: { 'aria-label': 'Layout engine' } });
     for (const value of LAYOUT_ENGINES) engine.createEl('option', { value, text: engineNames[value] });
-    engine.value = this.layoutEngineDraft; engine.disabled = this.physicsBusy;
-    engine.onchange = () => { this.layoutEngineDraft = engine.value as LayoutEnginePreference; summarize(); };
+    engine.value = this.graphicsTrial ? 'graphics' : this.layoutEngineDraft; engine.disabled = this.physicsBusy;
+    engine.onchange = () => { this.graphicsTrial = false; this.layoutEngineDraft = engine.value as LayoutEnginePreference; this.updateGraphicsHint(); summarize(); };
+    const hint = host.createDiv({ cls: 'graph-ng-setting-line graph-ng-graphics-hint' });
+    panelButton(hint, 'Try Graphics chip', () => { this.graphicsTrial = true; this.layoutEngineDraft = this.settings.layoutEngine; engine.value = 'graphics'; this.updateGraphicsHint(); summarize(); });
+    panelHelp(hint, 'Next pass', 'Can be faster on this device. Positions may differ.'); this.updateGraphicsHint();
+    const quick = settingRow(host, 'Quick start', 'graph-ng-toggle', 'Open Notes with a draft after about two seconds of layout work. Refine it when you want.').querySelector('input')!;
+    quick.checked = this.settings.quickStart; quick.onchange = () => { this.settings.quickStart = quick.checked; this.host.persist(); };
     const finish = settingRow(host, 'Finish fully', 'graph-ng-toggle', 'Skip the visual stop. The step limit still applies.').querySelector('input')!;
     finish.disabled = this.physicsBusy;
     finish.onchange = () => { this.finishDraft = finish.checked; summarize(); };
@@ -661,7 +673,7 @@ export class ExplorePanel {
     }
     host.createDiv({ cls: 'graph-ng-explore-error', text: this.physicsError, attr: { role: 'alert' } });
     const unsettled = this.host.layoutSettled?.() === false;
-    if (unsettled) this.note(host, this.host.looksDone?.() ? 'Layout ready' : 'Layout not settled');
+    if (unsettled) this.note(host, this.host.layoutOutcome?.() || 'Layout not settled');
     const actions = host.createDiv({ cls: 'graph-ng-layout-actions' });
     const apply = actions.createEl('button', { cls: 'mod-cta' }); workingText(apply, this.physicsBusy ? 'Recomputing…' : unsettled ? 'Keep refining' : 'Apply layout', this.physicsBusy);
     const changes = actions.createDiv({ cls: 'graph-ng-layout-changes', attr: { 'aria-live': 'polite' } }); summarize();

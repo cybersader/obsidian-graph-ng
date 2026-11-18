@@ -16,7 +16,7 @@ export type PipelineRequest =
   | { kind: 'rows'; columns: RowColumns; reset?: boolean; removed?: string[] }
   | { kind: 'load'; generation: BinaryGeneration }
   | { kind: 'migrate'; generation: { key: string; identities: string[]; positions: number[]; producer: string; layoutHash?: string; edgeKeys?: string[] }; declarationHash: string }
-  | { kind: 'project'; complete?: boolean } | { kind: 'detail' } | { kind: 'layout'; preview?: PreviewDemand } | { kind: 'encode' }
+  | { kind: 'project'; complete?: boolean } | { kind: 'detail' } | { kind: 'layout'; quickStart?: boolean; preview?: PreviewDemand } | { kind: 'encode' }
   | { kind: 'adoptLayout' }
   | { kind: 'recompute'; preview?: PreviewDemand; options: LayoutOptions; initial?: Float32Array; layoutEngine?: LayoutEnginePreference; engineChoices?: EngineTiming[] }
   | { kind: 'gpu' }
@@ -34,7 +34,7 @@ export interface EdgeRuleCounts { drawn: number; missing: number; excluded: numb
 export interface DetailResult { projection: RenderProjection; visible: Uint8Array; colors: Uint32Array; explore: ExploreResult; view: number }
 export interface ViewResult { explore: ExploreResult; colors: Uint32Array; groups: GroupProjection; view: number }
 interface PreviewDemand { from: number; wanted: boolean }
-export interface LayoutResult { engineStatus?: EngineStatus; positions: Float32Array; milliseconds: number; cached: boolean; looksDone?: boolean; settled?: boolean; /** all/some: saved positions, unchanged/short relax; interim variants: memory-only hints. Full runs omit reuse. */ reused?: 'all' | 'some' | 'interim' | 'interim-some'; stored?: string }
+export interface LayoutResult { budgetDraft?: boolean; engineStatus?: EngineStatus; positions: Float32Array; milliseconds: number; cached: boolean; looksDone?: boolean; settled?: boolean; /** all/some: saved positions, unchanged/short relax; interim variants: memory-only hints. Full runs omit reuse. */ reused?: 'all' | 'some' | 'interim' | 'interim-some'; stored?: string }
 export interface GroupEvent { kind: 'groups'; revision: number; view: number; projection: GroupProjection }
 export interface Transport { postMessage(message: unknown, transfer: Transferable[]): void; terminate(): void; onmessage: ((event: MessageEvent) => void) | null; onerror: ((event: ErrorEvent) => void) | null }
 interface Pending { id: number; revision: number; request: PipelineRequest; resolve(v: any): void; reject(e: Error): void; timer?: ReturnType<typeof setTimeout>; stop?: boolean }

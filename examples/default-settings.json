@@ -1,5 +1,6 @@
 {
   "settingsVersion": 2,
+  "quickStart": false,
   "layoutEngine": "auto",
   "performance": "auto",
   "performanceDiagnostics": false,

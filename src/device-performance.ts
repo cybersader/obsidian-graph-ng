@@ -2,20 +2,21 @@ import { LAYOUT_ENGINES, engineTimings, type LayoutEnginePreference, type Engine
 import { PERFORMANCE_MODES, performanceRecords, type PerformanceMode, type PerformanceRecord } from './performance';
 
 export interface DevicePreferences {
+  quickStart: boolean;
   layoutEngine: LayoutEnginePreference;
   performance: PerformanceMode;
   performanceDiagnostics: boolean;
   performanceSuggestions: boolean;
   performancePrompted: boolean;
 }
-export const deviceDefaults = (): DevicePreferences => ({ layoutEngine: 'auto', performance: 'auto', performanceDiagnostics: false, performanceSuggestions: true, performancePrompted: false });
+export const deviceDefaults = (): DevicePreferences => ({ quickStart: false, layoutEngine: 'auto', performance: 'auto', performanceDiagnostics: false, performanceSuggestions: true, performancePrompted: false });
 export function devicePreferences(input: unknown): DevicePreferences {
   const result = deviceDefaults();
   if (!input || typeof input !== 'object') return result;
   const value = input as Record<string, unknown>;
   if (LAYOUT_ENGINES.includes(value.layoutEngine as LayoutEnginePreference)) result.layoutEngine = value.layoutEngine as LayoutEnginePreference;
   if (PERFORMANCE_MODES.includes(value.performance as PerformanceMode)) result.performance = value.performance as PerformanceMode;
-  for (const key of ['performanceDiagnostics', 'performanceSuggestions', 'performancePrompted'] as const) if (typeof value[key] === 'boolean') result[key] = value[key];
+  for (const key of ['quickStart', 'performanceDiagnostics', 'performanceSuggestions', 'performancePrompted'] as const) if (typeof value[key] === 'boolean') result[key] = value[key];
   return result;
 }
 /** Keep the runtime settings object intact; only the shared write drops device preferences. */
@@ -65,7 +66,7 @@ export class DevicePerformanceStore {
     try { raw = this.key && this.storage?.getItem(this.key); } catch { this.storage = undefined; }
     // Shared samples may belong to somebody else. Never migrate them, even when opted in.
     // Layout engine never had a shared preference. Only a local record may opt in.
-    let settings: unknown = { ...devicePreferences(legacy), layoutEngine: 'auto' }, log: unknown = [];
+    let settings: unknown = { ...devicePreferences(legacy), quickStart: false, layoutEngine: 'auto' }, log: unknown = [];
     if (raw != null) {
       settings = undefined;
       try {

@@ -298,3 +298,17 @@ test('Finish fully help names the step limit', () => {
   try { expect(f.panel.body.textContent).toContain('Skip the visual stop. The step limit still applies.'); }
   finally { f.panel.dispose(); }
 });
+
+test('Quick start defaults off and saves without applying physics', () => {
+  let saves = 0; const f = fixture({ persist: () => saves++ });
+  expect(f.settings.quickStart).toBe(false); const quick = byLabel(f, 'Quick start'); quick.checked = true; quick.onchange();
+  expect(f.settings.quickStart).toBe(true); expect(saves).toBe(1); expect(f.applied()).toBe(0); f.panel.dispose();
+});
+
+test('Try Graphics chip fills the selector for one explicit pass without changing the saved engine', async () => {
+  const passes: unknown[] = [], f = fixture({ tryGraphics: () => true, applyLayout: async (v: any, trial?: boolean) => passes.push([v.layoutEngine, !!trial]) });
+  const select = () => f.panel.body.querySelectorAll('select').find((e: any) => e.getAttribute('aria-label') === 'Layout engine');
+  control(f.panel.body, 'Try Graphics chip').click(); expect(select().value).toBe('graphics'); expect(passes).toEqual([]); expect(f.settings.layoutEngine).toBe('auto');
+  await (control(f.panel.body, 'Apply layout') as any).onclick(); expect(select().value).toBe('auto'); await f.panel.runLayout({});
+  expect(passes).toEqual([[undefined, true], [undefined, false]]); expect(f.settings.layoutEngine).toBe('auto'); f.panel.dispose();
+});

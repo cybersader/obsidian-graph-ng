@@ -2728,3 +2728,10 @@ for (const failure of ['adoptLayout', 'encode', 'cache']) test(`post-commit ${fa
   await f.view[compiled('applyLayout')](values); expect(f.writes.length).toBe(1); expect(f.view.positions).toBe(f.next);
   expect(f.view.contentEl.dataset.cacheError).toContain('cache unavailable'); expect(f.view.statusText).not.toContain('failed');
 });
+
+test('one Graphics trial overrides only the dispatched pass, never its saved preference or the following pass', async () => {
+  const f = await fixture(), engines: string[] = []; f.plugin.settings.quickStart = true;
+  f.plugin.pipeline.request = async (_: number, req: any) => { engines.push(req.layoutEngine); expect(req.quickStart).toBeFalsy(); return { positions: f.next, milliseconds: 1 }; };
+  await f.view[compiled('applyLayout')]({}, true); await f.view[compiled('applyLayout')]({});
+  expect(engines).toEqual(['graphics','auto']); expect(f.plugin.settings.layoutEngine).toBe('auto'); expect(f.writes).toHaveLength(0);
+});

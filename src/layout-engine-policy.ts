@@ -13,6 +13,7 @@ export interface EngineTiming {
 export interface EngineStatus {
   engine: LayoutEngine; automatic: boolean;
   reason: 'small' | 'quality' | 'manual' | 'unavailable' | 'unsupported' | 'timing' | 'remembered' | 'failed' | 'unchanged';
+  tryGraphics?: boolean;
   timing?: EngineTiming; evictBucket?: number;
 }
 const integer = (x: number, min: number, max: number) => Number.isSafeInteger(x) && x >= min && x <= max;
