@@ -116,7 +116,7 @@ function memberRequestFixture() {
     groupGraph: { groups: [{ id: 'first', label: 'First', count: 1 }, { id: 'second', label: 'Second', count: 1 }] },
     contributionPage: { clear() {} }, explorePanel: { show() {} }, gpu: { available: false, reason: 'Synthetic no-GPU path' },
     plugin: { settings, pipeline: { request(_revision: number, request: any) { expect(request.kind).toBe('members'); return new Promise<Uint32Array>((resolve, reject) => pending.push({ resolve, reject })); } } },
-    showGroups() { backs++; panel.empty(); }, openPath() {} });
+    toGroups() { backs++; panel.empty(); }, openPath() {} });
   return { view, panel, pending, backs: () => backs, status: () => panel.querySelectorAll('div').find(e => e.getAttribute('role') === 'status' && e.getAttribute('aria-live') === 'polite') };
 }
 test('group browser pages and searches the existing dictionary without changing graph state', () => {

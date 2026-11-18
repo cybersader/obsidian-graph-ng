@@ -522,7 +522,9 @@ export class GraphView extends ItemView {
   private exploreQueued?: () => void;
   private detailScope?: Uint8Array;
   private scopeGroup?: { key: string; source: string };
-  private membersReady?: () => Promise<void> | void;
+  private membersReady?: (ready: boolean) => Promise<void> | void;
+  private settleMembers(ready: boolean) { const notify = this.membersReady; this.membersReady = undefined; return notify?.(ready); }
+  private clearMemberRows() { if (this.panel?.querySelector('.graph-ng-member-heading')) this.panel.empty(); }
   private scopeName = 'Selected group';
   private pendingCamera?: ViewCamera;
   /** Focus to return to from Groups ("Back to" chip), bound to the projection it indexes. */
@@ -621,14 +623,14 @@ export class GraphView extends ItemView {
     const stage = this.stage.getBoundingClientRect(), panel = tools.getBoundingClientRect();
     return panel.width > 0 ? Math.max(0, Math.min(stage.width, stage.right - panel.left)) : 0;
   }
-  invalidateSource() { this.deferredLayout = undefined; this.explored = undefined; this.explorePanel?.render(); this.contributionPage.clear(); this.groupGeneration = -1; this.revision++; this.renderRevision++; this.provisional = true; if (this.contentEl) this.contentEl.dataset.verified = 'false'; this.renderer?.dispose(); this.renderer = undefined; this.projection = undefined; this.detailGeneration = -1; this.positions = undefined; this.groupGraph = undefined; this.stage?.empty(); this.panel?.empty(); }
+  invalidateSource() { this.membersReady = undefined; this.deferredLayout = undefined; this.explored = undefined; this.explorePanel?.render(); this.contributionPage.clear(); this.groupGeneration = -1; this.revision++; this.renderRevision++; this.provisional = true; if (this.contentEl) this.contentEl.dataset.verified = 'false'; this.renderer?.dispose(); this.renderer = undefined; this.projection = undefined; this.detailGeneration = -1; this.positions = undefined; this.groupGraph = undefined; this.stage?.empty(); this.panel?.empty(); }
   promoteProperties() {
     if (this.closed || this.plugin.settings.projectionFile || !this.groupGraph || this.detailGeneration !== this.activeRevision) return;
     this.provisional = !this.plugin.adapter.factsComplete(); this.contentEl.dataset.verified = String(!this.provisional);
     if (this.report) { this.report.provisional = this.provisional; this.report.linksPending = this.plugin.adapter.linksPending(); this.report.pendingProperties = this.plugin.adapter.pendingProperties(); }
     this.statusText = this.layoutWorking || this.contentEl.dataset.state === 'building' ? this.statusText : this.provisional ? pendingText(this.report) : this.layoutSettled ? '' : 'Layout not settled';
   }
-  async onClose() { this.deferredLayout = undefined; this.plugin.pipeline?.stopLayout?.(this.activeRevision); this.explorePanel?.dispose(); this.contributionPage.clear(); this.closed = true; this.renderRevision++; this.revision++; this.renderer?.dispose(); this.unsubscribe?.(); }
+  async onClose() { this.membersReady = undefined; this.deferredLayout = undefined; this.plugin.pipeline?.stopLayout?.(this.activeRevision); this.explorePanel?.dispose(); this.contributionPage.clear(); this.closed = true; this.renderRevision++; this.revision++; this.renderer?.dispose(); this.unsubscribe?.(); }
   refresh(): Promise<void> {
     if (this.closed) return Promise.resolve();
     if (this.refreshing) {
@@ -650,6 +652,8 @@ export class GraphView extends ItemView {
     const source = this.plugin.propertySource, propertyRevision = this.plugin.propertyRevision;
     const current = () => !this.closed && rev === this.revision && source === this.plugin.propertySource && propertyRevision === this.plugin.propertyRevision;
     const settings = this.plugin.settings, start = performance.now();
+    // Member actions close over the previous dictionary. A scoped Notes open can retain them only until refresh.
+    this.clearMemberRows();
     this.carrierLookup = undefined; this.renderRevision++; this.provisional = true; this.contentEl.dataset.verified = 'false';
     this.report = undefined; this.explored = undefined; this.positions = undefined; this.deferredLayout = undefined;
     delete this.contentEl.dataset.layoutMs; delete this.contentEl.dataset.cached;
@@ -732,7 +736,7 @@ export class GraphView extends ItemView {
         const code = this.scopeGroup.source === configuredSource ? detail.explore.groupKeys.indexOf(this.scopeGroup.key) : -1;
         this.detailScope = detail.visible.map((bit, i) => bit && detail.explore.groupCodes[i] === code ? 1 : 0);
       }
-      const membersReady = this.membersReady; this.membersReady = undefined; if (membersReady) await membersReady();
+      if (this.membersReady) await this.settleMembers(true);
       if (!current()) return;
       this.contributionPage.update(this.contributionContext());
       const arrange = (activeStart = start) => this.arrangeNotes(revision, current, result, report, complete, coverage, ingestMs, projectMs, activeStart);
@@ -756,6 +760,7 @@ export class GraphView extends ItemView {
     } catch (error) { fail(error); }
     finally {
       heldLayout?.(false);
+      if (revision === this.activeRevision && this.membersReady) this.settleMembers(false);
       if (!current()) { this.plugin.adapter.invalidate(!!this.plugin.propertySource); this.plugin.ingestedHash = ''; this.contentEl.dataset.verified = 'false'; }
     }
   }
@@ -923,7 +928,7 @@ export class GraphView extends ItemView {
   }
   /** Search the fetched group dictionary; render only the configured page, never a full tree. */
   private memberList<T>(items: readonly T[], path: (item: T) => string, browse = false) {
-    if (!browse) this.panel.createEl('button', { text: 'Back to groups' }).onclick = () => this.showGroups();
+    if (!browse) this.panel.createEl('button', { text: 'Back to groups' }).onclick = () => this.toGroups();
     const search = this.panel.createEl('input', { attr: { type: 'search', placeholder: 'Search name or folder…', 'aria-label': 'Search available group members' } });
     const rows = this.panel.createDiv({ cls: 'graph-ng-members' });
     const draw = () => {
@@ -957,20 +962,24 @@ export class GraphView extends ItemView {
     const revision = this.activeRevision, projection = this.projection, renderRevision = browse ? this.renderRevision : ++this.renderRevision, view = this.viewGeneration;
     const status = this.panel.createDiv({ text: 'Loading members…', attr: { role: 'status', 'aria-live': 'polite' } });
     const current = () => revision === this.activeRevision && view === this.viewGeneration && (!projection || currentDetailGeneration(revision, this.activeRevision, this.detailGeneration)) && renderRevision === this.renderRevision && !this.closed && this.panel.contains(status);
-    const back = () => { if (!browse) this.panel.createEl('button', { text: 'Back to groups' }).onclick = () => this.showGroups(); };
+    const failure = 'Could not load members. Return to groups and select this group again.';
+    const back = () => { if (!browse) this.panel.createEl('button', { text: 'Back to groups' }).onclick = () => this.toGroups(); };
     // An obsolete answer never fills the panel, but a status it still owns must not stay "Loading".
     const stale = () => { if (!this.closed && this.panel.contains(status)) { status.textContent = 'Members out of date. Select the group again.'; back(); } };
     if (!this.plugin.settings.projectionFile && (!projection || this.detailGeneration !== revision)) {
-      back(); this.membersReady = () => {
+      back(); this.membersReady = ready => {
         if (!this.panel.contains(status) || this.closed) return;
+        if (!ready) { status.textContent = failure; return; }
         if (revision === this.activeRevision && view === this.viewGeneration && renderRevision === this.renderRevision) return this.drill(id, browse);
         status.textContent = 'Members out of date. Select the group again.';
-      }; return;
+      };
+      if (this.contentEl.dataset.state === 'error') this.settleMembers(false);
+      return;
     }
     let members: Uint32Array | undefined;
     try { members = projection ? await this.plugin.pipeline.request<Uint32Array>(revision, { kind: 'members', group: id, view }) : undefined; }
     catch {
-      if (current()) { status.textContent = 'Could not load members. Return to groups and select this group again.'; back(); } else stale();
+      if (current()) { status.textContent = failure; back(); } else stale();
       return;
     }
     if (!current()) { stale(); return; }
@@ -1176,6 +1185,7 @@ export class GraphView extends ItemView {
         const fits = !detail || this.admitDetail(scope ? result.explore.visible.map((v, i) => v & scope[i]!) : result.explore.visible, !detail.gpu, !completion);
         if (!fits && completion) throw new Error('Detail limit exceeded; displayed graph is unchanged');
         this.appliedView = sent; this.explored = result.explore; this.colors = result.colors; this.visible = result.explore.visible; this.groupGraph = result.groups; this.groupGeneration = revision;
+        if (this.viewGeneration !== result.view) this.clearMemberRows();
         this.viewGeneration = result.view; this.viewSource = this.sourceKey(sent);
         this.contentEl.dataset.exploreMs = String(performance.now() - started); const g = this.view.group; this.contentEl.dataset.groupSource = !g ? 'declared' : g.from === 'folder' ? `folder:${g.depth}` : g.from === 'expr' ? 'expression' : `${g.from}:${g.key}`; this.contentEl.dataset.visibleNodes = String(sum(result.explore.visible));
         this.contributionPage.update(this.contributionContext()); this.statusText = this.statusText;

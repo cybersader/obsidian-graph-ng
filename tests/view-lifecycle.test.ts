@@ -279,7 +279,6 @@ test('refresh invalidates an in-flight carrier index before a replacement graph 
   const view: any = Object.create(GraphView.prototype);
   let finishRead!: (text: string) => void, refreshing: Promise<void> | undefined, paginated = 0;
   const read = new Promise<string>(resolve => { finishRead = resolve; });
-  const status = { textContent: '', remove() {} };
   const graph = { groups: [], groupEdges: [] };
   const declaration = { groups: [], carrierResolvers: [{ kind: 'synthetic-id', key: 'id' }] };
   const settings = { declaration, projectionFile: 'aggregate.json', groupLevel: 0, listPageSize: 25, ingest: { chunkRows: 1, budgetMs: 8 }, maxProjectionBytes: 1024 };
@@ -288,7 +287,7 @@ test('refresh invalidates an in-flight carrier index before a replacement graph 
     revision: 0, renderRevision: 0, closed: false, contributions: new Map(), members: new Map(), groupGraph: graph,
     contributionScope: JSON.stringify(['local', settings.projectionFile, settings.groupLevel, declaration.groups]),
     contributionPage: { clear() {}, suspend() {} }, status: new ControlElement(), statusSummary: new ControlElement(), contentEl: { dataset: {} },
-    panel: { empty() {}, createEl() {}, createDiv() { return status; } },
+    panel: new ControlElement(),
     plugin: { settings, sourceIdentity: 'local', nextRevision: 0, adapter: { *values() { yield row; } }, pipeline: { async request() { return { groups: [], groupEdges: [] }; } } },
     app: { vault: { getAbstractFileByPath() { return new FixtureFile('aggregate.json'); }, read() { return read; } } },
     paginate() { paginated++; }, showGroups() {},
