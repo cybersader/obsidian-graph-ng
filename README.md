@@ -171,7 +171,7 @@ Apply runs one finite layout-only worker recomputation on the current projection
 1. Build locally using `./scripts/run.sh build`. Copy `main.js`, `manifest.json`, `styles.css`, `NOTICE`, and `THIRD_PARTY_NOTICES.txt` into a synthetic vault’s `.obsidian/plugins/graph-ng/` directory. Enable the plugin yourself.
 2. Run **Graph NG: Open graph** or use the fork ribbon icon.
 3. The initial **Groups** screen shows a page of nonempty declared groups with readable labels/member counts and counted edges between groups on that Canvas page (six groups by default). Independent previous/next controls page the Canvas, group list, and complete relationship list. Cross-page relationships remain accessible in the relationship list. Pairs use ↔ because they aggregate both directions; hover/click for type/directional counts and contributing edges/carrier notes. Self-pairs are retained.
-4. Click a group to see its members. Hardware WebGL also opens that group’s notes. Clicking a note in the graph or a member row opens it. **View → Notes** opens the full detailed graph. Zooming out returns to groups.
+4. Click a group to see its members. Choose **Open this group in Notes** to explore just those members. Clicking a note in the graph or a member row opens it. **View → Notes** opens the full detailed graph. Zooming out returns to groups.
 5. Settings → Graph NG contains separate declaration and tuning JSON editors. **Validate and save** rejects invalid input and rebuilds. Changing `debounceMs` requires a plugin reload.
 
 ## Explore: filters, groups and visuals

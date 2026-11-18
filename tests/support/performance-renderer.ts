@@ -24,7 +24,7 @@ export function performanceRenderer(webgl = false, options: { now?: () => number
   const listeners = new Set<() => void>();
   const motion = { matches: options.reduced ?? true, addEventListener(_name: string, f: () => void) { listeners.add(f); }, removeEventListener(_name: string, f: () => void) { listeners.delete(f); } };
   const source = readFileSync(new URL('../../main.js', import.meta.url), 'utf8');
-  const name = source.match(/this\.detailRenderer=await ([\w$]+)\.create\(this\.stage/)?.[1];
+  const name = source.match(/await ([\w$]+)\.create\(this\.stage,/)?.[1];
   if (!name) throw new Error('Build production bundle before benchmarking');
   const mangle = JSON.parse(readFileSync(new URL('../../.workspace/evidence/main-mangle-cache.json', import.meta.url), 'utf8'));
   const key = (n: string) => typeof mangle[n] === 'string' ? mangle[n] : n;

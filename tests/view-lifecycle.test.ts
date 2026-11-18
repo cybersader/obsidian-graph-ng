@@ -242,7 +242,7 @@ test('fact groups paint before layout, pending links prevent exact caching, and 
     await view.refreshOnce(); expect(painted).toBe(1); expect(complete).toBe(false); expect(caches).toBe(0); expect(encoded).toBe(0);
     expect(view.contentEl.dataset.verified).toBe('false'); expect(view.status.textContent).toContain('Ready, source checks incomplete'); expect(view.statusSummary.textContent).not.toContain('1 note0 edges'); expect(view.statusSummary.textContent).toContain('Ready, source checks incomplete');
     links['a.md'] = {}; adapter.invalidate();
-    await view.refreshOnce(); await view.deferredLayout(); expect(complete).toBe(true); expect(encoded).toBe(1); expect(caches).toBe(1); expect(view.contentEl.dataset.verified).toBe('true');
+    await view.refreshOnce(); await view.ensureNotesLayout(); expect(complete).toBe(true); expect(encoded).toBe(1); expect(caches).toBe(1); expect(view.contentEl.dataset.verified).toBe('true');
     const request = pipeline.request;
     const stages: string[] = [];
     const descriptor = Object.getOwnPropertyDescriptor(GraphView.prototype, 'statusText')!;
@@ -366,7 +366,7 @@ test('presentation state is per view, validates unknown values and restores only
     const a = make(), b = make(); expect(a.view.getState()).toEqual({ presentation: 'groups' });
     await a.view.setState({ presentation: 'nodes' }, {}); expect(a.shown).toEqual([]);
     expect(a.view.getState()).toEqual({ presentation: 'nodes' }); expect(b.view.getState()).toEqual({ presentation: 'groups' });
-    a.view.positions = new Float32Array(2); a.view.projection = {};
+    a.view.positions = new Float32Array(2); a.view.projection = {}; a.view.groupGraph = {};
     await a.view.setState(a.view.getState(), {}); expect(a.shown).toEqual(['nodes']);
     await a.view.setState({ presentation: 'groups' }, {}); expect(a.shown).toEqual(['nodes', 'groups']);
     for (const state of [null, {}, { presentation: '<untrusted>' }, { presentation: true }]) {
@@ -374,10 +374,10 @@ test('presentation state is per view, validates unknown values and restores only
     }
     expect(inherited).toBe(7);
     // Review 2026-11-16: an already-open leaf re-receiving its own state must not rebuild (camera, selection, drill-in survive).
-    const c = make(); c.view.positions = new Float32Array(2); c.view.projection = {}; c.view.contentEl.dataset.mode = 'nodes';
+    const c = make(); c.view.positions = new Float32Array(2); c.view.projection = {}; c.view.groupGraph = {}; c.view.contentEl.dataset.mode = 'nodes';
     await c.view.setState({ presentation: 'nodes' }, {}); expect(c.shown).toEqual([]);
     c.view.contentEl.dataset.mode = 'groups'; await c.view.setState({ presentation: 'groups' }, {}); expect(c.shown).toEqual([]);
-    c.view.contentEl.dataset.mode = 'nodes-building'; await c.view.setState({ presentation: 'groups' }, {}); expect(c.shown).toEqual([]);
+    c.view.contentEl.dataset.mode = 'nodes-building'; await c.view.setState({ presentation: 'groups' }, {}); expect(c.shown).toEqual(['groups']);
     // A refused admission changes what is shown, never the user's requested presentation.
     const d = make(); d.view.positions = new Float32Array(2); d.view.projection = {}; d.view.visible = new Uint32Array(1);
     d.view.presentation = 'nodes'; d.view.gpu = { available: true, reason: '' }; d.view.admitDetail = () => false; d.view.showGroups = () => { d.view.contentEl.dataset.mode = 'groups'; }; delete d.view.showDetails;

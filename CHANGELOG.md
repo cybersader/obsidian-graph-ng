@@ -4,7 +4,7 @@ The owner-approved bounded download ceilings for this UI pass are **470,000 raw 
 
 ## Unreleased: Groups opens without arranging Notes
 
-- On a cache miss, Groups can list and search its members without starting a force layout. Switching to Notes starts the pass and shows its progress. Verified saved positions still load immediately.
+- On a cache miss, Groups can list and search its members without starting a force layout. Switching to Notes starts the pass and shows its progress. Verified saved positions still load immediately. Applying physics in cold Groups saves the options for that first Notes pass. A group click lists its members and offers **Open this group in Notes** with or without a saved layout.
 
 ## Unreleased: explore during layout
 
