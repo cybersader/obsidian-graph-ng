@@ -42,6 +42,9 @@ interface Generation { key: string; identities: string[]; positions: number[]; p
 interface Data { settings: Settings; generations: Record<string, Generation> }
 /** Assign `next[k]` where `live[k]` still equals `was[k]`, in place; returns the count of keys kept live. */
 const adopt = <T extends object>(live: T, next: T, was: T, keys: (keyof T)[]) => keys.filter(k => JSON.stringify(live[k]) === JSON.stringify(was[k]) ? (live[k] = next[k], false) : true).length;
+/** Physical room loads per drain before yielding the cross-window queue. */
+const ROOM_DRAIN_LOADS = 64;
+
 export default class GraphPlugin extends Plugin {
   settings!: Settings;
   performanceLog: PerformanceRecord[] = [];
@@ -154,6 +157,8 @@ export default class GraphPlugin extends Plugin {
     const key = Symbol.for('graph-ng.property-loads'), queue = (host as unknown as Record<symbol, WorkQueue>)[key] ??= { work: Promise.resolve() };
     let waiting: Promise<void> | undefined, finish: (() => void) | undefined, latest = 0;
     let drainingSource: PropertySource | undefined;
+    // Rooms already loaded by a drain that yielded at ROOM_DRAIN_LOADS; its continuation skips them.
+    let carried: { source: PropertySource; seen: Map<unknown, number | undefined> } | undefined;
     let queued: WorkQueue['next'], flight: { controller: AbortController; mounted: () => boolean } | undefined;
     const unlink = () => { if (queue.next === queued) queue.next = undefined; queued = undefined; };
     const superseded = (source?: PropertySource) => {
@@ -202,20 +207,25 @@ export default class GraphPlugin extends Plugin {
           if (!current()) return;
           drainingSource = source;
           if (source.rooms) {
-            // Bound each drain by twice the largest inventory it has observed.
-            let handles = source.rooms(), limit = 2 * handles.length, loads = 0;
-            const seen = new Map<typeof handles[number], number | undefined>();
+            // Twice the largest inventory seen, never more than ROOM_DRAIN_LOADS. A
+            // longer drain yields the queue and continues as a fresh request.
+            let handles = source.rooms(), limit = Math.min(ROOM_DRAIN_LOADS, 2 * handles.length), loads = 0, more = false;
+            const seen = (carried?.source === source ? carried.seen : new Map()) as Map<typeof handles[number], number | undefined>, retry = new Set<typeof handles[number]>();
+            carried = undefined;
             while (current() && request === latest) {
-              const h = handles.find(h => h.load && (!seen.has(h) || seen.get(h) !== h.generation));
+              const due = handles.filter(h => h.load && (!seen.has(h) || seen.get(h) !== h.generation));
+              // Untried rooms go before retries, so a flapping room cannot starve a sibling.
+              const h = due.find(h => !retry.has(h)) ?? due[0];
               if (!h) break;
-              if (loads++ >= limit) { message ||= 'Property loading delayed'; break; }
+              if (loads++ >= limit) { more = true; break; }
               const generation = h.generation, id = h.cacheIdentity;
               seen.set(h, generation);
-              try { if (await physical(() => { let listed = true; try { listed = !!source.rooms?.().includes(h); } catch { /* Unknown inventory keeps the load. */ } return listed && h.generation === generation && h.cacheIdentity === id; }, signal => h.load!({ signal }))) seen.delete(h); }
+              try { if (await physical(() => { let listed = true; try { listed = !!source.rooms?.().includes(h); } catch { /* Unknown inventory keeps the load. */ } return listed && h.generation === generation && h.cacheIdentity === id; }, signal => h.load!({ signal }))) { seen.delete(h); retry.add(h); } }
               catch { message = 'Some room properties could not load'; }
               if (!current() || request !== latest) break;
-              handles = source.rooms(); limit = Math.max(limit, 2 * handles.length);
+              handles = source.rooms(); limit = Math.min(ROOM_DRAIN_LOADS, Math.max(limit, 2 * handles.length));
             }
+            if (more && current() && request === latest) { message ||= 'Property loading delayed'; carried = { source, seen }; if (active) setTimeout(() => { if (active && source === this.propertySource) void this.loadProperties?.(); }, 0); }
           } else if (!source.roomFor && !('room' in source) && source.load) {
             await physical(() => true, signal => source.load!({ signal }));
           }
@@ -253,7 +263,8 @@ export default class GraphPlugin extends Plugin {
       views(view => view.invalidateSource());
       this.notify();
       hydrate(source !== previous, moved);
-      displaced?.abort();
+      // A membership read that failed above is unknown; re-read once after syncing.
+      (displaced ?? (superseded(source) ? flight?.controller : undefined))?.abort();
     };
     const settled = (event: Event) => {
       const source = (host as typeof globalThis & { openclast?: { propertyFacts?: PropertySource } }).openclast?.propertyFacts;

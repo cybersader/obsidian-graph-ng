@@ -999,3 +999,50 @@ test('room queue: one unreadable inventory during a held load does not cancel a 
     expect(aborts).toBe(0); expect(completed).toBe(1);
   } finally { release.yes(); f.close(); }
 });
+const roomHandle = (id: string, load: (o: { signal: AbortSignal }) => Promise<unknown>) => Object.freeze({ cacheIdentity: `ocpf1:${id}`, generation: 1, verifiedComplete: false, load });
+const roomQueue = (f: { host: unknown }) => (f.host as any)[Symbol.for('graph-ng.property-loads')];
+for (const locks of [false, true]) test(`room queue: a flapping room cannot starve a sibling, locks=${locks}`, async () => {
+  const start = Array.from({ length: 4 }, signal), trace: string[] = []; let active = 0, peak = 0;
+  const a = roomHandle('a', async ({ signal: s }) => { const n = trace.length; trace.push('a'); peak = Math.max(peak, ++active); start[Math.min(n, 3)]!.yes();
+    try { if (n === 0) await new Promise((_, no) => s.addEventListener('abort', () => no(s.reason), { once: true })); } finally { active--; } });
+  const b = roomHandle('b', async () => { trace.push('b'); });
+  let rooms: readonly unknown[] = [a, b];
+  const nav = locks ? { locks: { request: async (_n: string, _o: unknown, fn: () => Promise<unknown>) => fn() } } : undefined;
+  const f = await contractFixture(undefined, undefined, undefined, s => { s.rooms = () => rooms as any; s.roomFor = () => undefined; }, 500, nav as any);
+  try {
+    await start[0]!.done; rooms = [b]; f.send('oc:property-facts-changed'); rooms = [a, b]; f.send('oc:property-facts-changed');
+    await roomQueue(f).work; await new Promise(r => setTimeout(r, 5)); await roomQueue(f).work;
+    expect(trace.slice(0, 2)).toEqual(['a', 'b']); expect(peak).toBe(1);
+  } finally { for (const s of start) s.yes(); f.close(); }
+});
+test('room queue: an inventory that keeps growing yields after a bounded drain and still finishes', async () => {
+  let attempts = 0, busy = 0, peak = 0, rooms: readonly unknown[];
+  const make = (i: number): unknown => roomHandle(String(i), async () => { peak = Math.max(peak, ++busy); if (++attempts < 96) rooms = Object.freeze([...rooms, make(i + 1)]); busy--; });
+  rooms = Object.freeze([make(1)]);
+  const f = await contractFixture(undefined, undefined, undefined, s => { s.rooms = () => rooms as any; s.roomFor = () => undefined; });
+  try {
+    for (let i = 0; i < 6 && attempts < 96; i++) { await roomQueue(f).work; await new Promise(r => setTimeout(r, 5)); }
+    expect(attempts).toBe(96); expect(peak).toBe(1);
+  } finally { f.close(); }
+});
+test('room queue: a removal seen after one failed membership read aborts the held load', async () => {
+  const start = signal(), release = signal(); let held: AbortSignal | undefined, fail = false, bLoads = 0;
+  const a = roomHandle('a', async ({ signal: s }) => { held = s; start.yes(); await new Promise<void>((yes, no) => { release.done.then(yes); s.addEventListener('abort', () => no(s.reason), { once: true }); }); });
+  const b = roomHandle('b', async () => { bLoads++; });
+  let rooms: readonly unknown[] = [a, b];
+  const f = await contractFixture(undefined, undefined, undefined, s => { s.rooms = () => { if (fail) { fail = false; throw Error('synthetic inventory'); } return rooms as any; }; s.roomFor = () => undefined; }, 25);
+  try {
+    await start.done; rooms = [b]; fail = true; f.send('oc:property-facts-changed');
+    await roomQueue(f).work;
+    expect(held?.aborted).toBe(true); expect(bLoads).toBe(1);
+  } finally { release.yes(); f.close(); }
+});
+test('room queue: more than one drain of stable rooms loads each room once', async () => {
+  const counts = new Map<string, number>();
+  const rooms = Object.freeze(Array.from({ length: 100 }, (_, i) => roomHandle(String(i), async () => { counts.set(String(i), (counts.get(String(i)) ?? 0) + 1); })));
+  const f = await contractFixture(undefined, undefined, undefined, s => { s.rooms = () => rooms as any; s.roomFor = () => undefined; });
+  try {
+    for (let i = 0; i < 6 && counts.size < 100; i++) { await roomQueue(f).work; await new Promise(r => setTimeout(r, 5)); }
+    expect(counts.size).toBe(100); expect([...counts.values()].every(n => n === 1)).toBe(true);
+  } finally { f.close(); }
+});
