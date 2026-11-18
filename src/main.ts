@@ -42,8 +42,6 @@ interface Generation { key: string; identities: string[]; positions: number[]; p
 interface Data { settings: Settings; generations: Record<string, Generation> }
 /** Assign `next[k]` where `live[k]` still equals `was[k]`, in place; returns the count of keys kept live. */
 const adopt = <T extends object>(live: T, next: T, was: T, keys: (keyof T)[]) => keys.filter(k => JSON.stringify(live[k]) === JSON.stringify(was[k]) ? (live[k] = next[k], false) : true).length;
-/** Physical room loads per drain before yielding the cross-window queue. */
-const ROOM_DRAIN_LOADS = 64;
 
 export default class GraphPlugin extends Plugin {
   settings!: Settings;
@@ -152,25 +150,27 @@ export default class GraphPlugin extends Plugin {
   /** Public optional host capability; listener ownership never transfers the provider. */
   watchProperties(host = globalThis, waitMs = 15000) {
     let active = true, verifying = false, pending = false, timer: ReturnType<typeof setTimeout> | undefined;
-    // Across view opens, grant swaps and plugin reloads in this window. The
-    // room-aware aggregate load fans out internally; never call it on that API.
+    // Coalesce view opens and source replacements in this window. Only the host
+    // schedules individual rooms and serializes physical loads across windows.
     const key = Symbol.for('graph-ng.property-loads'), queue = (host as unknown as Record<symbol, WorkQueue>)[key] ??= { work: Promise.resolve() };
     let waiting: Promise<void> | undefined, finish: (() => void) | undefined, latest = 0;
-    let drainingSource: PropertySource | undefined;
-    // Rooms already loaded by a drain that yielded at ROOM_DRAIN_LOADS; its continuation skips them.
-    let carried: { source: PropertySource; seen: Map<unknown, number | undefined> } | undefined;
-    let queued: WorkQueue['next'], flight: { controller: AbortController; mounted: () => boolean } | undefined;
+    let queued: WorkQueue['next'], flight: AbortController | undefined;
     const unlink = () => { if (queue.next === queued) queue.next = undefined; queued = undefined; };
-    const superseded = (source?: PropertySource) => {
-      if (!flight || flight.controller.signal.aborted) return false;
-      // An unreadable inventory is unknown, not proof that the room left.
-      try { return source !== this.propertySource || !flight.mounted(); } catch { return source !== this.propertySource; }
+    const physical = async (source: PropertySource) => {
+      if (!source.rooms && (source.roomFor || 'room' in source)) return ''; // Legacy room provider: live reads only.
+      const controller = flight = new AbortController();
+      try { await source.load?.({ signal: controller.signal }); return ''; }
+      catch { return controller.signal.aborted ? '' : source.rooms ? 'Some room properties could not load' : 'Property loading unavailable'; }
+      finally { flight = undefined; }
     };
     const views = (visit: (view: GraphView) => void) => {
       for (const leaf of this.app.workspace.getLeavesOfType(VIEW)) if (!leaf.isDeferred && leaf.view instanceof GraphView) visit(leaf.view);
     };
     const promote = () => views(view => view.promoteProperties());
-    const status = (message: string) => {
+    let loadStatus = '';
+    const status = (result = loadStatus) => {
+      loadStatus = result;
+      const message = this.adapter.inventoryError ? 'Room inventory unavailable' : result;
       if (!active || message === (this.hydrationStatus || '')) return;
       this.hydrationStatus = message;
       views(view => view.updateHydrationStatus());
@@ -187,50 +187,9 @@ export default class GraphPlugin extends Plugin {
       void latestWork(queue, queued = async () => {
         queued = undefined;
         const current = () => active && source === this.propertySource;
-        let message = '';
-        const physical = async (mounted: () => boolean, load: (signal: AbortSignal) => Promise<unknown>) => {
-          const controller = new AbortController(), { signal } = controller;
-          flight = { controller, mounted };
-          try {
-            const locks = host.navigator?.locks;
-            // The host may take its own lock inside load. Hold only our compatibility
-            // lock, through physical settlement, and revalidate after its queue wait.
-            if (locks) await locks.request('graph-ng:openclast-property-load', { signal }, async () => {
-              if (!signal.aborted && current() && request === latest && mounted()) await load(signal);
-            });
-            else await load(signal);
-          } catch (error) { if (!signal.aborted) throw error; }
-          finally { flight = undefined; }
-          return signal.aborted;
-        };
-        try {
-          if (!current()) return;
-          drainingSource = source;
-          if (source.rooms) {
-            // Twice the largest inventory seen, never more than ROOM_DRAIN_LOADS. A
-            // longer drain yields the queue and continues as a fresh request.
-            let handles = source.rooms(), limit = Math.min(ROOM_DRAIN_LOADS, 2 * handles.length), loads = 0, more = false;
-            const seen = (carried?.source === source ? carried.seen : new Map()) as Map<typeof handles[number], number | undefined>, retry = new Set<typeof handles[number]>();
-            carried = undefined;
-            while (current() && request === latest) {
-              const due = handles.filter(h => h.load && (!seen.has(h) || seen.get(h) !== h.generation));
-              // Untried rooms go before retries, so a flapping room cannot starve a sibling.
-              const h = due.find(h => !retry.has(h)) ?? due[0];
-              if (!h) break;
-              if (loads++ >= limit) { more = true; break; }
-              const generation = h.generation, id = h.cacheIdentity;
-              seen.set(h, generation);
-              try { if (await physical(() => { let listed = true; try { listed = !!source.rooms?.().includes(h); } catch { /* Unknown inventory keeps the load. */ } return listed && h.generation === generation && h.cacheIdentity === id; }, signal => h.load!({ signal }))) { seen.delete(h); retry.add(h); } }
-              catch { message = 'Some room properties could not load'; }
-              if (!current() || request !== latest) break;
-              handles = source.rooms(); limit = Math.min(ROOM_DRAIN_LOADS, Math.max(limit, 2 * handles.length));
-            }
-            if (more && current() && request === latest) { message ||= 'Property loading delayed'; carried = { source, seen }; if (active) setTimeout(() => { if (active && source === this.propertySource) void this.loadProperties?.(); }, 0); }
-          } else if (!source.roomFor && !('room' in source) && source.load) {
-            await physical(() => true, signal => source.load!({ signal }));
-          }
-        } catch { message = source.rooms ? 'Room inventory unavailable' : 'Property loading unavailable'; }
-        finally { drainingSource = undefined; if (request === latest && current()) { finish?.(); status(message); } }
+        if (!current() || request !== latest) return;
+        const message = await physical(source);
+        if (request === latest && current()) { finish?.(); status(message); }
       });
       return caller;
     };
@@ -242,35 +201,29 @@ export default class GraphPlugin extends Plugin {
         finally { verifying = false; if (pending) verify(); }
       }, this.settings.debounceMs);
     };
-    let observed = this.adapter.roomRevision, binding = this.adapter.loadRevision;
-    const hydrate = (grantChanged = false, moved = false) => {
-      const source = this.propertySource, replaced = binding !== this.adapter.loadRevision;
-      binding = this.adapter.loadRevision;
-      // A live drain already re-enumerates. Do not restart unrelated handles.
-      if (source && (grantChanged || (moved || replaced) && source !== drainingSource)) void this.loadProperties?.();
-    };
+    let observed = this.adapter.roomRevision;
     const changed = (event?: Event) => {
       const candidate = (host as typeof globalThis & { openclast?: { propertyFacts?: PropertySource } }).openclast?.propertyFacts;
       const source = typeof candidate?.get === 'function' ? candidate : undefined, previous = this.propertySource;
-      const displaced = superseded(source) ? flight!.controller : undefined;
       if (source === previous) this.adapter.syncRooms?.();
-      if (!displaced && observed === this.adapter.roomRevision && source === previous && (event as CustomEvent | undefined)?.detail?.invalidated === false) { hydrate(); pending = true; verify(); return; }
+      if (observed === this.adapter.roomRevision && source === previous && (event as CustomEvent | undefined)?.detail?.invalidated === false) { status(); pending = true; verify(); return; }
       clearTimeout(timer); timer = undefined; pending = false;
-      if (source !== previous) { if (!source) { ++latest; unlink(); finish?.(); } status(''); }
       this.propertySource = source; this.propertyRevision++;
       const moved = observed !== this.adapter.roomRevision;
       this.adapter.setPropertySource(source, !event, moved); observed = this.adapter.roomRevision; this.ingestedHash = '';
+      if (source !== previous) {
+        if (source) void this.loadProperties?.(); else { ++latest; unlink(); finish?.(); }
+        flight?.abort();
+      }
+      status(source !== previous ? '' : undefined);
       views(view => view.invalidateSource());
       this.notify();
-      hydrate(source !== previous, moved);
-      // A membership read that failed above is unknown; re-read once after syncing.
-      (displaced ?? (superseded(source) ? flight?.controller : undefined))?.abort();
     };
     const settled = (event: Event) => {
       const source = (host as typeof globalThis & { openclast?: { propertyFacts?: PropertySource } }).openclast?.propertyFacts;
       if (source === this.propertySource) this.adapter.syncRooms();
-      if (source !== this.propertySource || observed !== this.adapter.roomRevision || superseded(source)) changed(event);
-      else hydrate();
+      if (source !== this.propertySource || observed !== this.adapter.roomRevision) changed(event);
+      else status();
       const revision = this.propertyRevision;
       void this.adapter.onRoomSettled((event as CustomEvent).detail, this.settings.ingest, signal => this.notify(signal), () => {
         if (active && revision === this.propertyRevision) promote();
@@ -281,7 +234,7 @@ export default class GraphPlugin extends Plugin {
     this.register(() => {
       active = false; unlink(); finish?.(); clearTimeout(timer);
       host.removeEventListener?.('oc:property-facts-changed', changed); host.removeEventListener?.('oc:property-facts-settled', settled);
-      flight?.controller.abort();
+      flight?.abort();
     });
     changed();
   }

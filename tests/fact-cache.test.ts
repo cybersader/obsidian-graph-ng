@@ -675,53 +675,12 @@ test('contract: empty disposed inventory drops fallback but defers disk pruning 
     expect(await disk.exists(a)).toBe(false); expect(await disk.exists(b)).toBe(true);
   } finally { f.close(); }
 });
-test('contract: discovery and overlapping view opens load frozen room handles one at a time', async () => {
-  const calls: string[] = []; let active = 0, peak = 0, aggregates = 0, release!: () => void;
-  const blocked = new Promise<void>(r => release = r);
-  const room = (name: string) => Object.freeze({ cacheIdentity: `ocpf1:${name}`, generation: 1, verifiedComplete: true,
-    async load() { calls.push(name); peak = Math.max(peak, ++active); try { await blocked; } finally { active--; } } });
-  const handles = Object.freeze([room('a'), room('b')]);
-  const f = await contractFixture(undefined, undefined, undefined, source => {
-    source.rooms = () => handles; source.roomFor = path => path === 'a.md' ? handles[0] : handles[1];
-    source.load = async () => { aggregates++; await Promise.all(handles.map(h => h.load())); };
-  });
-  try {
-    expect(calls).toEqual(['a']); const opens = [f.plugin.loadProperties(), f.plugin.loadProperties()];
-    expect(active).toBe(1); release(); await Promise.all(opens);
-    expect(aggregates).toBe(0); expect(peak).toBe(1); expect(calls).toContain('b'); expect(active).toBe(0);
-  } finally { release(); f.close(); }
-});
-
 // Review schedules: gates mark exact host I/O and worker acknowledgement boundaries.
 function signal() {
   let yes!: () => void, no!: (e: Error) => void;
   const done = new Promise<void>((resolve, reject) => { yes = resolve; no = reject; });
   return { yes, no, done };
 }
-for (const rejected of [false, true]) test(`room queue: bounded caller, latest grant after held load ${rejected ? 'rejects' : 'resolves'}`, async () => {
-  const hold = signal(), loaded = signal(), calls: string[] = []; let active = 0, peak = 0;
-  const handle = (name: string) => Object.freeze({ cacheIdentity: `ocpf1:${name}`, generation: 1, verifiedComplete: true,
-    async load() { calls.push(name); peak = Math.max(peak, ++active); try { if (name === 'a') await hold.done; if (name === 'd') loaded.yes(); } finally { active--; } } });
-  const a = handle('a'), b = handle('b');
-  const f = await contractFixture(undefined, undefined, undefined, s => { s.rooms = () => Object.freeze([a,b]); s.roomFor = () => a; }, 30);
-  try {
-    for (const name of ['c', 'd']) { const h = handle(name); f.host.openclast.propertyFacts = { rooms: () => Object.freeze([h]), roomFor: () => h, get() {} } as PropertySource; f.send('oc:property-facts-changed'); }
-    await f.plugin.loadProperties(); expect(f.plugin.hydrationStatus).toBe('Property loading delayed'); expect(calls).toEqual(['a']);
-    if (rejected) hold.no(Error('synthetic load')); else hold.yes();
-    await loaded.done; await (f.host as any)[Symbol.for('graph-ng.property-loads')].work;
-    expect(calls).toEqual(['a', 'd']); expect(peak).toBe(1); expect(f.plugin.hydrationStatus).toBe('');
-  } finally { hold.yes(); f.close(); }
-});
-test('room queue: rejecting handle does not skip a sibling; inventory failures are visible', async () => {
-  const hold = signal(), calls: string[] = [];
-  const a = Object.freeze({ load() { calls.push('a'); return hold.done; } }), b = Object.freeze({ async load() { calls.push('b'); } });
-  const f = await contractFixture(undefined, undefined, undefined, s => { s.rooms = () => Object.freeze([a, b]); s.roomFor = () => a; });
-  try {
-    hold.no(Error('synthetic load')); await (f.host as any)[Symbol.for('graph-ng.property-loads')].work;
-    expect(calls).toEqual(['a', 'b']); expect(f.plugin.hydrationStatus).toBe('Some room properties could not load');
-    f.source.rooms = () => { throw Error('synthetic inventory'); }; await f.plugin.loadProperties(); expect(f.plugin.hydrationStatus).toBe('Room inventory unavailable');
-  } finally { hold.yes(); f.close(); }
-});
 test('room queue: rejection drains the newest request without another wakeup', async () => {
   const { latestWork } = await import('../src/adapter/latest-work'); const queue = { work: Promise.resolve() }, hold = signal(), entered = signal(), calls: number[] = [];
   const first = latestWork(queue, async () => { entered.yes(); await hold.done; }); await entered.done;
@@ -788,84 +747,50 @@ test('native parity: metadata notice during manifest publication preserves both 
 
 const hydrationQueue = (f: Awaited<ReturnType<typeof contractFixture>>) => (f.host as any)[Symbol.for('graph-ng.property-loads')];
 
-// Independent window queues, one synthetic origin and one strict device producer.
-function lockOrigin() {
-  const tails = new Map<string, Promise<unknown>>(), names: string[] = [], signals: AbortSignal[] = [];
-  const locks = { request<T>(name: string, options: LockOptions, run: () => Promise<T>) {
-    names.push(name); expect(options.ifAvailable).toBeUndefined(); const signal = options.signal!; signals.push(signal);
-    return new Promise<T>((resolve, reject) => {
-      const cancel = () => reject(new DOMException('Cancelled', 'AbortError'));
-      signal.addEventListener('abort', cancel, { once: true });
-      tails.set(name, (tails.get(name) ?? Promise.resolve()).then(async () => {
-        signal.removeEventListener('abort', cancel);
-        if (signal.aborted) return cancel();
-        try { resolve(await run()); } catch (error) { reject(error); }
-      }));
-    });
-  } } as LockManager;
-  return { navigator: { locks }, names, signals };
-}
-for (const legacy of [false, true]) test(`admission: two windows share one physical producer, legacy source=${legacy}`, async () => {
-  const origin = lockOrigin(), hold = signal(), calls: string[] = []; let active = 0, peak = 0;
-  const boot = (name: string) => contractFixture(undefined, undefined, undefined, s => {
-    const handle = { async load() { calls.push(name); peak = Math.max(peak, ++active); try { if (name === 'A') await hold.done; } finally { active--; } } };
-    if (legacy) { delete s.rooms; delete s.roomFor; s.load = handle.load; } else s.rooms = () => [handle];
-  }, 20, origin.navigator);
-  const a = await boot('A'), b = await boot('B');
+test('hydration: a burst behind discovery gets one aggregate call, no handle loads and no plugin or host lock requests', async () => {
+  const hold = signal(), requests: string[] = [], signals: AbortSignal[] = []; let handles = 0;
+  const locks = { request(name: string) { requests.push(name); throw Error('unexpected lock'); } } as unknown as LockManager;
+  const f = await contractFixture(undefined, undefined, undefined, source => {
+    const rooms = source.rooms!().map(h => Object.freeze({ ...h, async load() { handles++; } }));
+    source.rooms = () => rooms;
+    source.load = async opts => { signals.push(opts!.signal); if (signals.length === 1) await hold.done; };
+  }, undefined, { locks });
   try {
-    expect(hydrationQueue(a)).not.toBe(hydrationQueue(b)); expect(peak).toBe(1); expect(calls).toEqual(['A']);
-    await new Promise(r => setTimeout(r, 40)); expect(b.plugin.hydrationStatus).toBe('Property loading delayed');
-    hold.yes(); await Promise.all([hydrationQueue(a).work, hydrationQueue(b).work]);
-    expect(calls).toEqual(['A', 'B']); expect(peak).toBe(1); expect(b.plugin.hydrationStatus).toBe('');
-  } finally { hold.yes(); a.close(); b.close(); }
+    const opens = Array.from({ length: 64 }, () => f.plugin.loadProperties());
+    expect(signals.length).toBe(1); expect(new Set(opens).size).toBe(1);
+    for (const detail of [{reason: 'live_verified', invalidated: false}, {invalidated: true}]) f.send('oc:property-facts-changed', detail);
+    expect(signals[0]!.aborted).toBe(false);
+    hold.yes(); await Promise.all(opens); await hydrationQueue(f).work;
+    expect(signals.length).toBe(2); expect(signals[1]).not.toBe(signals[0]); expect(handles).toBe(0); expect(requests).toEqual([]);
+  } finally { hold.yes(); f.close(); }
 });
-test('admission: request only the plugin lock, never the nested host lock', async () => {
-  const origin = lockOrigin(); let physical: AbortSignal | undefined;
-  const f = await contractFixture(undefined, undefined, undefined, s => { const h = { async load({ signal }: { signal: AbortSignal }) { physical = signal; } }; s.rooms = () => [h]; }, 100, origin.navigator);
-  try { await hydrationQueue(f).work; expect(origin.names).toEqual(['graph-ng:openclast-property-load']);
-    expect(origin.names).not.toContain('openclast:property-facts-load'); expect(origin.signals[0]).toBe(physical); expect(physical?.aborted).toBe(false);
+
+test('hydration: aggregate rejection reports failure, does not verify facts and releases the window queue', async () => {
+  let calls = 0;
+  const f = await contractFixture(undefined, undefined, undefined, s => { s.load = async () => {
+    if (++calls === 1) throw new DOMException('host cancelled', 'AbortError');
+  }; });
+  try {
+    await hydrationQueue(f).work; expect(f.plugin.hydrationStatus).toBe('Some room properties could not load');
+    await f.plugin.loadProperties(); expect(calls).toBe(2); expect(f.plugin.hydrationStatus).toBe('');
+    expect(f.adapter.factsComplete()).toBe(false); expect(f.disk.writes).toBe(0);
   } finally { f.close(); }
 });
-for (const action of ['unload', 'supersede']) test(`admission: ${action} cancels a shared-lock wait before the producer is released`, async () => {
-  const origin = lockOrigin(), hold = signal(), calls: string[] = [];
-  const room = (name: string) => ({ cacheIdentity: `ocpf1:${name}`, generation: 1, async load() { calls.push(name); if (name === 'A') await hold.done; } });
-  const a = room('A'); let b = room('B');
-  const first = await contractFixture(undefined, undefined, undefined, s => { s.rooms = () => [a]; }, 100, origin.navigator);
-  const other = await contractFixture(undefined, undefined, undefined, s => { s.rooms = () => [b]; }, 100, origin.navigator);
+
+test('hydration: the default 15 s caller deadline does not abort or release hung physical work', async () => {
+  const hold = signal(), timers: Array<() => void> = [], signals: AbortSignal[] = [];
+  const schedule = globalThis.setTimeout;
+  const clock = spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void, ms: number) => {
+    if (ms === 15000) timers.push(fn);
+    return schedule(fn, ms);
+  }) as typeof setTimeout);
+  const f = await contractFixture(undefined, undefined, undefined, source => { source.load = async opts => { signals.push(opts!.signal); await hold.done; }; });
   try {
-    if (action === 'unload') other.close(); else { b = room('C'); other.send('oc:property-facts-changed', { invalidated: false }); }
-    expect(origin.signals[1]?.aborted).toBe(true); expect(calls).toEqual(['A']);
-    if (action === 'unload') await hydrationQueue(other).work;
-    hold.yes(); await Promise.all([hydrationQueue(first).work, hydrationQueue(other).work]);
-    expect(calls).toEqual(action === 'unload' ? ['A'] : ['A', 'C']);
-  } finally { hold.yes(); first.close(); other.close(); }
-});
-for (const detail of [undefined, { invalidated: false }]) test(`admission: load the current sibling instead of a frozen obsolete inventory, detail=${JSON.stringify(detail)}`, async () => {
-  const hold = signal(), calls: string[] = []; let physical: AbortSignal | undefined;
-  const a = Object.freeze({ cacheIdentity: 'ocpf1:a', generation: 1, async load({signal}: { signal: AbortSignal }) { physical = signal; calls.push('A'); await hold.done; } });
-  const b = (generation: number) => Object.freeze({ cacheIdentity: 'ocpf1:b', generation, async load() { calls.push(`B${generation}`); } });
-  let sibling = b(1);
-  const f = await contractFixture(undefined, undefined, undefined, s => { s.rooms = () => Object.freeze([a, sibling]); s.roomFor = p => p === 'a.md' ? a : sibling; });
-  try { expect(calls).toEqual(['A']); sibling = b(2); f.send('oc:property-facts-changed', detail);
-    expect(physical?.aborted).toBe(false); hold.yes(); await hydrationQueue(f).work;
-    expect(calls).toEqual(['A', 'B2']); expect(f.plugin.hydrationStatus).toBe('');
-  } finally { hold.yes(); f.close(); }
-});
-for (const change of ['object', 'generation']) for (const idle of [false, true]) test(`admission: revisit a previously loaded ${change} replacement, idle=${idle}`, async () => {
-  const hold = signal(), entered = signal(), generations: number[] = [];
-  let a = { cacheIdentity: 'ocpf1:a', generation: 1, async load() { generations.push(this.generation); } };
-  const b = { cacheIdentity: 'ocpf1:b', generation: 1, async load() { entered.yes(); await hold.done; } };
-  const f = await contractFixture(undefined, undefined, undefined, s => { s.rooms = () => [a,b]; s.roomFor = p => p === 'a.md' ? a : b; });
-  try { await entered.done; if (idle) { hold.yes(); await hydrationQueue(f).work; }
-    if (change === 'object') a = { ...a }; else a.generation++;
-    f.send('oc:property-facts-changed', { invalidated: false }); hold.yes(); await hydrationQueue(f).work;
-    expect(generations).toEqual([1, change === 'object' ? 1 : 2]);
-  } finally { hold.yes(); f.close(); }
-});
-test('admission: continuously changing silent inventory cannot extend a drain beyond twice its initial count', async () => {
-  let n = 0; const handle = { generation: 1, async load() { if (++n <= 4) this.generation++; } };
-  const f = await contractFixture(undefined, undefined, undefined, s => { s.rooms = () => [handle]; });
-  try { await hydrationQueue(f).work; expect(n).toBe(2); expect(f.plugin.hydrationStatus).toBe('Property loading delayed'); } finally { f.close(); }
+    const caller = f.plugin.loadProperties(); expect(timers.length).toBe(1); timers[0]!(); await caller;
+    expect(f.plugin.hydrationStatus).toBe('Property loading delayed'); expect(signals.length).toBe(1);
+    expect(signals[0]!.aborted).toBe(false); expect(hydrationQueue(f).draining).toBe(true);
+    hold.yes(); await hydrationQueue(f).work; expect(signals.length).toBe(2); expect(f.plugin.hydrationStatus).toBe('');
+  } finally { clock.mockRestore(); hold.yes(); f.close(); }
 });
 
 test('binding: retiring sixteen drains frees their acknowledgements and permits an immediate remount', async () => {
@@ -923,15 +848,15 @@ test('binding: six deadlines unlink queued room saves while one physical writer 
 test('binding: status skips deferred and unrelated leaves and reaches a loaded GraphView', async () => {
   const f = await contractFixture(), { GraphView } = await import('../src/main');
   try { await hydrationQueue(f).work; let painted = 0, touched = 0;
-    const view = Object.assign(Object.create(GraphView.prototype), { updateHydrationStatus() { painted++; } });
+    const view = Object.assign(Object.create(GraphView.prototype), { invalidateSource() {}, updateHydrationStatus() { painted++; } });
     f.plugin.app.workspace.getLeavesOfType = () => [{isDeferred:true, get view() { touched++; return {}; }}, {view:{}}, {view}];
-    f.source.rooms = () => { throw Error('synthetic inventory'); }; await f.plugin.loadProperties(); await hydrationQueue(f).work;
+    f.source.rooms = () => { throw Error('synthetic inventory'); }; f.send('oc:property-facts-changed'); await f.plugin.loadProperties(); await hydrationQueue(f).work;
     expect(f.plugin.hydrationStatus).toBe('Room inventory unavailable'); expect(painted).toBe(1); expect(touched).toBe(0);
   } finally { f.close(); }
 });
 
 test('binding: unload unlinks only its pending hydration while a legacy load holds the slot', async () => {
-  const hold = signal(), h = {load: () => hold.done}, f = await contractFixture(undefined,undefined,undefined,s => { s.rooms = () => [h]; });
+  const hold = signal(), f = await contractFixture(undefined, undefined, undefined, s => { s.load = () => hold.done; });
   try { const queue = hydrationQueue(f), physical = queue.work, caller = f.plugin.loadProperties(); expect(typeof queue.next).toBe('function');
     f.close(); await caller; expect(queue.next).toBeUndefined(); expect(queue.work).toBe(physical); expect(queue.draining).toBe(true);
     hold.yes(); await physical; expect(queue.draining).toBe(false);
@@ -948,101 +873,26 @@ test('binding: inventory recovery clears only its diagnostic and replays saved f
   } finally { f.close(); }
 });
 
-for (const change of ['unload','grant','room']) test(`binding: signal aborts a physical handle on ${change} and never overlaps its replacement`, async () => {
-  const hold = signal(), calls: string[] = []; let physical: AbortSignal | undefined, active = 0, peak = 0;
-  const old = {cacheIdentity:'ocpf1:old', generation:1, async load(opts?: { signal: AbortSignal }) {
-    physical = opts?.signal; calls.push('old'); peak = Math.max(peak, ++active);
-    // Acknowledgement can lag the signal. Hold the physical slot until rejection.
-    try { await hold.done; throw new DOMException('synthetic abort','AbortError'); } finally { active--; }
-  }}, next = {cacheIdentity:old.cacheIdentity, generation:2, async load() { calls.push('next'); peak = Math.max(peak, ++active); active--; }};
-  let handles: Array<typeof old | typeof next> = [old];
-  const f = await contractFixture(undefined,undefined,undefined,s => { s.rooms = () => handles; s.roomFor = () => handles[0]; });
-  try { expect(calls).toEqual(['old']);
-    if (change === 'unload') f.close(); else { handles = [next]; if (change === 'grant') f.host.openclast.propertyFacts = {...f.source}; f.send('oc:property-facts-changed', {invalidated:false}); }
-    expect(physical?.aborted).toBe(true); expect(calls).toEqual(['old']); hold.yes(); await hydrationQueue(f).work;
-    expect(peak).toBe(1); expect(calls).toEqual(change === 'unload' ? ['old'] : ['old','next']); expect(f.adapter.factsComplete()).toBe(false);
+for (const change of ['unload', 'revoke', 'grant replacement', 'room-set replacement']) test(`hydration: ${change} aborts the aggregate and drops superseded queued loads`, async () => {
+  const hold = signal(), calls: string[] = []; let physical: AbortSignal | undefined;
+  const f = await contractFixture(undefined, undefined, undefined, source => { source.load = async opts => {
+    calls.push('old'); physical = opts!.signal; await hold.done; throw new DOMException('cancelled', 'AbortError');
+  }; });
+  try {
+    const caller = f.plugin.loadProperties(); expect(calls).toEqual(['old']);
+    const replace = (next?: PropertySource) => {
+      (f.host.openclast as { propertyFacts?: PropertySource }).propertyFacts = next;
+      f.send('oc:property-facts-changed', { reason: 'replaced', invalidated: false });
+    };
+    if (change === 'unload') f.close();
+    else if (change === 'revoke') replace();
+    else {
+      replace({ ...f.source, load: async () => { calls.push('skipped'); } });
+      replace({ ...f.source, rooms: change === 'room-set replacement' ? () => [f.b] : f.source.rooms, load: async () => { calls.push('latest'); } });
+    }
+    expect(physical?.aborted).toBe(true); expect(calls).toEqual(['old']);
+    hold.yes(); await caller; await hydrationQueue(f).work;
+    expect(calls).toEqual(change.endsWith('replacement') ? ['old', 'latest'] : ['old']);
+    expect(f.plugin.hydrationStatus).toBe(''); expect(f.disk.writes).toBe(0);
   } finally { hold.yes(); f.close(); }
-});
-
-test('binding: host timeout services newest queued open before obsolete siblings without verifying', async () => {
-  const hold = signal(), calls: string[] = []; let pass = 0;
-  const a = {async load() { calls.push('a'); if (++pass === 1) await hold.done; }}, b = {async load() { calls.push('b'); }};
-  const f = await contractFixture(undefined,undefined,undefined,s => { s.rooms = () => [a,b]; }, 25);
-  try { await f.plugin.loadProperties(); expect(f.plugin.hydrationStatus).toBe('Property loading delayed'); expect(calls).toEqual(['a']);
-    hold.no(Object.assign(Error('synthetic timeout'), {name:'PropertyFactsLoadTimeoutError'})); await hydrationQueue(f).work;
-    expect(calls).toEqual(['a','a','b']); expect(f.plugin.hydrationStatus).toBe(''); expect(f.adapter.factsComplete()).toBe(false); expect(f.disk.writes).toBe(0);
-  } finally { hold.yes(); f.close(); }
-});
-test('room queue: one change that mounts two rooms during a held load loads every room', async () => {
-  const gate = signal(), started = signal(), calls: string[] = [];
-  const room = (name: string, load: () => Promise<void>) => Object.freeze({ cacheIdentity: `ocpf1:${name}`, generation: 1, verifiedComplete: false, load });
-  const a = room('a', async () => { calls.push('a'); started.yes(); await gate.done; }), b = room('b', async () => { calls.push('b'); }), c = room('c', async () => { calls.push('c'); });
-  let rooms: readonly unknown[] = Object.freeze([a]);
-  const f = await contractFixture(undefined, undefined, undefined, s => { s.rooms = () => rooms as any; s.roomFor = (p: string) => (rooms as any)[p === 'b.md' ? 1 : 0]; });
-  try {
-    await started.done; rooms = Object.freeze([a, b, c]); f.send('oc:property-facts-changed'); gate.yes();
-    await (f.host as any)[Symbol.for('graph-ng.property-loads')].work;
-    expect(calls).toEqual(['a', 'b', 'c']); expect(f.plugin.hydrationStatus).toBe('');
-  } finally { gate.yes(); f.close(); }
-});
-test('room queue: one unreadable inventory during a held load does not cancel a mounted room', async () => {
-  const started = signal(), release = signal(); let fail = 0, calls = 0, completed = 0, aborts = 0;
-  const a = Object.freeze({ cacheIdentity: 'ocpf1:a', generation: 1, verifiedComplete: false, async load({ signal: s }: { signal: AbortSignal }) {
-    if (++calls === 1) { started.yes(); await new Promise<void>((resolve, reject) => { s.addEventListener('abort', () => { aborts++; reject(s.reason); }, { once: true }); release.done.then(resolve); }); }
-    completed++;
-  } });
-  const rooms = Object.freeze([a]);
-  const f = await contractFixture(undefined, undefined, undefined, s => { s.rooms = () => { if (fail) { fail--; throw Error('synthetic inventory'); } return rooms as any; }; s.roomFor = () => a as any; });
-  try {
-    await started.done; fail = 1; f.send('oc:property-facts-changed'); release.yes();
-    await (f.host as any)[Symbol.for('graph-ng.property-loads')].work;
-    expect(aborts).toBe(0); expect(completed).toBe(1);
-  } finally { release.yes(); f.close(); }
-});
-const roomHandle = (id: string, load: (o: { signal: AbortSignal }) => Promise<unknown>) => Object.freeze({ cacheIdentity: `ocpf1:${id}`, generation: 1, verifiedComplete: false, load });
-const roomQueue = (f: { host: unknown }) => (f.host as any)[Symbol.for('graph-ng.property-loads')];
-for (const locks of [false, true]) test(`room queue: a flapping room cannot starve a sibling, locks=${locks}`, async () => {
-  const start = Array.from({ length: 4 }, signal), trace: string[] = []; let active = 0, peak = 0;
-  const a = roomHandle('a', async ({ signal: s }) => { const n = trace.length; trace.push('a'); peak = Math.max(peak, ++active); start[Math.min(n, 3)]!.yes();
-    try { if (n === 0) await new Promise((_, no) => s.addEventListener('abort', () => no(s.reason), { once: true })); } finally { active--; } });
-  const b = roomHandle('b', async () => { trace.push('b'); });
-  let rooms: readonly unknown[] = [a, b];
-  const nav = locks ? { locks: { request: async (_n: string, _o: unknown, fn: () => Promise<unknown>) => fn() } } : undefined;
-  const f = await contractFixture(undefined, undefined, undefined, s => { s.rooms = () => rooms as any; s.roomFor = () => undefined; }, 500, nav as any);
-  try {
-    await start[0]!.done; rooms = [b]; f.send('oc:property-facts-changed'); rooms = [a, b]; f.send('oc:property-facts-changed');
-    await roomQueue(f).work; await new Promise(r => setTimeout(r, 5)); await roomQueue(f).work;
-    expect(trace.slice(0, 2)).toEqual(['a', 'b']); expect(peak).toBe(1);
-  } finally { for (const s of start) s.yes(); f.close(); }
-});
-test('room queue: an inventory that keeps growing yields after a bounded drain and still finishes', async () => {
-  let attempts = 0, busy = 0, peak = 0, rooms: readonly unknown[];
-  const make = (i: number): unknown => roomHandle(String(i), async () => { peak = Math.max(peak, ++busy); if (++attempts < 96) rooms = Object.freeze([...rooms, make(i + 1)]); busy--; });
-  rooms = Object.freeze([make(1)]);
-  const f = await contractFixture(undefined, undefined, undefined, s => { s.rooms = () => rooms as any; s.roomFor = () => undefined; });
-  try {
-    for (let i = 0; i < 6 && attempts < 96; i++) { await roomQueue(f).work; await new Promise(r => setTimeout(r, 5)); }
-    expect(attempts).toBe(96); expect(peak).toBe(1);
-  } finally { f.close(); }
-});
-test('room queue: a removal seen after one failed membership read aborts the held load', async () => {
-  const start = signal(), release = signal(); let held: AbortSignal | undefined, fail = false, bLoads = 0;
-  const a = roomHandle('a', async ({ signal: s }) => { held = s; start.yes(); await new Promise<void>((yes, no) => { release.done.then(yes); s.addEventListener('abort', () => no(s.reason), { once: true }); }); });
-  const b = roomHandle('b', async () => { bLoads++; });
-  let rooms: readonly unknown[] = [a, b];
-  const f = await contractFixture(undefined, undefined, undefined, s => { s.rooms = () => { if (fail) { fail = false; throw Error('synthetic inventory'); } return rooms as any; }; s.roomFor = () => undefined; }, 25);
-  try {
-    await start.done; rooms = [b]; fail = true; f.send('oc:property-facts-changed');
-    await roomQueue(f).work;
-    expect(held?.aborted).toBe(true); expect(bLoads).toBe(1);
-  } finally { release.yes(); f.close(); }
-});
-test('room queue: more than one drain of stable rooms loads each room once', async () => {
-  const counts = new Map<string, number>();
-  const rooms = Object.freeze(Array.from({ length: 100 }, (_, i) => roomHandle(String(i), async () => { counts.set(String(i), (counts.get(String(i)) ?? 0) + 1); })));
-  const f = await contractFixture(undefined, undefined, undefined, s => { s.rooms = () => rooms as any; s.roomFor = () => undefined; });
-  try {
-    for (let i = 0; i < 6 && counts.size < 100; i++) { await roomQueue(f).work; await new Promise(r => setTimeout(r, 5)); }
-    expect(counts.size).toBe(100); expect([...counts.values()].every(n => n === 1)).toBe(true);
-  } finally { f.close(); }
 });

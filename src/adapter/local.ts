@@ -13,8 +13,8 @@ export interface PropertySource {
   rooms?(): readonly RoomHandle[];
   roomFor?(path: string): RoomHandle | undefined;
 }
-interface RoomHandle { load?(options: { signal: AbortSignal }): Promise<unknown>; cacheIdentity?: string; generation?: number; verifiedComplete?: boolean }
-interface RoomPartition { id: string; handle: RoomHandle; generation: number; ready: boolean; permit?: object; loaded?: boolean; lane?: SettlementLane }
+interface RoomHandle { cacheIdentity?: string; generation?: number; verifiedComplete?: boolean }
+interface RoomPartition { id: string; generation: number; ready: boolean; permit?: object; loaded?: boolean; lane?: SettlementLane }
 interface SettlementLane { controller: AbortController; next?: () => Promise<void> }
 function retireLane(room: RoomPartition) {
   room.permit = undefined;
@@ -46,8 +46,6 @@ export class LocalAdapter {
   attachFactCache(cache: FactCache, source: string) { this.cache = cache; this.cacheScope = source; }
   private partitions = new Map<string, RoomPartition>();
   roomRevision = 0;
-  // Hydration tracks the physical handle too. Keep this separate from cache authority.
-  loadRevision = 0;
   private savedOwners = new Map<string, string>();
   private get partitioned() { return typeof this.propertySource?.rooms === 'function' && typeof this.propertySource.roomFor === 'function'; }
   private forget(path: string) {
@@ -80,11 +78,10 @@ export class LocalAdapter {
     for (const h of handles ?? []) if (validRoom(h)) {
       const id = h.cacheIdentity!; active.add(id);
       let room = this.partitions.get(id);
-      if (room && (room.handle !== h || room.generation !== h.generation)) this.loadRevision++;
       if (!room || room.generation !== h.generation) {
         if (room) { retireLane(room); replaced.add(id); } else moved = true;
-        this.partitions.set(id, room = { id, handle: h, generation: h.generation!, ready: false });
-      } else room.handle = h;
+        this.partitions.set(id, room = { id, generation: h.generation!, ready: false });
+      }
       room.ready = h.verifiedComplete === true;
       if (!room.ready) retireLane(room);
     }
