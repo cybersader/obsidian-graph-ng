@@ -1570,6 +1570,8 @@ With default Chromium flags, the cold 20,000-note Auto run took **2.563 s** on P
 
 Compared with `fda8c30`, the plain loading picture computes the same visible bounds and validates every XY pair without building hit-test bins. A request-scoped credit gates the coordinate copy, isolate arrangement and transfer, not the solver. Groups and busy Notes receive the same step counts at the same stream boundaries. Recompute still retains indexed geometry for rollback; picking resumes on adopted coordinates, not on the preview.
 
+Follow-up regression tests with a synthetic Canvas renderer withhold animation callbacks: the first synchronous draw and subsequent timer draw each release one display credit, and an outstanding draw cannot credit a later pass at the same revision. A separate view test rejects obsolete renderer setup after switching from Notes to Groups and back; Notes keeps demand and accepts the next picture. These are lifecycle checks, not new performance measurements.
+
 Three paired runs per size, alternating which revision ran first. Counts and bytes below are totals over the three passes; times pool the individual observations, not the per-run percentiles.
 
 | Synthetic community graph | Version | Pictures produced / transferred / painted | Coordinate bytes | Mean preview update on main thread | Pan input-to-paint proxy, p95 |

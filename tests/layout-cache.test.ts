@@ -24,9 +24,12 @@ async function boot(disk: MemoryAdapter, resolved: Record<string, Record<string,
   const app: any = { vault: { getMarkdownFiles: () => files, getAbstractFileByPath: (p: string) => files.find(f => f.path === p), on() {}, read() { throw Error('no bodies'); } },
     metadataCache: { getFileCache: () => ({ frontmatter: {} }), resolvedLinks: resolved, on() {} } };
   const pipeline = new WorkerPipeline(new Worker(new URL('../src/layout-worker.ts', import.meta.url).href) as unknown as Transport, () => 20000);
-  let boundaries = 0, inner: any;
-  // Groups wants progress at each original boundary, never coordinate pictures.
-  Object.defineProperty(pipeline, 'onPositions', { get: () => () => { throw Error('Unexpected Groups preview'); }, set() {} });
+  let boundaries = 0, inner: any, activeView: { presentation: string };
+  // This cache fixture has no renderer. Reject Groups pictures; consume one Notes picture without requesting more.
+  Object.defineProperty(pipeline, 'onPositions', { get: () => ({ positions }: { positions: Float32Array }) => {
+    if (activeView.presentation === 'groups') throw Error('Unexpected Groups preview');
+    pipeline.recycle(positions.buffer as ArrayBuffer); return false;
+  }, set() {} });
   Object.defineProperty(pipeline, 'onProgress', { get: () => (step: number, total: number) => { boundaries++; inner?.(step, total); }, set: fn => { inner = fn; } });
   const plugin: any = Object.create(GraphPlugin.prototype);
   Object.assign(plugin, { settings: initial, propertyRevision: 0, nextRevision: 0, linkProducer: 'p@1', pipeline, generations: Object.create(null), writes: Promise.resolve(),
@@ -36,7 +39,8 @@ async function boot(disk: MemoryAdapter, resolved: Record<string, Record<string,
   /** One view open (or one refresh after a change): returns what the user would see. */
   async function open() {
     const view: any = Object.create(GraphView.prototype); boundaries = 0; disk.reads = []; disk.writes = 0;
-    Object.assign(view, { plugin, app, revision: 0, renderRevision: 0, closed: false, members: new Map(), contributions: new Map(), startupTrace: [], cacheTrace: [],
+    activeView = view;
+    Object.assign(view, { plugin, app, presentation: 'groups', revision: 0, renderRevision: 0, closed: false, members: new Map(), contributions: new Map(), startupTrace: [], cacheTrace: [],
       contributionPage: { clear() {}, suspend() {}, update() {} }, contentEl: { dataset: {} }, status: new ControlElement(), statusSummary: new ControlElement(),
       gpu: { available: false, reason: 'Not probed' }, showGroups() {} });
     await view.refreshOnce();

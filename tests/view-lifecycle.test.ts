@@ -425,6 +425,42 @@ test('Notes can request a fresh first picture after Groups interrupts renderer s
   notes = true; await preview.push(new Float32Array(2)); expect(creates).toBe(2); await preview.finish();
 });
 
+test('a renderer rejection after returning to Notes keeps demand and admits the next picture', async () => {
+  const { GraphView } = await import('../src/main'), { DetailRenderer } = await import('../src/webgl-renderer'), { defaults } = await import('../src/settings');
+  const settings = defaults('fixture'); settings.persistLayout = false;
+  const visible = Uint8Array.of(1), demand: boolean[] = [], recycled: ArrayBuffer[] = [];
+  let started!: () => void, finish!: (value: unknown) => void, reject!: (err: Error) => void, creates = 0;
+  const waiting = new Promise<void>(r => { started = r; });
+  const pipeline: any = { previewWanted: (_: number, wanted: boolean) => demand.push(wanted), recycle: (b: ArrayBuffer) => recycled.push(b), async request(_: number, req: any) {
+    if (req.kind === 'configure') return { declarationHash: 'd', layoutHash: 'l', ingestHash: 'i' };
+    if (req.kind === 'project') return { nodes: 1, edges: 0, quarantined: [], meta: { key: 'k' } };
+    if (req.kind === 'detail') return { projection: {}, explore: { visible }, visible, colors: new Uint32Array(1), view: 1 };
+    if (req.kind === 'layout') { started(); return new Promise(r => { finish = r; }); }
+  } };
+  const view: any = Object.create(GraphView.prototype);
+  Object.assign(view, { plugin: { settings, pipeline, nextRevision: 0, propertyRevision: 0, adapter: { async *columns() {}, coverage: () => ({ listed: 1, indexed: 1 }), factsComplete: () => true, pendingProperties: () => 0, linksPending: () => false, invalidate() {} } },
+    app: { workspace: { requestSaveLayout() {} }, vault: { getMarkdownFiles: () => [] } }, presentation: 'nodes', view: emptyView(), revision: 0, renderRevision: 0,
+    gpu: { available: true, reason: 'Synthetic renderer' }, members: new Map(), contributions: new Map(), startupTrace: [], cacheTrace: [], contributionPage: { clear() {}, suspend() {}, update() {}, fail() {} },
+    contentEl: { dataset: {} }, status: new ControlElement(), statusSummary: new ControlElement(), stage: new ControlElement(), panel: new ControlElement(), renderView: () => ({}) });
+  const create = DetailRenderer.create;
+  DetailRenderer.create = async (_stage, _projection, positions) => {
+    if (++creates === 1) await new Promise<never>((_, r) => { reject = r; });
+    return { positions, layoutPaint: Promise.resolve(), streamPositions(next: Float32Array) { const old = this.positions; this.positions = next; return old; }, dispose() {} } as any;
+  };
+  const work = view.refreshOnce();
+  try {
+    await waiting;
+    const push = (positions: Float32Array) => pipeline.onPositions({ revision: view.activeRevision, iteration: 2 * settings.streamEveryIterations, total: 100, positions });
+    const first = new Float32Array(2), next = new Float32Array(2), opening = push(first);
+    view.toGroups(); await view.showDetails(); reject(Error('Renderer superseded')); await opening;
+    expect(demand).toEqual([false, true]); expect(view.detailFallback).toBe(''); expect(recycled).toEqual([first.buffer]);
+    await push(next); expect(creates).toBe(2); expect(view.renderer.positions).toBe(next);
+    expect(push(new Float32Array(2))).toBe(view.renderer.layoutPaint); // later loading pictures wait for their draw
+  } finally {
+    DetailRenderer.create = create; view.showDetails = async () => {}; finish({ positions: new Float32Array(2), cached: false, milliseconds: 1 }); await work;
+  }
+});
+
 test('completed partial projections do not keep layout busy waiting for host metadata', async () => {
   const { GraphView } = await import('../src/main'); const view: any = Object.create(GraphView.prototype);
   Object.assign(view, { contentEl: { dataset: { state: 'ready' } }, provisional: true, plugin: { settings: { projectionFile: '' } }, report: { linksPending: true, pendingProperties: 4 } });

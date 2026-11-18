@@ -354,6 +354,10 @@ export class DetailRenderer {
   private labelsRevision = 0;
   private frameId = 0;
   private frameTimer: ReturnType<typeof setTimeout> | undefined;
+  /** One outstanding streamed picture. Both draw clocks settle the same receipt. */
+  layoutPaint?: Promise<void>;
+  private releasePaint?: () => void;
+  private finishPaint() { this.releasePaint?.(); this.releasePaint = this.layoutPaint = undefined; }
   private restoreTimer: ReturnType<typeof setTimeout> | undefined;
   private canvasEdges = new Uint32Array();
   private disposed = false;
@@ -715,7 +719,10 @@ export class DetailRenderer {
     }
     this.positions = next;
     if (this.gl) this.uploadCoordinates();
-    this.followExtent(); if (paint) this.draw(); else this.refresh(); return previous;
+    this.followExtent();
+    if (paint) this.draw();
+    else { this.layoutPaint ??= new Promise(resolve => { this.releasePaint = resolve; }); this.refresh(); }
+    return previous;
   }
   /** Only zoom outward while streaming; a gesture permanently releases this run. */
   private followExtent() {
@@ -1629,6 +1636,9 @@ export class DetailRenderer {
   private draw = () => {
     cancelAnimationFrame(this.frameId); clearTimeout(this.frameTimer); this.frameTimer = undefined;
     this.frameId = 0; if (this.disposed || this.lost || !this.ready) return;
+    this.paint(); this.finishPaint();
+  };
+  private paint() {
     // DPR can change without a CSS-size observer notification; reconcile on the next paint.
     if (this.dpr !== this.renderScale()) this.resize();
     const drawStart = performance.now(), more = this.animate(drawStart);
@@ -1686,7 +1696,7 @@ export class DetailRenderer {
     }
     gl.bindVertexArray(null); this.placeOverlay(); const cost = performance.now() - drawStart; this.timings.maxDraw = Math.max(this.timings.maxDraw || 0, cost); devicePerformance.frame(cost);
     if (more) this.refresh();
-  };
+  }
   /** Current label level with hysteresis; idempotent for an unchanged camera ratio. */
   private lodLevel() { return this.labelLevel = stickyLevel(this.labelLevel, this.camera.ratio, LABEL_RATIOS); }
   /** DOM text for the hovered note and collapsed groups only: bounded, text-only. */
@@ -2035,7 +2045,7 @@ export class DetailRenderer {
   }
   private contextLost = (e: Event) => {
     e.preventDefault(); if (this.disposed) return; this.lost = true; this.ready = false; this.input.release(); invalidateSearch(this.canvas); this.container.title = ''; this.canvas.style.cursor = 'wait';
-    cancelAnimationFrame(this.frameId); clearTimeout(this.frameTimer); this.frameTimer = undefined; this.frameId = 0; this.canvas.dataset.context = 'lost';
+    cancelAnimationFrame(this.frameId); clearTimeout(this.frameTimer); this.frameTimer = undefined; this.frameId = 0; this.finishPaint(); this.canvas.dataset.context = 'lost';
     clearTimeout(this.restoreTimer); this.restoreTimer = setTimeout(() => { if (!this.disposed && this.lost) { this.canvas.dataset.context = 'failed'; this.onUnavailable(); } }, this.settings.contextRestoreTimeoutMs);
   };
   private contextRestored = () => {
@@ -2044,7 +2054,7 @@ export class DetailRenderer {
     void this.initialize().then(() => { if (!this.disposed && !this.lost) this.canvas.dataset.context = 'restored'; }).catch(() => { if (!this.disposed) { this.canvas.dataset.context = 'failed'; this.onUnavailable(); } });
   };
   dispose() { clearTimeout(this.sizingTimer);
-    if (this.disposed) return; this.disposed = true; this.labelsRevision++; clearTimeout(this.restoreTimer); this.restoreTimer = undefined; cancelAnimationFrame(this.frameId); clearTimeout(this.frameTimer); this.frameTimer = undefined; this.observer.disconnect(); this.panelObserver?.disconnect(); this.media.removeEventListener('change', this.refreshTheme); this.motionMedia.removeEventListener('change', this.motionChanged);
+    if (this.disposed) return; this.disposed = true; this.finishPaint(); this.labelsRevision++; clearTimeout(this.restoreTimer); this.restoreTimer = undefined; cancelAnimationFrame(this.frameId); clearTimeout(this.frameTimer); this.frameTimer = undefined; this.observer.disconnect(); this.panelObserver?.disconnect(); this.media.removeEventListener('change', this.refreshTheme); this.motionMedia.removeEventListener('change', this.motionChanged);
     this.input.detach(this.container); this.limitChip.stop(); disposeSearch(this.canvas); this.miniMap.dispose();
     this.canvas.removeEventListener('webglcontextlost', this.contextLost); this.canvas.removeEventListener('webglcontextrestored', this.contextRestored);
     const gl = this.gl; if (gl && !this.lost) { gl.deleteFramebuffer(this.densityBuffer); for (const p of this.programs) gl.deleteProgram(p.handle); for (const b of [...this.buffers, ...this.labelBuffers, ...this.discBuffers]) if (b) gl.deleteBuffer(b); for (const v of [...this.vaos, ...this.labelVaos]) gl.deleteVertexArray(v); for (const t of this.textures) gl.deleteTexture(t); }

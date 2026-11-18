@@ -48,10 +48,9 @@ export class WorkerPipeline {
   private next = 0;
   private pending: Pending[] = [];
   private active?: Pending;
-  private creditPaint?: number;
   private closed = false;
   private restarts = 0;
-  /** Resolve after renderer setup; false retires an obsolete display for this request. */
+  /** Resolve when drawn (or discarded); false retires the display for this request. */
   onPositions?: (event: { revision: number; positions: Float32Array; iteration: number; total: number }) => void | false | Promise<void>;
   onProgress?: (iteration: number, total: number) => void;
   onGroups?: (event: GroupEvent) => void;
@@ -67,11 +66,8 @@ export class WorkerPipeline {
       if (m.kind === 'progress') { this.onProgress?.(m.iteration, m.total); return; }
       if (m.kind === 'positions') {
         const displayed = this.onPositions?.(m);
-        // A recycled buffer is not a display credit. Wait for setup and the queued paint.
         if (displayed !== false && 'preview' in p.request && p.request.preview) void Promise.resolve(displayed).then(() => {
-          if (p === this.active) this.creditPaint = requestAnimationFrame(() => {
-            this.creditPaint = undefined; if (p === this.active) worker.postMessage({ kind: 'preview-credit', id: p.id }, []);
-          });
+          if (p === this.active) worker.postMessage({ kind: 'preview-credit', id: p.id }, []);
         });
         return;
       }
@@ -83,7 +79,7 @@ export class WorkerPipeline {
         p.timer = setTimeout(() => this.fail(new Error('Graph worker processing timed out')), this.timeoutMs());
         if (p.stop) this.stopLayout(p.revision); return;
       }
-      clearTimeout(p.timer); this.clearCreditPaint(); this.active = undefined;
+      clearTimeout(p.timer); this.active = undefined;
       if (m.error) p.reject(new Error(m.error)); else p.resolve(m.result);
       this.dispatch();
     };
@@ -124,9 +120,7 @@ export class WorkerPipeline {
     try { this.worker.postMessage({ id: p.id, revision: p.revision, ...p.request, ...(evaluation(p.request) ? { budgetMs: p.request.budgetMs ?? this.timeoutMs() * .9 } : {}) }, transferables(p.request)); }
     catch (error) { this.fail(error instanceof Error ? error : new Error(String(error))); }
   }
-  private clearCreditPaint() { if (this.creditPaint !== undefined) cancelAnimationFrame(this.creditPaint); this.creditPaint = undefined; }
   private rejectAll(error: Error) {
-    this.clearCreditPaint();
     if (this.active) { clearTimeout(this.active.timer); this.active.reject(error); this.active = undefined; }
     for (const p of this.pending) p.reject(error); this.pending = [];
   }

@@ -721,17 +721,23 @@ export class GraphView extends ItemView {
       const recycle = (p: Float32Array) => this.plugin.pipeline.recycle(p.buffer as ArrayBuffer);
       preview = new LayoutPreview(async (positions, active) => {
         if (this.gpu.reason === 'Not probed') this.gpu = gpuStatus();
-        const bits = this.detailVisible()!, renderRevision = ++this.renderRevision;
+        const bits = this.detailVisible()!;
         if (!this.admitDetail(bits)) throw new Error(this.detailFallback);
         const previous = this.renderer instanceof DetailRenderer ? this.renderer : undefined;
         this.renderer?.dispose(); this.stage.empty(); this.contentEl.dataset.mode = 'nodes-building';
-        const renderer = await DetailRenderer.create(this.stage, this.projection!, positions, bits, settings, () => {}, () => {}, this.colors!, () => active() && renderRevision === this.renderRevision, !this.gpu.available, () => {}, { loading: true, typeHidden: this.renderView().typeHidden });
-        if (previous) renderer.adoptCamera(previous);
-        this.renderer = renderer; if (active()) this.layoutLabel(true); return renderer;
+        const renderer = await DetailRenderer.create(this.stage, this.projection!, positions, bits, settings, () => {}, () => {}, this.colors!, active, !this.gpu.available, () => {}, { loading: true, typeHidden: this.renderView().typeHidden });
+        if (active()) {
+          if (previous) renderer.adoptCamera(previous);
+          this.renderer = renderer; this.layoutLabel(true);
+        }
+        return renderer;
       }, recycle, () => current() && this.presentation === 'nodes', error => {
         this.plugin.pipeline.previewWanted?.(revision, false);
         this.detailFallback ||= `Layout preview unavailable: ${String(error)}. Showing Groups.`;
         this.showGroups(true); this.statusText = this.statusText;
+      }, () => {
+        const attempt = ++this.renderRevision;
+        return () => attempt === this.renderRevision;
       });
       this.plugin.pipeline.onEngine = (engineStatus, total) => { if (current()) { report.engineStatus = engineStatus; if (!report.progress) this.passSteps(0, total); this.plugin.recordLayoutEngine?.(engineStatus, true); } };
       const from = (devicePerformance.fast(settings.performance) ? 1 : 2) * settings.streamEveryIterations;
@@ -1007,7 +1013,7 @@ export class GraphView extends ItemView {
         this.plugin.pipeline.onPositions = event => {
           if (event.revision !== revision || !current() || streamError) { this.plugin.pipeline.recycle(event.positions.buffer as ArrayBuffer); return false; }
           this.passSteps(event.iteration, event.total);
-          if (event.iteration > 0 && finish) { try { old!.streamPositions(event.positions, !painted); if (!painted) { this.layoutLabel(true); painted = true; } } catch (e) { streamError = e; return false; } }
+          if (event.iteration > 0 && finish) { try { old!.streamPositions(event.positions, !painted); if (!painted) { this.layoutLabel(true); painted = true; } return old!.layoutPaint; } catch (e) { streamError = e; return false; } }
           else this.plugin.pipeline.recycle(event.positions.buffer as ArrayBuffer);
         };
         const result = await this.plugin.pipeline.request<LayoutResult>(revision, { kind: 'recompute', preview: { from: 1, wanted: !!finish }, options: next.layout, layoutEngine: next.layoutEngine, engineChoices: this.plugin.layoutChoices?.(), initial: this.positions!.slice() });

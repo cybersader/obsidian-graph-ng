@@ -4,7 +4,7 @@ The owner-approved bounded download ceilings for this UI pass are **470,000 raw 
 
 ## Unreleased: explore during layout
 
-- Notes previews skip hit-test bins until adoption. Groups still reports every layout update, but no longer receives coordinate pictures; Notes requests another picture only after its previous one is ready to draw. This changes neither layout coordinates nor saved-layout identity.
+- Notes previews skip hit-test bins until adoption. Groups still reports every layout update, but no longer receives coordinate pictures; Notes requests another picture after the previous draw, including when the timer paints instead of an animation frame. Switching to Groups and back during renderer setup no longer drops Notes previews for the rest of the pass. This changes neither layout coordinates nor saved-layout identity.
 
 - **Explore now** adopts a progressed Notes pass through the existing Stop action. **Keep refining** is available for any idle, unsettled Notes layout. Both controls share one pass; coordinate-only refinement preserves the camera and does not save settings. Solver steps retire on reply, and stage announcements persist through completion.
 - Loading names the current stage. Layout shows completed steps against this pass's budget instead of an overall percentage; an exact cache hit skips Arranging notes.

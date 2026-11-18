@@ -2,6 +2,7 @@
 interface PreviewRenderer {
   positions: Float32Array;
   readonly usable?: boolean;
+  readonly layoutPaint?: Promise<void>;
   streamPositions(next: Float32Array): Float32Array;
   dispose(): void;
 }
@@ -10,12 +11,12 @@ export class LayoutPreview {
   private next?: Float32Array;
   private starting?: Promise<void>;
   private closed = false;
-  constructor(private create: (positions: Float32Array, current: () => boolean) => Promise<PreviewRenderer>, private recycle: (positions: Float32Array) => void, private current: () => boolean, private failed: (error: unknown) => void) {}
+  constructor(private create: (positions: Float32Array, current: () => boolean) => Promise<PreviewRenderer>, private recycle: (positions: Float32Array) => void, private current: () => boolean, private failed: (error: unknown) => void, private beginAttempt?: () => () => boolean) {}
   push(positions: Float32Array): void | false | Promise<void> {
     if (this.closed || !this.current()) { this.recycle(positions); return this.closed ? false : undefined; }
     if (this.renderer?.usable === false) { this.recycle(this.renderer.positions); this.renderer = undefined; }
     if (this.renderer) {
-      try { this.recycle(this.renderer.streamPositions(positions)); }
+      try { this.recycle(this.renderer.streamPositions(positions)); return this.renderer.layoutPaint; }
       catch (e) { if (this.renderer.positions !== positions) this.recycle(positions); this.failed(e); void this.finish(); }
     } else {
       if (this.next) this.recycle(this.next);
@@ -25,7 +26,8 @@ export class LayoutPreview {
   }
   private async start() {
     const positions = this.next!; this.next = undefined;
-    const current = () => !this.closed && this.current();
+    const ownsAttempt = this.beginAttempt?.();
+    const current = () => !this.closed && this.current() && (!ownsAttempt || ownsAttempt());
     try {
       this.renderer = await this.create(positions, current);
       if (!current()) { this.renderer.dispose(); this.recycle(this.renderer.positions); this.renderer = undefined; }

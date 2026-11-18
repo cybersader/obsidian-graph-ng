@@ -93,6 +93,35 @@ test('loading preview attaches pan and zoom while suppressing picking and retain
   r[compiled('streamPositions')](f.next); expect(r.grid.heads).toBeUndefined(); expect(r.grid.positions).toBe(f.next); expect(r.camera).toEqual(moved); expect(r.overlay.hidden).toBe(true);
 });
 
+test('Notes previews keep arriving on timer-backed draws when animation frames are withheld', async () => {
+  const { WorkerPipeline } = await import('../src/pipeline');
+  const f = await fixture(), sent: any[] = [], entered = deferred();
+  const transport = { onmessage: null as any, onerror: null, terminate() {}, postMessage(m: any) { sent.push(m); if (m.kind === 'recompute') entered.resolve(); } };
+  const pipeline = f.plugin.pipeline = new WorkerPipeline(transport, () => 10000);
+  const tick = () => new Promise<void>(r => setTimeout(r, 0));
+  const emit = (iteration: number) => transport.onmessage({ data: { kind: 'positions', revision: 7, iteration, total: 100, positions: f.next.slice() } });
+  const credits = () => sent.filter(m => m.kind === 'preview-credit').map(m => m.id);
+  const raf = globalThis.requestAnimationFrame, cancel = globalThis.cancelAnimationFrame;
+  globalThis.requestAnimationFrame = () => 1; globalThis.cancelAnimationFrame = () => {};
+  const work = outcome(f.view[compiled('applyLayout')](values));
+  try {
+    await entered.promise; emit(1); await tick();
+    expect(credits()).toEqual([1]); // first picture draws synchronously
+    emit(2); await tick(); expect(credits()).toEqual([1]);
+    const delayedFrame = frameCallbacks.values().next().value!;
+    expect(backstops.size).toBe(1); backstops.values().next().value!(); await tick();
+    expect(credits()).toEqual([1, 1]);
+    delayedFrame(); await tick(); expect(credits()).toEqual([1, 1]); // even a late callback cannot acknowledge twice
+    emit(3); await tick(); expect(credits()).toEqual([1, 1]);
+    transport.onmessage({ data: { id: 1, revision: 7, result: { positions: f.next, milliseconds: 1, cached: false } } });
+    const next = pipeline.request(7, { kind: 'layout', preview: { from: 1, wanted: true } });
+    backstops.values().next().value!(); await tick();
+    expect(credits()).toEqual([1, 1]); // late draw cannot credit the next pass, even at the same revision
+    transport.onmessage({ data: { id: 2, revision: 7, result: {} } }); await next;
+    expect(await work).toBe('success');
+  } finally { pipeline.dispose(); await work; globalThis.requestAnimationFrame = raf; globalThis.cancelAnimationFrame = cancel; }
+});
+
 test('Stop layout remains beside status, sends one active revision and hides without removing its slot', async () => {
   const f = await fixture(), summary = f.view[compiled('statusSummary')]; let stopped = -1;
   const label = summary.createSpan({ text: 'Arranging notes' });
