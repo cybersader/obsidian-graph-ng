@@ -1,7 +1,10 @@
 import { layoutIdentity, validateLayout } from './core/layout-options';
 import { probeGpu } from './gpu-probe';
 import { renderProjection } from './render-projection';
-import { runLayout, runLayoutStream, isolateRing, type LayoutInput } from './core/layout';
+import { runLayout, isolateRing, type LayoutInput } from './core/layout';
+import { LayoutEngineSession } from './layout-engine';
+import type { EngineStatus, EngineTiming, LayoutEnginePreference } from './layout-engine-policy';
+const engines = new LayoutEngineSession();
 import { yieldTask } from './core/scheduler';
 import { checked, cooperative, filterSteps, groupSteps, lowerPredicate, lowerGroup, type EvaluationControl } from './core/expr/engine';
 import { identityDeclaration, digest, canonical, layoutDeclaration } from './core/declaration';
@@ -13,7 +16,7 @@ import { generationKey } from './core/generation';
 import { warmLayout, validSavedLayout } from './core/incremental';
 import { CACHE_FORMAT, decodeLayout, encodeLayout, type BinaryLayout, type GenerationMeta } from './core/binary-layout';
 import { edgeHashes, hashEdge, edgeHashSet } from './core/edge-hash';
-import { LAYOUT_PRODUCER, evaluation, type PipelineRequest, type PipelineConfig, type LayoutResult } from './pipeline';
+import { layoutProducer, evaluation, type PipelineRequest, type PipelineConfig, type LayoutResult } from './pipeline';
 import { carrierHiddenBy, emptyView, explore, groupColumn, hide, relationshipNotes, searchSteps, withoutTypes, type ExploreResult, type ExploreView } from './core/explore';
 const rows = new Map<string, FactRow>();
 let config: PipelineConfig, meta: GenerationMeta, projection: Projection, visible: Uint8Array;
@@ -21,7 +24,7 @@ let contracted: ReturnType<typeof contractGroups>, positions: Float32Array | und
 /** Unverified coordinates are same-declaration, in-memory hints only, never a disk generation. */
 let interim: BinaryLayout | undefined;
 let settled = false;
-let preparedLayout: { positions: Float32Array; settled: boolean; options: PipelineConfig['layout']; revision: number } | undefined;
+let preparedLayout: { positions: Float32Array; settled: boolean; options: PipelineConfig['layout']; revision: number; layoutEngine?: LayoutEnginePreference; engineChoices?: EngineTiming[] } | undefined;
 const recycled: ArrayBuffer[] = [];
 const takeBuffer = (length: number) => { const i = recycled.findIndex(b => b.byteLength === length * 4); return i < 0 ? new Float32Array(length) : new Float32Array(recycled.splice(i, 1)[0]!); };
 let complete = true, projectionRevision = -1, colors: Uint32Array = new Uint32Array(), explored: ExploreResult | undefined;
@@ -63,8 +66,17 @@ function* viewSteps(view: ExploreView, rules: PipelineConfig['declaration']['col
 let declarationHash = '', layoutHash = '', hashes: Uint32Array = new Uint32Array();
 /** Same source, producer and layout parameters: positions are valid warm-start hints even when only
  * grouping, display columns or other non-topology declaration fields changed. */
+const producer = () => layoutProducer(config.layoutEngine);
+function configKey(input: FactRow[], layout: PipelineConfig['layout']) {
+  const family = producer() + (config.layoutEngine === 'graphics' ? '/graphics' : '');
+  return generationKey(input, config.declaration, layout, `${family}/stream${config.streamEveryIterations}/group${config.groupLevel}/${config.source}/format${CACHE_FORMAT}`);
+}
+function configLayoutHash(layout: PipelineConfig['layout']) {
+  const engine = config.layoutEngine;
+  return digest({ layout: layoutIdentity(layout), streamEveryIterations: config.streamEveryIterations, ...(engine === 'graphics' ? { engine } : {}) });
+}
 function compatible(g: GenerationMeta) {
-  return g.format === CACHE_FORMAT && g.layoutHash === layoutHash && g.producer === LAYOUT_PRODUCER && g.source === config.source && g.streamEveryIterations === config.streamEveryIterations && canonical(layoutIdentity(g.layout)) === canonical(layoutIdentity(config.layout));
+  return g.format === CACHE_FORMAT && g.layoutHash === layoutHash && g.producer === producer() && g.source === config.source && g.streamEveryIterations === config.streamEveryIterations && canonical(layoutIdentity(g.layout)) === canonical(layoutIdentity(config.layout));
 }
 /** Exact identity of a persisted generation: compatible, same declaration and group level. */
 const matches = (g: GenerationMeta) => compatible(g) && g.declarationHash === declarationHash && g.groupLevel === config.groupLevel;
@@ -74,14 +86,19 @@ function groupSummary(p: GroupProjection): GroupProjection {
   // Carrier/contribution objects remain worker-owned and are read a page at a time.
   return { ...p, groupEdges: p.groupEdges.map(e => ({ ...e, carriers: { kind: e.carriers.kind, ids: [] } })) };
 }
-async function solve(input: LayoutInput, options: PipelineConfig['layout'], revision: number, stopped: () => boolean) {
-  let settled = false;
+async function solve(input: LayoutInput, options: PipelineConfig['layout'], revision: number, stopped: () => boolean, preference = config.layoutEngine, remembered = config.engineChoices) {
   const arrange = isolateRing(input);
-  const positions = await runLayoutStream(input, options, config.streamEveryIterations, (p, iteration, total) => {
-    arrange(p); self.postMessage({ kind: 'positions', revision, positions: p, iteration, total }, { transfer: [p.buffer] });
-  }, () => yieldTask(true), takeBuffer, value => { settled = value; }, stopped);
-  arrange(positions);
-  return { positions, settled };
+  const result = await engines.run(input, options, {
+    preference, remembered, every: config.streamEveryIterations, stopped, yieldNow: () => yieldTask(true),
+    status: engineStatus => self.postMessage({ kind: 'engine', revision, engineStatus }),
+    buffer: takeBuffer,
+    emit: (p, iteration, total) => {
+      arrange(p);
+      self.postMessage({ kind: 'positions', revision, positions: p, iteration, total }, { transfer: [p.buffer] });
+    },
+  });
+  if (result.engineStatus.reason !== 'unchanged') arrange(result.positions);
+  return result;
 }
 async function handle(r: PipelineRequest, revision: number, control: EvaluationControl): Promise<unknown> {
   switch (r.kind) {
@@ -95,7 +112,7 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       // Equal ID strings from different declared properties need not identify the same notes.
       if (saved && canonical(config.declaration.identity) !== canonical(r.config.declaration.identity)) saved = undefined;
       config = r.config;
-      declarationHash = await digest(identityDeclaration(layoutDeclaration(config.declaration, config.layout.force.familyPull > 0))); layoutHash = await digest({ layout: layoutIdentity(config.layout), streamEveryIterations: config.streamEveryIterations });
+      declarationHash = await digest(identityDeclaration(layoutDeclaration(config.declaration, config.layout.force.familyPull > 0))); layoutHash = await configLayoutHash(config.layout);
       if (saved && !compatible(saved.meta)) saved = undefined;
       if (interim && !matches(interim.meta)) interim = undefined;
       // held: this worker already has compatible coordinates, so the view can skip the disk read.
@@ -117,10 +134,10 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       const old = r.generation;
       if (!config.source.endsWith('/local')) return undefined;
       // Old keys omit source/format; local-only hints can never be stamped for a new view.
-      if (old.producer !== LAYOUT_PRODUCER || !validSavedLayout(old) || old.layoutHash !== await digest(layoutIdentity(config.layout)) || r.declarationHash !== declarationHash) return undefined;
+      if (old.producer !== producer() || !validSavedLayout(old) || old.layoutHash !== await digest(layoutIdentity(config.layout)) || r.declarationHash !== declarationHash) return undefined;
       const keys = new Uint32Array((old.edgeKeys?.length ?? 0) * 2);
       old.edgeKeys?.forEach((key, i) => keys.set(hashEdge(key), i * 2));
-      const m = { format: CACHE_FORMAT, declarationHash, layoutHash, layout: config.layout, key: old.key, producer: LAYOUT_PRODUCER, source: config.source, groupLevel: config.groupLevel, streamEveryIterations: config.streamEveryIterations };
+      const m = { format: CACHE_FORMAT, declarationHash, layoutHash, layout: config.layout, key: old.key, producer: producer(), source: config.source, groupLevel: config.groupLevel, streamEveryIterations: config.streamEveryIterations };
       return encodeLayout({ meta: m, identities: old.identities, positions: Float32Array.from(old.positions), edgeKeys: keys });
     }
     case 'project': {
@@ -133,8 +150,8 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       colors = colorGroups(projection, config.declaration);
       applyView(config.view ?? emptyView());
       self.postMessage({ kind: 'groups', revision, view: viewGeneration, projection: groupSummary(contracted.projection) });
-      const key = await generationKey(input, config.declaration, config.layout, `${LAYOUT_PRODUCER}/stream${config.streamEveryIterations}/group${config.groupLevel}/${config.source}/format${CACHE_FORMAT}`);
-      meta = { format: CACHE_FORMAT, key, declarationHash, layoutHash, layout: config.layout, producer: LAYOUT_PRODUCER, source: config.source, groupLevel: config.groupLevel, streamEveryIterations: config.streamEveryIterations };
+      const key = await configKey(input, config.layout);
+      meta = { format: CACHE_FORMAT, key, declarationHash, layoutHash, layout: config.layout, producer: producer(), source: config.source, groupLevel: config.groupLevel, streamEveryIterations: config.streamEveryIterations };
       hashes = edgeHashes(projection);
       let invalidSaved;
       if (saved && complete) { const current = new Set(projection.identities); if (saved.identities.some(id => !current.has(id))) { if (matches(saved.meta)) invalidSaved = saved.meta; saved = undefined; } }
@@ -149,19 +166,23 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       if (revision !== projectionRevision || !positions) throw new Error('Projection generation changed');
       validateLayout(r.options);
       const start = performance.now();
-      const next = await solve({ count: projection.paths.length, source: projection.source, target: projection.target, offsets: projection.offsets, targets: projection.targets, up: projection.up, seed: Number.parseInt(meta.key.slice(0, 8), 16), initial: r.initial ?? positions.slice() }, r.options, revision, control.cancelled);
-      preparedLayout = { ...next, options: r.options, revision };
+      // Resolve the engine once: an omitted override inherits the configured engine
+      // for solve, adoption and the saved-layout key alike.
+      const layoutEngine = r.layoutEngine ?? config.layoutEngine, engineChoices = r.engineChoices ?? config.engineChoices;
+      const next = await solve({ count: projection.paths.length, source: projection.source, target: projection.target, offsets: projection.offsets, targets: projection.targets, up: projection.up, seed: Number.parseInt(meta.key.slice(0, 8), 16), initial: r.initial ?? positions.slice() }, r.options, revision, control.cancelled, layoutEngine, engineChoices);
+      preparedLayout = { ...next, options: r.options, revision, layoutEngine, engineChoices };
       return { ...next, positions: next.positions.slice(), milliseconds: performance.now() - start, cached: false };
     }
     case 'adoptLayout': {
       const pending = preparedLayout;
       if (!pending || pending.revision !== revision || revision !== projectionRevision) throw new Error('Layout generation changed');
       const options = pending.options;
+      config = { ...config, layoutEngine: pending.layoutEngine, engineChoices: pending.engineChoices };
       const nextDeclarationHash = await digest(identityDeclaration(layoutDeclaration(config.declaration, options.force.familyPull > 0)));
-      const nextLayoutHash = await digest({ layout: layoutIdentity(options), streamEveryIterations: config.streamEveryIterations });
-      const key = await generationKey([...rows.values()], config.declaration, options, `${LAYOUT_PRODUCER}/stream${config.streamEveryIterations}/group${config.groupLevel}/${config.source}/format${CACHE_FORMAT}`);
+      const nextLayoutHash = await configLayoutHash(options);
+      const key = await configKey([...rows.values()], options);
       config = { ...config, layout: options }; declarationHash = nextDeclarationHash; layoutHash = nextLayoutHash;
-      meta = { ...meta, key, declarationHash, layoutHash, layout: options };
+      meta = { ...meta, key, declarationHash, layoutHash, layout: options, producer: producer() };
       positions = pending.positions; settled = pending.settled; preparedLayout = undefined;
       const generation = { meta, identities: projection.identities, positions, edgeKeys: hashes };
       if (complete && settled) { saved = { ...generation, groups: cacheSummary() }; interim = undefined; }
@@ -170,6 +191,7 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
     }
     case 'layout': {
       const start = performance.now(), seed = Number.parseInt(meta.key.slice(0, 8), 16);
+      let engineStatus: EngineStatus | undefined;
       // Continue the latest live computation; unchanged saved borrowing creates no interim.
       const prior = interim ?? saved, fromSaved = !!prior && prior === saved, stored = fromSaved ? prior.meta.key : undefined;
       const exact = complete && fromSaved && prior && matches(prior.meta) && prior.meta.key === meta.key && prior.identities.length === projection.identities.length && prior.identities.every((id, i) => id === projection.identities[i]);
@@ -200,13 +222,13 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
         // every note, rather than incorrectly treating all existing notes as pinned.
         if (prior === interim || config.layout.force.familyPull && projection.up) input.movable = undefined;
         if (input.movable && !input.movable.some(Boolean)) { positions = input.initial!; settled = fromSaved; reused = fromSaved ? 'all' : 'interim'; }
-        else { if (input.movable && input.initial) reused = fromSaved ? 'some' : 'interim-some'; const result = await solve(input, config.layout, revision, control.cancelled); positions = result.positions; settled = result.settled; }
+        else { if (input.movable && input.initial) reused = fromSaved ? 'some' : 'interim-some'; const result = await solve(input, config.layout, revision, control.cancelled); positions = result.positions; settled = result.settled; engineStatus = result.engineStatus; }
       }
       const milliseconds = performance.now() - start;
       // An exact hit already holds this generation; skip re-contracting its group summary.
       if (complete && settled && (!exact || prior === interim)) saved = { meta, identities: projection.identities, positions, edgeKeys: hashes, groups: cacheSummary() };
       interim = complete && settled || fromSaved && reused === 'all' ? undefined : { meta, identities: projection.identities, positions, edgeKeys: hashes };
-      return { positions: positions.slice(), milliseconds, cached: Boolean(exact && fromSaved), reused, stored, settled };
+      return { positions: positions.slice(), milliseconds, cached: Boolean(exact && fromSaved), reused, stored, settled, engineStatus };
     }
     case 'encode':
       if (!positions || !settled) throw new Error('Layout not settled');
@@ -259,7 +281,7 @@ const cancelled = new Set<number>();
 let layoutRequest = -1;
 self.onmessage = (event: MessageEvent<PipelineRequest & { id: number; revision: number; input?: LayoutInput; options?: any }>) => {
   const recycle = event.data as unknown as { kind: string; buffer?: ArrayBuffer; id: number };
-  if (recycle.kind === 'stop-layout') { if (recycle.id === layoutRequest) cancelled.add(recycle.id); return; }
+  if (recycle.kind === 'stop-layout') { if (recycle.id === layoutRequest) { cancelled.add(recycle.id); engines.stop(); } return; }
   if (recycle.kind === 'cancel-evaluation') { if ([...evaluations.values()].includes(recycle.id)) cancelled.add(recycle.id); return; }
   if (recycle.kind === 'recycle') { if (recycle.buffer && recycled.length < 2) recycled.push(recycle.buffer); return; }
   // Backwards-compatible deterministic layout protocol used by existing harness consumers.

@@ -2,10 +2,11 @@
 import { build } from 'esbuild';
 import { mkdir, copyFile, writeFile } from 'node:fs/promises';
 import { glsl } from './scripts/glsl.mjs';
+import { wgsl } from './scripts/wgsl.mjs';
 import { mangleProps } from './scripts/mangle-props.mjs';
 import { expressionBuild } from './scripts/expression-build.mjs';
 const shared = await expressionBuild();
-const workerOptions = { plugins: [shared.plugin(true)], metafile: true, entryPoints: ['src/layout-worker.ts'], bundle: true, minify: true, format: 'iife', platform: 'browser', write: false, target: 'es2022', charset: 'utf8' };
+const workerOptions = { plugins: [wgsl, shared.plugin(true)], metafile: true, entryPoints: ['src/layout-worker.ts'], bundle: true, minify: true, format: 'iife', platform: 'browser', write: false, target: 'es2022', charset: 'utf8' };
 const mainOptions = worker => ({ metafile: true, plugins: [glsl, shared.plugin(false)], entryPoints: ['src/main.ts'], outfile: 'main.js', bundle: true, minify: true, format: 'cjs', platform: 'browser', external: ['obsidian'], target: 'es2022', charset: 'utf8', mangleProps, mangleCache: {}, define: { __LAYOUT_WORKER_SOURCE__: JSON.stringify(worker.outputFiles[0].text) }, legalComments: 'eof' });
 const discoveryWorker = await build(workerOptions);
 const discoveryMain = await build({ ...mainOptions(discoveryWorker), write: false });

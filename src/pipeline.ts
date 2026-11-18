@@ -6,8 +6,10 @@ import type { BinaryGeneration, GenerationMeta } from './core/binary-layout';
 import type { RenderProjection } from './render-projection';
 import type { GroupProjection } from './core/group-projection';
 import type { ExploreResult, ExploreView } from './core/explore';
+import type { EngineStatus, EngineTiming, LayoutEnginePreference } from './layout-engine-policy';
 export const LAYOUT_PRODUCER = 'graph-ng-fa2@2';
-export interface PipelineConfig { declaration: GraphDeclaration; layout: LayoutOptions; source: string; groupLevel: number; predicate?: Predicate; view?: ExploreView; facetValues?: number; streamEveryIterations: number }
+export const layoutProducer = (engine?: LayoutEnginePreference) => engine === 'graphics' ? 'graph-ng-fa2@4-webgpu' : LAYOUT_PRODUCER;
+export interface PipelineConfig { layoutEngine?: LayoutEnginePreference; engineChoices?: EngineTiming[]; declaration: GraphDeclaration; layout: LayoutOptions; source: string; groupLevel: number; predicate?: Predicate; view?: ExploreView; facetValues?: number; streamEveryIterations: number }
 export type PipelineRequest =
   | { kind: 'external'; bytes: Uint8Array; maxBytes: number; limits: { groups: number; pairs: number; carriers: number } }
   | { kind: 'configure'; config: PipelineConfig }
@@ -16,7 +18,7 @@ export type PipelineRequest =
   | { kind: 'migrate'; generation: { key: string; identities: string[]; positions: number[]; producer: string; layoutHash?: string; edgeKeys?: string[] }; declarationHash: string }
   | { kind: 'project'; complete?: boolean } | { kind: 'detail' } | { kind: 'layout' } | { kind: 'encode' }
   | { kind: 'adoptLayout' }
-  | { kind: 'recompute'; options: LayoutOptions; initial?: Float32Array }
+  | { kind: 'recompute'; options: LayoutOptions; initial?: Float32Array; layoutEngine?: LayoutEnginePreference; engineChoices?: EngineTiming[] }
   | { kind: 'gpu' }
   | { kind: 'members'; group: string; view: number }
   | { kind: 'expression-count'; expr: string; context: 'filter' | 'group'; budgetMs?: number }
@@ -31,7 +33,7 @@ export interface ProjectResult { invalidSaved?: GenerationMeta; meta: Generation
 export interface EdgeRuleCounts { drawn: number; missing: number; excluded: number; lines: number }
 export interface DetailResult { projection: RenderProjection; visible: Uint8Array; colors: Uint32Array; explore: ExploreResult; view: number }
 export interface ViewResult { explore: ExploreResult; colors: Uint32Array; groups: GroupProjection; view: number }
-export interface LayoutResult { positions: Float32Array; milliseconds: number; cached: boolean; settled?: boolean; /** all/some: saved positions, unchanged/short relax; interim variants: memory-only hints. Full runs omit reuse. */ reused?: 'all' | 'some' | 'interim' | 'interim-some'; stored?: string }
+export interface LayoutResult { engineStatus?: EngineStatus; positions: Float32Array; milliseconds: number; cached: boolean; settled?: boolean; /** all/some: saved positions, unchanged/short relax; interim variants: memory-only hints. Full runs omit reuse. */ reused?: 'all' | 'some' | 'interim' | 'interim-some'; stored?: string }
 export interface GroupEvent { kind: 'groups'; revision: number; view: number; projection: GroupProjection }
 export interface Transport { postMessage(message: unknown, transfer: Transferable[]): void; terminate(): void; onmessage: ((event: MessageEvent) => void) | null; onerror: ((event: ErrorEvent) => void) | null }
 interface Pending { id: number; revision: number; request: PipelineRequest; resolve(v: any): void; reject(e: Error): void; timer?: ReturnType<typeof setTimeout>; stop?: boolean }
@@ -49,6 +51,7 @@ export class WorkerPipeline {
   private restarts = 0;
   onPositions?: (event: { revision: number; positions: Float32Array; iteration: number; total: number }) => void;
   onGroups?: (event: GroupEvent) => void;
+  onEngine?: (status: EngineStatus) => void;
   constructor(private worker: Transport, private timeoutMs: () => number, private cleanup = () => {}, private recovery?: Recovery) { this.attach(); }
   private attach() {
     const worker = this.worker;
@@ -56,6 +59,7 @@ export class WorkerPipeline {
       if (worker !== this.worker || this.closed) return;
       const m = event.data, p = this.active;
       if (!p || m.revision !== p.revision) return;
+      if (m.kind === 'engine') { this.onEngine?.(m.engineStatus); return; }
       if (m.kind === 'positions') { this.onPositions?.(m); return; }
       if (m.kind === 'groups') { this.onGroups?.(m); return; }
       if (m.id !== p.id) return;
@@ -106,7 +110,7 @@ export class WorkerPipeline {
   }
   private fail(error: Error) {
     this.worker.terminate(); this.rejectAll(error);
-    this.onGroups = undefined; this.onPositions = undefined;
+    this.onGroups = undefined; this.onPositions = undefined; this.onEngine = undefined;
     if (this.recovery && this.restarts < this.recovery.maxRestarts()) {
       this.restarts++;
       try { this.worker = this.recovery.restart(); this.attach(); this.recovery.onRestart?.(); return; }

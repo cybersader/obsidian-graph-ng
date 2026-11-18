@@ -38,7 +38,7 @@ async function plugin(data,localStorage=storage()){
   await p.loadDevicePerformance(data ? data.deviceNamespace : (nextNamespace++).toString(16).padStart(32,'0'));return p;
 }
 function local(p){return JSON.parse(p.localStorage.getItem(`graph-ng:graph-ng:${p.deviceNamespace}:performance:v1`));}
-function sharedOnly(p){for(const key of ['performance','performanceDiagnostics','performanceSuggestions','performancePrompted'])assert.equal(p.disk.settings[key],undefined);assert.equal(p.disk.performanceLog,undefined);}
+function sharedOnly(p){for(const key of ['layoutEngine','performance','performanceDiagnostics','performanceSuggestions','performancePrompted'])assert.equal(p.disk.settings[key],undefined);assert.equal(p.disk.performanceLog,undefined);}
 
 function button(modal,label){return settings.filter(s=>s.host===modal.contentEl).flatMap(s=>s.buttons).find(b=>b.text===label);}
 function control(host,label){return host.all().find(e=>e.options.attr?.['aria-label']===label);}
@@ -121,6 +121,25 @@ function control(host,label){return host.all().find(e=>e.options.attr?.['aria-la
   const reloadA=await plugin(memberB.disk,memberA.localStorage),reloadB=await plugin(memberA.disk,memberB.localStorage);
   assert.equal(reloadA.settings.performance,'fast');assert.equal(reloadB.settings.performance,'quality');assert.equal(reloadA.settings.performanceSuggestions,false);assert.equal(reloadB.settings.performanceSuggestions,true);assert.equal(reloadA.settings.performancePrompted,true);assert.equal(reloadB.settings.performancePrompted,false);assert.equal(reloadA.performanceLog[0].notes,12);assert.equal(reloadB.performanceLog[0].notes,23);sharedOnly(memberA);sharedOnly(memberB);
   console.log('PASS two members share one data.json but keep independent modes, flags and logs');
+  const imported={settings:{layoutEngine:'graphics'},deviceNamespace:'a'.repeat(32)};
+  const unconfigured=await plugin(imported);
+  assert.equal(unconfigured.settings.layoutEngine,'auto');assert.equal(local(unconfigured).settings.layoutEngine,'auto');
+  unconfigured.settings.layoutEngine='graphics';await unconfigured.save();sharedOnly(unconfigured);
+  assert.equal((await plugin(unconfigured.disk,unconfigured.localStorage)).settings.layoutEngine,'graphics');
+  assert.equal((await plugin(imported,{getItem(){throw Error('disabled');},setItem(){}})).settings.layoutEngine,'auto');
+  console.log('PASS only a local choice can enable Graphics, even with imported shared settings');
+  const choice=await plugin();choice.manifest.version='0.5.2';
+  // Include the legacy fields so the previous bundle cannot pass by rejecting this sample.
+  const timing={bucket:3,mode:0,every:5,batch:5,iterations:8,cpuSetup:2,gpuSetup:100,cpuStep:25,gpuStep:1,measuredAt:Date.now(),engine:'graphics',processorMs:200,graphicsMs:108,setupMs:100};
+  choice.recordLayoutEngine({engine:'graphics',reason:'timing',timing},true);
+  assert.equal(choice.layoutChoices().length,0);
+  choice.recordLayoutEngine({engine:'graphics',reason:'timing',timing});
+  assert.equal(choice.layoutChoices()[0].gpuStep,1);
+  const shared={deviceNamespace:choice.deviceNamespace};
+  const populated=await plugin(shared,choice.localStorage);populated.manifest.version='0.5.2';assert.equal(populated.layoutChoices()[0].gpuStep,1);
+  choice.recordLayoutEngine({engine:'processor',reason:'failed',evictBucket:3},true);
+  const restarted=await plugin(shared,choice.localStorage);restarted.manifest.version='0.5.2';assert.equal(restarted.layoutChoices().length,0);
+  console.log('PASS engine progress cannot publish a winner; graphics failure evicts the durable bucket');
   const absent=await plugin(migrated.disk,undefined);context.localStorage=undefined;await absent.loadDevicePerformance(absent.deviceNamespace);absent.settings.performance='quality';await absent.commitPerformance(new Set(['fast']),true,()=>true);assert.equal(absent.settings.performance,'fast');sharedOnly(absent);
   const throwing=await plugin(migrated.disk,{getItem(){throw Error('disabled');},setItem(){throw Error('quota');}});throwing.settings.performanceDiagnostics=true;throwing.recordPerformance({notes:3});await throwing.save();assert.equal(throwing.performanceLog[0].notes,3);sharedOnly(throwing);
   console.log('PASS unavailable storage stays in memory without rejecting mode or log operations');

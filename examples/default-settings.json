@@ -1,5 +1,6 @@
 {
   "settingsVersion": 2,
+  "layoutEngine": "auto",
   "performance": "auto",
   "performanceDiagnostics": false,
   "performanceSuggestions": true,

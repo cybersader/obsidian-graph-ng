@@ -53,6 +53,9 @@ export class BarnesHut {
     return c;
   }
   build(p: Float32Array, weights: Float32Array, depthLimit: number): void {
+    this.buildParts(p, weights, depthLimit, false).next();
+  }
+  *buildParts(p: Float32Array, weights: Float32Array, depthLimit: number, sliced: boolean) {
     this.used = 0;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (let i = 0; i < p.length; i += 2) { minX = Math.min(minX, p[i]!); maxX = Math.max(maxX, p[i]!); minY = Math.min(minY, p[i + 1]!); maxY = Math.max(maxY, p[i + 1]!); }
@@ -60,6 +63,7 @@ export class BarnesHut {
     if (this.queryOrder && this.builds++ % 8 === 0) this.queryOrder.update(p, minX, minY, maxX, maxY);
     this.allocate((minX + maxX) / 2, (minY + maxY) / 2, Math.max(maxX - minX, maxY - minY, 1e-6) / 2, -1);
     for (let i = 0; i < weights.length; i++) {
+      if (sliced && i % 2048 === 0) yield;
       const x = p[2 * i]!, y = p[2 * i + 1]!, m = weights[i]!;
       let c = 0, depth = 0;
       while (true) {
@@ -86,10 +90,10 @@ export class BarnesHut {
     for (let c = 0; c < this.used; c++) if (this.mass[c]) { this.mx[c]! /= this.mass[c]!; this.my[c]! /= this.mass[c]!; }
   }
   /** Fixed nodes never read their own force, so a warm start only walks the tree for movable ones. */
-  repulse(p: Float32Array, weights: Float32Array, forces: Float32Array, scaling: number, theta: number, movable?: Uint8Array, radii?: Float32Array): void {
-    const theta2 = theta * theta, maxRadius = radii?.reduce((a, b) => Math.max(a, b), 0) ?? 0;
+  repulse(p: Float32Array, weights: Float32Array, forces: Float32Array, scaling: number, theta: number, movable?: Uint8Array, radii?: Float32Array, begin = 0, end = weights.length, maxRadius = radii?.reduce((a, b) => Math.max(a, b), 0) ?? 0): void {
+    const theta2 = theta * theta;
     const order = this.queryOrder?.indices;
-    for (let q = 0; q < weights.length; q++) {
+    for (let q = begin; q < end; q++) {
       const i = order ? order[q]! : q;
       if (movable && !movable[i]) continue;
       const x = p[2 * i]!, y = p[2 * i + 1]!, m = weights[i]!;

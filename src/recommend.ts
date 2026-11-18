@@ -82,7 +82,7 @@ export function recommend(t: GraphStats, s: Settings): Suggestion[] {
  * planted-group separation; they do not infer private-vault meaning. The 300..1000 step budget
  * grows with sqrt(notes + edges), under the existing terminable-worker deadline. Exhaustion
  * is not settlement: callers expose Keep refining rather than silently persisting it. */
-export function recommendedPhysics(nodes: number, edges: number): Required<PhysicsValues> {
+export function recommendedPhysics(nodes: number, edges: number): Required<Omit<PhysicsValues, 'layoutEngine'>> {
   const n = Math.max(1, nodes), size = n + Math.max(0, edges);
   return {
     familyPull: 0, hubGravity: 2, scalingRatio: 10, slowDown: 1, strongGravityMode: true, linLogMode: false, outboundAttractionDistribution: false, adjustSizes: false,

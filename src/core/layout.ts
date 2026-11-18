@@ -118,21 +118,45 @@ export class LayoutSolver {
       if (this.radii) for (const radius of this.radii) this.maxRadius = Math.max(this.maxRadius, radius);
     }
   }
+  /** Borrowed numeric inputs for optional compute adapters; never a second graph authority. */
+  get adapterColumns() { return { mass: this.mass, radii: this.radii, compensation: this.compensation, hubMass: this.hubMass, familyDegree: this.familyDegree }; }
   get kernelBackend(): 'wasm-scalar' | 'js' { return this.kernel?.active ? 'wasm-scalar' : 'js'; }
   get settled(): boolean { return !this.input.count || this.quiet >= Math.min(this.limit, this.options.convergenceIterations); }
   get done(): boolean { return !this.input.count || this.iteration >= this.limit || (this.options.convergenceThreshold > 0 && this.settled); }
-  step(): void {
+  step(): void { this.stepParts(false).next(); }
+  /** Yield only before position integration. Cancelling abandons force scratch, not half a position column. */
+  async stepResponsive(yieldNow: () => Promise<void>, stopped: () => boolean): Promise<boolean> {
+    if (this.input.count < 512 && this.tree) { this.step(); return true; }
+    let last = performance.now();
+    for (const _ of this.stepParts(true)) {
+      if (performance.now() - last < 8) continue;
+      await yieldNow(); if (stopped()) return false; last = performance.now();
+    }
+    return true;
+  }
+  private *stepParts(sliced: boolean) {
     if (this.done) return;
     const { count: n, source, target, movable } = this.input, o = this.options, f = o.force, p = this.positions, mass = this.mass;
     const old = this.oldForces; this.oldForces = this.forces; this.forces = old;
     const forces = this.forces, history = this.oldForces;
     forces.fill(0);
     if (this.tree) {
-      this.tree.build(p, mass, o.maxTreeDepth);
-      if (!this.kernel?.repulse(this.tree, p, forces, f.scalingRatio, f.barnesHutTheta, this.maxRadius)) this.tree.repulse(p, mass, forces, f.scalingRatio, f.barnesHutTheta, movable, this.radii);
+      yield* this.tree.buildParts(p, mass, o.maxTreeDepth, sliced);
+      const chunk = sliced ? (f.barnesHutTheta < .5 ? 256 : 1024) : n;
+      let accelerated = !!this.kernel?.active;
+      for (let begin = 0; accelerated && begin < n; begin += chunk) {
+        if (sliced) yield;
+        accelerated = this.kernel!.repulse(this.tree, p, forces, f.scalingRatio, f.barnesHutTheta, this.maxRadius, begin, Math.min(n, begin + chunk));
+      }
+      // A trapped kernel publishes no unfinished forces. Replay the whole walk in JS.
+      if (!accelerated) for (let begin = 0; begin < n; begin += chunk) {
+        if (sliced) yield;
+        this.tree.repulse(p, mass, forces, f.scalingRatio, f.barnesHutTheta, movable, this.radii, begin, Math.min(n, begin + chunk), this.maxRadius);
+      }
     }
     else {
       for (let i = 0; i < n; i++) for (let j = 0; j < i; j++) {
+        if (sliced && j % 8192 === 0 && (j || i % 16 === 0)) yield;
         const dx = p[2 * i]! - p[2 * j]!, dy = p[2 * i + 1]! - p[2 * j + 1]!;
         let d = Math.sqrt(dx * dx + dy * dy), factor = 0;
         if (this.radii) d = Math.max(d * .5, d - this.radii[i]! - this.radii[j]!);
@@ -205,22 +229,22 @@ export function runLayout(input: LayoutInput, options: LayoutOptions): Float32Ar
  * Iteration budgets (rather than wall-clock early exits) preserve determinism.
  * The worker remains terminable by the host deadline even within one iteration.
  */
-export async function runLayoutStream(input: LayoutInput, options: LayoutOptions, every: number, emit: (p: Float32Array, iteration: number, total: number) => void, yieldNow: () => Promise<void>, buffer = (length: number) => new Float32Array(length), finished = (_settled: boolean) => {}, stopped = () => false): Promise<Float32Array> {
+export async function runLayoutStream(input: LayoutInput, options: LayoutOptions, every: number, emit: (p: Float32Array, iteration: number, total: number) => void, yieldNow: () => Promise<void>, buffer: (length: number) => Float32Array = length => new Float32Array(length), finished = (_settled: boolean, _steps: number) => {}, stopped = () => false, solver = new LayoutSolver(input, options), steps = solver.limit, offset = 0): Promise<Float32Array> {
   if (!Number.isSafeInteger(every) || every < 1) throw new Error('Invalid layout stream cadence');
-  const solver = new LayoutSolver(input, options);
   const send = () => { const p = buffer(solver.positions.length); p.set(solver.positions); emit(p, solver.iteration, solver.limit); };
-  if (!input.count) { finished(true); return solver.positions; }
-  // A seed is not a layout. Even an immediate Stop completes one bounded step.
+  if (!input.count) { finished(!stopped(), 0); return solver.positions; }
+  // Stop can return the validated start, but never publish it as a settled frame.
   await yieldNow();
   let yieldedAt = performance.now();
-  while (!solver.done && (!solver.iteration || !stopped())) {
-    solver.step();
-    if (!solver.done && solver.iteration % every === 0) send();
-    // Large configured batches still admit Stop between steps; a single step is atomic.
-    if (!solver.done && (solver.iteration % options.batchIterations === 0 || solver.iteration % every === 0 || performance.now() - yieldedAt >= 50)) {
+  while (!solver.done && solver.iteration < steps && !stopped()) {
+    if (!await solver.stepResponsive(yieldNow, stopped)) break;
+    const index = offset + solver.iteration;
+    if (!solver.done && solver.iteration < steps && index % every === 0) send();
+    // Small fast steps also admit Stop between batches. Large walks yield inside the step.
+    if (!solver.done && solver.iteration < steps && (index % options.batchIterations === 0 || index % every === 0 || performance.now() - yieldedAt >= 8)) {
       await yieldNow(); if (stopped()) break; yieldedAt = performance.now();
     }
   }
-  finished(!stopped() && solver.settled);
-  return solver.positions;
+  finished(!stopped() && solver.settled, solver.iteration);
+  return !solver.iteration && input.initial ? input.initial : solver.positions;
 }

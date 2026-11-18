@@ -1,3 +1,4 @@
+import { LAYOUT_ENGINES } from './layout-engine-policy';
 import { PERFORMANCE_MODES } from './performance';
 import { deviceDefaults, type DevicePreferences } from './device-performance';
 import { MAX_NODE_RADIUS, legacySizing, validateNodeSizing, validateNodeRadius, type NodeSizingPolicy } from './node-sizing';
@@ -265,6 +266,7 @@ export function validateSettings(v: unknown): asserts v is Settings {
   if (s.settingsVersion !== 2) throw new Error('Unsupported settings version');
   if (!Number.isSafeInteger(s.workerRestarts) || s.workerRestarts < 0) throw new Error('workerRestarts must be a nonnegative integer');
   if (!PERFORMANCE_MODES.includes(s.performance) || typeof s.performanceDiagnostics !== 'boolean' || typeof s.performanceSuggestions !== 'boolean' || typeof s.performancePrompted !== 'boolean') throw new Error('Invalid performance settings');
+  if (!LAYOUT_ENGINES.includes(s.layoutEngine)) throw new Error('Invalid layout engine');
   validateDeclaration(s.declaration);
   if (!s.ingest || !Number.isSafeInteger(s.ingest.chunkRows) || s.ingest.chunkRows < 1 || !Number.isFinite(s.ingest.budgetMs) || s.ingest.budgetMs <= 0) throw new Error('Invalid ingestion budget');
   if (!s.cache || typeof s.cache.directory !== 'string' || (s.cache.directory !== '' && (!s.cache.directory.startsWith('cache/') || s.cache.directory.split('/').some(p => !p || p === '..' || p === '.') || /[\\:]/.test(s.cache.directory)))) throw new Error('Cache directory must be empty or a plugin-owned cache/ subdirectory');

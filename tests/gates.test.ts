@@ -24,6 +24,25 @@ test('secret/attribution detectors reject synthetic credentials and metadata, no
   expect(lifecycleHooks({ scripts: { test: 'ok', prepare: 'source-build', postinstall: 'blocked' } })).toEqual({ postinstall: 'blocked' });
 });
 
+test('quality tally requires every shape, all cyclic seed pairs and first settlement', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-ng-quality-test-'));
+  const seeds = [17, 18, 29], count = 20000;
+  const run = {count, maxIterations: 20000,
+    layouts: seeds.flatMap(seed => ['cpu','gpu'].map(engine => ({engine: engine+seed, iterations: 7, ms: 12, quality: {finite: true}, settled: true}))),
+    pairs: seeds.map((seed, i) => ({seed, baselineSeed: seeds[(i+1)%3], cpu: {edge: .25, graph: .25, overlap: .75}, gpu: {edge: .3125, graph: .3125, overlap: .6875}}))};
+  const file = (shape: string) => path.join(dir, `quality-${count}-${shape}.json`);
+  const save = (shape: string) => fs.writeFileSync(file(shape), JSON.stringify({kind: 'quality', count, shape, runs: [run]}));
+  const tally = () => JSON.parse(execFileSync('node', [path.resolve(import.meta.dir, '../scripts/layout-engine-quality.mjs'), dir], {encoding: 'utf8'})).buckets[1];
+  try {
+    save('community'); save('scale-free'); expect(tally().admitted).toBe(false);
+    fs.writeFileSync(file('grid'), ''); expect(tally().admitted).toBe(false);
+    save('grid'); expect(tally().admitted).toBe(true); // equality at 1.25 passes for all three metrics
+    run.pairs[2]!.gpu.overlap = .625; save('grid'); expect(tally().admitted).toBe(false);
+    run.pairs[2]!.gpu.overlap = .6875; run.layouts[5]!.settled = false; save('grid'); expect(tally().admitted).toBe(false);
+    run.layouts[5]!.settled = true; run.pairs[2]!.baselineSeed = 29; save('grid'); expect(tally().admitted).toBe(false);
+  } finally { fs.rmSync(dir, {recursive: true, force: true}); }
+});
+
 function fixture(run: (dir: string, git: (...args: string[]) => string, scan: (...args: string[]) => ReturnType<typeof spawnSync>) => void) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'graph-ng-gate-test-'));
   try {
@@ -104,7 +123,7 @@ test('mangled bundle properties are private to the main bundle', async () => {
   for (const file of [...fs.readdirSync(lib).filter(f => /^lib\..*\.d\.ts$/.test(f)).map(f => path.join(lib, f)), path.join(import.meta.dir, '../node_modules/obsidian/obsidian.d.ts')]) for (const id of ids(read(file))) reserved.add(id);
   const src = path.join(import.meta.dir, '../src'), dir = (d: string) => fs.readdirSync(d).filter(f => /\.m?ts$/.test(f)).map(f => path.join(d, f));
   // Worker-bundle sources and harness/e2e code may cross the bundle boundary by property name.
-  const crossing = [...dir(path.join(src, 'core')), ...['layout-worker.ts', 'pipeline.ts', 'render-projection.ts', 'gpu-probe.ts'].map(f => path.join(src, f)), ...dir(path.join(import.meta.dir, 'e2e')), ...dir(path.join(import.meta.dir, '../scripts'))];
+  const crossing = [...dir(path.join(src, 'core')), ...['layout-worker.ts', 'pipeline.ts', 'render-projection.ts', 'gpu-probe.ts', 'layout-engine.ts', 'layout-engine-policy.ts', 'webgpu-layout.ts', 'webgpu-layout-shaders.ts'].map(f => path.join(src, f)), ...dir(path.join(import.meta.dir, 'e2e')), ...dir(path.join(import.meta.dir, '../scripts'))];
   for (const file of crossing) for (const id of ids(read(file))) reserved.add(id);
   const literals = new Set<string>();
   for (const file of [...dir(src), ...dir(path.join(src, 'adapter'))]) for (const m of read(file).matchAll(/['"`]([A-Za-z_]\w*)['"`]/g)) literals.add(m[1]!);
@@ -136,10 +155,10 @@ test('property mangling excludes every declared settings and node-sizing schema 
 test('UI pass download ceilings remain exactly bounded and active documentation agrees', () => {
   const root = path.resolve(import.meta.dirname, '..');
   const gate = fs.readFileSync(path.join(root, 'scripts/bundle-size.mjs'), 'utf8');
-  expect(gate).toContain('zeroDependencyTargetBytes: 439000, zeroDependencyTargetGzipBytes: 151000');
+  expect(gate).toContain('zeroDependencyTargetBytes: 461000, zeroDependencyTargetGzipBytes: 165000');
   for (const name of ['README.md', 'CONTRIBUTING.md', 'docs/publish-checklist.md', 'CHANGELOG.md']) {
     const doc = fs.readFileSync(path.join(root, name), 'utf8');
-    expect(doc).toContain('439,000'); expect(doc).toContain('151,000');
+    expect(doc).toContain('461,000'); expect(doc).toContain('165,000');
   }
 });
 
