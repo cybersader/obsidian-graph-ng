@@ -13,7 +13,7 @@ export interface PropertySource {
   roomFor?(path: string): RoomHandle | undefined;
 }
 interface RoomHandle { load?(): Promise<unknown>; cacheIdentity?: string; generation?: number; verifiedComplete?: boolean }
-interface RoomPartition { id: string; generation: number; ready: boolean; permit?: object; loaded?: boolean; writing?: boolean }
+interface RoomPartition { id: string; generation: number; ready: boolean; permit?: object; loaded?: boolean }
 function validRoom(room: RoomHandle | undefined) {
   return typeof room?.cacheIdentity === 'string' && room.cacheIdentity.startsWith('ocpf1:') && Number.isSafeInteger(room.generation);
 }
@@ -42,14 +42,21 @@ export class LocalAdapter {
   roomRevision = 0;
   private savedOwners = new Map<string, string>();
   private get partitioned() { return typeof this.propertySource?.rooms === 'function' && typeof this.propertySource.roomFor === 'function'; }
-  private forget(path: string) { this.savedFacts.delete(path); this.savedOwners.delete(path); }
+  private forget(path: string) {
+    const id = this.savedOwners.get(path), charge = id && this.charges.get(id);
+    if (charge && --charge.rows === 0) {
+      this.roomBudget.bytes -= charge.bytes; this.roomBudget.parts -= charge.parts; this.charges.delete(id!);
+    }
+    this.savedFacts.delete(path); this.savedOwners.delete(path);
+  }
   private storageError(error: unknown) { this.cacheStatus = 'unavailable'; this.factError = String(error); }
+  private charges = new Map<string, { bytes: number; parts: number; rows: number }>();
   private roomBudget = { bytes: 0, parts: 0 };
   private pruned = false;
   private unknownRooms = false;
   private inventory() {
     try { const handles = this.propertySource?.rooms?.(); return this.partitioned && Array.isArray(handles) ? handles as RoomHandle[] : undefined; }
-    catch { return undefined; }
+    catch (error) { this.storageError(error); return undefined; }
   }
   private prune(background = false) {
     const source = this.propertySource, turn = this.cacheTurn, cache = this.cache!;
@@ -60,12 +67,12 @@ export class LocalAdapter {
   }
   // Unknown inventory disables replay and settlement; it never proves absence on disk.
   syncRooms() {
-    const handles = this.inventory(), active = new Set<string>(); let moved = false, retired = false;
+    const handles = this.inventory(), active = new Set<string>(), replaced = new Set<string>(); let moved = false, retired = false;
     for (const h of handles ?? []) if (validRoom(h)) {
       const id = h.cacheIdentity!; active.add(id);
       let room = this.partitions.get(id);
       if (!room || room.generation !== h.generation) {
-        moved ||= !room;
+        if (room) replaced.add(id); else moved = true;
         this.partitions.set(id, room = { id, generation: h.generation!, ready: false });
       }
       room.ready = h.verifiedComplete === true;
@@ -76,28 +83,43 @@ export class LocalAdapter {
     }
     if ((retired || this.unknownRooms) && handles?.length && this.cache && !this.cache.paused) this.prune(true);
     this.unknownRooms = !handles?.length;
-    if (moved) for (const [path, id] of this.savedOwners) if (!active.has(id)) { this.forget(path); this.index.change(path); }
+    if (moved || replaced.size) for (const [path, id] of this.savedOwners) if (!active.has(id) || replaced.has(id)) { this.forget(path); this.index.change(path); }
     if (moved) this.roomRevision++;
   }
+  // The first event owns the drain. Later callers return immediately, replacing
+  // one pending action, never attaching another handler to a held acknowledgement.
+  private settlements = new Map<string, { next?: () => Promise<boolean> }>();
   async onRoomSettled(detail: { cacheIdentity?: unknown; generation?: unknown } | undefined, options: IngestOptions, refresh: () => Promise<unknown>) {
     const room = typeof detail?.cacheIdentity === 'string' ? this.partitions.get(detail.cacheIdentity) : undefined;
     if (!room?.ready || room.generation !== detail?.generation) return;
-    const permit = room.permit = {}, epoch = this.epoch, turn = this.cacheTurn;
-    const current = () => this.epoch === epoch && this.cacheTurn === turn && this.partitions.get(room.id) === room && room.permit === permit;
-    // Even a previously indexed path can have a different final value.
-    let needsAck = this.reloadRequired, flush = false;
+    const permit = room.permit = {};
+    const current = () => this.partitions.get(room.id) === room && room.permit === permit;
+    const action = async () => {
+      let needsAck = this.reloadRequired || this.ingesting, flush = false;
+      try {
+        if (!current()) return false;
+        await sliced([...this.paths], options, path => {
+          if (!current() || this.route(path, true) !== room) return;
+          if (this.index.hasPending(path)) flush = true;
+          else if (!this.dirty.has(path)) this.auditPath(path, false);
+          if (this.dirty.has(path) || this.index.hasPending(path)) needsAck = true;
+        });
+        if (current() && needsAck) { if (flush) this.index.flush(); await refresh(); }
+        // A reset during the wait changes worker evidence, not room authority.
+        // saveRoom checks the current acknowledged stamps in the new worker epoch.
+        if (current()) await this.saveRoom(room, current);
+        return current();
+      } catch (error) { if (current()) this.storageError(error); return false; }
+      finally { if (current()) room.permit = undefined; }
+    };
+    let lane = this.settlements.get(room.id);
+    if (lane) { lane.next = action; return; }
+    this.settlements.set(room.id, lane = { next: action });
+    let result = false;
     try {
-      await sliced([...this.paths], options, path => {
-        if (!current() || this.route(path, true) !== room) return;
-        if (this.index.hasPending(path)) flush = true;
-        else if (!this.dirty.has(path)) this.auditPath(path, false);
-        if (this.dirty.has(path) || this.index.hasPending(path)) needsAck = true;
-      });
-      // The continuation owns this exact event's permit. An ordinary refresh
-      // cannot sweep deferred rooms, even if several settlements interleave.
-      if (current() && needsAck) { if (flush) this.index.flush(); await refresh(); }
-      if (current()) { await this.saveRoom(room); return this.epoch === epoch; }
-    } catch (e) { if (current()) this.storageError(e); }
+      while (lane.next) { const next: () => Promise<boolean> = lane.next; lane.next = undefined; result = await next(); }
+      return result;
+    } finally { this.settlements.delete(room.id); }
   }
   private route(path: string, strict = false) {
     let h: RoomHandle | undefined;
@@ -109,7 +131,8 @@ export class LocalAdapter {
   private retireSaved() {
     this.cacheTurn++; this.factVersion++;
     for (const path of this.savedFacts.keys()) this.index.change(path);
-    this.savedFacts.clear(); this.savedOwners.clear();
+    this.savedFacts.clear(); this.savedOwners.clear(); this.charges.clear(); this.roomBudget = { bytes: 0, parts: 0 };
+    for (const room of this.partitions.values()) room.permit = undefined;
   }
   private purgeFacts() {
     this.retireSaved();
@@ -141,7 +164,7 @@ export class LocalAdapter {
           });
           for (const [room, group] of paths) {
             if (!current()) break;
-            await this.loadRoom(room, group, current, this.roomBudget, key);
+            await this.loadRoom(room, group, current, key);
           }
           return;
         }
@@ -153,24 +176,27 @@ export class LocalAdapter {
     })().finally(() => { if (partitioned && this.restore === work) this.restore = undefined; });
     return this.restore = work;
   }
-  private async loadRoom(room: RoomPartition, paths: Set<string>, owned: () => boolean, budget: { bytes: number; parts: number }, key: (check: () => void, id: string) => Promise<string>) {
+  private async loadRoom(room: RoomPartition, paths: Set<string>, owned: () => boolean, key: (check: () => void, id: string) => Promise<string>) {
     const current = () => !!(owned() && this.partitions.get(room.id) === room && this.inventory()?.some(h => h.cacheIdentity === room.id && h.generation === room.generation));
-    const admitted = { ...budget };
+    const before = { ...this.roomBudget }, admitted = { ...before };
     try {
       const rows = await this.cache!.load(check => key(check, room.id), current, room.id, admitted);
       if (!owned()) return;
       this.syncRooms(); if (!current()) return; room.loaded = true; if (!rows) return;
       if (rows.size !== paths.size || [...rows.keys()].some(p => !paths.has(p) || this.route(p) !== room)) throw Error('Saved facts mismatch');
-      Object.assign(budget, admitted);
+      for (const path of rows.keys()) this.forget(path);
+      if (rows.size) {
+        const bytes = admitted.bytes - before.bytes, parts = admitted.parts - before.parts;
+        this.charges.set(room.id, { bytes, parts, rows: rows.size }); this.roomBudget.bytes += bytes; this.roomBudget.parts += parts;
+      }
       for (const [path, row] of rows) { this.savedFacts.set(path, row); this.savedOwners.set(path, room.id); }
       this.cacheStatus = 'restored';
     } catch (error) { if (current()) { room.loaded = true; this.storageError(error); await this.cache!.dropPartition(room.id, current).catch(error => this.storageError(error)); } }
   }
-  private async saveRoom(room: RoomPartition) {
-    const permit = room.permit;
-    if (!this.cache || this.cache.paused || this.reloadRequired || this.ingesting || !permit || room.writing) return;
+  private async saveRoom(room: RoomPartition, permitted: () => boolean) {
+    if (!this.cache || this.cache.paused || this.reloadRequired || this.ingesting) return;
     const version = this.factVersion, epoch = this.epoch;
-    const current = () => epoch === this.epoch && version === this.factVersion && !this.cache?.paused && this.partitions.get(room.id) === room && room.permit === permit;
+    const current = () => epoch === this.epoch && version === this.factVersion && !this.cache?.paused && permitted();
     const paths = new Map<string, string>(), links = this.declaration?.edges.filter(e => e.kind === 'producer') ?? [];
     if (links.some(e => e.producer !== this.producer)) return;
     const confirmed = (path: string) => {
@@ -186,7 +212,6 @@ export class LocalAdapter {
       for (const path of this.paths) if ((this.route(path, true) === room) !== paths.has(path) || paths.has(path) && (paths.get(path) !== this.sent.get(path) || !confirmed(path))) return false;
       return true;
     };
-    room.writing = true;
     try {
       let ready = true;
       await sliced([...this.paths], { chunkRows: 256, budgetMs: 8 }, path => {
@@ -195,8 +220,8 @@ export class LocalAdapter {
       if (!ready || !paths.size || !current()) return;
       function* rows() { for (const path of paths.keys()) { const row = confirmed(path); if (!row) throw Error('Room facts changed'); yield row; } }
       await this.cache.save(async check => digest([2, await this.cacheKey(check), room.id]), rows(), current, commit, room.id);
-      if (current()) { room.permit = undefined; this.cacheStatus = 'saved'; this.factError = ''; }
-    } catch (error) { if (current()) this.storageError(error); } finally { room.writing = false; }
+      if (current()) { this.cacheStatus = 'saved'; this.factError = ''; }
+    } catch (error) { if (current()) this.storageError(error); }
   }
   async saveFacts() {
     if (this.propertySource) return;
@@ -245,12 +270,13 @@ export class LocalAdapter {
       if (wasPartitioned && this.partitioned) {
         // Preserve partitions with equal bindings, but do not inherit a settled
         // event or asynchronous work from the previous provider object.
-        for (const [id, room] of this.partitions) this.partitions.set(id, { ...room, permit: undefined, writing: false });
+        for (const [id, room] of this.partitions) this.partitions.set(id, { ...room, permit: undefined });
       } else {
         this.partitions.clear();
         if (!startup || !this.partitioned) void this.purgeFacts();
       }
     }
+    if (same && !siblingsCurrent) for (const room of this.partitions.values()) room.permit = undefined;
     this.syncRooms();
     this.invalidate((same || wasPartitioned) && this.partitioned, same && siblingsCurrent);
   }

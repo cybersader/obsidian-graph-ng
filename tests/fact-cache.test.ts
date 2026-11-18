@@ -56,7 +56,7 @@ test('saved native facts never override selected derived verified:false or persi
 // Drive public room discovery and window events, including a cold plugin restart.
 const directory = 'plugin/cache/startup-facts';
 const roomDir = async (id: string) => `${directory}/${await digest(id)}`;
-async function contractFixture(disk = new MemoryAdapter(), firstId = 'ocpf1:room-a', missing?: 'rooms' | 'roomFor', prepare?: (source: PropertySource) => void) {
+async function contractFixture(disk = new MemoryAdapter(), firstId = 'ocpf1:room-a', missing?: 'rooms' | 'roomFor', prepare?: (source: PropertySource) => void, waitMs?: number) {
   const { default: GraphPlugin } = await import('../src/main');
   const a = { cacheIdentity: firstId as string | undefined, generation: 1, complete: true, verifiedComplete: true }, b = { ...a, cacheIdentity: 'ocpf1:room-b' };
   const handles = [a, b];
@@ -70,13 +70,13 @@ async function contractFixture(disk = new MemoryAdapter(), firstId = 'ocpf1:room
   const unmounted = new FixtureFile('unmounted.md'); Object.assign(unmounted.stat, { mtime: 100 }); f.files.push(unmounted);
   const plugin = Object.assign(Object.create(GraphPlugin.prototype), { adapter: f.adapter, settings: { debounceMs: 5, ingest: { chunkRows: 1, budgetMs: 8 } },
     app: { workspace: { getLeavesOfType: () => [] } }, register: (fn: () => void) => cleanup.push(fn), notify() {} });
-  f.adapter.attachFactCache(new FactCache(disk, directory), 'device'); plugin.watchProperties(host);
+  f.adapter.attachFactCache(new FactCache(disk, directory), 'device'); plugin.watchProperties(host, waitMs);
   const send = (event: string, detail?: unknown) => host.dispatchEvent(new CustomEvent(event, { detail }));
   let settledWork: ReturnType<LocalAdapter['onRoomSettled']> | undefined; const record = f.adapter.onRoomSettled.bind(f.adapter);
   f.adapter.onRoomSettled = (...args) => settledWork = record(...args);
   const settle = async (h = a) => { settledWork = undefined; send('oc:property-facts-settled', { generation: h.generation, cacheIdentity: h.cacheIdentity }); await settledWork; };
   const fill = (path: string) => live.set(path, { category: `Saved ${path}`, verified: true });
-  return { ...f, plugin, a, b, handles, source, fill, live, disk, settle, send, close() { cleanup.forEach(fn => fn()); f.dispose(); } };
+  return { ...f, plugin, host, a, b, handles, source, fill, live, disk, settle, send, close() { cleanup.forEach(fn => fn()); f.dispose(); } };
 }
 async function savedContract() {
   const f = await contractFixture();
@@ -690,4 +690,98 @@ test('contract: discovery and overlapping view opens load frozen room handles on
     expect(active).toBe(1); release(); await Promise.all(opens);
     expect(aggregates).toBe(0); expect(peak).toBe(1); expect(calls).toContain('b'); expect(active).toBe(0);
   } finally { release(); f.close(); }
+});
+
+// Review schedules: gates mark exact host I/O and worker acknowledgement boundaries.
+function signal() {
+  let yes!: () => void, no!: (e: Error) => void;
+  const done = new Promise<void>((resolve, reject) => { yes = resolve; no = reject; });
+  return { yes, no, done };
+}
+for (const rejected of [false, true]) test(`room queue: bounded caller, latest grant after held load ${rejected ? 'rejects' : 'resolves'}`, async () => {
+  const hold = signal(), loaded = signal(), calls: string[] = []; let active = 0, peak = 0;
+  const handle = (name: string) => Object.freeze({ cacheIdentity: `ocpf1:${name}`, generation: 1, verifiedComplete: true,
+    async load() { calls.push(name); peak = Math.max(peak, ++active); try { if (name === 'a') await hold.done; if (name === 'd') loaded.yes(); } finally { active--; } } });
+  const a = handle('a'), b = handle('b');
+  const f = await contractFixture(undefined, undefined, undefined, s => { s.rooms = () => Object.freeze([a,b]); s.roomFor = () => a; }, 30);
+  try {
+    for (const name of ['c', 'd']) { const h = handle(name); f.host.openclast.propertyFacts = { rooms: () => Object.freeze([h]), roomFor: () => h, get() {} } as PropertySource; f.send('oc:property-facts-changed'); }
+    await f.plugin.loadProperties(); expect(f.plugin.hydrationStatus).toBe('Property loading delayed'); expect(calls).toEqual(['a']);
+    if (rejected) hold.no(Error('synthetic load')); else hold.yes();
+    await loaded.done; await (f.host as any)[Symbol.for('graph-ng.property-loads')].work;
+    expect(calls).toEqual(['a', 'd']); expect(peak).toBe(1); expect(f.plugin.hydrationStatus).toBe('');
+  } finally { hold.yes(); f.close(); }
+});
+test('room queue: rejecting handle does not skip a sibling; inventory failures are visible', async () => {
+  const hold = signal(), calls: string[] = [];
+  const a = Object.freeze({ load() { calls.push('a'); return hold.done; } }), b = Object.freeze({ async load() { calls.push('b'); } });
+  const f = await contractFixture(undefined, undefined, undefined, s => { s.rooms = () => Object.freeze([a, b]); s.roomFor = () => a; });
+  try {
+    hold.no(Error('synthetic load')); await (f.host as any)[Symbol.for('graph-ng.property-loads')].work;
+    expect(calls).toEqual(['a', 'b']); expect(f.plugin.hydrationStatus).toBe('Some room properties could not load');
+    f.source.rooms = () => { throw Error('synthetic inventory'); }; await f.plugin.loadProperties(); expect(f.plugin.hydrationStatus).toBe('Room inventory unavailable');
+  } finally { hold.yes(); f.close(); }
+});
+test('room queue: rejection drains the newest request without another wakeup', async () => {
+  const { latestWork } = await import('../src/adapter/latest-work'); const queue = { work: Promise.resolve() }, hold = signal(), entered = signal(), calls: number[] = [];
+  const first = latestWork(queue, async () => { entered.yes(); await hold.done; }); await entered.done;
+  latestWork(queue, async () => { calls.push(1); }); latestWork(queue, async () => { calls.push(2); }); hold.no(Error('synthetic failure'));
+  await first; expect(calls).toEqual([2]);
+});
+test('room queue: two valid settlements overlapping a chunk write publish without a third event', async () => {
+  const f = await contractFixture(), started = signal(), release = signal();
+  try {
+    f.fill('a.md'); await f.rows(); const write = f.disk.writeBinary.bind(f.disk);
+    f.disk.writeBinary = async (p, b) => { started.yes(); await release.done; await write(p, b); };
+    const first = f.settle(); await started.done; await f.settle(); release.yes(); await first;
+    expect(await f.disk.exists(await roomDir(f.a.cacheIdentity!) + '/manifest.json')).toBe(true);
+  } finally { release.yes(); f.close(); }
+});
+test('room queue: obsolete stream cancellation does not consume the replacement settlement', async () => {
+  const f = await contractFixture(), release = signal(), ack = signal();
+  try {
+    f.fill('a.md'); await f.rows(); const g = f.adapter.columns(true, { chunkRows: 1, budgetMs: 8 }); await g.next();
+    const replacement = Object.freeze({ ...f.a, cacheIdentity: 'ocpf1:replacement-a' });
+    f.source.roomFor = p => p === 'a.md' ? replacement : p === 'b.md' ? f.b : undefined; f.source.rooms = () => Object.freeze([replacement, f.b]);
+    let refreshes = 0; f.plugin.notify = () => { if (++refreshes === 2) ack.yes(); return release.done; };
+    const settled = f.settle(replacement); await ack.done; await g.return(undefined); await f.rows(); release.yes(); await settled;
+    expect(await f.disk.exists(await roomDir(replacement.cacheIdentity) + '/manifest.json')).toBe(true);
+  } finally { release.yes(); f.close(); }
+});
+test('room queue: 64 valid settlements retain one acknowledgement wait and save the newest', async () => {
+  const f = await contractFixture(), release = signal(), started = signal();
+  try {
+    f.fill('a.md'); await f.rows(); f.live.set('a.md', { category: 'new', verified: true });
+    let n = 0; f.plugin.notify = () => { n++; started.yes(); return release.done; };
+    const first = f.settle(); await started.done; await Promise.all(Array.from({ length: 63 }, () => f.settle()));
+    expect(n).toBe(1); expect(f.disk.writes).toBe(0); await f.rows(false); release.yes(); await first;
+    expect(n).toBe(1); expect(f.disk.writes).toBe(1); expect(await f.disk.exists(await roomDir(f.a.cacheIdentity!) + '/manifest.json')).toBe(true);
+  } finally { release.yes(); f.close(); }
+});
+test('room queue: 42 replacements of one retained 900 KB partition do not exhaust replay', async () => {
+  const seed = await contractFixture(), value = 'r'.repeat(900000);
+  try { seed.live.set('a.md', { category: value, verified: true }); await seed.rows(); await seed.settle(); } finally { seed.close(); }
+  const f = await contractFixture(seed.disk); let hs: readonly typeof f.a[] = [];
+  try {
+    f.source.rooms = () => hs; f.source.roomFor = p => p === 'a.md' ? hs[0] : undefined;
+    for (let i = 0; i < 42; i++) {
+      if (i % 2 === 0) { hs = Object.freeze([]); f.send('oc:property-facts-changed'); }
+      hs = Object.freeze([Object.freeze({ ...f.a, generation: i + 2 })]); f.send('oc:property-facts-changed');
+      expect((await f.rows())[0]!.properties.category === value).toBe(true);
+    }
+    expect(await f.disk.exists(await roomDir(f.a.cacheIdentity!) + '/manifest.json')).toBe(true);
+  } finally { f.close(); }
+});
+test('native parity: metadata notice during manifest publication preserves both provisional rows on restart', async () => {
+  const s = await savedFixture(), x = s.boot();
+  try {
+    for (const file of x.files) x.caches.set(file.path, { frontmatter: { id: file.path, category: 'new' } });
+    await x.rows(); const write = s.disk.write.bind(s.disk);
+    s.disk.write = async (p, b) => { await write(p, b); x.emit('changed', x.files[0]); }; await x.adapter.saveFacts();
+    const restart = s.boot();
+    try { // Expected result measured at native baseline 12d0621 for this exact schedule.
+      expect({ present: await s.disk.exists('plugin/saved-facts/manifest.json'), rows: (await restart.rows()).map(r => r.properties.category) }).toEqual({ present: true, rows: ['new', 'new'] });
+      expect(restart.adapter.factsComplete()).toBe(false);
+    } finally { restart.dispose(); }
+  } finally { x.dispose(); }
 });

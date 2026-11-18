@@ -171,6 +171,7 @@ export class FactCache {
       commitCheck(); await this.disk.write(`${dir}/manifest.json`, JSON.stringify({ format: FACT_FORMAT, key, parts }));
       // An in-flight host write cannot be cancelled. Withdraw a stale commit
       // while this queue still owns the directory, before any subsequent load.
+      if (!identity) { check(); return; } // Native publication retains its completed manifest.
       try { commitCheck(); } catch (error) { await this.disk.rmdir(dir, true); throw error; }
     });
   }

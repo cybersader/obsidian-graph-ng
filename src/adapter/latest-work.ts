@@ -6,7 +6,7 @@ export function latestWork(queue: WorkQueue, action: () => Promise<void>) {
   if (!queue.draining) {
     queue.draining = true;
     queue.work = queue.work.then(async () => {
-      try { while (queue.next) { const next = queue.next; queue.next = undefined; await next(); } }
+      try { while (queue.next) { const next = queue.next; queue.next = undefined; try { await next(); } catch { /* Each request reports its own failure. Keep draining. */ } } }
       finally { queue.draining = false; }
     }).catch(() => {});
   }
