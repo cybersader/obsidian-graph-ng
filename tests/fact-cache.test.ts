@@ -53,6 +53,132 @@ test('saved native facts never override selected derived verified:false or persi
   } finally { f.dispose(); }
 });
 
+// Drive public room discovery and window events, including a cold plugin restart.
+const directory = 'plugin/cache/startup-facts';
+const roomDir = async (id: string) => `${directory}/${await digest(id)}`;
+async function contractFixture(disk = new MemoryAdapter(), firstId = 'ocpf1:room-a', missing?: 'rooms' | 'roomFor', prepare?: (source: PropertySource) => void, waitMs?: number, navigator?: { locks: LockManager }) {
+  const { default: GraphPlugin } = await import('../src/main');
+  const a = { cacheIdentity: firstId as string | undefined, generation: 1, complete: true, verifiedComplete: true }, b = { ...a, cacheIdentity: 'ocpf1:room-b' };
+  const handles = [a, b];
+  const live = new Map<string, { category: string; verified: boolean }>();
+  const source: PropertySource = { rooms: () => handles, roomFor: path => path === 'a.md' ? a : path === 'b.md' ? b : undefined, get(path) {
+    const row = live.get(path);
+    return row && { source: 'derived', state: 'current', verified: row.verified, frontmatter: { id: path, category: row.category } };
+  } };
+  if (missing) delete source[missing]; prepare?.(source);
+  const f = fixture(), cleanup: (() => void)[] = [], host = Object.assign(new EventTarget(), { navigator, openclast: { propertyFacts: source } });
+  const unmounted = new FixtureFile('unmounted.md'); Object.assign(unmounted.stat, { mtime: 100 }); f.files.push(unmounted);
+  const plugin = Object.assign(Object.create(GraphPlugin.prototype), { adapter: f.adapter, propertyRevision: 0, hydrationStatus: '', settings: { debounceMs: 5, ingest: { chunkRows: 1, budgetMs: 8 } },
+    app: { workspace: { getLeavesOfType: () => [] } }, register: (fn: () => void) => cleanup.push(fn), notify() {} });
+  f.adapter.attachFactCache(new FactCache(disk, directory), 'device'); plugin.watchProperties(host, waitMs);
+  const send = (event: string, detail?: unknown) => host.dispatchEvent(new CustomEvent(event, { detail }));
+  let settledWork: ReturnType<LocalAdapter['onRoomSettled']> | undefined; const record = f.adapter.onRoomSettled.bind(f.adapter);
+  f.adapter.onRoomSettled = (...args) => settledWork = record(...args);
+  const settle = async (h = a) => { settledWork = undefined; send('oc:property-facts-settled', { generation: h.generation, cacheIdentity: h.cacheIdentity }); await settledWork; };
+  const fill = (path: string) => live.set(path, { category: `Saved ${path}`, verified: true });
+  return { ...f, plugin, host, a, b, handles, source, fill, live, disk, settle, send, close() { cleanup.forEach(fn => fn()); f.dispose(); } };
+}
+async function savedContract() {
+  const f = await contractFixture();
+  try { f.fill('a.md'); f.fill('b.md'); await f.rows(); await f.settle(f.a); await f.settle(f.b); expect(f.disk.writes).toBe(2); return f.disk; }
+  finally { f.close(); }
+}
+test('a room settlement saves only its own routed paths even with incomplete siblings', async () => {
+  const f = await contractFixture();
+  try {
+    f.fill('a.md'); f.fill('unmounted.md'); await f.rows(); expect(f.adapter.factsComplete()).toBe(false);
+    await f.settle(f.a); expect(f.disk.files.size).toBe(2);
+    const dir = await roomDir(f.a.cacheIdentity!); expect(await f.disk.exists(`${dir}/manifest.json`)).toBe(true);
+    expect(JSON.parse(await f.disk.read(`${dir}/0.bin`)).map((r: FactRow) => r.path)).toEqual(['a.md']);
+    expect([...f.disk.files.keys()].every(path => !path.includes('ocpf1:'))).toBe(true);
+    expect(await f.disk.exists(await roomDir(f.b.cacheIdentity))).toBe(false);
+  } finally { f.close(); }
+});
+test('cold replay stays provisional across routed rooms, and live host facts always win', async () => {
+  const f = await contractFixture(await savedContract());
+  try {
+    f.a.verifiedComplete = f.b.verifiedComplete = false;
+    expect((await f.rows()).map(r => r.properties.category)).toEqual(['Saved a.md', 'Saved b.md', undefined]);
+    expect(f.adapter.savedCopy).toBe(true); expect(f.adapter.coverage().indexed).toBe(0); expect(f.adapter.factsComplete()).toBe(false);
+    f.live.set('a.md', { category: 'Host now', verified: false }); f.caches.set('b.md', { frontmatter: { category: 'Native now' } });
+    expect((await f.rows()).map(r => r.properties.category)).toEqual(['Host now', 'Native now', undefined]);
+    expect(f.adapter.savedCopy).toBe(false); expect(f.adapter.factsComplete()).toBe(false);
+  } finally { f.close(); }
+});
+test('cold identity mismatch purges the orphan partition without reading it or removing siblings', async () => {
+  const disk = await savedContract(), reads = disk.reads.length, f = await contractFixture(disk, 'ocpf1:new');
+  try {
+    expect((await f.rows()).map(r => r.properties.category)).toEqual([undefined, 'Saved b.md', undefined]);
+    const old = await roomDir('ocpf1:room-a'); expect(await disk.exists(old)).toBe(false); expect(disk.reads.slice(reads)).not.toContain(`${old}/0.bin`);
+  } finally { f.close(); }
+});
+for (const missing of ['rooms', 'roomFor'] as const) test(`old host with no ${missing} cannot replay or save`, async () => {
+  const f = await contractFixture(await savedContract(), 'ocpf1:room-a', missing);
+  try { expect((await f.rows()).every(r => !r.properties.id)).toBe(true); f.fill('a.md'); await f.rows(); await f.settle(f.a); await f.adapter.saveFacts(); expect(f.disk.files.size).toBe(0); }
+  finally { f.close(); }
+});
+test('stale events, transport completion and metadata settlement cannot authorize writes', async () => {
+  const f = await contractFixture();
+  try {
+    f.fill('a.md'); f.fill('b.md'); await f.rows(); f.send('oc:metadata-index-settled', { files: 3, resolvedFiles: 3 });
+    await f.settle({ ...f.a, generation: 0 }); await f.settle({ ...f.a, cacheIdentity: 'ocpf1:other' }); await f.adapter.saveFacts(); expect(f.disk.files.size).toBe(0);
+    f.a.verifiedComplete = false; await f.settle(f.a); await f.adapter.saveFacts(); expect(f.disk.files.size).toBe(0);
+    f.a.verifiedComplete = true; f.a.generation++; await f.adapter.saveFacts(); expect(f.disk.files.size).toBe(0);
+    await f.settle(f.a); expect(f.disk.writes).toBe(1); expect(await f.disk.exists(await roomDir(f.b.cacheIdentity))).toBe(false);
+  } finally { f.close(); }
+});
+for (const replacement of ['ocpf1:replacement', undefined]) test(`live room ${replacement ? 'replacement' : 'inactivity'} retires only its own partition`, async () => {
+  const f = await contractFixture(await savedContract()), old = await roomDir(f.a.cacheIdentity!);
+  try {
+    await f.rows(); f.a.cacheIdentity = replacement; f.send('oc:property-facts-changed', { invalidated: false });
+    expect((await f.rows()).map(r => r.properties.category)).toEqual([undefined, 'Saved b.md', undefined]);
+    // Queue barrier only; no manifest is loaded or purged by this check.
+    await new FactCache(f.disk, directory).dropPartition('ocpf1:unused');
+    expect(await f.disk.exists(old)).toBe(false); expect(await f.disk.exists(await roomDir(f.b.cacheIdentity))).toBe(true);
+  } finally { f.close(); }
+});
+for (const during of ['chunk', 'manifest']) for (const change of ['generation', 'identity', 'verification']) test(`room save drops ${change} change during ${during} write`, async () => {
+  const f = await contractFixture(), disk = f.disk, dir = await roomDir(f.a.cacheIdentity!);
+  try {
+    f.fill('a.md'); await f.rows();
+    let moved = false; const move = () => { moved = true; if (change === 'generation') f.a.generation++; else if (change === 'identity') f.a.cacheIdentity = 'ocpf1:other'; else f.a.verifiedComplete = false; };
+    if (during === 'chunk') { const write = disk.writeBinary.bind(disk); disk.writeBinary = async (p, b) => { await write(p, b); move(); }; }
+    else { const write = disk.write.bind(disk); disk.write = async (p, s) => { await write(p, s); move(); }; }
+    await f.settle(f.a); expect(moved).toBe(true); expect(await disk.exists(`${dir}/manifest.json`)).toBe(false); expect(f.adapter.cacheStatus).not.toBe('saved');
+  } finally { f.close(); }
+});
+
+test('a generation change during load prevents adoption only for that room', async () => {
+  const disk = await savedContract(), f = await contractFixture(disk), own = await roomDir(f.a.cacheIdentity!);
+  const read = disk.readBinary.bind(disk);
+  disk.readBinary = async path => { const bytes = await read(path); if (path.startsWith(own + '/')) f.a.generation++; return bytes; };
+  try { expect((await f.rows()).map(r => r.properties.category)).toEqual([undefined, 'Saved b.md', undefined]); }
+  finally { f.close(); }
+});
+test('a present handle with no valid identity never supplies or saves a partition', async () => {
+  const f = await contractFixture(await savedContract(), 'old-format');
+  try {
+    expect((await f.rows()).map(r => r.properties.category)).toEqual([undefined, 'Saved b.md', undefined]);
+    f.fill('a.md'); await f.rows(); const writes = f.disk.writes; await f.settle(f.a); expect(f.disk.writes).toBe(writes);
+  } finally { f.close(); }
+});
+test('moving a path to another active mount never replays its previous owner’s row', async () => {
+  const f = await contractFixture(await savedContract());
+  try {
+    await f.rows(); f.source.roomFor = () => f.b;
+    expect((await f.rows()).map(r => r.properties.category)).toEqual([undefined, 'Saved b.md', undefined]);
+  } finally { f.close(); }
+});
+test('sibling chunks consume the same bounded byte allowance before a partition can commit', async () => {
+  const disk = new MemoryAdapter(), store = new FactCache(disk, directory), a = 'ocpf1:a', b = 'ocpf1:b';
+  const row = { path: 'note.md', properties: { id: 'x' } };
+  await store.save('one', [row], () => true, () => true, a);
+  const other = await roomDir(a), stat = disk.stat.bind(disk);
+  disk.stat = async path => path === other + '/0.bin' ? { size: 32 * 1024 * 1024 } : stat(path);
+  await expect(store.save('two', [row], () => true, () => true, b)).rejects.toThrow('over limit');
+  expect(await disk.exists(`${other}/manifest.json`)).toBe(true); expect(await disk.exists(`${await roomDir(b)}/manifest.json`)).toBe(false);
+});
+
 test('source, declaration, file stamps and whole-vault namespace mismatches refuse cache', async () => {
   for (const kind of ['source', 'device namespace', 'plugin version', 'producer', 'declaration', 'mtime', 'size', 'namespace']) {
     const saved = await savedFixture(), f = saved.boot(undefined, ['source', 'device namespace', 'plugin version'].includes(kind) ? `other-${kind}` : 'local');
@@ -428,4 +554,356 @@ test('value batching counts sparse arrays as their persisted null entries', asyn
   await store.save('key', rows, () => true);
   expect(JSON.parse(await disk.read(`${directory}/manifest.json`)).parts.length).toBe(2);
   expect([...(await store.load('key', () => true))!.values()]).toEqual(JSON.parse(JSON.stringify(rows)));
+});
+
+// Exercise scheduling at real adapter boundaries: storage I/O, window events and worker batch acknowledgement.
+for (const at of ['chunk', 'manifest']) test(`contract: nested mount takes ownership during ${at} publication`, async () => {
+  const f = await contractFixture();
+  try {
+    let nested = false; const note = 'mount/nested/synthetic.md'; f.files[0]!.path = note;
+    f.source.rooms = () => nested ? [f.a, f.b] : [f.a];
+    f.source.roomFor = p => nested && p.startsWith('mount/nested/') ? f.b : p.startsWith('mount/') ? f.a : undefined;
+    f.source.get = p => p === note ? { source: 'derived', state: 'current', verified: true, frontmatter: { id: p } } : undefined;
+    f.send('oc:property-facts-changed'); await f.rows();
+    if (at === 'chunk') { const write = f.disk.writeBinary.bind(f.disk); f.disk.writeBinary = async (p, b) => { await write(p, b); nested = true; }; }
+    else { const write = f.disk.write.bind(f.disk); f.disk.write = async (p, s) => { await write(p, s); nested = true; }; }
+    await f.settle(f.a); expect(nested).toBe(true);
+    expect(await f.disk.exists(await roomDir(f.a.cacheIdentity!) + '/manifest.json')).toBe(false);
+  } finally { f.close(); }
+});
+test('contract: settlement waits for acknowledgement of the replacement worker value', async () => {
+  const f = await contractFixture();
+  try {
+    f.fill('b.md'); f.fill('unmounted.md'); f.live.set('a.md', { category: 'first', verified: false });
+    expect((await f.rows())[0]!.properties.category).toBe('first');
+    let requested!: () => void, release!: () => void; const refresh = new Promise<void>(r => requested = r), hold = new Promise<void>(r => release = r);
+    f.plugin.notify = () => { requested(); return hold; };
+    f.live.set('a.md', { category: 'settled', verified: true }); const settling = f.settle(); await Promise.race([settling, refresh]);
+    expect(f.adapter.factsComplete()).toBe(false); expect(f.disk.writes).toBe(0);
+    f.adapter.index.flush(); const gen = f.adapter.columns(false, { chunkRows: 1, budgetMs: 8 });
+    const next = await gen.next(); expect(next.done).toBeFalsy();
+    expect(unpackRows(next.value!.columns)[0]!.properties.category).toBe('settled');
+    expect(f.adapter.factsComplete()).toBe(false); await gen.next();
+    expect(f.adapter.factsComplete()).toBe(true); release(); await settling; expect(f.disk.writes).toBe(1);
+  } finally { f.close(); }
+});
+test('contract: native display fallback never supplies a derived partition', async () => {
+  const f = await contractFixture();
+  try {
+    f.caches.set('a.md', { frontmatter: { category: 'native only' } });
+    expect((await f.rows())[0]!.properties.category).toBe('native only'); await f.settle(); expect(f.disk.writes).toBe(0);
+  } finally { f.close(); }
+});
+test('contract: readiness after an unverified event does not authorize a save', async () => {
+  const f = await contractFixture();
+  try { f.fill('a.md'); await f.rows(); f.a.verifiedComplete = false; await f.settle(); f.a.verifiedComplete = true;
+    await f.adapter.saveFacts(); expect(f.disk.writes).toBe(0); await f.settle(); expect(f.disk.writes).toBe(1);
+  } finally { f.close(); }
+});
+test('contract: a settlement-triggered view refresh cannot retry another room', async () => {
+  const f = await contractFixture();
+  try {
+    await f.rows(); f.fill('b.md'); await f.settle(f.b); expect(f.disk.writes).toBe(0);
+    let joining: Promise<void> | undefined, release!: () => void; const gate = new Promise<void>(r => release = r);
+    f.plugin.notify = () => joining = (async () => { await gate; f.adapter.index.flush(); await f.rows(); await f.adapter.saveFacts(); })();
+    f.a.cacheIdentity = 'ocpf1:new-a'; const settled = f.settle(); release(); expect(joining).toBeDefined(); await settled; await joining;
+    expect(await f.disk.exists(await roomDir(f.b.cacheIdentity) + '/manifest.json')).toBe(false);
+  } finally { f.close(); }
+});
+test('contract: a mount arriving during listing survives pruning', async () => {
+  const disk = await savedContract(), f = await contractFixture(disk); f.handles.pop(); f.send('oc:property-facts-changed');
+  try {
+    const list = disk.list.bind(disk); let first = true;
+    disk.list = async p => { if (first && p === directory) { first = false; f.handles.push(f.b); f.send('oc:property-facts-changed', { invalidated: false }); } return list(p); };
+    await f.rows(); expect(first).toBe(false); expect(await disk.exists(await roomDir(f.b.cacheIdentity) + '/manifest.json')).toBe(true);
+    expect((await f.rows())[1]!.properties.category).toBe('Saved b.md');
+  } finally { f.close(); }
+});
+test('contract: failed room inventory is not evidence of retirement', async () => {
+  const disk = await savedContract(), f = await contractFixture(disk);
+  try { await f.rows(); const rooms = f.source.rooms; f.source.rooms = () => { throw Error('inventory unavailable'); };
+    f.adapter.syncRooms(); await new FactCache(disk, directory).load('unused', () => true, 'ocpf1:barrier');
+    expect(disk.files.size).toBe(4); f.source.rooms = rooms; expect((await f.rows())[1]!.properties.category).toBe('Saved b.md');
+  } finally { f.close(); }
+});
+test('contract: malformed part counts do not spend a healthy sibling’s load budget', async () => {
+  const disk = await savedContract(), f = await contractFixture(disk);
+  try { const path = await roomDir(f.a.cacheIdentity!) + '/manifest.json', m = JSON.parse(await disk.read(path));
+    m.parts = Array(4097).fill(null); await disk.write(path, JSON.stringify(m));
+    expect((await f.rows())[1]!.properties.category).toBe('Saved b.md'); expect(await disk.exists(path)).toBe(false);
+    expect(await disk.exists(await roomDir(f.b.cacheIdentity) + '/manifest.json')).toBe(true);
+  } finally { f.close(); }
+});
+for (const during of ['stream', 'initial read']) test(`contract: sibling fallback survives reset during ${during}`, async () => {
+  const disk = await savedContract(), f = await contractFixture(disk);
+  try {
+    if (during === 'stream') { const gen = f.adapter.columns(true, { chunkRows: 1, budgetMs: 8 }); await gen.next();
+      f.a.cacheIdentity = undefined; f.send('oc:property-facts-changed', { invalidated: false }); await gen.return(undefined);
+    } else { const read = disk.readBinary.bind(disk); let first = true;
+      disk.readBinary = async p => { const bytes = await read(p); if (first) { first = false; f.fill('a.md'); f.send('oc:property-facts-changed'); } return bytes; };
+      await f.rows(); expect(first).toBe(false);
+    }
+    expect((await f.rows())[1]!.properties.category).toBe('Saved b.md');
+  } finally { f.close(); }
+});
+test('contract: native restore is independent of optional partition listing', async () => {
+  const s = await savedFixture(), f = s.boot(); s.disk.list = async () => { throw Error('list unavailable'); };
+  try { expect(await f.rows()).toEqual(s.rows); expect(s.disk.files.size).toBe(2); } finally { f.dispose(); }
+});
+test('contract: hung storage retains a single reconciliation across identity churn', async () => {
+  const disk = await savedContract(), f = await contractFixture(disk), store = new FactCache(disk, directory);
+  try { await f.rows(); let started!: () => void, release!: () => void;
+    const waiting = new Promise<void>(r => started = r), hold = new Promise<void>(r => release = r), exists = disk.exists.bind(disk);
+    disk.exists = async p => { started(); await hold; return exists(p); };
+    const blocker = store.load('unused', () => true, 'ocpf1:barrier'); await waiting;
+    const queues = (globalThis as any)[Symbol.for('graph-ng.startup-facts.queues')], tails = new Set();
+    for (let i = 0; i < 100; i++) { f.a.cacheIdentity = `ocpf1:changed-${i}`; f.adapter.syncRooms(); tails.add(queues.get(disk).get(directory).work); }
+    release(); await blocker; await store.load('unused', () => true, 'ocpf1:barrier');
+    expect(tails.size).toBe(1); expect(await exists(await roomDir('ocpf1:room-a'))).toBe(false); expect(await exists(await roomDir(f.b.cacheIdentity))).toBe(true);
+  } finally { f.close(); }
+});
+
+test('contract: empty disposed inventory drops fallback but defers disk pruning to a nonempty inventory', async () => {
+  const disk = await savedContract(), f = await contractFixture(disk), a = await roomDir(f.a.cacheIdentity!), b = await roomDir(f.b.cacheIdentity);
+  const barrier = () => new FactCache(disk, directory).load('unused', () => true, 'ocpf1:barrier');
+  try {
+    await f.rows(); f.source.rooms = () => Object.freeze([]); f.source.roomFor = () => undefined;
+    f.send('oc:property-facts-changed'); expect(f.adapter.savedCopy).toBe(false); await f.rows(); await barrier();
+    expect(await disk.exists(a)).toBe(true); expect(await disk.exists(b)).toBe(true);
+    f.source.rooms = () => Object.freeze([f.b]); f.source.roomFor = path => path === 'b.md' ? f.b : undefined;
+    f.send('oc:property-facts-changed'); expect((await f.rows())[1]!.properties.category).toBe('Saved b.md'); await barrier();
+    expect(await disk.exists(a)).toBe(false); expect(await disk.exists(b)).toBe(true);
+  } finally { f.close(); }
+});
+// Review schedules: gates mark exact host I/O and worker acknowledgement boundaries.
+function signal() {
+  let yes!: () => void, no!: (e: Error) => void;
+  const done = new Promise<void>((resolve, reject) => { yes = resolve; no = reject; });
+  return { yes, no, done };
+}
+test('room queue: rejection drains the newest request without another wakeup', async () => {
+  const { latestWork } = await import('../src/adapter/latest-work'); const queue = { work: Promise.resolve() }, hold = signal(), entered = signal(), calls: number[] = [];
+  const first = latestWork(queue, async () => { entered.yes(); await hold.done; }); await entered.done;
+  latestWork(queue, async () => { calls.push(1); }); latestWork(queue, async () => { calls.push(2); }); hold.no(Error('synthetic failure'));
+  await first; expect(calls).toEqual([2]);
+});
+test('room queue: two valid settlements overlapping a chunk write publish without a third event', async () => {
+  const f = await contractFixture(), started = signal(), release = signal();
+  try {
+    f.fill('a.md'); await f.rows(); const write = f.disk.writeBinary.bind(f.disk);
+    f.disk.writeBinary = async (p, b) => { started.yes(); await release.done; await write(p, b); };
+    const first = f.settle(); await started.done; await f.settle(); release.yes(); await first;
+    expect(await f.disk.exists(await roomDir(f.a.cacheIdentity!) + '/manifest.json')).toBe(true);
+  } finally { release.yes(); f.close(); }
+});
+test('room queue: obsolete stream cancellation does not consume the replacement settlement', async () => {
+  const f = await contractFixture(), release = signal(), ack = signal();
+  try {
+    f.fill('a.md'); await f.rows(); const g = f.adapter.columns(true, { chunkRows: 1, budgetMs: 8 }); await g.next();
+    const replacement = Object.freeze({ ...f.a, cacheIdentity: 'ocpf1:replacement-a' });
+    f.source.roomFor = p => p === 'a.md' ? replacement : p === 'b.md' ? f.b : undefined; f.source.rooms = () => Object.freeze([replacement, f.b]);
+    let refreshes = 0; f.plugin.notify = () => { if (++refreshes === 2) ack.yes(); return release.done; };
+    const settled = f.settle(replacement); await ack.done; await g.return(undefined); await f.rows(); release.yes(); await settled;
+    expect(await f.disk.exists(await roomDir(replacement.cacheIdentity) + '/manifest.json')).toBe(true);
+  } finally { release.yes(); f.close(); }
+});
+test('room queue: 64 valid settlements retain one acknowledgement wait and save the newest', async () => {
+  const f = await contractFixture(), release = signal(), started = signal();
+  try {
+    f.fill('a.md'); await f.rows(); f.live.set('a.md', { category: 'new', verified: true });
+    let n = 0; f.plugin.notify = () => { n++; started.yes(); return release.done; };
+    const first = f.settle(); await started.done; await Promise.all(Array.from({ length: 63 }, () => f.settle()));
+    expect(n).toBe(1); expect(f.disk.writes).toBe(0); await f.rows(false); release.yes(); await first;
+    expect(n).toBe(1); expect(f.disk.writes).toBe(1); expect(await f.disk.exists(await roomDir(f.a.cacheIdentity!) + '/manifest.json')).toBe(true);
+  } finally { release.yes(); f.close(); }
+});
+test('room queue: 42 replacements of one retained 900 KB partition do not exhaust replay', async () => {
+  const seed = await contractFixture(), value = 'r'.repeat(900000);
+  try { seed.live.set('a.md', { category: value, verified: true }); await seed.rows(); await seed.settle(); } finally { seed.close(); }
+  const f = await contractFixture(seed.disk); let hs: readonly typeof f.a[] = [];
+  try {
+    f.source.rooms = () => hs; f.source.roomFor = p => p === 'a.md' ? hs[0] : undefined;
+    for (let i = 0; i < 42; i++) {
+      if (i % 2 === 0) { hs = Object.freeze([]); f.send('oc:property-facts-changed'); }
+      hs = Object.freeze([Object.freeze({ ...f.a, generation: i + 2 })]); f.send('oc:property-facts-changed');
+      expect((await f.rows())[0]!.properties.category === value).toBe(true);
+    }
+    expect(await f.disk.exists(await roomDir(f.a.cacheIdentity!) + '/manifest.json')).toBe(true);
+  } finally { f.close(); }
+});
+test('native parity: metadata notice during manifest publication preserves both provisional rows on restart', async () => {
+  const s = await savedFixture(), x = s.boot();
+  try {
+    for (const file of x.files) x.caches.set(file.path, { frontmatter: { id: file.path, category: 'new' } });
+    await x.rows(); const write = s.disk.write.bind(s.disk);
+    s.disk.write = async (p, b) => { await write(p, b); x.emit('changed', x.files[0]); }; await x.adapter.saveFacts();
+    const restart = s.boot();
+    try { // Expected result measured at native baseline 12d0621 for this exact schedule.
+      expect({ present: await s.disk.exists('plugin/saved-facts/manifest.json'), rows: (await restart.rows()).map(r => r.properties.category) }).toEqual({ present: true, rows: ['new', 'new'] });
+      expect(restart.adapter.factsComplete()).toBe(false);
+    } finally { restart.dispose(); }
+  } finally { x.dispose(); }
+});
+
+const hydrationQueue = (f: Awaited<ReturnType<typeof contractFixture>>) => (f.host as any)[Symbol.for('graph-ng.property-loads')];
+
+test('hydration: a burst behind discovery gets one aggregate call, no handle loads and no plugin or host lock requests', async () => {
+  const hold = signal(), requests: string[] = [], signals: AbortSignal[] = []; let handles = 0;
+  const locks = { request(name: string) { requests.push(name); throw Error('unexpected lock'); } } as unknown as LockManager;
+  const f = await contractFixture(undefined, undefined, undefined, source => {
+    const rooms = source.rooms!().map(h => Object.freeze({ ...h, async load() { handles++; } }));
+    source.rooms = () => rooms;
+    source.load = async opts => { signals.push(opts!.signal); if (signals.length === 1) await hold.done; };
+  }, undefined, { locks });
+  try {
+    const opens = Array.from({ length: 64 }, () => f.plugin.loadProperties());
+    expect(signals.length).toBe(1); expect(new Set(opens).size).toBe(1);
+    for (const detail of [{reason: 'live_verified', invalidated: false}, {invalidated: true}]) f.send('oc:property-facts-changed', detail);
+    expect(signals[0]!.aborted).toBe(false);
+    hold.yes(); await Promise.all(opens); await hydrationQueue(f).work;
+    expect(signals.length).toBe(2); expect(signals[1]).not.toBe(signals[0]); expect(handles).toBe(0); expect(requests).toEqual([]);
+  } finally { hold.yes(); f.close(); }
+});
+
+test('hydration: aggregate rejection reports failure, does not verify facts and releases the window queue', async () => {
+  let calls = 0;
+  const f = await contractFixture(undefined, undefined, undefined, s => { s.load = async () => {
+    if (++calls === 1) throw new DOMException('host cancelled', 'AbortError');
+  }; });
+  try {
+    await hydrationQueue(f).work; expect(f.plugin.hydrationStatus).toBe('Some room properties could not load');
+    await f.plugin.loadProperties(); expect(calls).toBe(2); expect(f.plugin.hydrationStatus).toBe('');
+    expect(f.adapter.factsComplete()).toBe(false); expect(f.disk.writes).toBe(0);
+  } finally { f.close(); }
+});
+
+test('hydration: the default 15 s caller deadline does not abort or release hung physical work', async () => {
+  const hold = signal(), timers: Array<() => void> = [], signals: AbortSignal[] = [];
+  const schedule = globalThis.setTimeout;
+  const clock = spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void, ms: number) => {
+    if (ms === 15000) timers.push(fn);
+    return schedule(fn, ms);
+  }) as typeof setTimeout);
+  const f = await contractFixture(undefined, undefined, undefined, source => { source.load = async opts => { signals.push(opts!.signal); await hold.done; }; });
+  try {
+    const caller = f.plugin.loadProperties(); expect(timers.length).toBe(1); timers[0]!(); await caller;
+    expect(f.plugin.hydrationStatus).toBe('Property loading delayed'); expect(signals.length).toBe(1);
+    expect(signals[0]!.aborted).toBe(false); expect(hydrationQueue(f).draining).toBe(true);
+    hold.yes(); await hydrationQueue(f).work; expect(signals.length).toBe(2); expect(f.plugin.hydrationStatus).toBe('');
+  } finally { clock.mockRestore(); hold.yes(); f.close(); }
+});
+
+test('binding: retiring sixteen drains frees their acknowledgements and permits an immediate remount', async () => {
+  const f = await contractFixture(), hold = signal(), { default: GraphPlugin } = await import('../src/main');
+  let entered: ReturnType<typeof signal> | undefined, finished = 0;
+  // Exercise real listener acknowledgement aggregation, not a disposable Promise.race wrapper.
+  f.plugin.listeners = new Set([() => {}, () => { if (entered) { entered.yes(); return hold.done; } }]); f.plugin.notify = GraphPlugin.prototype.notify;
+  let handles: typeof f.handles = [];
+  const mount = (next: typeof handles) => { handles = next; f.send('oc:property-facts-changed'); };
+  try {
+    f.fill('a.md'); await f.rows(); f.source.rooms = () => handles; f.source.roomFor = p => p === 'a.md' ? handles[0] : undefined;
+    for (let i = 0; i < 16; i++) {
+      const h = { ...f.a, cacheIdentity: `ocpf1:synthetic-${i}`, generation: i + 1 }; mount([h]); entered = signal();
+      void f.settle(h).then(() => finished++); await entered.done; entered = undefined;
+    }
+    mount([]); await new Promise(r => setTimeout(r, 0)); expect(finished).toBe(16);
+    const h = { ...f.a, cacheIdentity: 'ocpf1:synthetic-0', generation: 17 }; mount([h]); await f.rows(); await f.settle(h);
+    expect(await f.disk.exists(await roomDir(h.cacheIdentity) + '/manifest.json')).toBe(true);
+    // Direct generation replacement and unload also detach a held logical wait.
+    for (const generation of [18, 19]) { h.generation = generation; mount([h]); entered = signal(); void f.settle(h).then(() => finished++); await entered.done; entered = undefined; }
+    f.close(); await new Promise(r => setTimeout(r, 0)); expect(finished).toBe(18);
+  } finally { hold.yes(); f.close(); }
+});
+
+test('binding: the winning revision promotes its loaded view after the obsolete write', async () => {
+  const f = await contractFixture(), started = signal(), release = signal(), { GraphView } = await import('../src/main');
+  try {
+    for (const file of f.files) f.fill(file.path); await f.rows(); let promotions = 0;
+    const view = Object.assign(Object.create(GraphView.prototype), { promoteProperties() { promotions++; }, invalidateSource() {}, updateHydrationStatus() {} });
+    f.plugin.app.workspace.getLeavesOfType = () => [{ view }]; const write = f.disk.writeBinary.bind(f.disk);
+    f.disk.writeBinary = async (p,b) => { started.yes(); await release.done; return write(p,b); };
+    const old = f.settle(); await started.done; f.live.set('a.md', {category: 'changed', verified: false}); f.send('oc:property-facts-changed');
+    await f.rows(); expect(f.adapter.factsComplete()).toBe(false); f.live.set('a.md', {category: 'changed', verified: true}); await f.settle(); release.yes(); await old;
+    expect(await f.disk.exists(await roomDir(f.a.cacheIdentity!) + '/manifest.json')).toBe(true); expect(f.adapter.factsComplete()).toBe(true); expect(promotions).toBe(1);
+  } finally { release.yes(); f.close(); }
+});
+
+test('binding: six deadlines unlink queued room saves while one physical writer remains', async () => {
+  const f = await contractFixture(), started = signal(), release = signal(), cache = (f.adapter as any).cache;
+  try {
+    f.fill('a.md'); await f.rows(); cache.deadlineMs = 70; let writes = 0; const write = f.disk.writeBinary.bind(f.disk);
+    f.disk.writeBinary = async (p,b) => { writes++; started.yes(); await release.done; return write(p,b); };
+    const first = f.settle(); await started.done; const tails = new Set([cache.queue.work]); await first;
+    for (let i=0;i<5;i++) { await f.settle(); tails.add(cache.queue.work); }
+    expect(tails.size).toBe(1); expect(cache.queue.jobs.size).toBe(0); expect(writes).toBe(1);
+    // A second cache object on this root also replaces (not appends to) a queued intent.
+    const peer = new FactCache(f.disk, directory), id = f.a.cacheIdentity!;
+    const obsolete = peer.save('old', [], () => true, undefined, id).catch(e => String(e));
+    const replacement = peer.save('new', [], () => false, undefined, id).catch(e => String(e));
+    expect(cache.queue.jobs.size).toBe(1); expect(await obsolete).toContain('cancelled');
+    release.yes(); expect(await replacement).toContain('cancelled'); await cache.queue.work; expect(f.disk.writes).toBe(0);
+  } finally { release.yes(); f.close(); }
+});
+
+test('binding: status skips deferred and unrelated leaves and reaches a loaded GraphView', async () => {
+  const f = await contractFixture(), { GraphView } = await import('../src/main');
+  try { await hydrationQueue(f).work; let painted = 0, touched = 0;
+    const view = Object.assign(Object.create(GraphView.prototype), { invalidateSource() {}, updateHydrationStatus() { painted++; } });
+    f.plugin.app.workspace.getLeavesOfType = () => [{isDeferred:true, get view() { touched++; return {}; }}, {view:{}}, {view}];
+    f.source.rooms = () => { throw Error('synthetic inventory'); }; f.send('oc:property-facts-changed'); await f.plugin.loadProperties(); await hydrationQueue(f).work;
+    expect(f.plugin.hydrationStatus).toBe('Room inventory unavailable'); expect(painted).toBe(1); expect(touched).toBe(0);
+  } finally { f.close(); }
+});
+
+test('binding: unload unlinks only its pending hydration while a legacy load holds the slot', async () => {
+  const hold = signal(), f = await contractFixture(undefined, undefined, undefined, s => { s.load = () => hold.done; });
+  try { const queue = hydrationQueue(f), physical = queue.work, caller = f.plugin.loadProperties(); expect(typeof queue.next).toBe('function');
+    f.close(); await caller; expect(queue.next).toBeUndefined(); expect(queue.work).toBe(physical); expect(queue.draining).toBe(true);
+    hold.yes(); await physical; expect(queue.draining).toBe(false);
+  } finally { hold.yes(); }
+
+});
+
+test('binding: inventory recovery clears only its diagnostic and replays saved facts', async () => {
+  const f = await contractFixture(await savedContract());
+  try { await f.rows(); const rooms = f.source.rooms; f.source.rooms = () => { throw Error('synthetic inventory'); }; f.send('oc:property-facts-changed');
+    f.source.rooms = rooms; f.send('oc:property-facts-changed'); await f.plugin.loadProperties(); expect((await f.rows())[0]!.properties.category).toBe('Saved a.md');
+    expect(f.adapter.cacheStatus).toBe('restored'); expect(f.adapter.factError).toBe(''); expect(f.plugin.hydrationStatus).toBe('');
+    f.adapter.factError = 'synthetic disk failure'; f.adapter.syncRooms(); expect(f.adapter.factError).toBe('synthetic disk failure');
+  } finally { f.close(); }
+});
+
+for (const change of ['unload', 'revoke', 'grant replacement', 'room-set replacement']) test(`hydration: ${change} aborts the aggregate and drops superseded queued loads`, async () => {
+  const hold = signal(), calls: string[] = []; let physical: AbortSignal | undefined;
+  const f = await contractFixture(undefined, undefined, undefined, source => { source.load = async opts => {
+    calls.push('old'); physical = opts!.signal; await hold.done; throw new DOMException('cancelled', 'AbortError');
+  }; });
+  try {
+    const caller = f.plugin.loadProperties(); expect(calls).toEqual(['old']);
+    const replace = (next?: PropertySource) => {
+      (f.host.openclast as { propertyFacts?: PropertySource }).propertyFacts = next;
+      f.send('oc:property-facts-changed', { reason: 'replaced', invalidated: false });
+    };
+    if (change === 'unload') f.close();
+    else if (change === 'revoke') replace();
+    else {
+      replace({ ...f.source, load: async () => { calls.push('skipped'); } });
+      replace({ ...f.source, rooms: change === 'room-set replacement' ? () => [f.b] : f.source.rooms, load: async () => { calls.push('latest'); } });
+    }
+    expect(physical?.aborted).toBe(true); expect(calls).toEqual(['old']);
+    hold.yes(); await caller; await hydrationQueue(f).work;
+    expect(calls).toEqual(change.endsWith('replacement') ? ['old', 'latest'] : ['old']);
+    expect(f.plugin.hydrationStatus).toBe(''); expect(f.disk.writes).toBe(0);
+  } finally { hold.yes(); f.close(); }
+});
+test('room removal by source replacement purges that room on disk with no view open', async () => {
+  const f = await contractFixture(await savedContract()), oldA = await roomDir(f.a.cacheIdentity!), keptB = await roomDir(f.b.cacheIdentity!);
+  try {
+    await f.rows();
+    const only = Object.freeze([f.b]), next = { ...f.source, rooms: () => only, roomFor: (p: string) => p === 'b.md' ? f.b : undefined } as PropertySource;
+    (f.host as any).openclast.propertyFacts = next; f.send('oc:property-facts-changed', { reason: 'replaced' });
+    await new FactCache(f.disk, directory).dropPartition('ocpf1:unused');
+    await new FactCache(f.disk, directory).dropPartition('ocpf1:unused');
+    expect(await f.disk.exists(oldA)).toBe(false); expect(await f.disk.exists(keptB)).toBe(true);
+  } finally { f.close(); }
 });

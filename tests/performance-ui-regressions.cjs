@@ -1,6 +1,7 @@
 // Exercise production controls and the real persistence queue with an inert host.
 const fs = require('node:fs'), vm = require('node:vm'), assert = require('node:assert/strict');
 const source = fs.readFileSync('main.js', 'utf8'), mangle = JSON.parse(fs.readFileSync('.workspace/evidence/main-mangle-cache.json', 'utf8'));
+for (const name of ['propertyFacts', 'get', 'load', 'roomFor', 'rooms', 'cacheIdentity', 'generation', 'verifiedComplete', 'verified', 'frontmatter', 'parseError', 'truncated', 'navigator', 'locks', 'request', 'signal', 'abort', 'aborted', 'isDeferred', 'work', 'next', 'draining', 'jobs']) assert.equal(mangle[name], undefined, `public propertyFacts member renamed: ${name}`);
 const marker = source.indexOf('"Local performance log"');
 const controls = [...source.slice(0, marker).matchAll(/function ([\w$]+)\([^)]*\)\{/g)].at(-1)[1];
 const modalName = source.slice(marker).match(/function ([\w$]+)\([^)]*\)\{[^]*?new [\w$]+\.Modal/)[1];

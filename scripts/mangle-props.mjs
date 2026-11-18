@@ -40,6 +40,8 @@ export const MANGLED_PROPS = ['onViewStateChange', 'tuneViewState', 'showViewGro
   'beginLayout', 'averageDegree', 'viewCurrent', 'hasPending', 'openGroup',
   'canTravel', 'hubRatio', 'contributionHeading',
   // Startup-cache lifecycle only; on-disk fields and deviceNamespace stay literal.
+  'syncRooms', 'roomRevision', 'prunePartitions', 'unknownRooms', 'onRoomSettled',
+  'roomBudget', 'savedOwners', 'loadProperties', 'auditPath', 'storageError', 'loadRoom', 'saveRoom',
   'attachFactCache', 'cacheScope', 'cacheTurn', 'factVersion', 'savedVersion',
   'restoreFacts', 'saveFacts', 'clearFacts', 'savedFacts', 'retireSaved', 'savedCopy',
   'rejectSaved', 'purgeFacts', 'cacheStatus', 'factError', 'factDirectory', 'factStore', 'deadlineMs', 'cacheKey'];

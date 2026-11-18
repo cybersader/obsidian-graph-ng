@@ -1,3 +1,4 @@
+import { latestWork, waitForView, type WorkQueue } from './adapter/latest-work';
 import { devicePerformance, performanceRecords, type PerformanceRecord } from './performance';
 import { DevicePerformanceStore, sharedPerformanceData } from './device-performance';
 import { performanceChoices, performanceSettings, type PerformanceChoice, performanceControls, showPerformanceSuggestions } from './performance-ui';
@@ -41,6 +42,7 @@ interface Generation { key: string; identities: string[]; positions: number[]; p
 interface Data { settings: Settings; generations: Record<string, Generation> }
 /** Assign `next[k]` where `live[k]` still equals `was[k]`, in place; returns the count of keys kept live. */
 const adopt = <T extends object>(live: T, next: T, was: T, keys: (keyof T)[]) => keys.filter(k => JSON.stringify(live[k]) === JSON.stringify(was[k]) ? (live[k] = next[k], false) : true).length;
+
 export default class GraphPlugin extends Plugin {
   settings!: Settings;
   performanceLog: PerformanceRecord[] = [];
@@ -143,35 +145,107 @@ export default class GraphPlugin extends Plugin {
   }
   propertySource?: PropertySource;
   propertyRevision = 0;
+  hydrationStatus = '';
+  loadProperties?: () => Promise<void>;
   /** Public optional host capability; listener ownership never transfers the provider. */
-  watchProperties(host = globalThis) {
+  watchProperties(host = globalThis, waitMs = 15000) {
     let active = true, verifying = false, pending = false, timer: ReturnType<typeof setTimeout> | undefined;
+    // Coalesce view opens and source replacements in this window. Only the host
+    // schedules individual rooms and serializes physical loads across windows.
+    const key = Symbol.for('graph-ng.property-loads'), queue = (host as unknown as Record<symbol, WorkQueue>)[key] ??= { work: Promise.resolve() };
+    let waiting: Promise<void> | undefined, finish: (() => void) | undefined, latest = 0;
+    let queued: WorkQueue['next'], flight: AbortController | undefined;
+    const unlink = () => { if (queue.next === queued) queue.next = undefined; queued = undefined; };
+    const physical = async (source: PropertySource) => {
+      if (!source.rooms && (source.roomFor || 'room' in source)) return ''; // Legacy room provider: live reads only.
+      const controller = flight = new AbortController();
+      try { await source.load?.({ signal: controller.signal }); return ''; }
+      catch { return controller.signal.aborted ? '' : source.rooms ? 'Some room properties could not load' : 'Property loading unavailable'; }
+      finally { flight = undefined; }
+    };
+    const views = (visit: (view: GraphView) => void) => {
+      for (const leaf of this.app.workspace.getLeavesOfType(VIEW)) if (!leaf.isDeferred && leaf.view instanceof GraphView) visit(leaf.view);
+    };
+    const promote = () => views(view => view.promoteProperties());
+    let loadStatus = '';
+    const status = (result = loadStatus) => {
+      loadStatus = result;
+      const message = this.adapter.inventoryError ? 'Room inventory unavailable' : result;
+      if (!active || message === (this.hydrationStatus || '')) return;
+      this.hydrationStatus = message;
+      views(view => view.updateHydrationStatus());
+    };
+    this.loadProperties = () => {
+      const source = this.propertySource, request = ++latest;
+      if (!active || !source) return Promise.resolve();
+      // Caller completion and host completion have different owners. Never attach
+      // timeout races to a permanently unresolved physical promise on each open.
+      const caller = waiting ??= new Promise<void>(resolve => {
+        const timer = setTimeout(() => { finish?.(); status('Property loading delayed'); }, waitMs);
+        finish = () => { clearTimeout(timer); waiting = undefined; finish = undefined; resolve(); };
+      });
+      void latestWork(queue, queued = async () => {
+        queued = undefined;
+        const current = () => active && source === this.propertySource;
+        if (!current() || request !== latest) return;
+        const message = await physical(source);
+        if (request === latest && current()) { finish?.(); status(message); }
+      });
+      return caller;
+    };
     const verify = () => {
       if (!active || timer !== undefined || verifying) return;
       timer = setTimeout(async () => {
         timer = undefined; verifying = true; pending = false;
-        try { if (await this.adapter.verifyProperties(this.settings.ingest) && active) for (const leaf of this.app.workspace.getLeavesOfType(VIEW)) (leaf.view as GraphView).promoteProperties(); }
+        try { if (await this.adapter.verifyProperties(this.settings.ingest) && active) promote(); }
         finally { verifying = false; if (pending) verify(); }
       }, this.settings.debounceMs);
     };
+    let observed = this.adapter.roomRevision;
     const changed = (event?: Event) => {
       const candidate = (host as typeof globalThis & { openclast?: { propertyFacts?: PropertySource } }).openclast?.propertyFacts;
       const source = typeof candidate?.get === 'function' ? candidate : undefined, previous = this.propertySource;
-      if (source === previous && (event as CustomEvent | undefined)?.detail?.invalidated === false) { pending = true; verify(); return; }
+      if (source === previous) this.adapter.syncRooms?.();
+      if (observed === this.adapter.roomRevision && source === previous && (event as CustomEvent | undefined)?.detail?.invalidated === false) { status(); pending = true; verify(); return; }
       clearTimeout(timer); timer = undefined; pending = false;
       this.propertySource = source; this.propertyRevision++;
-      this.adapter.setPropertySource(source); this.ingestedHash = '';
-      for (const leaf of this.app.workspace.getLeavesOfType(VIEW)) (leaf.view as GraphView).invalidateSource();
+      const moved = observed !== this.adapter.roomRevision;
+      this.adapter.setPropertySource(source, !event, moved); observed = this.adapter.roomRevision; this.ingestedHash = '';
+      if (source !== previous) {
+        if (source) void this.loadProperties?.(); else { ++latest; unlink(); finish?.(); }
+        flight?.abort();
+      }
+      status(source !== previous ? '' : undefined);
+      views(view => view.invalidateSource());
       this.notify();
-      if (source && source !== previous) void Promise.resolve().then(() => active && source === this.propertySource && source.load?.()).catch(() => {});
     };
+    const settled = (event: Event) => {
+      const source = (host as typeof globalThis & { openclast?: { propertyFacts?: PropertySource } }).openclast?.propertyFacts;
+      if (source === this.propertySource) this.adapter.syncRooms();
+      if (source !== this.propertySource || observed !== this.adapter.roomRevision) changed(event);
+      else status();
+      const revision = this.propertyRevision;
+      void this.adapter.onRoomSettled((event as CustomEvent).detail, this.settings.ingest, signal => this.notify(signal), () => {
+        if (active && revision === this.propertyRevision) promote();
+      });
+    };
+    host.addEventListener?.('oc:property-facts-settled', settled);
     host.addEventListener?.('oc:property-facts-changed', changed);
-    this.register(() => { active = false; clearTimeout(timer); host.removeEventListener?.('oc:property-facts-changed', changed); });
+    this.register(() => {
+      active = false; unlink(); finish?.(); clearTimeout(timer);
+      host.removeEventListener?.('oc:property-facts-changed', changed); host.removeEventListener?.('oc:property-facts-settled', settled);
+      flight?.abort();
+    });
     changed();
   }
   resetAdapter() { this.adapter?.invalidate(); this.adapter?.index.dispose(); this.adapter = new LocalAdapter(this.app, this, this.linkProducer, this.settings.debounceMs, () => this.notify(), true, this.settings.declaration, this.propertySource); this.adapter.attachFactCache(this.factStore, `${this.deviceNamespace}/${this.manifest.version}/${this.sourceIdentity}`); this.ingestedHash = ''; }
   subscribe(listener: () => void | Promise<void>) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
-  notify() { return Promise.all([...this.listeners].map(fn => fn())); }
+  notify(signal?: AbortSignal) {
+    // The settlement watches a single acknowledgement directly. For multiple
+    // views also detach their individual waits if any view never settles.
+    if (signal && this.listeners.size === 1) return [...this.listeners][0]!() ?? Promise.resolve();
+    return Promise.all([...this.listeners].map(fn => { const work = fn(); return signal && work ? waitForView(work, signal) : work; }));
+  }
   async open() {
     let leaf = this.app.workspace.getLeavesOfType(VIEW)[0];
     if (!leaf) { leaf = this.app.workspace.getLeaf('tab'); await leaf.setViewState({ type: VIEW, active: true }); }
@@ -344,6 +418,7 @@ export class GraphView extends ItemView {
   private loading() { return this.layoutWorking || this.contentEl.dataset.state === 'building' ? { stage: this.statusMessage, ...this.readProgress } : undefined; }
   private progressAt = 0;
   private progressText(text: string) { const now = performance.now(); if (now - (this.progressAt ?? 0) >= 100) { this.progressAt = now; this.statusText = text; } }
+  updateHydrationStatus() { if (this.status && this.statusSummary) this.statusText = this.statusText; }
   private get statusText() { return this.statusMessage; }
   /** Graph information: a short message over structured tiles/issues; the canvas summary shows separate chips. */
   private set statusText(text: string) {
@@ -351,11 +426,11 @@ export class GraphView extends ItemView {
     this.layoutRing?.setAttribute('stroke-dashoffset', String(100 - this.buildProgress.percent));
     (this.explorePanel as (ExplorePanel & { updateSummary?(): void }) | undefined)?.updateSummary?.();
     const state = this.contentEl.dataset.state;
-    renderInformation(this.status, [text, this.detailFallback].filter(Boolean).join(' '), this.layoutWorking ? 'building' : state, this.report, this.explored, this.informationActions, this.loading());
+    renderInformation(this.status, [text, this.detailFallback, this.plugin.hydrationStatus].filter(Boolean).join(' '), this.layoutWorking ? 'building' : state, this.report, this.explored, this.informationActions, this.loading());
     const health = state === 'error' ? [text] : this.loading() ? [this.loading()!.stage]
       : this.plugin.settings.projectionFile ? ['External aggregate, not verified']
       : this.provisional ? [this.plugin.adapter?.savedCopy ? 'Saved copy while host confirms' : pendingText(this.report)] : [];
-    const chips = [this.viewFeedbackText, this.layoutStopped && !this.loading() && state !== 'error' ? 'Layout stopped' : '', ...health].filter(Boolean), readout = state === 'ready' && !this.provisional && this.report;
+    const chips = [this.plugin.hydrationStatus, this.viewFeedbackText, this.layoutStopped && !this.loading() && state !== 'error' ? 'Layout stopped' : '', ...health].filter(Boolean), readout = state === 'ready' && !this.provisional && this.report;
     const info = this.statusSummary.querySelector<HTMLElement>('.graph-ng-summary-info') ?? this.statusSummary.createEl('button', { cls: 'graph-ng-summary-info', attr: { 'aria-label': 'Graph information' } });
     info.hidden = !readout && !chips.length;
     info.onclick = () => this.explorePanel?.show('information', info);
@@ -492,8 +567,7 @@ export class GraphView extends ItemView {
     // Creating even a probe GL context can block; the initial group view needs no GPU.
     this.registerEvent(this.app.workspace.on('css-change', () => this.renderer?.refreshTheme?.()));
     this.unsubscribe = this.plugin.subscribe(() => this.refresh());
-    const source = this.plugin.propertySource;
-    void Promise.resolve().then(() => !this.closed && source === this.plugin.propertySource && source?.load?.()).catch(() => {});
+    void this.plugin.loadProperties?.();
     await this.refresh();
   }
   /** How far the open graph tools panel reaches over the stage from its right edge (CSS px). */
@@ -644,8 +718,9 @@ export class GraphView extends ItemView {
       this.buildProgress.text(4); this.contentEl.dataset.state = 'ready'; this.statusText = this.provisional ? pendingText(report) : this.layoutSettled ? '' : 'Layout not settled';
       this.contentEl.dataset.layoutMs = String(layout.milliseconds); this.contentEl.dataset.cached = String(layout.cached);
       if (this.presentation === 'nodes') await this.showDetails();
-      if (current() && !this.provisional) await this.plugin.adapter.saveFacts?.();
+      if (current() && !this.provisional && !source) await this.plugin.adapter.saveFacts?.();
       if (this.plugin.adapter.factError) this.statusText = 'Saved facts unavailable. Using host properties.';
+      else if (this.plugin.adapter.inventoryError) this.statusText = 'Room inventory unavailable';
       if (current() && !this.provisional) this.plugin.recordPerformance?.({ notes: result.nodes, edges: result.edges, ingestMs, projectMs, groupsMs: Number(this.contentEl.dataset.refreshGroupMs), layoutMs: layout.milliseconds, totalMs: performance.now() - start });
       if (layout.settled !== false && settings.persistLayout && this.plugin.store.committed !== result.meta.key && complete && !this.provisional && (!settings.declaration.edges.some(e => e.kind === 'producer') || this.plugin.adapter.linksResolved)) {
         const generation = await this.plugin.pipeline.request<BinaryGeneration>(revision, { kind: 'encode' });
@@ -654,12 +729,12 @@ export class GraphView extends ItemView {
         this.contentEl.dataset.cacheError = await this.plugin.cache(generation, current).then(() => '', String);
       }
     } catch (e) {
-      this.plugin.adapter.invalidate(); this.plugin.ingestedHash = ''; this.provisional = true; this.contentEl.dataset.verified = 'false';
+      this.plugin.adapter.invalidate(!!this.plugin.propertySource); this.plugin.ingestedHash = ''; this.provisional = true; this.contentEl.dataset.verified = 'false';
       if (current()) { this.report = undefined; this.contentEl.dataset.state = 'error'; if (this.presentation === 'nodes') { this.contentEl.dataset.mode = 'groups'; this.showGroups(true); } this.statusText = `Projection refresh failed: ${String(e)}`; this.contributionPage.fail(`Projection refresh failed: ${String(e)}`); }
     } finally {
       heldLayout?.(false);
       await preview?.finish();
-      if (!current()) { this.plugin.adapter.invalidate(); this.plugin.ingestedHash = ''; this.contentEl.dataset.verified = 'false'; }
+      if (!current()) { this.plugin.adapter.invalidate(!!this.plugin.propertySource); this.plugin.ingestedHash = ''; this.contentEl.dataset.verified = 'false'; }
     }
   }
   /** Groups from Notes: remember the held focus so its group is ringed and a chip leads back. */

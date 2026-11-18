@@ -10,7 +10,21 @@ type CacheKey = string | ((check: () => void) => Promise<string>);
 interface Part { bytes: number; hash: string }
 interface Manifest { format: number; key: string; parts: Part[] }
 // Retain only a void-valued queue across plugin module reloads, never loaded facts.
-interface Queue { work: Promise<void>; epoch: number }
+interface Job { run(): Promise<void>; cancel?(): void }
+interface Queue { work: Promise<void>; epoch: number; jobs?: Map<string | symbol, Job> }
+// Pending operations are removable; only a physically settled operation gives
+// up the writer. Use FIFO even when replacing a room intent across a root clear.
+function enqueue(queue: Queue, key: string | symbol, job: Job) {
+  let jobs = queue.jobs;
+  if (!jobs) {
+    queue.jobs = jobs = new Map();
+    queue.work = queue.work.then(async () => {
+      try { for (const [id, next] of jobs!) { jobs!.delete(id); await next.run(); } }
+      finally { queue.jobs = undefined; }
+    });
+  }
+  jobs.get(key)?.cancel?.(); jobs.delete(key); jobs.set(key, job);
+}
 const queueKey = Symbol.for('graph-ng.startup-facts.queues');
 const queues = (globalThis as unknown as Record<symbol, WeakMap<BinaryAdapter, Map<string, Queue>>>)[queueKey] ??= new WeakMap();
 function bounded(value: unknown, depth = 0) {
@@ -36,32 +50,83 @@ export class FactCache {
     if (!queue) targets.set(factDirectory, queue = { work: Promise.resolve(), epoch: 0 });
     this.queue = queue;
   }
-  private run<T>(current: () => boolean, action: (check: () => void) => Promise<T>): Promise<T> {
+  private run<T>(current: () => boolean, action: (check: () => void) => Promise<T>, key: string | symbol = Symbol()): Promise<T> {
     const queue = this.queue, epoch = queue.epoch, until = performance.now() + this.deadlineMs; let expired = false, timer: ReturnType<typeof setTimeout>;
     const check = () => { if (expired || performance.now() >= until) throw Error('Saved facts deadline exceeded'); if (epoch !== queue.epoch || !current()) throw Error('Saved facts cancelled'); };
-    const next = queue.work.then(() => { check(); return action(check); });
-    queue.work = next.then(() => {}, () => {});
-    return Promise.race([next, new Promise<never>((_, reject) => { timer = setTimeout(() => { expired = true; reject(Error('Saved facts deadline exceeded')); }, this.deadlineMs); })]).finally(() => clearTimeout(timer));
+    return new Promise<T>((resolve, reject) => {
+      const job: Job = {
+        async run() { try { check(); resolve(await action(check)); } catch (error) { reject(error); } finally { clearTimeout(timer); } },
+        cancel() { clearTimeout(timer); reject(Error('Saved facts cancelled')); },
+      };
+      timer = setTimeout(() => {
+        expired = true; if (queue.jobs?.get(key) === job) queue.jobs.delete(key); reject(Error('Saved facts deadline exceeded'));
+      }, this.deadlineMs);
+      enqueue(queue, key, job);
+    });
   }
   clear(pause = false) {
     this.paused ||= pause; this.queue.epoch++;
     return this.run(() => true, async check => { check(); if (await this.disk.exists(this.factDirectory)) { check(); await this.disk.rmdir(this.factDirectory, true); } });
   }
-  load(key: CacheKey, current: () => boolean): Promise<Map<string, FactRow> | undefined> {
+  private async partition(identity?: string) {
+    return identity ? `${this.factDirectory}/${await digest(identity)}` : this.factDirectory;
+  }
+  // Partitions and root operations share the SAME adapter/directory queue. A root
+  // clear cancels every child; retiring one identity does not cancel a sibling.
+  dropPartition(identity: string, current = () => true) {
     return this.run(current, async check => {
-      const path = `${this.factDirectory}/manifest.json`; check();
+      const dir = await this.partition(identity); check();
+      if (await this.disk.exists(dir)) { check(); await this.disk.rmdir(dir, true); }
+    });
+  }
+  private child(path: string, parent: string, pattern: RegExp) {
+    return path.startsWith(parent + '/') && pattern.test(path.slice(parent.length + 1));
+  }
+  // Churn while host I/O is stuck replaces one root-owned request, not the
+  // promise tail. Its inventory and execution deadline start at service time.
+  prunePartitions(inventory: () => string[] | undefined, current: () => boolean, onError?: (e: unknown) => void) {
+    const prune = async (check: () => void) => {
+      check(); if (!await this.disk.exists(this.factDirectory) || !this.disk.list || !this.disk.remove) return;
+      check(); const { folders, files } = await this.disk.list(this.factDirectory);
+      const ids = inventory(); if (!ids?.length) return;
+      const known = new Set(ids), keep = new Set<string>();
+      for (const id of known) { check(); keep.add(await this.partition(id)); }
+      // Hashing and each deletion yield. A fresh successful inventory must
+      // contain no unaccounted-for identity at the call to destructive I/O.
+      const safe = () => { check(); const live = inventory(); return live?.length && live.every(id => known.has(id)); };
+      for (const dir of folders) if (this.child(dir, this.factDirectory, /^[a-f0-9]{64}$/) && !keep.has(dir)) {
+        if (!safe()) return; await this.disk.rmdir(dir, true);
+      }
+      for (const file of files) if (this.child(file, this.factDirectory, /^(manifest\.json|\d+\.bin)$/)) {
+        if (!safe()) return; await this.disk.remove(file);
+      }
+    };
+    if (!onError) return this.run(current, prune);
+    const epoch = this.queue.epoch;
+    enqueue(this.queue, Symbol.for('graph-ng.prune-facts'), { run: async () => {
+      const until = performance.now() + this.deadlineMs;
+      await prune(() => { if (!current() || epoch !== this.queue.epoch || performance.now() >= until) throw Error('Saved facts reconciliation stopped'); }).catch(onError);
+    } });
+  }
+  load(key: CacheKey, current: () => boolean, identity?: string, budget = { bytes: 0, parts: 0 }): Promise<Map<string, FactRow> | undefined> {
+    return this.run(current, async check => {
+      const dir = await this.partition(identity);
+      const path = `${dir}/manifest.json`; check();
       if (!await this.disk.exists(path)) return;
       key = typeof key === 'string' ? key : await key(check); check();
       check(); const size = (await this.disk.stat(path))?.size;
       if (!size || size > FACT_CHUNK) invalid();
       check(); const m: Manifest = JSON.parse(await this.disk.read(path));
-      if (m.format !== FACT_FORMAT || m.key !== key) { check(); await this.disk.rmdir(this.factDirectory, true); check(); return; }
+      if (m.format !== FACT_FORMAT || m.key !== key) { check(); await this.disk.rmdir(dir, true); check(); return; }
       if (!Array.isArray(m.parts) || m.parts.length > 4096) invalid();
-      const rows = new Map<string, FactRow>(); let total = 0;
+      if (budget.parts + m.parts.length > 4096) return;
+      let bytesRead = 0;
+      const rows = new Map<string, FactRow>();
       for (let i = 0; i < m.parts.length; i++) {
         check(); const p = m.parts[i]!;
-        if (!Number.isSafeInteger(p.bytes) || p.bytes < 1 || p.bytes > FACT_CHUNK || typeof p.hash !== 'string' || !/^[a-f0-9]{64}$/.test(p.hash) || (total += p.bytes) > FACT_BYTES) invalid();
-        const file = `${this.factDirectory}/${i}.bin`;
+        if (!Number.isSafeInteger(p.bytes) || p.bytes < 1 || p.bytes > FACT_CHUNK || typeof p.hash !== 'string' || !/^[a-f0-9]{64}$/.test(p.hash) || (bytesRead += p.bytes) > FACT_BYTES) invalid();
+        if (budget.bytes + bytesRead > FACT_BYTES) return;
+        const file = `${dir}/${i}.bin`;
         if ((await this.disk.stat(file))?.size !== p.bytes) invalid();
         check(); const bytes = new Uint8Array(await this.disk.readBinary(file));
         if (bytes.length !== p.bytes || await sha(bytes) !== p.hash) invalid();
@@ -75,23 +140,38 @@ export class FactCache {
         }
         await this.yieldNow();
       }
-      check(); return rows;
+      check(); budget.parts += m.parts.length; budget.bytes += bytesRead; return rows;
     });
   }
-  save(key: CacheKey, rows: Iterable<FactRow>, current: () => boolean) {
+  save(key: CacheKey, rows: Iterable<FactRow>, current: () => boolean, commitCurrent = current, identity?: string) {
     return this.run(current, async check => {
+      const dir = await this.partition(identity);
       key = typeof key === 'string' ? key : await key(check); check();
       // Retire the old commit point before overwriting chunks; no partial generation can load.
-      check(); if (await this.disk.exists(this.factDirectory)) { check(); await this.disk.rmdir(this.factDirectory, true); }
-      const pieces = this.factDirectory.split('/');
+      check(); if (await this.disk.exists(dir)) { check(); await this.disk.rmdir(dir, true); }
+      const pieces = dir.split('/');
       for (let i = 1; i <= pieces.length; i++) { check(); const p = pieces.slice(0, i).join('/'); if (!await this.disk.exists(p)) { check(); await this.disk.mkdir(p); } }
       const parts: Part[] = []; let batch: string[] = [], size = 2, values = 0, total = 0, count = 0;
+      let siblings = 0;
+      if (identity) {
+        // Charge actual sibling chunks (even unfinished writes), within the same
+        // queue slot. Partitioning must not multiply the existing storage ceiling.
+        if (!this.disk.list) return invalid();
+        check(); const { folders } = await this.disk.list(this.factDirectory);
+        for (const other of folders) if (other !== dir && this.child(other, this.factDirectory, /^[a-f0-9]{64}$/)) {
+          check(); const { files } = await this.disk.list(other);
+          for (const file of files) if (this.child(file, other, /^\d+\.bin$/)) {
+            check(); const n = (await this.disk.stat(file))?.size;
+            if (n === undefined || !Number.isSafeInteger(n) || n < 0 || (total += n) > FACT_BYTES || ++siblings > 4096) invalid();
+          }
+        }
+      }
       const flush = async () => {
         check(); const bytes = new TextEncoder().encode(`[${batch.join(',')}]`);
-        if (bytes.length > FACT_CHUNK || (total += bytes.length) > FACT_BYTES || parts.length >= 4096) invalid();
+        if (bytes.length > FACT_CHUNK || (total += bytes.length) > FACT_BYTES || siblings + parts.length >= 4096) invalid();
         const hash = await sha(bytes); check();
         const part = parts.length;
-        await this.disk.writeBinary(`${this.factDirectory}/${part}.bin`, bytes.buffer);
+        await this.disk.writeBinary(`${dir}/${part}.bin`, bytes.buffer);
         parts.push({ bytes: bytes.length, hash }); batch = []; size = 2; values = 0; await this.yieldNow();
       };
       for (const row of rows) {
@@ -107,9 +187,13 @@ export class FactCache {
         if (batch.length === 256) await flush();
       }
       if (batch.length) await flush();
-      check(); await this.disk.write(`${this.factDirectory}/manifest.json`, JSON.stringify({ format: FACT_FORMAT, key, parts }));
-      check();
-    });
+      const commitCheck = () => { if (!commitCurrent()) throw Error('Saved facts cancelled'); check(); };
+      commitCheck(); await this.disk.write(`${dir}/manifest.json`, JSON.stringify({ format: FACT_FORMAT, key, parts }));
+      // An in-flight host write cannot be cancelled. Withdraw a stale commit
+      // while this queue still owns the directory, before any subsequent load.
+      if (!identity) { check(); return; } // Native publication retains its completed manifest.
+      try { commitCheck(); } catch (error) { await this.disk.rmdir(dir, true); throw error; }
+    }, identity);
   }
 }
 /** Whole-vault resolution namespace, not just declared/excluded Markdown rows.
