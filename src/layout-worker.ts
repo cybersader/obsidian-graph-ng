@@ -166,8 +166,11 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       if (revision !== projectionRevision || !positions) throw new Error('Projection generation changed');
       validateLayout(r.options);
       const start = performance.now();
-      const next = await solve({ count: projection.paths.length, source: projection.source, target: projection.target, offsets: projection.offsets, targets: projection.targets, up: projection.up, seed: Number.parseInt(meta.key.slice(0, 8), 16), initial: r.initial ?? positions.slice() }, r.options, revision, control.cancelled, r.layoutEngine, r.engineChoices);
-      preparedLayout = { ...next, options: r.options, revision, layoutEngine: r.layoutEngine, engineChoices: r.engineChoices };
+      // Resolve the engine once: an omitted override inherits the configured engine
+      // for solve, adoption and the saved-layout key alike.
+      const layoutEngine = r.layoutEngine ?? config.layoutEngine, engineChoices = r.engineChoices ?? config.engineChoices;
+      const next = await solve({ count: projection.paths.length, source: projection.source, target: projection.target, offsets: projection.offsets, targets: projection.targets, up: projection.up, seed: Number.parseInt(meta.key.slice(0, 8), 16), initial: r.initial ?? positions.slice() }, r.options, revision, control.cancelled, layoutEngine, engineChoices);
+      preparedLayout = { ...next, options: r.options, revision, layoutEngine, engineChoices };
       return { ...next, positions: next.positions.slice(), milliseconds: performance.now() - start, cached: false };
     }
     case 'adoptLayout': {

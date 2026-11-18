@@ -74,3 +74,23 @@ test('family off keeps historical bytes and saved positions; active family inval
     } finally { p.dispose(); }
   }
 });
+test('a recompute that omits the engine adopts under the configured Graphics key, never the Processor key', async () => {
+  const fixture = familyFixture(60), d = fixture.declaration, rows = fixture.rows;
+  const layout = { ...options, iterations: 20, convergenceThreshold: 1e20, convergenceIterations: 3 };
+  const pipeline = () => new WorkerPipeline(new Worker(new URL('../src/layout-worker.ts', import.meta.url).href) as unknown as Transport, () => 10000);
+  const keyFor = async (layoutEngine?: string, recompute = false) => {
+    const p = pipeline();
+    try {
+      await p.request(1, { kind: 'configure', config: { declaration: d, source: 'synthetic@1/local', groupLevel: 0, streamEveryIterations: 1, layout, ...(layoutEngine ? { layoutEngine } : {}) } as any });
+      await p.request(1, { kind: 'rows', reset: true, columns: packRows(rows, d) });
+      await p.request(1, { kind: 'project' });
+      await p.request<LayoutResult>(1, { kind: 'layout' });
+      if (!recompute) return (await p.request<BinaryGeneration>(1, { kind: 'encode' })).meta;
+      await p.request<LayoutResult>(1, { kind: 'recompute', options: layout });
+      return await p.request<any>(1, { kind: 'adoptLayout' });
+    } finally { p.dispose(); }
+  };
+  const processor = await keyFor('processor'), graphics = await keyFor('graphics'), adopted = await keyFor('graphics', true);
+  expect(graphics.key).not.toBe(processor.key);
+  expect(adopted.key).toBe(graphics.key); expect(adopted.layoutHash).toBe(graphics.layoutHash);
+});
