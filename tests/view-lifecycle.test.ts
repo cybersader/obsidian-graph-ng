@@ -419,15 +419,16 @@ test('a calm loading renderer holds its first overview; a busy progressive rende
 
 test('a cancelled draw releases its waiting snapshot before a restored renderer gets credit', async () => {
   const { LayoutPreview } = await import('../src/layout-preview');
-  const frames: Float32Array[] = [0, 1, 2].map(n => Float32Array.of(n, n)), recycled: Float32Array[] = [];
+  const frames = [0, 1, 2, 3].map(n => Float32Array.of(n, n)), recycled: Float32Array[] = [];
   let end!: (cancel: boolean) => void;
-  const renderer = { positions: frames[0]!, onLayoutPaint(fn: () => void) { return new Promise<void>(r => { end = cancel => { if (!cancel) fn(); r(); }; }); },
+  const renderer = { recovering: false, get usable() { return !this.recovering; }, positions: frames[0]!, onLayoutPaint(fn: () => void) { return new Promise<void>(r => { end = cancel => { if (!cancel) fn(); r(); }; }); },
     streamPositions(next: Float32Array) { const old = this.positions; this.positions = next; return old; }, dispose() {} };
   const preview = new LayoutPreview(async () => renderer, p => recycled.push(p), () => true, e => { throw e; });
   await preview.push(frames[0]!);
   const lost = preview.push(frames[1]!); end(true); await lost; expect(recycled).toEqual([frames[1]!]);
-  const restored = preview.push(frames[2]!); end(false); await restored;
-  expect(renderer.positions).toBe(frames[2]!); await preview.finish(); expect(new Set(recycled)).toEqual(new Set(frames));
+  renderer.recovering = true; await preview.push(frames[2]!); expect(recycled).toEqual([frames[1]!, frames[2]!]);
+  renderer.recovering = false; const restored = preview.push(frames[3]!); end(false); await restored;
+  expect(renderer.positions).toBe(frames[3]!); await preview.finish(); expect(new Set(recycled)).toEqual(new Set(frames));
 });
 
 test('returning to Notes replaces a preview disposed by Groups', async () => {
@@ -459,7 +460,7 @@ test('a renderer rejection after returning to Notes keeps demand and admits the 
   const visible = Uint8Array.of(1), demand: boolean[] = [], recycled: ArrayBuffer[] = [];
   let started!: () => void, finish!: (value: unknown) => void, reject!: (err: Error) => void, creates = 0;
   const waiting = new Promise<void>(r => { started = r; });
-  const pipeline: any = { previewWanted: (_: number, wanted: boolean) => demand.push(wanted), recycle: (b: ArrayBuffer) => recycled.push(b), async request(_: number, req: any) {
+  const pipeline: any = { previewWanted: (_: number, wanted: boolean, owner?: {wanted: boolean}) => { demand.push(wanted); if (owner) owner.wanted = wanted; }, recycle: (b: ArrayBuffer) => recycled.push(b), async request(_: number, req: any) {
     if (req.kind === 'configure') return { declarationHash: 'd', layoutHash: 'l', ingestHash: 'i' };
     if (req.kind === 'project') return { nodes: 1, edges: 0, quarantined: [], meta: { key: 'k' } };
     if (req.kind === 'detail') return { projection: {}, explore: { visible }, visible, colors: new Uint32Array(1), view: 1 };
@@ -471,7 +472,9 @@ test('a renderer rejection after returning to Notes keeps demand and admits the 
     gpu: { available: true, reason: 'Synthetic renderer' }, members: new Map(), contributions: new Map(), startupTrace: [], cacheTrace: [], contributionPage: { clear() {}, suspend() {}, update() {}, fail() {} },
     contentEl: { dataset: {} }, status: new ControlElement(), statusSummary: new ControlElement(), stage: new ControlElement(), panel: new ControlElement(), renderView: () => ({}) });
   const create = DetailRenderer.create;
-  DetailRenderer.create = async (_stage, _projection, positions) => {
+  const timeouts: (() => void)[] = [];
+  DetailRenderer.create = async (_stage, _projection, positions, _bits, _settings, _node, _zoom, _colors, _current, _software, unavailable) => {
+    timeouts.push(unavailable!);
     if (++creates === 1) await new Promise<never>((_, r) => { reject = r; });
     return { positions, layoutPaint: Promise.resolve(), onLayoutPaint(this: { layoutPaint: Promise<void> }, fn: () => void) { fn(); return this.layoutPaint; }, streamPositions(next: Float32Array) { const old = this.positions; this.positions = next; return old; }, dispose() {} } as any;
   };
@@ -487,6 +490,14 @@ test('a renderer rejection after returning to Notes keeps demand and admits the 
     view.renderer.layoutPaint = new Promise<void>(resolve => { releaseDraw = resolve; });
     const drawing = push(new Float32Array(2)).then(() => { credited = true; });
     await Promise.resolve(); expect(credited).toBe(false); releaseDraw(); await drawing; expect(credited).toBe(true);
+    let groups = 0; view.showGroups = () => { groups++; view.renderRevision++; };
+    view.renderer.calmLayout = true; view.renderer.onPreviewMotion();
+    view.renderer.calmLayout = false; view.renderer.onPreviewMotion();
+    view.renderer.calmLayout = true; view.renderer.onPreviewMotion();
+    expect(demand).toEqual([false, true, false, true, false]);
+    timeouts[0]!(); expect(groups).toBe(0);
+    timeouts[1]!(); expect(groups).toBe(1); expect(view.detailFallback).toContain('Groups');
+    timeouts[1]!(); expect(groups).toBe(1);
   } finally {
     DetailRenderer.create = create; view.showDetails = async () => {}; finish({ positions: new Float32Array(2), cached: false, milliseconds: 1 }); await work;
   }

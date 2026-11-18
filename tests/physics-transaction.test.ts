@@ -1,3 +1,4 @@
+import { performanceRenderer as reviewRenderer } from './support/performance-renderer';
 import { test, expect, afterEach } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
@@ -2748,4 +2749,87 @@ for (const failure of ['adoptLayout', 'encode', 'cache']) test(`post-commit ${fa
   f.plugin.cache = async () => { throw Error('cache unavailable'); };
   await f.view[compiled('applyLayout')](values); expect(f.writes.length).toBe(1); expect(f.view.positions).toBe(f.next);
   expect(f.view.contentEl.dataset.cacheError).toContain('cache unavailable'); expect(f.view.statusText).not.toContain('failed');
+});
+
+
+
+test('review: live OS preference controls the active worker preview subscription both ways', async () => {
+  const f = await fixture();
+  const h = reviewRenderer(false, { reduced: true });
+  const r = await h.Renderer.create(h.stage, f.view.projection, f.positions, f.view.visible, f.plugin.settings, () => {}, () => {}, new Uint32Array(3), () => true, true);
+  f.view.detailRenderer = f.view.renderer = r;
+  const { WorkerPipeline } = await import('../src/pipeline');
+  const entered = deferred(), sent: any[] = [];
+  const transport = { onmessage: null as any, onerror: null, terminate() {}, postMessage(m: any) { sent.push(m); if (m.kind === 'recompute') entered.resolve(); } };
+  f.plugin.pipeline = new WorkerPipeline(transport, () => 10000);
+  const work = f.view[compiled('applyLayout')](values);
+  try {
+    await entered.promise;
+    transport.onmessage({ data: { kind: 'positions', revision: 7, iteration: 1, total: 100, positions: f.next.slice() } });
+    expect(sent.filter(m => m.kind === 'preview-wanted').map(m => m.wanted)).toEqual([false]);
+    h.reduce(false); h.frame(); await Promise.resolve();
+    expect(r[h.key('calmLayout')]).toBe(false);
+    expect(sent.filter(m => m.kind === 'preview-wanted').map(m => m.wanted)).toEqual([false, true]);
+    h.reduce(true);
+    expect(sent.filter(m => m.kind === 'preview-wanted').map(m => m.wanted)).toEqual([false, true, false]);
+  } finally {
+    transport.onmessage({ data: { id: 1, revision: 7, result: { positions: f.next, milliseconds: 1, cached: false } } });
+    await work; h.dispose(r);
+  }
+});
+
+test('review: first create survives context loss in the yielded VAO upload and accepts restoration', async () => {
+  const h = reviewRenderer(true), k = h.key, s = defaults('fixture'), p = projection();
+  const proto = h.Renderer.prototype, integer = proto[k('integer')];
+  let owner: any, restore: (() => void) | undefined;
+  proto[k('integer')] = function (...args: any[]) {
+    if (!owner) {
+      owner = this;
+      queueMicrotask(() => { owner[k('contextLost')]({ preventDefault() {} }); });
+      restore = () => owner[k('contextRestored')]();
+    }
+    return integer.apply(this, args);
+  };
+  try {
+    // Park the lost context until create's upload continuation has run. The
+    // contextRestored event is still comfortably inside the restore deadline.
+    const opening = h.Renderer.create(h.stage, p, Float32Array.of(0, 0, 1, 2, 3, 4), new Uint8Array(3).fill(1), s, () => {}, () => {}, new Uint32Array(3));
+    const result = await opening.then((r: any) => r, (e: Error) => e.message);
+    expect(owner.canvas.dataset.context).toBe('lost'); restore!();
+    for (let i = 0; i < 100 && owner.canvas.dataset.context === 'lost'; i++) await new Promise(r => setTimeout(r, 2));
+    expect({ opened: result === owner, context: owner.canvas.dataset.context }).toEqual({ opened: true, context: 'restored' });
+  } finally { proto[k('integer')] = integer; h.dispose(owner); }
+});
+
+test('review: a second context loss observed by polling does not consume the restore timeout', async () => {
+  const h = reviewRenderer(true), k = h.key, s = defaults('fixture'); let unavailable = 0;
+  const r = await h.Renderer.create(h.stage, projection(), Float32Array.of(0, 0, 1, 2, 3, 4), new Uint8Array(3).fill(1), s, () => {}, () => {}, new Uint32Array(3), () => true, false, () => { unavailable++; });
+  try {
+    const gl = r.gl; let driverLost = false;
+    r[k('contextLost')]({ preventDefault() {} });
+    gl.isContextLost = () => driverLost;
+    gl.linkProgram = () => { driverLost = true; };
+    r[k('contextRestored')](); // new batch; driver loses this context before its DOM event runs
+    await new Promise(resolve => setTimeout(resolve, 30));
+    expect({ unavailable, failed: r.canvas.dataset.context === 'failed' }).toEqual({ unavailable: 0, failed: false });
+    s.contextRestoreTimeoutMs = 10;
+    r[k('contextLost')]({ preventDefault() {} });
+    await new Promise(resolve => setTimeout(resolve, 30));
+    expect({ unavailable, context: r.canvas.dataset.context }).toEqual({ unavailable: 1, context: 'failed' });
+  } finally { h.dispose(r); }
+});
+
+for (const gpu of [false, true]) test(`review: handoff retains zoom near the limit after extent growth (WebGL=${gpu})`, async () => {
+  const h = reviewRenderer(gpu), k = h.key, s = defaults('fixture');
+  const create = (extent: number, loading: boolean) => h.Renderer.create(h.stage, projection(), Float32Array.of(0, 0, 10, 10, extent, extent), new Uint8Array(3).fill(1), s, () => {}, () => {}, new Uint32Array(3), () => true, !gpu, () => {}, { loading });
+  const preview = await create(100, true), final = await create(200, false);
+  try {
+    preview.controls()[k('zoomAt')](.001, 0, 0);
+    expect(preview.camera.ratio).toBe(s.cameraMinRatio);
+    expect(final[k('adoptCamera')](preview)).toBe(true);
+    expect(final[k('scale')]).toBeCloseTo(preview[k('scale')], 8);
+    expect([final[k('centerX')], final[k('centerY')]]).toEqual([preview[k('centerX')], preview[k('centerY')]]);
+    final.controls()[k('panBy')](10, 10); final.controls()[k('zoomAt')](1, 0, 0);
+    expect(final[k('scale')]).toBeCloseTo(preview[k('scale')], 8);
+  } finally { h.dispose(final); h.dispose(preview); }
 });

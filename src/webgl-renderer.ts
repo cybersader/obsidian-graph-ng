@@ -339,7 +339,8 @@ export class DetailRenderer {
   private motionMedia = matchMedia('(prefers-reduced-motion: reduce)');
   get calmLayout() { return this.settings.visuals.motion !== 'full' || this.motionMedia.matches; }
   private still() { return devicePerformance.fast(this.settings.performance) || this.calmLayout; }
-  private motionChanged = () => this.refresh();
+  onPreviewMotion?: () => void;
+  private motionChanged = () => { this.onPreviewMotion?.(); this.refresh(); };
   private programs: Program[] = [];
   private vaos: WebGLVertexArrayObject[] = [];
   private buffers: WebGLBuffer[] = [];
@@ -376,6 +377,7 @@ export class DetailRenderer {
   private fit = 1;
   /** Camera ratio of the last fit-all framing; effects scale relative to it. */
   private homeRatio = 1;
+  private handoffRatio?: number;
   private edges: ReturnType<typeof incidentEdges>;
   private colors: Uint32Array;
   private positionWidth = 1;
@@ -540,7 +542,9 @@ export class DetailRenderer {
     try {
       renderer = new DetailRenderer(container, p, positions, visible, settings, onNode, onZoomOut, colors, software, onUnavailable, view);
       renderer.canvas.style.visibility = 'hidden';
-      await renderer.initialize();
+      const slots = renderer.programs;
+      // A lost or replaced setup does not own the renderer's recovery listener.
+      try { await renderer.initialize(); } catch (error) { if (renderer.disposed || renderer.setupCurrent(slots)) throw error; }
       if (!current()) throw new Error('Renderer superseded');
       await renderer.prepareLabels(current);
       if (!current()) throw new Error('Renderer superseded');
@@ -689,7 +693,9 @@ export class DetailRenderer {
     if (!previous || previous.followLayout) return false;
     this.followLayout = false;
     const f = this.cameraFrame;
-    this.setCamera((previous.centerX - f.minX) / f.width, (previous.centerY - f.minY) / f.height, previous.camera.ratio * this.fit / previous.fit);
+    // Both limits must admit the held world scale, even when the new extent changes sharply.
+    this.handoffRatio = this.fit / previous.scale;
+    this.setCamera((previous.centerX - f.minX) / f.width, (previous.centerY - f.minY) / f.height, this.handoffRatio);
     return true;
   }
   /** Keep pan/zoom and the last layout, suppress stale labels and picking until adoption.
@@ -852,12 +858,13 @@ export class DetailRenderer {
   private integer(location: number, data: Uint32Array | Uint8Array) { const gl = this.gl!, b = this.buffer(data); gl.enableVertexAttribArray(location); gl.vertexAttribIPointer(location, 1, data instanceof Uint8Array ? gl.UNSIGNED_BYTE : gl.UNSIGNED_INT, 0, 0); gl.vertexAttribDivisor(location, 1); return b; }
   private texture(unit: number) { const gl = this.gl!, t = gl.createTexture()!; this.textures[unit] = t; this.textureUnit(unit); this.textureFilter(gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE); }
   private bytes(unit: number, data: Uint8Array) { const gl = this.textureUnit(unit); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, this.positionWidth, this.positionHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, data); }
+  private setupCurrent(slots: Program[]) { return slots === this.programs && !this.disposed && !this.lost && !this.gl?.isContextLost(); }
   private async initialize() {
     if (this.disposed || this.lost) return;
     const gl = this.gl;
     if (!gl) { this.ready = true; this.refresh(); return; }
     const slots = this.programs, staged: Program[] = [];
-    const current = () => slots === this.programs && !this.disposed && !this.lost && !gl.isContextLost();
+    const current = () => this.setupCurrent(slots);
     let error: unknown;
     await Promise.all(([[edgeVertex, solidFragment], [nodeVertex, nodeFragment], [labelVertex, labelFragment], [discVertex, discFragment], [densityVertex, densityFragment]] as const).map(async ([v, f], i) => {
       const start = performance.now();
@@ -1078,7 +1085,7 @@ export class DetailRenderer {
   private get centerX() { return this.cameraFrame.minX + this.camera.x * this.cameraFrame.width; }
   private get centerY() { return this.cameraFrame.minY + this.camera.y * this.cameraFrame.height; }
   private layoutRatio(grid = this.grid) { return Math.max(1, grid.width * this.fit / this.width, grid.height * this.fit / this.height); }
-  private clampRatio(ratio: number) { return Math.max(this.settings.cameraMinRatio, Math.min(this.settings.cameraMaxRatio * this.layoutRatio(), ratio)); }
+  private clampRatio(ratio: number) { return Math.max(Math.min(this.settings.cameraMinRatio, this.handoffRatio ?? Infinity), Math.min(Math.max(this.settings.cameraMaxRatio * this.layoutRatio(), this.handoffRatio ?? 0), ratio)); }
   setCamera(x: number, y: number, ratio: number) {
     if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(ratio)) throw new Error('CAMERA_NONFINITE');
     this.flight = undefined; this.camera.x = x; this.camera.y = y; this.camera.ratio = this.clampRatio(ratio); this.refresh();
@@ -1616,6 +1623,7 @@ export class DetailRenderer {
     const at = this.edgeAnchor === anchor && this.selectedEdges.length ? [...stops.keys()].indexOf(other(this.selectedEdges[0]!)) : -1;
     this.selectEdge(list[at < 0 ? (step > 0 ? 0 : list.length - 1) : (at + step + list.length) % list.length]!, anchor); return true;
   }
+  get recovering() { return !this.disposed && !this.usable; }
   get usable() { return this.ready && !this.disposed && !this.lost && !this.gl?.isContextLost(); }
   /** A prepared renderer allocates under existing limits but schedules no drawing. */
   refresh() {
@@ -2041,7 +2049,7 @@ export class DetailRenderer {
       panBy: (dx, dy) => this.panBy(dx, dy),
       zoomAt: (factor, x, y) => {
         // Zooming out clamps a little past the whole graph (and Fit all); it never switches views.
-        this.followLayout = false; this.flight = undefined; const before = this.scale, step = zoomStep(this.camera.ratio, factor, this.settings.cameraMinRatio, this.clampRatio(Math.max(this.homeRatio, this.layoutRatio()) * ZOOM_OUT_LIMIT));
+        this.followLayout = false; this.flight = undefined; const before = this.scale, step = zoomStep(this.camera.ratio, factor, this.clampRatio(0), Math.max(this.handoffRatio ?? 0, this.clampRatio(Math.max(this.homeRatio, this.layoutRatio()) * ZOOM_OUT_LIMIT)));
         this.camera.ratio = step.ratio; if (step.clamped) this.limitChip.hit(performance.now());
         this.camera.x += (x / before - x / this.scale) / this.cameraFrame.width; this.camera.y += (y / before - y / this.scale) / this.cameraFrame.height; this.refresh();
       },
@@ -2068,8 +2076,8 @@ export class DetailRenderer {
   private contextRestored = () => {
     if (this.disposed) return; clearTimeout(this.restoreTimer); this.restoreTimer = undefined; this.canvas.style.cursor = 'grab';
     this.lost = false; this.densityBuffer = null; this.densitySize = [0, 0]; this.densityReady = false; this.programs = []; this.vaos = []; this.buffers = []; this.textures = []; this.labelBuffers = []; this.labelVaos = []; this.discBuffers = [null, null];
-    const slots = this.programs, current = () => !this.disposed && !this.lost && slots === this.programs;
-    void this.initialize().then(() => { if (current()) this.canvas.dataset.context = 'restored'; }).catch(() => { if (current()) { this.canvas.dataset.context = 'failed'; this.onUnavailable(); } });
+    const slots = this.programs, current = () => this.setupCurrent(slots);
+    void this.initialize().then(() => { if (current()) { this.canvas.dataset.context = 'restored'; this.onPreviewMotion?.(); } }).catch(() => { if (current()) { this.canvas.dataset.context = 'failed'; this.onUnavailable(); } });
   };
   dispose() { clearTimeout(this.sizingTimer);
     if (this.disposed) return; this.disposed = true; this.finishPaint(); this.labelsRevision++; clearTimeout(this.restoreTimer); this.restoreTimer = undefined; cancelAnimationFrame(this.frameId); clearTimeout(this.frameTimer); this.frameTimer = undefined; this.observer.disconnect(); this.panelObserver?.disconnect(); this.media.removeEventListener('change', this.refreshTheme); this.motionMedia.removeEventListener('change', this.motionChanged);

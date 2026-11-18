@@ -27,7 +27,7 @@ import { CanvasLimit, canvasDetailEdges } from './render-data';
 import { carrierIndexer, indexCarriers, type GroupProjection } from './core/group-projection';
 import { BinaryLayoutStore, type BinaryGeneration } from './core/binary-layout';
 import { yieldTask, sliced } from './core/scheduler';
-import { WorkerPipeline, layoutProducer, currentDetailGeneration, type ProjectResult, type DetailResult, type LayoutResult, type ViewResult } from './pipeline';
+import { WorkerPipeline, layoutProducer, currentDetailGeneration, type PreviewDemand, type ProjectResult, type DetailResult, type LayoutResult, type ViewResult } from './pipeline';
 import { groupPages, page } from './core/group-page';
 import { ContributionPage, type ContributionContext } from './contribution-page';
 import { accounting, pendingText, layoutProgress, num, plural, renderInformation, renderReadout, sum, type InformationReport } from './graph-information';
@@ -774,34 +774,47 @@ export class GraphView extends ItemView {
     }
     return this.plugin.serialize(() => run(values));
   }
+  private watchPreview(renderer: DetailRenderer, revision: number, demand: PreviewDemand, current: () => boolean) {
+    renderer.onPreviewMotion = () => {
+      const wanted = !renderer.calmLayout;
+      if (current() && renderer.usable !== false && wanted !== demand.wanted) this.plugin.pipeline.previewWanted?.(revision, wanted, demand);
+    };
+    renderer.onPreviewMotion();
+  }
   private async arrangeNotes(revision: number, current: () => boolean, result: ProjectResult, report: InformationReport, complete: boolean, coverage: { indexed: number; listed: number }, ingestMs: number, projectMs: number, start: number) {
     const settings = this.plugin.settings;
     let preview: LayoutPreview | undefined;
     try {
       const recycle = (p: Float32Array) => this.plugin.pipeline.recycle(p.buffer as ArrayBuffer);
+      const from = (devicePerformance.fast(settings.performance) ? 1 : 2) * settings.streamEveryIterations;
+      const demand = { from, wanted: this.presentation === 'nodes' };
+      const fallback = (error: unknown) => {
+        this.plugin.pipeline.previewWanted?.(revision, false, demand);
+        this.detailFallback ||= `Layout preview unavailable: ${String(error)}. Showing Groups.`;
+        this.showGroups(true); this.statusText = this.statusText;
+      };
       preview = new LayoutPreview(async (positions, active) => {
         if (this.gpu.reason === 'Not probed') this.gpu = gpuStatus();
         const bits = this.detailVisible()!;
         if (!this.admitDetail(bits)) throw new Error(this.detailFallback);
         const previous = this.renderer instanceof DetailRenderer ? this.renderer : undefined;
         this.renderer?.dispose(); this.stage.empty(); this.contentEl.dataset.mode = 'nodes-building';
-        const renderer = await DetailRenderer.create(this.stage, this.projection!, positions, bits, settings, () => {}, () => {}, this.colors!, active, !this.gpu.available, () => {}, { loading: true, typeHidden: this.renderView().typeHidden });
+        const renderer = await DetailRenderer.create(this.stage, this.projection!, positions, bits, settings, () => {}, () => {}, this.colors!, active, !this.gpu.available, () => {
+          if (!active()) return;
+          this.gpu = { available: false, reason: 'WebGL context could not be restored' };
+          fallback(this.gpu.reason);
+        }, { loading: true, typeHidden: this.renderView().typeHidden });
         if (active()) {
           if (previous) renderer.adoptCamera(previous);
           this.renderer = renderer; this.layoutLabel(true);
-          if (renderer.calmLayout) this.plugin.pipeline.previewWanted?.(revision, false);
+          this.watchPreview(renderer, revision, demand, active);
         }
         return renderer;
-      }, recycle, () => current() && this.presentation === 'nodes', error => {
-        this.plugin.pipeline.previewWanted?.(revision, false);
-        this.detailFallback ||= `Layout preview unavailable: ${String(error)}. Showing Groups.`;
-        this.showGroups(true); this.statusText = this.statusText;
-      }, () => {
+      }, recycle, () => current() && this.presentation === 'nodes', fallback, () => {
         const attempt = ++this.renderRevision;
         return () => attempt === this.renderRevision;
       });
       this.plugin.pipeline.onEngine = (engineStatus, total) => { if (current()) { report.engineStatus = engineStatus; if (!report.progress) this.passSteps(0, total); this.plugin.recordLayoutEngine?.(engineStatus, true); } };
-      const from = (devicePerformance.fast(settings.performance) ? 1 : 2) * settings.streamEveryIterations;
       this.plugin.pipeline.onProgress = (step, total) => { if (current()) this.passSteps(step, total); };
       this.plugin.pipeline.onPositions = event => {
         if (event.revision === revision && current()) {
@@ -814,7 +827,7 @@ export class GraphView extends ItemView {
       };
       let layout: LayoutResult;
       this.layoutControl(true);
-      try { layout = await this.plugin.pipeline.request<LayoutResult>(revision, { kind: 'layout', preview: { from, wanted: this.presentation === 'nodes' } }); }
+      try { layout = await this.plugin.pipeline.request<LayoutResult>(revision, { kind: 'layout', preview: demand }); }
       catch (error) { if (String(error).includes('Saved identities')) { await this.plugin.store.quarantine(result.meta); } throw error; }
       finally { this.plugin.pipeline.onProgress = undefined; this.plugin.pipeline.onPositions = undefined; this.plugin.pipeline.onEngine = undefined; this.layoutControl(false); }
       if (!current()) return;
@@ -1074,12 +1087,13 @@ export class GraphView extends ItemView {
       const stopped = this.layoutStopped, previousProgress = this.plugin.pipeline.onProgress, previousStream = this.plugin.pipeline.onPositions, previousEngine = this.plugin.pipeline.onEngine;
       const ready = () => current() && (!token || token.current());
       const recycle = (p: Float32Array) => this.plugin.pipeline.recycle(p.buffer as ArrayBuffer);
+      const demand = { from: 1, wanted: !!old };
       const paint = (p: Float32Array) => {
         if (!current() || !old || streamError || (painted && old.calmLayout)) { recycle(p); return; }
         try {
           const previous = old.streamPositions(p, painted ? 'drawing' : true);
           if (painted) recycle(previous); // the first replaced array belongs to rollback
-          else { painted = true; this.layoutLabel(true); if (old.calmLayout) this.plugin.pipeline.previewWanted?.(revision, false); }
+          else { painted = true; this.layoutLabel(true); this.watchPreview(old, revision, demand, current); }
         } catch (e) { if (old.positions !== p) recycle(p); streamError = e; return false; }
       };
       const frames = new FrameCadence(paint, recycle);
@@ -1096,7 +1110,7 @@ export class GraphView extends ItemView {
           if (event.iteration > 0 && finish && old) return !painted || old.calmLayout ? paint(event.positions) : frames.push(event.positions, old);
           recycle(event.positions);
         };
-        const result = await this.plugin.pipeline.request<LayoutResult>(revision, { kind: 'recompute', preview: { from: 1, wanted: !!finish }, options: next.layout, layoutEngine: next.layoutEngine, engineChoices: this.plugin.layoutChoices?.(), initial: this.positions!.slice() });
+        const result = await this.plugin.pipeline.request<LayoutResult>(revision, { kind: 'recompute', preview: demand, options: next.layout, layoutEngine: next.layoutEngine, engineChoices: this.plugin.layoutChoices?.(), initial: this.positions!.slice() });
         this.plugin.pipeline.onProgress = previousProgress; this.plugin.pipeline.onPositions = previousStream; this.plugin.pipeline.onEngine = previousEngine;
         frames.clear(); this.plugin.recordLayoutEngine?.(result.engineStatus);
         requireLayout(current); if (streamError) throw streamError;
@@ -1119,6 +1133,7 @@ export class GraphView extends ItemView {
           }
         } catch (error) { this.contentEl.dataset.cacheError = String(error); }
       } finally {
+        if (old && painted) old.onPreviewMotion = undefined;
         frames.clear(); if (!committed) this.layoutStopped = stopped; this.layoutControl(false); this.plugin.pipeline.onProgress = previousProgress; this.plugin.pipeline.onPositions = previousStream; this.plugin.pipeline.onEngine = previousEngine; token?.discard();
         try { finish?.(committed); }
         finally { if (working) { this.layoutWorking = false; this.statusText = !committed ? LAYOUT_FAILED : this.provisional ? pendingText(this.report) : this.idleLayoutText; } }

@@ -5,7 +5,8 @@ The owner-approved bounded download ceilings for this UI pass are **480,000 raw 
 ## Unreleased: calmer layout previews
 
 - Reduced motion, Off and the system reduced-motion preference hold one progressed Notes overview until the result replaces it. Full motion keeps the newest waiting picture when drawing falls behind. Progress and Stop stay live.
-- WebGL submits the five Notes programs together on the renderer context. Opening Groups does not start shader setup.
+- Changing the system motion preference during a solve pauses or resumes previews. The final drawing keeps the user's world-space zoom, even at the closest preview zoom.
+- WebGL submits the five Notes programs together on the renderer context. A context lost during upload can still recover. If the loading overview cannot recover by its deadline, Groups remains visible while layout finishes. Opening Groups does not start shader setup.
 
 ## Unreleased: stop when the layout looks ready
 

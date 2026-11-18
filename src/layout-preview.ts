@@ -1,6 +1,7 @@
 /** Loading uses the ordinary renderer and limits, with one held frame and at most one waiting frame. */
 interface PreviewRenderer {
   positions: Float32Array;
+  readonly recovering?: boolean;
   readonly usable?: boolean;
   readonly calmLayout?: boolean;
   onLayoutPaint(update: () => void): void | Promise<void>;
@@ -38,6 +39,7 @@ export class LayoutPreview {
   constructor(private create: (positions: Float32Array, current: () => boolean) => Promise<PreviewRenderer>, private recycle: (positions: Float32Array) => void, private current: () => boolean, private failed: (error: unknown) => void, private beginAttempt?: () => () => boolean) {}
   push(positions: Float32Array): void | false | Promise<void> {
     if (this.closed || !this.current()) { this.recycle(positions); return this.closed ? false : undefined; }
+    if (this.renderer?.recovering) { this.recycle(positions); return; }
     if (this.renderer?.usable === false) { this.frames.clear(); this.recycle(this.renderer.positions); this.renderer = undefined; }
     if (this.renderer?.calmLayout) { this.recycle(positions); return; }
     if (this.renderer) return this.frames.push(positions, this.renderer);

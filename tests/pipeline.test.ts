@@ -237,6 +237,7 @@ test('Groups withdraws recompute demand and cannot resurrect its obsolete render
     p.previewWanted(8,false); expect(fake.sent).toHaveLength(1);
     p.previewWanted(7,false); expect(fake.sent.at(-1)).toEqual({ kind: 'preview-wanted', id: 1, wanted: false });
     p.previewWanted(7,true); expect(fake.sent).toHaveLength(2);
+    p.previewWanted(7, true, { from: 1, wanted: false }); expect(fake.sent).toHaveLength(2); // same revision, different request
     fake.emit({ id: 1, revision: 7, result: 'final' }); expect(await work).toBe('final');
   } finally { p.dispose(); }
 });
