@@ -179,54 +179,87 @@ export function offscreenPips(ids: ArrayLike<number>, xy: ArrayLike<number>, w: 
   return pips.filter((p): p is Pip => !!p);
 }
 export const PIP_DIRECTIONS = ['right', 'lower right', 'below', 'lower left', 'left', 'upper left', 'above', 'upper right'] as const;
-/** Packed visible ids by spatial cell. A viewport intersects at most 128 row spans;
- * sample equally spaced ranks across those spans without walking crowded cells. */
+/** Exact 2-D rank sampling: order by class and x; each aligned power-of-two x span
+ * also has a y order. Two binary searches on y trim a span even at a crowded boundary.
+ * Interactive preparation costs O(N log N) time/ids. Loading previews keep just the ids. */
 export class CanvasViewport {
-  private side: number;
-  private offsets: Uint32Array;
   readonly ids: Uint32Array;
-  constructor(private bounds: PositionBounds, visible: Uint8Array, preview: boolean) {
-    const side = this.side = preview ? 1 : Math.min(128, Math.ceil(Math.sqrt(visible.length / 8)));
-    const offsets = this.offsets = new Uint32Array(side * side + 1), p = bounds.positions;
-    const cell = (i: number) => this.bin(p[2 * i]!, false) + side * this.bin(p[2 * i + 1]!, true);
-    for (let i = 0; i < visible.length; i++) if (visible[i]) offsets[cell(i) + 1]!++;
-    for (let j = 1; j < offsets.length; j++) offsets[j]! += offsets[j - 1]!;
-    const cursor = offsets.slice(); this.ids = new Uint32Array(offsets[offsets.length - 1]!);
-    for (let i = 0; i < visible.length; i++) if (visible[i]) this.ids[cursor[cell(i)]!++] = i;
+  private levels: Uint32Array[] = [];
+  private offsets = [0, 0, 0, 0];
+  constructor(private bounds: PositionBounds, visible: Uint8Array, preview: boolean, kind = (_n: number) => 0) {
+    // Ordinary, foldable relationship, retained relationship. Disabled geometry is absent.
+    const p = bounds.positions, at = this.offsets;
+    for (let i = 0; i < visible.length; i++) if (visible[i]) { const k = kind(i); if (k >= 0) at[k + 1]!++; }
+    for (let k = 1; k < at.length; k++) at[k]! += at[k - 1]!;
+    const ids = this.ids = new Uint32Array(at[3]!), cursor = at.slice();
+    for (let i = 0; i < visible.length; i++) if (visible[i]) { const k = kind(i); if (k >= 0) ids[cursor[k]!++] = i; }
+    if (preview) return;
+    for (let k = 0; k < 3; k++) ids.subarray(at[k], at[k + 1]).sort((a, b) => p[2 * a]! - p[2 * b]! || a - b);
+    this.levels.push(ids);
+    for (let width = 1; width < ids.length; width *= 2) {
+      const prev = this.levels[this.levels.length - 1]!, next = new Uint32Array(ids.length);
+      for (let l = 0; l < ids.length; l += 2 * width) {
+        const mid = Math.min(l + width, ids.length), end = Math.min(mid + width, ids.length);
+        let a = l, b = mid;
+        for (let j = l; j < end; j++) next[j] = b === end || a < mid && p[2 * prev[a]! + 1]! <= p[2 * prev[b]! + 1]! ? prev[a++]! : prev[b++]!;
+      }
+      this.levels.push(next);
+    }
   }
-  private bin(v: number, y: boolean) {
-    const b = this.bounds; return Math.max(0, Math.min(this.side - 1, Math.floor(this.side * (v - (y ? b.minY : b.minX)) / (y ? b.height : b.width))));
-  }
-  sample(x: number, y: number, w: number, h: number, cap: number, add: (n: number) => void) {
-    const left = this.bin(x - w, false), right = this.bin(x + w, false) + 1, first = this.bin(y - h, true), last = this.bin(y + h, true), a = this.offsets;
+  sample(x: number, y: number, w: number, h: number, cap: number, add: (n: number) => void, classes = 7) {
+    const p = this.bounds.positions, spans: [Uint32Array, number, number][] = [];
     let count = 0;
-    for (let row = first; row <= last; row++) count += a[row * this.side + right]! - a[row * this.side + left]!;
-    let i = 0, before = 0; const take = Math.min(count, cap);
-    for (let row = first; row <= last && i < take; row++) {
-      const start = a[row * this.side + left]!, end = before + a[row * this.side + right]! - start;
-      while (i < take && Math.floor((i + .5) * count / take) < end) add(this.ids[start + Math.floor((i++ + .5) * count / take) - before]!);
-      before = end;
+    const bound = (ids: Uint32Array, l: number, r: number, axis: number, value: number, upper: boolean) => {
+      while (l < r) {
+        const m = Math.floor((l + r) / 2), v = p[2 * ids[m]! + axis]!;
+        if (v < value || upper && v === value) l = m + 1; else r = m;
+      }
+      return l;
+    };
+    const slice = (l: number, r: number) => {
+      const end = bound(this.ids, l, r, 0, x + w, true);
+      l = bound(this.ids, l, end, 0, x - w, false);
+      while (l < end) {
+        // Largest aligned dyadic span starting here that ends inside the x interval.
+        const aligned = l ? 31 - Math.clz32(l & -l) : 31;
+        const depth = Math.min(aligned, 31 - Math.clz32(end - l)), width = 2 ** depth, ids = this.levels[depth]!;
+        const a = bound(ids, l, l + width, 1, y - h, false), b = bound(ids, a, l + width, 1, y + h, true);
+        if (b > a) { spans.push([ids, a, b]); count += b - a; }
+        l += width;
+      }
+    };
+    for (let k = 0; k < 3; k++) if (classes & 1 << k) {
+      const a = this.offsets[k]!, b = this.offsets[k + 1]!;
+      if (this.levels.length) slice(a, b); else { count += b - a; spans.push([this.ids, a, b]); }
+    }
+    const take = Math.min(count, cap); let before = 0, i = 0;
+    for (const [ids, a, b] of spans) {
+      while (i < take && Math.floor((i + .5) * count / take) < before + b - a) add(ids[a + Math.floor((i++ + .5) * count / take) - before]!);
+      before += b - a;
     }
   }
 }
-/** Select the lowest ranked visible rows on view/focus changes. The packed rank already
- * groups relationship legs. A tie crossing the budget is skipped as a unit, never split.
- * Four byte histograms avoid sorting or allocating one more full edge column. */
-export function canvasDetailEdges(total: number, eligible: number, cap: number, on: (e: number) => boolean, rank: (e: number) => number) {
-  const out = new Uint32Array(Math.min(eligible, cap)); let limit = Infinity;
-  if (eligible > cap) {
-    const bins = new Uint32Array(256); let prefix = 0, left = cap;
-    for (const shift of [24, 16, 8, 0]) {
-      bins.fill(0);
-      for (let e = 0; e < total; e++) if (on(e)) { const k = rank(e) >>> shift; if ((k >>> 8) === prefix) bins[k & 255]!++; }
-      let b = 0; while (bins[b]! <= left) left -= bins[b++]!;
-      prefix = prefix * 256 + b;
+/** Prepare whole drawable units on view/selection changes. Equal visual ranks need not
+ * mean equal ownership. Negative unit keys identify shared geometry; other rows are independent.
+ * Priority is the strongest interaction on ANY row in the unit. */
+export function canvasDetailEdges(total: number, eligible: number, cap: number, on: (e: number) => boolean, rank: (e: number) => number, unit = (e: number) => e, priority = (_e: number) => 0) {
+  const out = new Uint32Array(Math.min(eligible, cap)); let size = 0;
+  if (!out.length) return out;
+  if (eligible <= cap) { for (let e = 0; e < total; e++) if (on(e)) out[size++] = e; }
+  else {
+    const rows = new Uint32Array(total), heads = new Map<number, number>(), units: number[] = [];
+    const counts = new Uint32Array(total), priorities = new Uint8Array(total);
+    for (let e = 0; e < total; e++) if (on(e)) {
+      const key = unit(e), id = key >= 0 ? e : heads.get(key) ?? e;
+      if (!counts[id]) { units.push(id); if (key < 0) heads.set(key, id); }
+      rows[e] = id + 1; counts[id]!++; priorities[id] = Math.max(priorities[id]!, priority(e));
     }
-    limit = prefix;
+    units.sort((a, b) => priorities[b]! - priorities[a]! || rank(a) - rank(b) || a - b);
+    let left = cap;
+    for (const id of units) { const cost = counts[id]!; counts[id] = +(cost <= left); if (counts[id]) left -= cost; }
+    for (let e = 0; e < total; e++) if (rows[e] && counts[rows[e]! - 1]) out[size++] = e;
   }
-  let i = 0;
-  for (let e = 0; e < total && i < out.length; e++) if (on(e) && (limit === Infinity || rank(e) < limit)) out[i++] = e;
-  return out.subarray(0, i);
+  return out.subarray(0, size);
 }
 export function segmentDistance(x: number, y: number, ax: number, ay: number, bx: number, by: number) {
   const dx = bx - ax, dy = by - ay, t = Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy || 1)));

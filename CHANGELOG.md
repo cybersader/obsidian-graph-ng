@@ -6,6 +6,8 @@ The owner-approved bounded download ceilings for this UI pass are **480,000 raw 
 
 - Canvas 2D now opens Notes above the existing draw budgets. The view labels sampled detail, spends the note budget on the viewport and preserves full-graph selection, filter counts and layout. No settings override is needed. Graph information labels filtered graph totals as included notes and edges, not counts painted in a frame.
 
+- Sampled Notes now keeps a visible note pickable beside distant outliers or offscreen connection rings. Folded dots and disabled legs no longer crowd out drawable details. Selected and path relationships get priority as whole units, and selection names still work with highlighting off.
+
 ## Unreleased: room startup and layout cache
 
 - Room load failures and overdue warnings stay visible through queued retries. Inventory recovery updates the status immediately, and a room timeout has its own message.
