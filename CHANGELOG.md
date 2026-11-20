@@ -8,6 +8,8 @@ The owner-approved bounded download ceilings for this UI pass are **485,000 raw 
 
 - Sampled Notes now keeps a visible note pickable beside distant outliers or offscreen connection rings. Folded dots and disabled legs no longer crowd out drawable details. Selected and path relationships get priority as whole units, and selection names still work with highlighting off.
 
+- Software Notes now spends its line budget on drawable geometry, including at the exact budget limit. Selecting or hovering a nested relationship keeps its own connections without lighting the whole chain. A highlighted path keeps its joining dot, and a transparent dot no longer intercepts clicks.
+
 ## Unreleased: room startup and layout cache
 
 - Room load failures and overdue warnings stay visible through queued retries. Inventory recovery updates the status immediately, and a room timeout has its own message.

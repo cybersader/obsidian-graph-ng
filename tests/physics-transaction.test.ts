@@ -562,16 +562,12 @@ test('Repair R2 legacy carrier edit retains existing atlas and creates no sizing
 
 // Driver/Canvas calls from the production bundle; no GPU execution is claimed.
 test('UX production Canvas detail honors zero and fractional opacity without changing graph rows', async () => {
-  const f = await fixture(), r = f.renderer, key = (name: string) => typeof mangle[name] === 'string' ? mangle[name] : name;
-  r.projection.source = new Uint32Array([0]); r.projection.target = new Uint32Array([1]);
-  r[key('edgeOn')] = new Uint8Array([1]); r[key('filterVisible')] = new Uint8Array([1, 1, 1]); r[key('canvasEdges')] = new Uint32Array([0]); r[key('visibleEdges')] = 1; r.selected = -1;
+  const {r, k: key, settings} = await graduated([[0,1]], 2);
   const stroke = ctx.stroke; let calls: number[] = []; ctx.stroke = () => calls.push(ctx.globalAlpha);
-  try { for (const opacity of [0, .00001, .2]) { calls = []; f.plugin.settings.visuals.edgeOpacity = opacity; r[key('drawCanvas')](); expect(calls.length).toBe(opacity ? 1 : 0); if (opacity) { expect(calls[0]).toBeGreaterThan(0); expect(calls[0]).toBeLessThanOrEqual(opacity * 3.75); } expect(r.projection.source.length).toBe(1); } } finally { ctx.stroke = stroke; }
+  try { for (const opacity of [0, .00001, .2]) { calls = []; settings.visuals.edgeOpacity = opacity; r[key('drawCanvas')](); expect(calls.length).toBe(opacity ? 1 : 0); if (opacity) { expect(calls[0]).toBeGreaterThan(0); expect(calls[0]).toBeLessThanOrEqual(opacity * 3.75); } expect(r.projection.source.length).toBe(1); } } finally { ctx.stroke = stroke; }
 });
 test('Edges mode in production Canvas: Off draws no lines, Focus only draws none until a note is focused', async () => {
-  const f = await fixture(), r = f.renderer, key = (name: string) => typeof mangle[name] === 'string' ? mangle[name] : name, v = f.plugin.settings.visuals;
-  r.projection.source = new Uint32Array([0]); r.projection.target = new Uint32Array([1]);
-  r[key('edgeOn')] = new Uint8Array([1]); r[key('filterVisible')] = new Uint8Array([1, 1, 1]); r[key('canvasEdges')] = new Uint32Array([0]); r[key('visibleEdges')] = 1; r.selected = -1;
+  const {r, k: key, settings} = await graduated([[0,1]], 2), v = settings.visuals;
   const stroke = ctx.stroke; let calls: number[] = []; ctx.stroke = () => calls.push(ctx.globalAlpha);
   try {
     v.edgeOpacity = .2;
@@ -755,6 +751,72 @@ test('selected and path geometry get a whole unit; disabled and non-fitting unit
   expect(rows()).toHaveLength(3); expect(rows().every(e => e < m)).toBe(true);
   const masked = v.slice(); masked[4] = masked[5] = 0; settings.canvasMaxDetailEdges = m+1; r.setView(masked,{}); r[k('drawCanvas')]();
   expect(rows()).toEqual(Array.from({length:m},(_,i) => i)); expect(r.paintedLines.size).toBeGreaterThan(0);
+});
+// Complete synthetic geometry through real setView, focus/path, Canvas draw and pick.
+// Owner is the synthetic relationship note index, not a parsed key.
+async function admissionFixture(n: number, links: [number, number, number?][], xy?: Float32Array) {
+  const f = await graduated(links.map(([a,b]) => [a,b]), n, 0, undefined, xy ?? Float32Array.from({length:2*n}, (_,i) => i%2 ? Math.floor((i>>1)/100) : (i>>1)%100));
+  const {r,k,settings} = f, p = r.projection, mask = new Uint8Array(n).fill(1);
+  p.carrierNodes = new Uint32Array(n);
+  links.forEach(([a,b,owner],e) => { p.offsets[a+1]++; p.offsets[b+1]++; if (owner !== undefined) { p.carrierNodes[owner] = owner+1; p.carrier[e] = owner; } });
+  for (let i=1;i<=n;i++) p.offsets[i] += p.offsets[i-1];
+  r[k('carrierCount')] = p.carrierNodes.reduce((sum: number, id: number) => sum + +!!id, 0);
+  settings.visuals.carrierLines = 'through'; settings.visuals.motion = 'off';
+  r.setView(mask,{});
+  const draw = () => r[k('drawCanvas')](), rows = (): number[] => [...r[k('canvasEdges')]], center = (node: number) => {
+    const f = r[k('cameraFrame')]; r.setCamera((r.positions[2*node]-f.minX)/f.width,(r.positions[2*node+1]-f.minY)/f.height,.02);
+  };
+  return {...f, draw, rows, center, mask};
+}
+test('software admission: a retained star reserves only its owned rows and endpoints, never the component', async () => {
+  const links: [number,number,number?][] = [];
+  for (let i=1;i<=6;i++) links.push([i-1,i,i],[i,7,i]);
+  links.push([8,9],[9,10],[10,11],[8,9],[9,10],[10,11]);
+  const {r,k,settings,draw,rows,mask} = await admissionFixture(12,links);
+  settings.canvasMaxDetailEdges = 10; settings.visuals.carrierOpacity = 0; r.setView(mask,{}); draw();
+  expect(rows()).toEqual([12,13,14,15,16,17]); expect([...r.paintedLines].sort()).toEqual(rows().sort());
+  settings.visuals.carrierOpacity = 1; r[k('focusNote')](2); r[k('edgeQuiet')] = () => [1,Infinity]; draw();
+  expect(rows().filter(e => e<12)).toEqual([2,3]); expect(r.paintedDots.has(1)).toBe(true); expect(r.paintedDots.has(2)).toBe(true);
+  expect(r.paintedDots.has(3)).toBe(false);
+  // Even when the rest fits the hard cap, a low ink share suppresses its context.
+  settings.canvasMaxDetailEdges = 16; r.setView(mask,{}); r[k('edgeQuiet')] = () => [.2,Infinity]; draw();
+  expect(rows().filter(e => e<12)).toHaveLength(12); expect([...r.paintedLines].filter(e => Number(e)<12).sort()).toEqual([2,3]);
+  r[k('focusNote')](11); r.fitAll(0); r.hovered = 2; r[k('animate')](performance.now()); draw();
+  expect([...r.paintedLines].filter(e => Number(e)<12).sort()).toEqual([2,3]);
+});
+test('software admission: exact cap and one unusable row over it have the same drawable ink pool', async () => {
+  const links: [number,number,number?][] = []; for (let i=0;i<9951;i++) links.push([1+i%100,0,0],[0,101+Math.floor(i/100),0]);
+  for (let i=201;i<251;i++) links.push([i,i+1]);
+  const {r,k,draw,rows,mask} = await admissionFixture(2300,links); mask.fill(0,101,201);
+  // Mask the final incoming leg separately via the existing type filter.
+  r.projection.type[19900] = 1;
+  for (const extra of [false,true]) {
+    r.setView(mask,{[compiled('typeHidden')]:new Uint8Array([0,+!extra])}); draw();
+    expect(r[k('visibleEdges')]).toBe(10000 + +extra); expect(rows()).toHaveLength(50); expect(r.paintedLines.size).toBe(50);
+  }
+});
+test('software admission: a rejected relationship center cannot paint or intercept a hit even when selected', async () => {
+  const {r,k,settings,mask,center,draw,rows} = await admissionFixture(10,[[0,1,1],[1,2,1],[0,1,1],[1,3,1],[6,7]]);
+  settings.canvasMaxDetailEdges = 3; settings.visuals.zoomAdapt = false; r.setView(mask,{}); r[k('focusNote')](1); center(1); draw();
+  expect(rows()).toEqual([4]); expect(r.paintedDots.has(1)).toBe(false); expect(r.pick(400,300)).not.toBe(1);
+});
+test('software admission: the only eligible focus center paints and picks ahead of coincident inactive centers', async () => {
+  const m=4000, xy=new Float32Array(6*m), links: [number,number,number?][]=[];
+  xy.fill(10000,2*m); for (let i=0;i<m;i++) links.push([m+i,i,i],[i,2*m+i,i]);
+  const {r,k,settings,draw} = await admissionFixture(3*m,links,xy);
+  settings.visuals.edgeMode='focus'; settings.visuals.zoomAdapt=false; r[k('focusNote')](m); r.setCamera(0,0,.02); draw();
+  expect([...r.paintedDots]).toEqual([0]); expect(r.pick(400,300)).toBe(0); expect(r.paintedLines.size).toBe(2);
+});
+test('software admission: a highlighted hop reserves its joining dot without creating another semantic hop', async () => {
+  const {r,k,settings,draw} = await admissionFixture(4100,[[1,0,0],[0,2,0]]); settings.visuals.zoomAdapt=false;
+  r[k('findPath')](1,2); r.fitAll(0); draw(); expect(r[k('pathView')].hops).toHaveLength(1);
+  for (const n of [0,1,2]) expect(r.paintedDots.has(n)).toBe(true); expect(r.paintedLines.size).toBe(2);
+});
+test.each([20,3000])('software admission: zero-alpha context is not a hit in a %i-note view', async n => {
+  const {r,k,settings,draw,center} = await admissionFixture(n,[[0,1]]);
+  settings.visuals.dimOpacity=0; r[k('focusNote')](0); center(10); draw();
+  const point = r.screenPoint(10); expect(r.paintedDots.has(10)).toBe(false); expect(r.pick(point.x,point.y)).not.toBe(10);
+  center(0); draw(); const focus = r.screenPoint(0); expect(r.pick(focus.x,focus.y)).toBe(0);
 });
 test('warm sampled paints visit bounded candidates, also with a focused hub and overlays', async () => {
   const n = 30000, m = 60000, cap = 160, {r,k} = await graduated(Array.from({length: m}, (_,i) => [0,1 + i%(n-1)]), n, cap);
@@ -1356,7 +1418,7 @@ test('wiring: card Lens action, lens-displaced picking/arrows/cue/labels, and Es
     const pulled = r.screenPoint(1); expect(pulled).not.toEqual(before);
     // Tier-lifted picking (min size) finds the displaced note at its drawn position, not its grid cell.
     r[k('focusLevel')] = 1; expect(r.pick(pulled.x, pulled.y)).toBe(1); expect(r.pick(before.x, before.y)).not.toBe(1);
-    expect(r[k('pickTiered')](pulled.x, pulled.y, r[k('worldPoint')](pulled.x, pulled.y), 1)).toBe(1);
+    expect(r[k('pickTiered')](pulled.x, pulled.y, r[k('worldPoint')](pulled.x, pulled.y), 1, () => true)).toBe(1);
     // Off-screen arrows project the drawn positions; labels re-place on a lens change; the cue ring follows the row.
     r[k('placeOverlay')](); const directs = r[k('directs')], xy = r[k('pipXY')];
     directs.forEach((n: number, i: number) => { const q = r.screenPoint(n); expect([xy[i * 2], xy[i * 2 + 1]]).toEqual([q.x, q.y]); });
