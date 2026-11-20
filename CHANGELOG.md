@@ -4,7 +4,8 @@ The owner-approved bounded download ceilings for this UI pass are **485,000 raw 
 
 ## Unreleased: Appearance sidebar
 
-- Related settings use compact shortcuts marked ↗. Selecting one opens its settings section without changing the graph. Section headings and controls have an inset so the Current badge and wrapped shortcuts stay clear of the section edge.
+- Related settings use compact shortcuts marked ↗. Selecting one opens its settings section without changing the graph. Section headings and controls keep an inset on narrow panels.
+- Each graph state now has a heading icon. A labeled check beside the active view name replaces the right-aligned “Current” text; chevrons still indicate only disclosure.
 
 ## Unreleased: software Notes
 

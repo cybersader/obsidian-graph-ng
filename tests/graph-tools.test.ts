@@ -710,6 +710,17 @@ test('Appearance keeps every setting once under its owning state or shared categ
   expect(f.panel.root.querySelectorAll('input').some((e: any) => e.getAttribute('aria-label') === 'Show direction')).toBe(false);
   f.panel.dispose();
 });
+test('Appearance keeps the state icon, disclosure chevron and named active marker distinct', () => {
+  const f = fixture(); f.panel.show('appearance');
+  const icons = { Notes: 'file-text', 'Selected note': 'mouse-pointer', 'Only connections': 'focus', 'Connection rings': 'orbit', 'Path between notes': 'route', Groups: 'network' };
+  for (const state of VIEW_STATES) {
+    const heading: ControlElement = f.panel.appearanceSections.get(state).querySelector('summary');
+    expect(heading.querySelectorAll('svg').map(e => e.getAttribute('data-icon'))).toEqual(['chevron-right', icons[state], 'circle-check']);
+    expect(heading.querySelector('.graph-ng-state-current')?.getAttribute('aria-label')).toBe(`Active graph view: ${state}`);
+    expect(heading.textContent).toBe(state);
+  }
+  f.panel.dispose();
+});
 test('Appearance follows stable states without remounting editors, and shared links open the real owner', () => {
   const f = fixture(); let state: typeof VIEW_STATES[number] = 'Selected note'; f.host.namedViewState = () => state; f.panel.show('appearance');
   const selected = f.panel.appearanceSections.get('Selected note'), labels = f.panel.appearanceSections.get('Labels');

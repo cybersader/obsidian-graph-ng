@@ -122,11 +122,7 @@ export class ExplorePanel {
   /** Expand on stable state changes, never replace controls or steal an editor's focus. */
   updateViewState() {
     const state = this.currentViewState();
-    for (const [name, section] of this.appearanceSections) {
-      section.toggleClass('is-current', name === state);
-      const badge = section.querySelector<HTMLElement>('.graph-ng-state-current');
-      if (badge) badge.hidden = name !== state;
-    }
+    for (const [name, section] of this.appearanceSections) section.toggleClass('is-current', name === state);
     if (state === this.appearanceState || this.body.contains(document.activeElement)) return;
     this.appearanceState = state;
     const section = this.appearanceSections.get(state);
@@ -138,11 +134,11 @@ export class ExplorePanel {
     for (let node: HTMLElement | null = section; node && node !== this.body; node = node.parentElement) if (node.tagName === 'DETAILS') (node as HTMLDetailsElement).open = true;
     const summary = section.querySelector('summary'); summary?.focus({ preventScroll: true }); summary?.scrollIntoView({ block: 'nearest' });
   }
-  private appearanceSection(host: HTMLElement, name: string) {
+  private appearanceSection(host: HTMLElement, name: string, icon?: string) {
     const section = host.createEl('details', { cls: 'graph-ng-appearance-state' });
     this.appearanceSections.set(name, section); section.open = this.appearanceOpen.has(name);
-    const summary = disclosure(section, name);
-    if (VIEW_STATES.includes(name as ViewState)) summary.createSpan({ cls: 'graph-ng-state-current', text: 'Current' });
+    const summary = disclosure(section, name, undefined, icon);
+    if (icon) setIcon(summary.createSpan({ cls: 'graph-ng-state-current', attr: { role: 'img', 'aria-label': `Active graph view: ${name}` } }), 'circle-check');
     return disclosureBody(section);
   }
   private physicsError = '';
@@ -781,18 +777,23 @@ export class ExplorePanel {
       this.slider(parent, label, curve, () => v[key], value => { v[key] = value; }, labels, { def: initial[key], desc });
     const choice = <K extends 'edgeCompositing' | 'emphasis' | 'labelStyle' | 'namePriority' | 'motion' | 'clickFraming' | 'cardPlacement'>(parent: HTMLElement, key: K, label: string, desc: string, options: [Visuals[K], string][], labels = false) =>
       settingSelect(parent, label, desc, options, v[key] ?? 'anchored', value => { v[key] = value as Visuals[K]; this.host.visualsChanged(labels); if (labels) this.render(); });
-    const sections = new Map<string, HTMLElement>();
+    const sections: Record<string, HTMLElement> = {};
+    // Like STATE_HELP, these rows follow VIEW_STATES. Each starts with its heading icon.
+    const stateControls = [
+      ['file-text', 'Note size', 'Labels', 'Edges'], ['mouse-pointer'], ['focus', 'Selected note', 'Labels', 'Edges'],
+      ['orbit', 'Selected note', 'Navigation and motion'], ['route', 'Edges', 'Navigation and motion'], ['network', 'Groups and colors'],
+    ] as const;
     for (const [i, state] of VIEW_STATES.entries()) {
-      const body = this.appearanceSection(host, state); sections.set(state, body);
+      const body = this.appearanceSection(host, state, stateControls[i]![0]); sections[state] = body;
       panelHelp(body, 'About this state', STATE_HELP[i]);
     }
     const everywhere = this.appearanceSection(host, 'Everywhere');
     this.host.performanceControls?.(everywhere);
     panelHelp(everywhere, 'Shared appearance', 'These controls apply across states and save immediately. Sizing has its own Apply. Closing Appearance ends previews.');
-    for (const name of ['Suggested for this graph', 'Note size', 'Labels', 'Edges', 'Groups and colors', 'Navigation and motion', 'Relationship notes']) sections.set(name, this.appearanceSection(everywhere, name));
-    const selected = sections.get('Selected note')!, find = selected, labels = sections.get('Labels')!, edges = sections.get('Edges')!, colors = sections.get('Groups and colors')!, navigation = sections.get('Navigation and motion')!, relationships = sections.get('Relationship notes')!;
-    this.suggested(sections.get('Suggested for this graph')!);
-    this.nodes(sections.get('Note size')!);
+    for (const name of ['Suggested for this graph', 'Note size', 'Labels', 'Edges', 'Groups and colors', 'Navigation and motion', 'Relationship notes']) sections[name] = this.appearanceSection(everywhere, name);
+    const selected = sections['Selected note']!, find = selected, labels = sections['Labels']!, edges = sections['Edges']!, colors = sections['Groups and colors']!, navigation = sections['Navigation and motion']!, relationships = sections['Relationship notes']!;
+    this.suggested(sections['Suggested for this graph']!);
+    this.nodes(sections['Note size']!);
     this.slider(labels, 'Label density', { min: .25, max: 3, log: true }, () => s.labelDensity, x => { s.labelDensity = x; }, true, { def: 1 });
     this.edgeMode(edges);
     choice(edges, 'edgeCompositing', 'Edge compositing', 'Density reduces faint overlap; Blend keeps the original strokes. Canvas uses Blend.', [['blend', 'Blend (default)'], ['density', 'Density']]);
@@ -807,18 +808,13 @@ export class ExplorePanel {
     this.guard(colors, 'halos');
     this.flag(colors, 'autoPalette', 'Group colors (when no rule matches)');
     if (this.host.toggleLens) {
-      this.lensButton = settingRow(sections.get('Connection rings')!, 'Connection rings', 'graph-ng-toggle', 'Brings the selected note’s direct connections into rings temporarily. Follows selection. L toggles it; Escape closes it.').querySelector('input')!;
+      this.lensButton = settingRow(sections['Connection rings']!, 'Connection rings', 'graph-ng-toggle', 'Brings the selected note’s direct connections into rings temporarily. Follows selection. L toggles it; Escape closes it.').querySelector('input')!;
       this.lensButton.onchange = () => { this.host.toggleLens?.(); this.updateLensControl(); };
       this.updateLensControl();
     }
-    for (const [state, targets] of [
-      ['Notes', ['Note size', 'Labels', 'Edges']],
-      ['Only connections', ['Selected note', 'Labels', 'Edges']],
-      ['Connection rings', ['Selected note', 'Navigation and motion']],
-      ['Path between notes', ['Edges', 'Navigation and motion']],
-      ['Groups', ['Groups and colors']],
-    ] as const) {
-      const links = sections.get(state)!.createEl('fieldset', { cls: 'graph-ng-related-settings' });
+    for (const [i, [, ...targets]] of stateControls.entries()) {
+      if (!targets.length) continue;
+      const links = sections[VIEW_STATES[i]!]!.createEl('fieldset', { cls: 'graph-ng-related-settings' });
       links.createEl('legend', { text: 'Related settings' });
       for (const target of targets) setIcon(panelButton(links, target, () => this.focusAppearance(target)).createSpan(), 'arrow-up-right');
     }

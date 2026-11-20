@@ -54,9 +54,10 @@ export function panelHelp(host: HTMLElement, label: string, text?: string, cls =
 /** One non-scrolling content boundary below the native summary, including nested disclosures. */
 export function disclosureBody(host: HTMLElement) { return host.createEl('div', { cls: 'graph-ng-disclosure-body' }); }
 /** The same host chevron for every panel disclosure; native summary keyboard behavior stays intact. */
-export function disclosure(host: HTMLElement, text = '', attr: Record<string, string> = {}) {
+export function disclosure(host: HTMLElement, text = '', attr: Record<string, string> = {}, icon?: string) {
   const summary = host.createEl('summary', { attr });
   setIcon(summary.createSpan({ cls: 'graph-ng-chevron' }), 'chevron-right');
+  if (icon) setIcon(summary.createSpan({ attr: { 'aria-hidden': 'true' } }), icon);
   summary.createSpan({ cls: 'graph-ng-disclosure-label', text });
   return summary;
 }

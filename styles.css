@@ -631,8 +631,13 @@ button.graph-ng-help-trigger:hover { color:var(--text-accent); }
 .graph-ng-appearance-state > summary { padding-inline:var(--gng-space-2); }
 .graph-ng-appearance-state > summary > .graph-ng-disclosure-label { min-inline-size:0; overflow-wrap:anywhere; }
 .graph-ng-appearance-state > .graph-ng-disclosure-body { padding-inline-end:var(--gng-space-2); }
-.graph-ng-state-current { flex:none; margin-inline-start:auto; color:var(--text-accent); font-size:var(--gng-text-xs); }
-.graph-ng-state-current[hidden] { display:none; }
+.graph-ng-appearance-state > summary > [aria-hidden=true] { display:inline-flex; flex:none; color:var(--text-muted); }
+.graph-ng-appearance-state.is-current > summary { display:grid; grid-template-columns:auto auto minmax(0,max-content) auto; grid-template-rows:minmax(var(--gng-row-h),auto); justify-content:start; row-gap:0; }
+.graph-ng-appearance-state > summary svg { width:14px; height:14px; }
+.graph-ng-state-current { display:none; }
+.graph-ng-appearance-state.is-current > summary > .graph-ng-state-current { display:inline-flex; flex:none; color:var(--text-accent); }
+/* In-flow hint, not a tooltip: keep the first row stable and never cover the next control. */
+.graph-ng-appearance-state.is-current > summary:is(:focus-visible,:has(> .graph-ng-state-current:hover))::after { content:'Active graph view' / ''; grid-column:1 / -1; padding-block-end:4px; color:var(--text-muted); font-size:var(--gng-text-xs); font-weight:normal; }
 .graph-ng-related-settings { min-inline-size:0; display:flex; flex-wrap:wrap; gap:4px 6px; margin:var(--gng-space-2) 0 0; padding:0; border:0; }
 .graph-ng-related-settings > legend { padding:0; margin-bottom:4px; font-size:var(--gng-text-xs); color:var(--text-muted); }
 .graph-ng-related-settings > button { display:inline-flex; align-items:center; gap:4px; min-width:0; max-width:100%; width:auto; height:auto; min-height:24px; padding:2px 7px; border:1px solid var(--background-modifier-border); border-radius:999px; background:transparent; box-shadow:none; font-size:var(--gng-text-xs); font-weight:normal; color:var(--text-muted); text-align:start; white-space:normal; }
