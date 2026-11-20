@@ -791,13 +791,6 @@ export class ExplorePanel {
     panelHelp(everywhere, 'Shared appearance', 'These controls apply across states and save immediately. Sizing has its own Apply. Closing Appearance ends previews.');
     for (const name of ['Suggested for this graph', 'Note size', 'Labels', 'Edges', 'Groups and colors', 'Navigation and motion', 'Relationship notes']) sections.set(name, this.appearanceSection(everywhere, name));
     const selected = sections.get('Selected note')!, find = selected, labels = sections.get('Labels')!, edges = sections.get('Edges')!, colors = sections.get('Groups and colors')!, navigation = sections.get('Navigation and motion')!, relationships = sections.get('Relationship notes')!;
-    for (const [state, targets] of [
-      ['Notes', ['Note size', 'Labels', 'Edges']],
-      ['Only connections', ['Selected note', 'Labels', 'Edges']],
-      ['Connection rings', ['Selected note', 'Navigation and motion']],
-      ['Path between notes', ['Edges', 'Navigation and motion']],
-      ['Groups', ['Groups and colors']],
-    ] as const) for (const target of targets) panelButton(sections.get(state)!, target, () => this.focusAppearance(target), false, 'graph-ng-appearance-link');
     this.suggested(sections.get('Suggested for this graph')!);
     this.nodes(sections.get('Note size')!);
     this.slider(labels, 'Label density', { min: .25, max: 3, log: true }, () => s.labelDensity, x => { s.labelDensity = x; }, true, { def: 1 });
@@ -817,6 +810,17 @@ export class ExplorePanel {
       this.lensButton = settingRow(sections.get('Connection rings')!, 'Connection rings', 'graph-ng-toggle', 'Brings the selected note’s direct connections into rings temporarily. Follows selection. L toggles it; Escape closes it.').querySelector('input')!;
       this.lensButton.onchange = () => { this.host.toggleLens?.(); this.updateLensControl(); };
       this.updateLensControl();
+    }
+    for (const [state, targets] of [
+      ['Notes', ['Note size', 'Labels', 'Edges']],
+      ['Only connections', ['Selected note', 'Labels', 'Edges']],
+      ['Connection rings', ['Selected note', 'Navigation and motion']],
+      ['Path between notes', ['Edges', 'Navigation and motion']],
+      ['Groups', ['Groups and colors']],
+    ] as const) {
+      const links = sections.get(state)!.createEl('fieldset', { cls: 'graph-ng-related-settings' });
+      links.createEl('legend', { text: 'Related settings' });
+      for (const target of targets) setIcon(panelButton(links, target, () => this.focusAppearance(target)).createSpan(), 'arrow-up-right');
     }
     choice(navigation, 'cardPlacement', 'Card placement', 'Side uses a sheet when space is tight. Auto switches earlier.', [['auto', 'Auto (default)'], ['side', 'Side'], ['sheet', 'Bottom sheet']]);
     settingSelect(selected, 'Click a note', 'Highlight connections is the default. Highlight shows direct connections, neighbours of neighbours and dimmed context. Relationship notes count with their endpoints. Ctrl/Cmd-click opens a note; touch shows its card.', [['highlight', 'Highlight connections'], ['card', 'Open the card only'], ['open', 'Open the note']], v.clickOpens ? 'open' : v.hoverHighlight ? 'highlight' : 'card', value => { v.clickOpens = value === 'open'; if (value !== 'open') v.hoverHighlight = value === 'highlight'; this.host.visualsChanged(false); });
