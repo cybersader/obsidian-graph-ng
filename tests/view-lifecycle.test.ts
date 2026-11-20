@@ -631,6 +631,112 @@ test('final renderer replaces the retained preview only after create confirms it
   } finally { DetailRenderer.create = original; }
 });
 
+// Control the same pre-reveal current() checkpoint as DetailRenderer.create, not only GraphView's later adoption.
+async function notesOpenFixture() {
+  const { GraphView } = await import('../src/main'), { DetailRenderer } = await import('../src/webgl-renderer');
+  const visible = Uint8Array.of(1, 1, 1), initial = { visible, groupCodes: Uint32Array.of(0, 0, 0), groupKeys: ['first'], groupLabels: ['First'], types: ['line'], facets: [] };
+  const latest = { ...initial, visible: Uint8Array.of(0, 1, 1), groupCodes: Uint32Array.of(1, 0, 1), groupKeys: ['first', 'second'], groupLabels: ['First', 'Second'] };
+  const colors = Uint32Array.of(2, 1, 0), scope = Uint8Array.of(1, 1, 0), projection = { nodeCount: 3, source: new Uint32Array() };
+  const view: any = Object.create(GraphView.prototype);
+  Object.assign(view, { projection, visible, colors: new Uint32Array(3), positions: new Float32Array(6), explored: initial, view: emptyView(),
+    detailScope: scope, contentEl: { dataset: { state: 'ready', mode: 'groups' } }, app: { workspace: { requestSaveLayout() {} } },
+    renderRevision: 0, detailGeneration: 1, activeRevision: 1, gpu: { available: true, reason: 'fixture' }, plugin: { settings: { explore: {} }, saveSoon() {},
+      pipeline: { request: async () => ({ explore: latest, colors, groups: {}, view: 2 }) } }, panel: new ControlElement(), stage: new ControlElement(),
+    status: new ControlElement(), statusSummary: new ControlElement(), contributionPage: { clear() {}, update() {} },
+    showGroups() { actions.push('groups'); view.renderRevision++; view.renderer?.dispose(); view.renderer = view.detailRenderer = undefined; view.contentEl.dataset.mode = 'groups'; } });
+  const paints: unknown[] = [], actions: string[] = [], losses: (() => void)[] = [];
+  const original = DetailRenderer.create;
+  let pause = false, release!: () => void;
+  DetailRenderer.create = async (_host, _projection, _positions, bits, _s, _node, _zoom, palette, current, software, unavailable, rv) => {
+    losses.push(unavailable!);
+    if (pause) { pause = false; await new Promise<void>(r => { release = r; }); }
+    if (!current!()) throw Error('Renderer superseded');
+    paints.push({ bits: [...bits], groupCodes: rv?.groupCodes && [...rv.groupCodes], collapsed: rv?.collapsed && [...rv.collapsed], hidden: [...rv!.typeHidden!], colors: [...palette], software });
+    return { timings: {}, setView() {}, fitAll() { actions.push('fit'); }, adoptCamera() { return false; }, flyTo() { actions.push('camera'); },
+      focusNote() { actions.push('focus'); }, dispose() { actions.push('dispose'); } } as any;
+  };
+  const apply = () => new Promise<void>((resolve, reject) => view.setView({ ...emptyView(), query: 'synthetic', collapsedGroups: ['second'], hiddenTypes: ['line'] }, undefined, undefined, (err: unknown) => err ? reject(err) : resolve()));
+  const expected = { bits: [0, 1, 0], groupCodes: [1, 0, 1], collapsed: [0, 1], hidden: [1], colors: [...colors], software: false };
+  return { view, apply, expected, paints, actions, losses, pause: () => { pause = true; }, release: () => release(), restore: () => { DetailRenderer.create = original; } };
+}
+
+test('Notes opening never reveals an obsolete scoped mask or presentation columns after a filter result', async () => {
+  const f = await notesOpenFixture();
+  try {
+    f.view.pendingFocus = { projection: f.view.projection, node: 1, lens: true }; f.view.pendingCamera = { x: 0, y: 0, ratio: 1 };
+    f.pause(); const work = f.view.showDetails(); await f.apply(); expect(f.view.contentEl.dataset.visibleNodes).toBe('2');
+    f.release(); await work;
+    expect(f.paints).toEqual([f.expected]); expect(f.view.contentEl.dataset.mode).toBe('nodes'); expect(f.actions).toEqual(['camera', 'focus']);
+  } finally { f.restore(); }
+});
+
+test('permanent graphics recovery uses current scope, applied filter and presentation columns', async () => {
+  for (const workspace of [false, true]) {
+    const f = await notesOpenFixture();
+    try {
+      await f.view.showDetails(); await f.apply(); if (workspace) await f.view.workspaceNotes(); expect(f.paints.length).toBe(1);
+      const show = f.view.showDetails.bind(f.view); let recovery!: Promise<void>; f.view.showDetails = (...args: unknown[]) => recovery = show(...args);
+      f.losses[0]!(); await recovery;
+      expect(f.paints[1]).toEqual({ ...f.expected, bits: workspace ? [0, 1, 1] : [0, 1, 0], software: true });
+      f.losses[0]!(); expect(f.paints.length).toBe(2); expect(f.actions).not.toContain('groups');
+    } finally { f.restore(); }
+  }
+});
+
+test('workspace scope changing alone before first paint cannot reveal the previous group', async () => {
+  const f = await notesOpenFixture();
+  try {
+    await f.apply(); f.pause(); const opening = f.view.showDetails(); await f.view.workspaceNotes();
+    f.release(); await opening; expect(f.paints).toEqual([{ ...f.expected, bits: [0, 1, 1] }]);
+  } finally { f.restore(); }
+});
+
+test('a retained preview receives the new scoped mask without enabling labels or picking while final Notes prepares', async () => {
+  const f = await notesOpenFixture(), { DetailRenderer } = await import('../src/webgl-renderer');
+  const updates: unknown[] = [], preview = Object.create(DetailRenderer.prototype);
+  Object.assign(preview, { projection: f.view.projection, ready: true, canvas: { style: {} }, dispose() { f.actions.push('preview disposed'); },
+    setView(bits: Uint8Array, view: any) { updates.push([[...bits], view.loading, view.groupCodes, [...view.typeHidden], [...view.colors]]); } });
+  f.view.renderer = preview;
+  try {
+    f.pause(); const opening = f.view.showDetails(); await f.apply();
+    expect(updates).toEqual([[[0, 1, 0], true, undefined, [1], [2, 1, 0]]]); expect(f.actions).toEqual([]);
+    f.release(); await opening; expect(f.paints).toEqual([f.expected]); expect(f.actions).toEqual(['preview disposed', 'fit']);
+    f.losses[0]!(); expect(f.view.gpu.available).toBe(true); expect(f.losses.length).toBe(2);
+  } finally { f.restore(); }
+});
+
+test('the first loading preview drops stale work but retains its lightweight render view', async () => {
+  const f = await notesOpenFixture();
+  try {
+    f.view.contentEl.dataset.mode = 'nodes-building'; f.pause(); let published = 0;
+    const opening = f.view.createNotesRenderer(f.view.positions, true, () => true, () => {}, () => { published++; });
+    await f.apply(); f.release(); await opening;
+    expect(published).toBe(1); expect(f.paints).toEqual([{ ...f.expected, collapsed: undefined, groupCodes: undefined }]);
+  } finally { f.restore(); }
+});
+
+test('a requested but unapplied filter cannot mix new presentation columns into the current mask', async () => {
+  const f = await notesOpenFixture();
+  try {
+    await f.apply(); let release!: () => void;
+    f.view.plugin.pipeline.request = () => new Promise<void>(r => { release = r; });
+    const waiting = new Promise(resolve => f.view.setView(emptyView(), undefined, undefined, resolve));
+    await f.view.showDetails(); expect(f.paints).toEqual([f.expected]);
+    await f.view.onClose(); release(); await waiting;
+  } finally { f.restore(); }
+});
+
+test('closed or superseded Notes construction cannot reveal, recover or adopt the discarded renderer', async () => {
+  for (const stop of ['close', 'groups']) {
+    const f = await notesOpenFixture();
+    try {
+      f.pause(); const work = f.view.showDetails(); await f.apply();
+      if (stop === 'close') await f.view.onClose(); else f.view.showGroups();
+      f.release(); await work; f.losses[0]!(); expect(f.paints).toEqual([]); expect(f.losses.length).toBe(1); expect(f.view.detailRenderer).toBeUndefined();
+    } finally { f.restore(); }
+  }
+});
+
 test('fallback summary uses compact on-demand help outside the information button and panel footprint', async () => {
   const { GraphView } = await import('../src/main'), { readFileSync } = await import('node:fs');
   const view: any = Object.create(GraphView.prototype), summary = new ControlElement();

@@ -592,13 +592,7 @@ export class GraphView extends ItemView {
       memberGroups: () => this.groupGraph?.groups, openGroup: id => { void this.drill(id, true); },
       scope: () => this.detailScope ? this.scopeName : 'Workspace', scoped: () => Boolean(this.detailScope),
       presentation: mode => {
-        if (mode === 'workspace') {
-          if (!this.detailScope) return;
-          if (this.detailRenderer && this.contentEl.dataset.mode === 'nodes') {
-            this.detailScope = undefined; this.detailRenderer.setView(this.visible!, this.renderView()); this.explorePanel?.render(); return;
-          }
-          this.detailScope = undefined; mode = 'nodes';
-        }
+        if (mode === 'workspace') return this.workspaceNotes();
         if (mode === 'groups') this.toGroups(); else if (mode !== this.contentEl.dataset.mode) return this.showDetails();
       },
       previewSizing: values => { if (values && !this.detailRenderer) throw new Error('Open Notes first'); this.detailRenderer?.previewSizing(values); },
@@ -814,20 +808,13 @@ export class GraphView extends ItemView {
       };
       preview = new LayoutPreview(async (positions, active) => {
         if (this.gpu.reason === 'Not probed') this.gpu = gpuStatus();
-        const bits = this.detailVisible()!;
         const previous = this.renderer instanceof DetailRenderer ? this.renderer : undefined;
         this.renderer?.dispose(); this.stage.empty(); this.contentEl.dataset.mode = 'nodes-building';
-        const renderer = await DetailRenderer.create(this.stage, this.projection!, positions, bits, settings, () => {}, () => {}, this.colors!, active, !this.gpu.available, () => {
-          if (!active()) return;
-          this.gpu = { available: false, reason: 'WebGL context could not be restored' };
-          fallback(this.gpu.reason);
-        }, { loading: true, typeHidden: this.renderView().typeHidden });
-        if (active()) {
+        return this.createNotesRenderer(positions, true, active, () => fallback(this.gpu.reason), renderer => {
           if (previous) renderer.adoptCamera(previous);
           this.renderer = renderer; this.layoutLabel(true);
           this.watchPreview(renderer, revision, demand, active);
-        }
-        return renderer;
+        });
       }, recycle, () => current() && this.presentation === 'nodes', fallback, () => {
         const attempt = ++this.renderRevision;
         return () => attempt === this.renderRevision;
@@ -860,7 +847,7 @@ export class GraphView extends ItemView {
       report.layout = { cached: layout.cached, reused: layout.reused, ms: layout.milliseconds, totalMs: performance.now() - start };
       this.layoutWorking = true; this.contentEl.dataset.state = 'ready';
       this.contentEl.dataset.layoutMs = String(layout.milliseconds); this.contentEl.dataset.cached = String(layout.cached);
-      if (this.presentation === 'nodes') await this.showDetails(this.detailVisible(), !this.detailScope);
+      if (this.presentation === 'nodes') await this.showDetails(!this.detailScope);
       this.layoutWorking = false; if (!current()) return;
       this.statusText = this.provisional ? pendingText(report) : this.idleLayoutText;
       if (current() && !this.provisional) this.plugin.recordPerformance?.({ notes: result.nodes, edges: result.edges, ingestMs, projectMs, groupsMs: Number(this.contentEl.dataset.refreshGroupMs), layoutMs: layout.milliseconds, totalMs: performance.now() - start });
@@ -1030,7 +1017,7 @@ export class GraphView extends ItemView {
       if (this.closed || projection !== this.projection || revision !== this.activeRevision || view !== this.viewGeneration || renderRevision !== this.renderRevision) return;
       this.scopeGroup = group.key === undefined ? undefined : { key: group.key, source: this.viewSource };
       const bits = new Uint8Array(p.nodeCount); for (const i of members) bits[i] = 1;
-      this.detailScope = bits; this.scopeName = group.label; return this.showDetails(this.detailVisible(), false);
+      this.detailScope = bits; this.scopeName = group.label; return this.showDetails(false);
     };
     this.memberList(Array.from(members), i => renderPath(p, i), browse);
   }
@@ -1167,11 +1154,13 @@ export class GraphView extends ItemView {
     });
   }
   /** Renderer masks for the current explore result: group codes, collapsed groups, hidden types. */
-  private renderView(): RenderView {
-    const r = this.explored; if (!r) return {};
-    const collapsed = new Uint8Array(r.groupKeys.length), keys = new Set(this.view.collapsedGroups), types = new Set(this.view.hiddenTypes);
+  private renderView(loading = false): RenderView {
+    const r = this.explored; if (!r) return { loading };
+    const applied = this.appliedView ?? this.view, types = new Set(applied.hiddenTypes), typeHidden = Uint8Array.from(r.types, t => types.has(t) ? 1 : 0);
+    if (loading) return { loading, typeHidden, colors: this.colors };
+    const collapsed = new Uint8Array(r.groupKeys.length), keys = new Set(applied.collapsedGroups);
     r.groupKeys.forEach((k, i) => { if (keys.has(k)) collapsed[i] = 1; });
-    return { groupCodes: r.groupCodes, groupLabels: r.groupLabels, collapsed, typeHidden: Uint8Array.from(r.types, t => types.has(t) ? 1 : 0), colors: this.colors };
+    return { groupCodes: r.groupCodes, groupLabels: r.groupLabels, collapsed, typeHidden, colors: this.colors };
   }
   savedViewIssue(saved: SavedView): string {
     try {
@@ -1239,14 +1228,13 @@ export class GraphView extends ItemView {
           const absent = [...sent.hiddenGroups, ...sent.collapsedGroups].filter(k => !result.explore.groupKeys.includes(k));
           if (absent.length) throw new Error(`Not present in the saved grouping: ${absent.join(', ')}. Review the saved definition before opening.`);
         }
-        const detail = this.contentEl.dataset.mode === 'nodes' ? this.detailRenderer : undefined;
         this.appliedView = sent; this.explored = result.explore; this.colors = result.colors; this.visible = result.explore.visible; this.groupGraph = result.groups; this.groupGeneration = revision;
         if (this.viewGeneration !== result.view) this.clearMemberRows();
         this.viewGeneration = result.view; this.viewSource = this.sourceKey(sent);
         this.contentEl.dataset.exploreMs = String(performance.now() - started); const g = this.view.group; this.contentEl.dataset.groupSource = !g ? 'declared' : g.from === 'folder' ? `folder:${g.depth}` : g.from === 'expr' ? 'expression' : `${g.from}:${g.key}`; this.contentEl.dataset.visibleNodes = String(sum(result.explore.visible));
         this.contributionPage.update(this.contributionContext()); this.statusText = this.statusText;
-        if (detail) detail.setView(this.detailVisible()!, this.renderView());
-        else if (this.contentEl.dataset.mode === 'groups') { this.showGroups(true); if (this.presentation === 'nodes') await this.showDetails(); }
+        if (this.contentEl.dataset.mode === 'groups') { this.showGroups(true); if (this.presentation === 'nodes') await this.showDetails(); }
+        else this.syncNotesView();
         this.explorePanel?.setState(this.view); after?.(); if (owns()) this.viewFeedback(); finish();
       } catch (error) {
         finish(error);
@@ -1328,11 +1316,50 @@ export class GraphView extends ItemView {
     else { this.pendingCamera = camera; this.detailScope = undefined; void this.showDetails(); }
   }
   private detailVisible() { return this.detailScope ? this.visible?.map((v, i) => v & this.detailScope![i]!) : this.visible; }
-  async showDetails(bits = this.detailVisible(), clearPanel = true) {
+  private workspaceNotes() {
+    if (!this.detailScope) return;
+    this.detailScope = undefined;
+    if (this.contentEl.dataset.mode === 'groups') return this.showDetails();
+    this.syncNotesView(); this.explorePanel?.render();
+  }
+  private syncNotesView() {
+    const mode = this.contentEl.dataset.mode, preview = this.renderer;
+    if (mode === 'nodes') this.detailRenderer?.setView(this.detailVisible()!, this.renderView());
+    else if (mode === 'nodes-building' && preview instanceof DetailRenderer && preview !== this.detailRenderer && preview.projection === this.projection && (preview.usable || preview.recovering)) {
+      preview.setView(this.detailVisible()!, this.renderView(true));
+    }
+  }
+  /** The factory checks current() before revealing its canvas. An applied filter or scope change
+   * retires just this attempt, not the preview, camera/focus intent, or the caller waiting for Notes. */
+  private async createNotesRenderer(positions: Float32Array, loading: boolean, active: () => boolean, unavailable: () => void, publish: (r: DetailRenderer) => void) {
+    const projection = this.projection!;
+    while (active()) {
+      let matches = generationCurrent(() => [this.viewGeneration, this.detailScope]);
+      const current = () => active() && matches();
+      let detail: DetailRenderer;
+      try {
+        detail = await DetailRenderer.create(this.stage, projection, positions, this.detailVisible()!, this.plugin.settings,
+          i => { if (!loading) this.openPath(renderPath(projection, i)); }, () => { if (!loading) this.toGroups(); }, this.colors!, current, !this.gpu.available, () => {
+            if (!current()) return;
+            this.gpu = { available: false, reason: 'WebGL context could not be restored' }; unavailable();
+          }, this.renderView(loading));
+      } catch (error) {
+        const stale = !matches(); matches = () => false;
+        if (active() && stale) continue;
+        throw error;
+      }
+      if (!current()) { matches = () => false; detail.dispose(); continue; }
+      // After publication live filters update the same renderer. Its loss handler now owns
+      // the render revision, not the scope snapshot at construction.
+      matches = () => true; publish(detail); return detail;
+    }
+    throw new Error('Renderer superseded');
+  }
+  async showDetails(clearPanel = true) {
     const focus = this.pendingFocus; this.pendingFocus = undefined;
     if (this.deferredLayout) { this.rememberPresentation('nodes'); return this.ensureNotesLayout(); }
     if (this.contentEl.dataset.state === 'building') { this.rememberPresentation('nodes'); return; }
-    if (!this.projection || !this.positions || !bits) { new Notice('Notes are not ready; Groups remains usable.'); return; }
+    if (!this.projection || !this.positions || !this.visible) { new Notice('Notes are not ready; Groups remains usable.'); return; }
     this.rememberPresentation('nodes');
     const renderRevision = ++this.renderRevision; this.contentEl.dataset.mode = 'nodes-building'; this.returnTo = undefined;
     try {
@@ -1340,43 +1367,41 @@ export class GraphView extends ItemView {
       if (renderRevision !== this.renderRevision || this.closed) return;
       const preview = this.renderer instanceof DetailRenderer && (this.layoutWorking || this.renderer !== this.detailRenderer) ? this.renderer : undefined;
       if (preview) preview.canvas.style.position = 'absolute';
-      else { this.renderer?.dispose(); this.stage.empty(); }
+      else { this.renderer?.dispose(); this.renderer = this.detailRenderer = undefined; this.stage.empty(); }
       if (clearPanel) { this.contributionPage.clear(); this.panel.empty(); }
       const projection = this.projection;
-      const detail = await DetailRenderer.create(this.stage, projection, this.positions, bits, this.plugin.settings, i => this.openPath(renderPath(projection, i)), () => this.toGroups(), this.colors!, () => renderRevision === this.renderRevision, !this.gpu.available, () => {
-        if (renderRevision !== this.renderRevision || this.closed) return;
-        this.gpu = { available: false, reason: 'WebGL context could not be restored' };
-        this.showGroups(); void this.showDetails(bits, clearPanel);
-      }, this.renderView());
-      if (this.closed || renderRevision !== this.renderRevision) { detail.dispose(); return; }
-      this.detailRenderer = detail;
-      const moved = detail.adoptCamera(preview);
-      preview?.dispose();
-      this.plugin.recordPerformance?.({ notes: projection.nodeCount, edges: projection.source.length, labelsMs: this.detailRenderer.timings.labels, labelUploadMs: this.detailRenderer.timings.labelUpload });
-      this.renderer = this.detailRenderer; this.contentEl.dataset.mode = 'nodes'; this.detailFallback = ''; this.statusText = this.statusText;
-      const detailGeneration = this.detailGeneration;
-      this.detailRenderer.describeEdges = edges => this.plugin.pipeline.request(detailGeneration, { kind: 'relationships', edges });
-      this.detailRenderer.openPath = path => this.openPath(path);
-      this.detailRenderer.openNote = (path, mode) => this.openNote(path, mode);
-      this.detailRenderer.copyLink = path => this.copyLink(path);
-      this.detailRenderer.noteTitle = path => {
-        const title: unknown = this.app.metadataCache.getCache(path)?.frontmatter?.title;
-        return typeof title === 'string' ? title.slice(0, 256) : '';
-      };
-      this.detailRenderer.measureTools = () => this.toolsOverlap(); this.detailRenderer.syncTools?.();
-      this.detailRenderer.showMenu = obsidianMenu(this.app, Menu, path => { const f = this.app.vault.getAbstractFileByPath(path); return f instanceof TFile ? f : null; }, this.leaf);
-      this.detailRenderer.onSizingChange = () => { this.explorePanel?.updateSizingReadout(); this.explorePanel?.updateLensControl(); };
-      this.detailRenderer.onViewStateChange = () => this.explorePanel?.updateViewState();
-      this.detailRenderer.tuneViewState = state => this.explorePanel?.showAppearance(state);
-      this.detailRenderer.showViewGroups = () => this.toGroups();
-      this.detailRenderer.onLensChange = () => this.explorePanel?.updateLensControl();
-      this.detailRenderer.onMoreConnections = focus => this.detailRenderer?.showConnections(focus);
-      this.detailRenderer.onHub = group => { const key = this.explored?.groupKeys[group]; if (key !== undefined) this.setView({ ...this.view, collapsedGroups: this.view.collapsedGroups.filter(k => k !== key) }, () => this.focusGroup(group)); };
-      if (moved) this.pendingCamera = undefined;
-      if (this.pendingCamera) { const c = this.pendingCamera; this.pendingCamera = undefined; this.detailRenderer.flyTo(c.x, c.y, c.ratio); }
-      else if (!moved) this.detailRenderer.fitAll(0);
-      if (focus?.projection === this.projection) this.detailRenderer.focusNote(focus.node, focus.lens);
-      this.explorePanel?.render();
+      await this.createNotesRenderer(this.positions, false, () => !this.closed && renderRevision === this.renderRevision, () => {
+        void this.showDetails(clearPanel);
+      }, detail => {
+        this.detailRenderer = detail;
+        const moved = detail.adoptCamera(preview);
+        preview?.dispose();
+        this.plugin.recordPerformance?.({ notes: projection.nodeCount, edges: projection.source.length, labelsMs: detail.timings.labels, labelUploadMs: detail.timings.labelUpload });
+        this.renderer = detail; this.contentEl.dataset.mode = 'nodes'; this.detailFallback = ''; this.statusText = this.statusText;
+        const detailGeneration = this.detailGeneration;
+        detail.describeEdges = edges => this.plugin.pipeline.request(detailGeneration, { kind: 'relationships', edges });
+        detail.openPath = path => this.openPath(path);
+        detail.openNote = (path, mode) => this.openNote(path, mode);
+        detail.copyLink = path => this.copyLink(path);
+        detail.noteTitle = path => {
+          const title: unknown = this.app.metadataCache.getCache(path)?.frontmatter?.title;
+          return typeof title === 'string' ? title.slice(0, 256) : '';
+        };
+        detail.measureTools = () => this.toolsOverlap(); detail.syncTools?.();
+        detail.showMenu = obsidianMenu(this.app, Menu, path => { const f = this.app.vault.getAbstractFileByPath(path); return f instanceof TFile ? f : null; }, this.leaf);
+        detail.onSizingChange = () => { this.explorePanel?.updateSizingReadout(); this.explorePanel?.updateLensControl(); };
+        detail.onViewStateChange = () => this.explorePanel?.updateViewState();
+        detail.tuneViewState = state => this.explorePanel?.showAppearance(state);
+        detail.showViewGroups = () => this.toGroups();
+        detail.onLensChange = () => this.explorePanel?.updateLensControl();
+        detail.onMoreConnections = focus => this.detailRenderer?.showConnections(focus);
+        detail.onHub = group => { const key = this.explored?.groupKeys[group]; if (key !== undefined) this.setView({ ...this.view, collapsedGroups: this.view.collapsedGroups.filter(k => k !== key) }, () => this.focusGroup(group)); };
+        if (moved) this.pendingCamera = undefined;
+        if (this.pendingCamera) { const c = this.pendingCamera; this.pendingCamera = undefined; detail.flyTo(c.x, c.y, c.ratio); }
+        else if (!moved) detail.fitAll(0);
+        if (focus && focus.projection === projection) detail.focusNote(focus.node, focus.lens);
+        this.explorePanel?.render();
+      });
     } catch (e) { if (renderRevision !== this.renderRevision) return; this.gpu = { available: false, reason: String(e) }; this.detailFallback = `Notes could not be drawn: ${String(e)}. Showing Groups.`; this.showGroups(); this.statusText = ''; }
   }
 }
