@@ -2122,6 +2122,12 @@ export class DetailRenderer {
       if (nodesToDraw.size < cap) {
         const pad = 8 + Math.max(s.visuals.tierMinSize, radius * (1 + s.visuals.degreeSizing) * Math.max(1, s.visuals.carrierSize)) * 3;
         sampled.sample(cx, cy, (hw+pad)/scale, (hh+pad)/scale, cap, admit, classes);
+        // Spatial samples include centers of rejected row units. Fill spare slots
+        // from admitted row endpoints, never the unbounded graph-wide carrier list.
+        if (mode !== 'focus' && level.alpha && this.canvasInk) for (const n of this.canvasInk.centers) {
+          if (nodesToDraw.size >= cap) break;
+          admit(n);
+        }
       }
     }
     // Shared ink rules apply inside the software draw list.

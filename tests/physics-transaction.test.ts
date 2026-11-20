@@ -807,6 +807,22 @@ test('software admission: the only eligible focus center paints and picks ahead 
   settings.visuals.edgeMode='focus'; settings.visuals.zoomAdapt=false; r[k('focusNote')](m); r.setCamera(0,0,.02); draw();
   expect([...r.paintedDots]).toEqual([0]); expect(r.pick(400,300)).toBe(0); expect(r.paintedLines.size).toBe(2);
 });
+test('software admission: rejected neighbors cannot hide the only admitted relationship center', async () => {
+  const m = 5001, n = m + 2105, links: [number, number, number?][] = [], xy = new Float32Array(n * 2);
+  for (let i = 1; i <= m; i++) {
+    links.push([i === 1 ? m + 2 : i - 1, i, i], [i, m + 1, i]);
+    xy[2*i] = 1 + i % 70; xy[2*i+1] = 1 + Math.floor(i / 70);
+  }
+  links.push([m+3, 0, 0], [0, m+4, 0]); xy.fill(10000, 2*(m+1)); xy[2*(m+3)+1] = xy[2*(m+4)] = 0;
+  const {r, settings, mask, draw} = await admissionFixture(n, links, xy);
+  Object.assign(settings.visuals, defaults('links').visuals, {motion:'off'});
+  for (const hideNeighbors of [false, true]) {
+    if (hideNeighbors) mask.fill(0, 1, m+1);
+    r.setView(mask, {}); r.setCamera(0, 0, .02); draw();
+    expect(r.paintedLines.size).toBe(2); expect(r.paintedDots.has(0)).toBe(true);
+    expect(r.pick(400,300)).toBe(0);
+  }
+});
 test('software admission: a highlighted hop reserves its joining dot without creating another semantic hop', async () => {
   const {r,k,settings,draw} = await admissionFixture(4100,[[1,0,0],[0,2,0]]); settings.visuals.zoomAdapt=false;
   r[k('findPath')](1,2); r.fitAll(0); draw(); expect(r[k('pathView')].hops).toHaveLength(1);
