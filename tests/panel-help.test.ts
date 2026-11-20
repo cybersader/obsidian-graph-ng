@@ -88,7 +88,7 @@ test('progress updates only the summary, preserving focused drafts and scroll, a
   field.focus(); body.scrollTop = 101;
   for (done = 1; done <= 100; done++) f.panel.updateSummary();
   expect(body.children).toEqual(children); expect(ControlElement.active).toBe(field); expect(body.scrollTop).toBe(101);
-  expect(f.panel.counts.textContent).toContain('Notes shown so far'); expect(f.panel.counts.textContent).toContain('Reading links 100%'); expect(f.panel.counts.textContent).not.toContain('Hidden, see why');
+  expect(f.panel.counts.textContent).toContain('Notes included so far'); expect(f.panel.counts.textContent).toContain('Reading links 100%'); expect(f.panel.counts.textContent).not.toContain('Hidden, see why');
   f.host.loading = () => undefined; f.panel.updateSummary(); expect(f.panel.counts.textContent).not.toContain('so far');
   f.panel.close(); const counts = [...f.panel.counts.children]; f.panel.updateSummary(); expect(f.panel.counts.children).toEqual(counts); f.panel.dispose();
 });

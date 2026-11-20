@@ -37,8 +37,8 @@ test('coverage accounts for every markdown note once, every category non-zero, a
     dropped: p.dropped, rows: p.carrierPaths.length + p.quarantined.length, ruleNotes: p.ruleNotes, rules: d.edges.map(x => x.name), vault: total, excluded };
   const a = accounting(r, e);
   expect(a.parts.map(x => [x.icon, x.label, x.count])).toEqual([
-    ['circle-dot', 'Shown as dots', 3], // n0, n6, n9
-    ['spline', 'Drawn as crosswalk lines', 4],
+    ['circle-dot', 'Included as dots', 3], // n0, n6, n9
+    ['spline', 'Represented as crosswalk lines', 4],
     ['filter', 'Hidden by filter: kind exists', 3],
     ['filter', 'Hidden by filter: team is “B”', 4], // n1, n4, n7, n10; s2 already hidden
     ['search', 'Hidden by search', 1], // other3
@@ -64,9 +64,9 @@ test('edge breakdown includes zero-drawn types, exact view-hidden counts and nav
   renderInformation(host, '', 'ready', r, e, { filter: i => calls.push(i) });
   const lines = () => host.querySelectorAll('details').find((x: any) => x.dataset.info === 'edges');
   const row = (name: string) => host.querySelectorAll('.graph-ng-stat').find((x: any) => x.querySelector('.graph-ng-stat-label')?.textContent === name);
-  expect(lines().open).toBe(false); row('Edges drawn').click(); expect(lines().open).toBe(true);
-  expect(row('crosswalk edges drawn').querySelector('.graph-ng-count').textContent).toBe('0');
-  expect(row('link edges drawn').querySelector('.graph-ng-count').textContent).toBe('12');
+  expect(lines().open).toBe(false); row('Edges included').click(); expect(lines().open).toBe(true);
+  expect(row('crosswalk edges included').querySelector('.graph-ng-count').textContent).toBe('0');
+  expect(row('link edges included').querySelector('.graph-ng-count').textContent).toBe('12');
   expect(row('crosswalk: hidden by view').querySelector('.graph-ng-count').textContent).toBe('4');
   row('crosswalk: hidden by view').click(); expect(calls).toEqual([0]);
   expect(row('Relationship type hidden').querySelector('.graph-ng-count').textContent).toBe('4');
@@ -77,7 +77,7 @@ test('edge breakdown includes zero-drawn types, exact view-hidden counts and nav
   expect(ControlElement.active).toBe(lines().querySelector('summary'));
   expect(chip.querySelectorAll('button')).toHaveLength(0); ControlElement.active = undefined;
   renderInformation(host, '', 'ready', { ...r, nodes: r.nodes + 1 }, e);
-  expect(host.textContent).not.toContain('crosswalk edges drawn');
+  expect(host.textContent).not.toContain('crosswalk edges included');
 });
 
 test('complete accounting does not hide source issues; lines break down by type', () => {
@@ -85,14 +85,14 @@ test('complete accounting does not hide source issues; lines break down by type'
   const r: InformationReport = { nodes: p.paths.length, edges: p.source.length, listed: rows.length, linksPending: false, provisional: false, unresolved: p.unresolved, duplicates: 0,
     dropped: p.dropped, rows: rows.length, ruleNotes: p.ruleNotes, rules: d.edges.map(x => x.name), vault: rows.length, excluded: [] };
   const a = accounting(r, e);
-  expect(a.complete).toBe(true); expect(a.parts.map(x => [x.label, x.count])).toEqual([['Shown as dots', 15], ['Drawn as crosswalk lines', 4]]);
+  expect(a.complete).toBe(true); expect(a.parts.map(x => [x.label, x.count])).toEqual([['Included as dots', 15], ['Represented as crosswalk lines', 4]]);
   const host: any = new ControlElement(); renderInformation(host, '', 'ready', r, e);
   expect(host.querySelector('.graph-ng-coverage-state').textContent).toBe('Source issues need attention');
   const stats = host.querySelectorAll('.graph-ng-stat').map((s: any) => [s.querySelector('svg')?.getAttribute('data-icon'), s.querySelector('.graph-ng-stat-label').textContent, s.querySelector('.graph-ng-count').textContent]);
-  expect(stats.slice(0, 2)).toEqual([['circle-dot', 'Notes shown', '15'], ['spline', 'Edges drawn', String(e.visibleEdges)]]);
-  for (const row of [['circle-dot', 'Shown as dots', '15'], ['spline', 'Drawn as crosswalk lines', '4'], ['files', 'Markdown notes in vault', '19']]) expect(stats).toContainEqual(row);
-  expect(stats).toContainEqual(['spline', 'crosswalk edges drawn', String(e.ruleVisible[0])]);
-  expect(stats).toContainEqual(['spline', 'link edges drawn', String(e.ruleVisible[1])]);
+  expect(stats.slice(0, 2)).toEqual([['circle-dot', 'Notes included', '15'], ['spline', 'Edges included', String(e.visibleEdges)]]);
+  for (const row of [['circle-dot', 'Included as dots', '15'], ['spline', 'Represented as crosswalk lines', '4'], ['files', 'Markdown notes in vault', '19']]) expect(stats).toContainEqual(row);
+  expect(stats).toContainEqual(['spline', 'crosswalk edges included', String(e.ruleVisible[0])]);
+  expect(stats).toContainEqual(['spline', 'link edges included', String(e.ruleVisible[1])]);
   expect(stats).toContainEqual(['unlink', 'Target note missing', '1']);
   expect(e.ruleVisible[0]! + e.ruleVisible[1]!).toBe(e.visibleEdges);
   // The canvas readout: notes and edges, no vault total and no middle dots.
@@ -201,9 +201,9 @@ test('relationship display has one explicit save/rebuild switch, separate from s
   expect(remove.textContent).toBe(''); expect(warning.querySelector('.graph-ng-help-popover').hidden).toBe(true);
   expect(host.textContent).not.toMatch(/reveals|would be/);
   show.click(); remove.click(); expect(calls).toEqual([['display', true], ['remove', 0]]);
-  // Drawn as notes: they are dots now, the switch offers lines back, and the warning says they are hidden.
+  // Represented as notes: they are dots now, the switch offers lines back, and the warning says they are hidden.
   const nodesHost: any = new ControlElement(); renderInformation(nodesHost, '', 'ready', { ...r, relationshipNodes: true }, e, act);
-  expect(nodesHost.textContent).not.toContain('Drawn as crosswalk lines');
+  expect(nodesHost.textContent).not.toContain('Represented as crosswalk lines');
   nodesHost.querySelectorAll('button').find((b: any) => b.textContent === 'Show relationships as lines (save and rebuild)').click(); expect(calls.at(-1)).toEqual(['display', false]);
   expect(nodesHost.querySelector('.graph-ng-stat-warning').textContent).toContain('Filtered relationship notes4');
   expect(nodesHost.textContent).toContain('crosswalk relationship notes');
@@ -245,13 +245,13 @@ test('loading information suppresses unsettled counts, preserves configured mode
   expect(host.textContent).toContain('40 notes with unverified properties');
   expect(host.textContent).toContain('60 of 100 steps'); expect(host.textContent).not.toContain('%');
   expect(host.querySelector('.graph-ng-help-trigger').textContent).toBe('Relationship notes');
-  for (const misleading of ['44,572', '61,077', '189,505', 'drawn as dots', 'Edges drawn', 'No issues found', 'Save as']) expect(host.textContent).not.toContain(misleading);
+  for (const misleading of ['44,572', '61,077', '189,505', 'drawn as dots', 'Edges included', 'No issues found', 'Save as']) expect(host.textContent).not.toContain(misleading);
   expect(layoutProgress({ iteration: 3, total: 6 })).toBe('3 of 6 steps');
   expect(pendingText({ linksPending: true, pendingProperties: 0 })).toBe('Ready, source checks incomplete');
   // Completed layout does not turn unresolved host metadata into final-looking accounting.
   renderInformation(host, '', 'ready', { ...report, pendingProperties: 0, layout: { cached: true, ms: 0, totalMs: 1 } });
   expect(host.textContent).toContain('Ready, source checks incomplete'); expect(host.textContent).toContain('Reused saved layout');
-  expect(host.textContent).not.toContain('Edges drawn');
+  expect(host.textContent).not.toContain('Edges included');
 });
 
 test('relationship warning offers filter review without changing mode or filters', () => {
@@ -322,7 +322,7 @@ test('only explicit current-generation read counters are shown during loading', 
   const host: any = new ControlElement();
   renderInformation(host, 'Reading notes 40%', 'building', undefined, undefined, {}, { indexed: 40, listed: 100 });
   expect(host.textContent).toContain('Notes read40'); expect(host.textContent).toContain('Notes pending60');
-  expect(host.textContent).not.toContain('Edges drawn'); expect(host.textContent).toContain('Source checks pending');
+  expect(host.textContent).not.toContain('Edges included'); expect(host.textContent).toContain('Source checks pending');
   renderInformation(host, 'Resolving relationships…', 'building');
   expect(host.textContent).not.toContain('Notes read'); expect(host.textContent).not.toContain('%');
 });

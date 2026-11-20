@@ -4,7 +4,7 @@ The owner-approved bounded download ceilings for this UI pass are **480,000 raw 
 
 ## Unreleased: software Notes
 
-- Canvas 2D now opens Notes above the existing draw budgets. The view labels sampled detail, spends the note budget on the viewport and preserves full-graph selection, filter counts and layout. No settings override is needed.
+- Canvas 2D now opens Notes above the existing draw budgets. The view labels sampled detail, spends the note budget on the viewport and preserves full-graph selection, filter counts and layout. No settings override is needed. Graph information labels filtered graph totals as included notes and edges, not counts painted in a frame.
 
 ## Unreleased: room startup and layout cache
 

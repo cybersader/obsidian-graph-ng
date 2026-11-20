@@ -57,7 +57,7 @@ test('filters inspector: inline stat rows, readable chips with named counts, fac
   f.panel.summary(false, result);
   const counts = f.panel.counts, row = (s: any) => [s.querySelector('svg')?.getAttribute('data-icon'), s.querySelector('.graph-ng-stat-label').textContent, s.querySelector('.graph-ng-count').textContent];
   expect(counts.querySelector('.graph-ng-scope-name')).toBeUndefined(); expect(counts.textContent).not.toContain('filter');
-  expect(counts.querySelectorAll('.graph-ng-stat').map(row)).toEqual([['circle-dot', 'Notes shown', '7'], ['spline', 'Edges drawn', '5'], ['eye-off', 'Hidden, see why', '3 notes, 15 edges']]);
+  expect(counts.querySelectorAll('.graph-ng-stat').map(row)).toEqual([['circle-dot', 'Notes included', '7'], ['spline', 'Edges included', '5'], ['eye-off', 'Hidden, see why', '3 notes, 15 edges']]);
   // The hidden row leads to the breakdown.
   const opened: unknown[] = []; f.panel.show = (tool: string) => opened.push(tool); counts.querySelectorAll('.graph-ng-stat').at(-1).click(); expect(opened).toEqual(['information']); delete f.panel.show;
   f.panel.host.scoped = () => true; f.panel.host.scope = () => 'Group A'; f.panel.summary(false, result); expect(counts.querySelector('.graph-ng-scope-name').textContent).toBe('In Group A');

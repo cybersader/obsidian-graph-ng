@@ -46,8 +46,8 @@ const by = (f: Predicate) => `by filter: ${hiddenClause(f).text.replace(/^where 
 export function accounting(r: InformationReport, view?: Explored): Accounting {
   const parts: Part[] = [], add = parted(parts);
   const e = current(r, view), dots = e ? sum(e.visible) : r.nodes;
-  add('circle-dot', 'Shown as dots', dots);
-  if (!r.relationshipNodes) for (const [rule, count] of Object.entries(r.ruleNotes ?? {})) add('spline', `Drawn as ${rule} lines`, count, undefined, true);
+  add('circle-dot', 'Included as dots', dots);
+  if (!r.relationshipNodes) for (const [rule, count] of Object.entries(r.ruleNotes ?? {})) add('spline', `Represented as ${rule} lines`, count, undefined, true);
   if (e) {
     e.filters.forEach((f, i) => add('filter', `Hidden ${by(f)}`, e.filterHidden[i], i));
     add('search', 'Hidden by search', e.queryHidden, -1); add('eye-off', 'In hidden groups or colors', e.matched - dots, e.filters.length);
@@ -78,7 +78,7 @@ export function statRow(host: HTMLElement, icon: string, label: string, value: s
   if (click) setIcon(row.createSpan({ cls: 'graph-ng-stat-icon' }), 'chevron-right');
   return row;
 }
-/** The always-visible canvas readout: notes shown, then the notes the view hides, else the edges drawn. */
+/** The always-visible canvas readout: notes shown, then the notes the view hides, else the edges included. */
 export function renderReadout(host: HTMLElement, a: Accounting) {
   const open = host.onclick;
   host.onclick = event => { open?.call(host, event); revealInformation(host.closest('.graph-ng-view') ?? host, 'edges'); };
@@ -140,7 +140,7 @@ function renderBody(host: HTMLElement, message: string, state: string | undefine
   const e = current(r, view), a = accounting(r, e), edges = edgeAccounting(r, e), unread = a.parts.find(p => p.icon === 'loader');
   host.createDiv({ cls: 'graph-ng-coverage-state', attr: { role: 'status' }, text: a.complete ? e?.carrierHidden?.some(Boolean) ? 'Relationship notes are filtered' : r.linksPending ? 'Source checks pending' : r.duplicates || r.unresolved ? 'Source issues need attention' : a.hidden || edges.total !== edges.drawn ? 'Ready with hidden items' : 'All notes accounted for' : unread ? `Still loading: ${plural(unread.count, 'note')} left to read` : 'Vault changed since the last refresh' });
   const headline = host.createDiv({ cls: 'graph-ng-stats graph-ng-answer' });
-  statRow(headline, 'circle-dot', 'Notes shown', num(a.dots)); statRow(headline, 'spline', 'Edges drawn', num(edges.drawn), '', () => revealInformation(host, 'edges'));
+  statRow(headline, 'circle-dot', 'Notes included', num(a.dots)); statRow(headline, 'spline', 'Edges included', num(edges.drawn), '', () => revealInformation(host, 'edges'));
   const section = (id: string, icon: string, label: string, value: string, cls = '') => {
     const details = host.createEl('details', { cls: `graph-ng-info-section ${cls}` }); details.dataset.info = id;
     statRow(disclosure(details), icon, label, value); return disclosureBody(details);
@@ -161,10 +161,10 @@ function renderBody(host: HTMLElement, message: string, state: string | undefine
   const notes = section('notes', 'files', 'Note accounting', num(a.total), 'graph-ng-coverage');
   partRows(notes, a.parts, r, act); statRow(notes, 'files', 'Markdown notes in vault', num(a.total), 'graph-ng-stat-total');
   const lines = section('edges', 'spline', 'Edge accounting', num(edges.total));
-  statRow(lines, 'spline', 'Edges drawn', num(edges.drawn));
+  statRow(lines, 'spline', 'Edges included', num(edges.drawn));
   e?.types?.forEach((type, i) => {
     const drawn = e.typeVisible![i]!, hidden = e.typeTotals![i]! - drawn;
-    statRow(lines, 'spline', `${type} edges drawn`, num(drawn), 'graph-ng-stat-sub');
+    statRow(lines, 'spline', `${type} edges included`, num(drawn), 'graph-ng-stat-sub');
     if (hidden) statRow(lines, 'eye-off', `${type}: hidden by view`, num(hidden), 'graph-ng-stat-sub', act.filter && (() => act.filter!(e.filters.length)));
   });
   partRows(lines, edges.parts, r, act); statRow(lines, 'sigma', 'Edges found', num(edges.total), 'graph-ng-stat-total');

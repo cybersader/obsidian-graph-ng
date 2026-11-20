@@ -36,7 +36,7 @@ export interface PanelHost {
   viewCurrent?(): boolean;
   mode(): string;
   policy(): string[];
-  /** Edge notes (reified edges drawn as nodes) in the detail view; 0 otherwise. */
+  /** Edge notes (reified edges included as nodes) in the detail view; 0 otherwise. */
   carriers(): number;
   /** Relationship notes (reified edge carriers) in the loaded projection, either display. */
   relationshipNotes?(): number;
@@ -334,7 +334,7 @@ export class ExplorePanel {
     this.show('filters'); const chip = this.body.querySelectorAll<HTMLElement>('.graph-ng-chip')[at];
     chip?.addClass('is-focused'); chip?.querySelector('button')?.focus();
   }
-  /** Notes shown and edges drawn; what the view hides is one row leading to the breakdown. The scope is named only inside a selected group. */
+  /** Notes included and edges included; what the view hides is one row leading to the breakdown. The scope is named only inside a selected group. */
   private summaryKey?: string;
   private summary(external: boolean, r?: ExploreResult) {
     const progress = this.counts.querySelector<HTMLElement>('.graph-ng-working-status'), loading = this.host.loading?.();
@@ -347,7 +347,7 @@ export class ExplorePanel {
     if (external || !r) { status(this.note(this.counts, ''), loading?.stage ?? (external ? 'External aggregate' : 'Waiting for projection…'), !!loading); return; }
     const stats = this.counts.createDiv({ cls: 'graph-ng-stats' });
     const shown = sum(r.visible), notes = r.nodes - shown, edges = r.edges - r.visibleEdges;
-    statRow(stats, 'circle-dot', loading ? 'Notes shown so far' : 'Notes shown', num(shown)); statRow(stats, 'spline', loading ? 'Edges drawn so far' : 'Edges drawn', num(r.visibleEdges));
+    statRow(stats, 'circle-dot', loading ? 'Notes included so far' : 'Notes included', num(shown)); statRow(stats, 'spline', loading ? 'Edges included so far' : 'Edges included', num(r.visibleEdges));
     if (loading) { status(statRow(stats, 'loader', '', '', 'graph-ng-loading-counts').querySelector<HTMLElement>('.graph-ng-stat-label')!, loading.stage, true); return; }
     if (notes || edges) statRow(stats, 'eye-off', 'Hidden, see why', `${plural(notes, 'note')}, ${plural(edges, 'edge')}`, '', () => this.show('information'));
   }
