@@ -664,6 +664,73 @@ for (const count of [20000, 80]) test(`default software Notes keeps ${count} not
     const narrow = new Uint8Array(count); narrow[0] = narrow[1] = 1; r.setView(narrow, {}); expect(r.canvasHint.hidden).toBe(true);
   } finally { ctx.fill = fill; ctx.moveTo = move; }
 });
+test('offscreen connection rings leave room for an unrelated visible pick', async () => {
+  const n = 400, xy = Float32Array.from({length: 2*n}, (_,i) => i%2 ? Math.floor((i>>1)/20) : (i>>1)%20);
+  const {r,k} = await graduated(Array.from({length: 250}, (_,i) => [0,i+1]),n,32,undefined,xy);
+  r[k('focusNote')](0,true); r[k('animateLens')](performance.now()+1000); r.setCamera(1,1,.02); r[k('drawCanvas')]();
+  expect(r[k('lensRows')].length).toBe(31); const p = r.screenPoint(n-1); expect(r.pick(p.x,p.y)).toBe(n-1);
+});
+test('folded relationship dots do not reserve slots in the ordinary note sample', async () => {
+  const n = 256, pairs: [number,number][] = [];
+  for (let i = 0; i < n; i += 2) pairs.push([i,i+1],[i+1,(i+2)%n]);
+  const {r,k,settings} = await graduated(pairs,n,n/2);
+  r.projection.carrier = Uint32Array.from({length:n}, (_,i) => (i>>1)*2+1);
+  r.projection.carrierNodes = Uint32Array.from({length:n},(_,i) => i%2 ? i+1 : 0); r[k('carrierCount')] = n/2;
+  settings.visuals.carrierLines = 'direct'; r.setView(new Uint8Array(n).fill(1),{}); r[k('drawCanvas')]();
+  expect([...r.paintedDots].sort((a,b) => Number(a)-Number(b))).toEqual(Array.from({length:n/2},(_,i) => 2*i));
+});
+test('selected and path geometry get a whole unit; disabled and non-fitting units yield their slots', async () => {
+  const m = 60, pairs: [number,number][] = Array.from({length:m}, () => [0,1]);
+  pairs.push([2,3],[3,4],[2,3],[3,5]);
+  const {r,k,settings} = await graduated(pairs,6,4), v = new Uint8Array(6).fill(1);
+  const legs = [m,m+1,m+2,m+3]; r.projection.carrier.fill(3,m); r.projection.carrierNodes[3] = 4; r[k('carrierCount')] = 1;
+  settings.visuals.carrierLines = 'through'; r.setView(v,{}); r[k('focusNote')](3); r[k('drawCanvas')]();
+  expect([...r[k('canvasEdges')]]).toEqual(legs);
+  r[k('findPath')](2,4); r[k('emphasize')](true); r[k('drawCanvas')]();
+  expect(r[k('pathView')].edges).toEqual([m,m+1]); expect([...r[k('canvasEdges')]]).toEqual(legs);
+  for (const e of legs) expect(r.paintedLines.has(e)).toBe(true);
+  settings.canvasMaxDetailEdges = 3; r.setView(v,{}); const rows = () => [...r[k('canvasEdges')]] as number[];
+  expect(rows()).toHaveLength(3); expect(rows().every(e => e < m)).toBe(true);
+  const masked = v.slice(); masked[4] = masked[5] = 0; settings.canvasMaxDetailEdges = m+1; r.setView(masked,{}); r[k('drawCanvas')]();
+  expect(rows()).toEqual(Array.from({length:m},(_,i) => i)); expect(r.paintedLines.size).toBeGreaterThan(0);
+});
+test('warm sampled paints visit bounded candidates, also with a focused hub and overlays', async () => {
+  const n = 30000, m = 60000, cap = 160, {r,k} = await graduated(Array.from({length: m}, (_,i) => [0,1 + i%(n-1)]), n, cap);
+  const draw = () => r[k('draw')](), visits = {visible: 0, source: 0, predicate: 0, candidates: 0, spatial: 0};
+  const measure = (array: Uint8Array | Uint32Array | Float32Array, key: 'visible' | 'source' | 'spatial') => new Proxy(array, {get(a,k) {
+    if (typeof k === 'string' && /^\d+$/.test(k)) visits[key]++;
+    const v = Reflect.get(a,k,a); return typeof v === 'function' ? v.bind(a) : v;
+  }});
+  r.visible = measure(r.visible,'visible'); r.projection.source = measure(r.projection.source,'source');
+  const index = r[k('canvasIndex')], sample = index[k('sample')].bind(index), edge = r[k('edgeDrawn')];
+  r.grid.positions = measure(r.grid.positions, 'spatial');
+  index[k('sample')] = (x: number,y: number,w: number,h: number,c: number,add: (n: number) => void,mask: number) => sample(x,y,w,h,c,(n: number) => { visits.candidates++; add(n); },mask);
+  r[k('edgeDrawn')] = (e: number) => { visits.predicate++; return edge(e); };
+  for (const focused of [false,true]) {
+    if (focused) { r[k('focusNote')](0,true); r[k('emphasize')](true); }
+    draw(); for (const key of Object.keys(visits) as (keyof typeof visits)[]) visits[key] = 0;
+    draw(); expect(visits.candidates).toBeGreaterThan(0); expect(visits.candidates).toBeLessThanOrEqual(4*cap);
+    expect(visits.spatial).toBeLessThan(2000); expect(visits.visible).toBeLessThan(10*cap);
+    expect(visits.predicate).toBeGreaterThan(0); expect(visits.predicate).toBeLessThanOrEqual(3*cap);
+    expect(visits.source).toBeLessThan(16*cap);
+  }
+});
+test('sampled Canvas replays a stationary hover after publishing the new painted set', async () => {
+  const { r, k, hover } = await graduated([[0, 1],[0, 1],[0, 1],[0, 1],[0, 1],[0, 1]], 5, 5);
+  hover(2); expect(r.hovered).toBe(2);
+  r.setView(new Uint8Array(5).fill(1), {}); r[k('draw')](); expect(r.hovered).toBe(2);
+});
+test('sampled Canvas picks a painted lifted tier before a closer background centre', async () => {
+  const { r, k } = await graduated(Array.from({length: 6}, () => [0, 1]), 5, 5, undefined, Float32Array.of(0,0,350,350,2,0,400,0,0,400));
+  r[k('focusNote')](0); r[k('emphasize')](true); r[k('drawCanvas')]();
+  const p = r.screenPoint(2); expect(r.paintedDots.has(2)).toBe(true); expect(r.pick(p.x,p.y)).toBe(0);
+});
+test('selection names survive an edge-only budget with focus highlighting disabled', async () => {
+  const { r,k,settings } = await graduated(Array.from({length: 6}, () => [0,1]), 5, 5);
+  settings.visuals.labelStyle = 'anchored'; settings.visuals.namePriority = 'selection'; settings.visuals.hoverHighlight = false;
+  r[k('focusNote')](0); r[k('draw')](); expect(r[k('focusNode')]).toBe(-1);
+  expect(r[k('anchorNames')].map((a: any) => a.node)).toEqual([0,1]);
+});
 const EMPTY = { x: 1, y: 599 };
 test('graduated production: a click is the one CPU tier authority, hover never retiers; every reset path clears', async () => {
   const f = await graduated([[0, 1], [1, 2], [2, 3]]), { r, k } = f;

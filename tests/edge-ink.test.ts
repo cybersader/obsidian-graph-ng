@@ -133,7 +133,8 @@ test('importance ranks bound the bridge allowance while favouring hub spokes and
 test('both renderers and picking consume the same importance column and context share', () => {
   expect(edgeShader).toContain('layout(location=4) in uint lineRank;');
   expect(source).toContain('this.integer(4, this.lineRanks)');
-  expect(source.match(/!lineAdmitted\(this.lineRanks\[e\]!/g)).toHaveLength(2); // Canvas and picking
+  expect(source).toContain('!lineAdmitted(this.lineRanks[e]!, ink!'); // unsampled picking
+  expect(source).toContain('!lineAdmitted(this.inkRank(this.lineRanks[e]!), ink,'); // sampled Canvas quantiles derive from the same column
   expect(source).not.toContain('unionAlpha');
   expect(source).toContain('edgeAlpha(v, v.zoomAdapt ? 0 : this.visibleEdges');
   expect(source).toContain('edgeAlpha(s.visuals, s.visuals.zoomAdapt ? 0 : this.visibleEdges');

@@ -188,7 +188,7 @@ test('software drawing samples eligible rows without dropping rows on small view
   const on = (e: number) => e % 2 === 0;
   expect([...canvasDetailEdges(6, 3, 3, on, n => n)]).toEqual([0, 2, 4]);
   expect([...canvasDetailEdges(6, 3, 2, on, n => n)]).toEqual([0, 2]);
-  expect([...canvasDetailEdges(6, 3, 2, on, n => n === 0 ? 0 : 2)]).toEqual([0]);
+  expect([...canvasDetailEdges(6, 3, 2, on, n => n === 0 ? 0 : 2, n => n === 0 ? n : -1)]).toEqual([0]);
   expect(canvasDetailEdges(60000, 0, 1, on, n => n).length).toBe(0);
 });
 test('viewport samples across the whole layout and recovers detail on zoom', () => {
@@ -197,6 +197,32 @@ test('viewport samples across the whole layout and recovers detail on zoom', () 
   index.sample(100, 50, 100, 50, 2000, n => ids.push(n)); expect(new Set(ids).size).toBe(2000);
   const missing = Array.from(visible.keys()).find(i => !ids.includes(i))!; ids.length = 0;
   index.sample(xy[2 * missing]!, xy[2 * missing + 1]!, 1, 1, 2000, n => ids.push(n)); expect(ids).toContain(missing); expect(ids.length).toBeLessThan(2000);
+});
+test('viewport exact ranks retain the lone in-view centre with finite outliers', () => {
+  const v = new Uint8Array(20000).fill(1), xy = new Float32Array(2 * v.length);
+  for (let n = 1; n < v.length - 1; n++) xy.set([18000 + n % 1900, 18000 + (n >> 11)], n * 2);
+  xy.set([1e6, 1e6], xy.length - 2);
+  const index = new CanvasViewport(new PickGrid(xy, v), v, false), ids: number[] = [];
+  index.sample(0, 0, 15000, 11500, 2000, n => ids.push(n)); expect(ids).toEqual([0]);
+});
+test('trim both axes before sampling and visit bounded index entries at a crowded boundary', () => {
+  const n = 65536, v = new Uint8Array(n).fill(1), xy = Float32Array.from({length: 2*n}, (_,i) => i % 2 ? ((i >> 1)*37)%257 : ((i >> 1)*47)%811);
+  const grid = new PickGrid(xy, v), index = new CanvasViewport(grid, v, false, n => n % 4 - 1);
+  let reads = 0; Object.assign(grid, { positions: new Proxy(xy, {get(a,k) { if (typeof k === 'string' && /^\d+$/.test(k)) reads++; return Reflect.get(a,k,a); }}) });
+  for (const [x,y,w,h,mask] of [[204,128,0,257,7],[204,128,812,0,1],[405,111,6,7,5],[405,128,405,128,3]]) {
+    const ids: number[] = [], matches = Array.from(v.keys()).filter(i => i%4 && (mask! & 1 << (i%4-1)) && Math.abs(xy[2*i]!-x!) <= w! && Math.abs(xy[2*i+1]!-y!) <= h!);
+    reads = 0; index.sample(x!,y!,w!,h!,2000,n => ids.push(n),mask);
+    expect(reads).toBeLessThan(3000); expect(new Set(ids).size).toBe(Math.min(2000,matches.length));
+    const eligible = new Set(matches); expect(ids.every(n => eligible.has(n))).toBe(true);
+  }
+});
+test('priority on one leg reserves its entire eligible unit, independent of rank collisions', () => {
+  // Rows 1 and 4 belong together. Row 3 has the same score but is independent; row 5 is disabled.
+  const rows = canvasDetailEdges(6,6,3,e => e !== 5,e => e === 1 || e === 4 || e === 3 ? 4 : e,e => e === 1 || e === 4 ? -1 : e,e => +(e === 4));
+  expect([...rows]).toEqual([0,1,4]);
+});
+test('skip non-fitting whole units and continue with lower-ranked units', () => {
+  expect([...canvasDetailEdges(8, 8, 4, () => true, e => e < 5 ? 0 : e, e => e < 5 ? -1 : e)]).toEqual([5, 6, 7]);
 });
 test('drawing-buffer resize never resets an unchanged axis', () => {
   let width = 800, height = 600; const writes: string[] = [];
