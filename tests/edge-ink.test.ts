@@ -133,13 +133,13 @@ test('importance ranks bound the bridge allowance while favouring hub spokes and
 test('both renderers and picking consume the same importance column and context share', () => {
   expect(edgeShader).toContain('layout(location=4) in uint lineRank;');
   expect(source).toContain('this.integer(4, this.lineRanks)');
-  expect(source).toContain('!lineAdmitted(this.lineRanks[e]!, ink!'); // unsampled picking
+  expect(source).toContain('!lineAdmitted(this.inkRank(this.lineRanks[e]!), ink!'); // uncapped picking also respects a filtered software pool
   expect(source).toContain('!lineAdmitted(this.inkRank(this.lineRanks[e]!), ink,'); // sampled Canvas quantiles derive from the same column
   expect(source).not.toContain('unionAlpha');
   expect(source).toContain('edgeAlpha(v, v.zoomAdapt ? 0 : this.visibleEdges');
-  expect(source).toContain('edgeAlpha(s.visuals, s.visuals.zoomAdapt ? 0 : this.visibleEdges');
+  expect(source).toContain('edgeAlpha(s.visuals, s.visuals.zoomAdapt ? 0 : this.canvasEdges.length');
   expect(source).toContain('width = 2 * Math.max(.5, this.edgeWidth(zoom))'); expect(source).toContain('ctx.lineWidth = width * wide;');
-  expect(source).toContain('return this.settings.edgeSize * zoomFade(this.settings.visuals, this.visibleEdges, zoom, this.width, this.height)');
+  expect(source).toContain('return this.settings.edgeSize * zoomFade(this.settings.visuals, this.canvasInk?.source.length ?? this.visibleEdges, zoom, this.width, this.height)');
 });
 
 test('label plates are one quad per label: overlapping glyph padding neither hides a neighbour nor doubles plate alpha', () => {
