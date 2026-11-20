@@ -1,5 +1,5 @@
 import { test, expect } from 'bun:test';
-import { PickGrid, positionTexture, incidentEdges, segmentDistance, placeLabels, labelLOD, LABEL_RATIOS, canvasDetailEdges, CanvasLimit, resizeDrawingBuffer } from '../src/render-data';
+import { PickGrid, positionTexture, incidentEdges, segmentDistance, placeLabels, labelLOD, LABEL_RATIOS, canvasDetailEdges, CanvasViewport, resizeDrawingBuffer } from '../src/render-data';
 import { buildProjection } from '../src/core/projection';
 import { defaultDeclaration, validateDeclaration } from '../src/core/declaration';
 import { defaults, upgradeSettings, validateSettings } from '../src/settings';
@@ -184,15 +184,20 @@ test('new renderer knobs migrate missing settings and reject invalid ranges', ()
   expect(() => validateSettings({ ...s, cameraMinRatio: 8, cameraMaxRatio: 8 })).toThrow('cameraMinRatio');
   expect(() => validateSettings({ ...s, labelCandidateMultiplier: 1.5 })).toThrow();
 });
-test('software edge and node budgets reject excess work, never silently truncate', () => {
-  const p = { source: new Uint32Array([0, 0, 1, 2]), target: new Uint32Array([0, 1, 0, 0]) }, visible = new Uint8Array([1, 1, 0]);
-  expect([...canvasDetailEdges(p, visible, 2, 3)]).toEqual([0, 1, 2]);
-  expect(() => canvasDetailEdges(p, visible, 1, 3)).toThrow('CANVAS_DETAIL_NODE_LIMIT');
-  expect(() => canvasDetailEdges(p, visible, 2, 2)).toThrow('CANVAS_DETAIL_EDGE_LIMIT');
-  // Callers detect the refusal by type, not by matching message text.
-  expect(() => canvasDetailEdges(p, visible, 1, 3)).toThrow(CanvasLimit); expect(() => canvasDetailEdges(p, visible, 2, 2)).toThrow(CanvasLimit);
+test('software drawing samples eligible rows without dropping rows on small views', () => {
+  const on = (e: number) => e % 2 === 0;
+  expect([...canvasDetailEdges(6, 3, 3, on, n => n)]).toEqual([0, 2, 4]);
+  expect([...canvasDetailEdges(6, 3, 2, on, n => n)]).toEqual([0, 2]);
+  expect([...canvasDetailEdges(6, 3, 2, on, n => n === 0 ? 0 : 2)]).toEqual([0]);
+  expect(canvasDetailEdges(60000, 0, 1, on, n => n).length).toBe(0);
 });
-
+test('viewport samples across the whole layout and recovers detail on zoom', () => {
+  const visible = new Uint8Array(20000).fill(1), xy = Float32Array.from({ length: 40000 }, (_, i) => i % 2 ? Math.floor((i >> 1) / 200) : (i >> 1) % 200);
+  const index = new CanvasViewport(new PickGrid(xy, visible), visible, false), ids: number[] = [];
+  index.sample(100, 50, 100, 50, 2000, n => ids.push(n)); expect(new Set(ids).size).toBe(2000);
+  const missing = Array.from(visible.keys()).find(i => !ids.includes(i))!; ids.length = 0;
+  index.sample(xy[2 * missing]!, xy[2 * missing + 1]!, 1, 1, 2000, n => ids.push(n)); expect(ids).toContain(missing); expect(ids.length).toBeLessThan(2000);
+});
 test('drawing-buffer resize never resets an unchanged axis', () => {
   let width = 800, height = 600; const writes: string[] = [];
   const canvas = { get width() { return width; }, set width(v: number) { writes.push('width'); width = v; },

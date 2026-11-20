@@ -159,7 +159,6 @@ test('batch 4 F1 failed saved-view Open offers no Retry view that would bypass i
   const f = await fixture(), saved = folderView('Notes', 'Focus'), displayed = f.view.explored; saved.view.hiddenGroups = ['Notes'];
   await expect(f.view.openSavedView(saved)).rejects.toThrow('Not present in the saved grouping: Notes');
   expect(f.panel.alert.querySelectorAll('button').some((b: ControlElement) => b.textContent === 'Retry view')).toBe(false);
-  f.view.admitDetail = () => false; await expect(f.view.openSavedView(folderView('Notes', 'Focus'))).rejects.toThrow('Detail limit');
   expect(f.panel.alert.querySelectorAll('button').length).toBe(0); expect(f.view.explored).toBe(displayed); expect(f.renderer.calls).toEqual([]); f.panel.dispose();
 });
 test('batch 4 L2 saved-view Open is re-enabled once refresh finishes loading', async () => {
@@ -321,7 +320,7 @@ test('Open rejects a hidden key absent from the saved grouping before adopting t
   expect(f.renderer.calls).toEqual([]); f.panel.dispose();
 });
 
-test('Open failure/cap refusal leaves displayed result intact but requested settings honest', async () => {
+test('Open failure leaves displayed result intact; retry can display software Notes above the drawing budget', async () => {
   const f = await fixture(), saved = folderView('Notes', 'Focus'), displayed = f.view.explored;
   f.plugin.settings.explore.savedViews = [saved, { name: 'Previous', view: emptyView(), camera: null }]; f.panel.render();
   expect(f.panel.buttons.get('views').title).toBe('Saved views (requested: Previous)');
@@ -330,8 +329,8 @@ test('Open failure/cap refusal leaves displayed result intact but requested sett
   expect(f.view.explored).toBe(displayed); expect(f.plugin.settings.explore.view).toEqual(saved.view); expect(f.renderer.calls).toEqual([]);
   expect(f.panel.buttons.get('views').title).toBe('Saved views (requested: Focus)');
   f.plugin.pipeline.request = async () => ({ explore: f.result(saved.view), colors: new Uint32Array(4), groups: {}, view: 2 });
-  let admissions = 0; f.view.admitDetail = () => { admissions++; return false; };
-  await expect(f.view.openSavedView(saved)).rejects.toThrow('Detail limit'); expect(admissions).toBe(1); expect(f.view.explored).toBe(displayed); expect(f.renderer.calls).toEqual([]); f.panel.dispose();
+  f.renderer.gpu = false; f.plugin.settings.canvasMaxDetailNodes = 1;
+  await f.view.openSavedView(saved); expect(f.view.explored).not.toBe(displayed); expect(f.renderer.calls).toContain('display'); f.panel.dispose();
 });
 
 test('superseded Open cannot display or restore camera; latest success restores it once', async () => {

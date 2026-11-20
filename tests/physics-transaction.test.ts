@@ -641,6 +641,29 @@ async function graduated(pairs: [number, number][], n = 5, max = 0, paths?: stri
   const expected = (f: number, on = new Uint8Array(pairs.length).fill(1), vis = new Uint8Array(n).fill(1)) => { const state = new Uint8Array(n * 4), edge = new Uint8Array(pairs.length); focusTiers(f, incidentEdges(r.projection), r.projection, on, vis, state, edge, [], []); return [Array.from({ length: n }, (_, i) => state[i * 4 + 1]), [...edge]]; };
   return { r, settings, opened, k, tap, hover, tiers, expected, actual: () => [tiers(), [...r[k('edgeTier')]]] };
 }
+for (const count of [20000, 80]) test(`default software Notes keeps ${count} notes and dense relationships with bounded paint`, async () => {
+  const settings = defaults('links'), p = projection(count), m = 30000, visible = new Uint8Array(count).fill(1);
+  p.source = Uint32Array.from({ length: m }, (_, i) => i % count); p.target = p.source.map(n => (n + 1) % count);
+  for (let e = 0; e < m; e++) { p.offsets[p.source[e]! + 1]!++; p.offsets[p.target[e]! + 1]!++; }
+  for (let i = 1; i <= count; i++) p.offsets[i]! += p.offsets[i-1]!;
+  p.type = new Uint32Array(m); p.carrier = new Uint32Array(m).fill(0xffffffff);
+  const positions = Float32Array.from({ length: count * 2 }, (_, i) => i % 2 ? Math.floor((i >> 1) / 200) : (i >> 1) % 200);
+  const r = await Renderer.create(new Element(), p, positions, visible, settings, () => {}, () => {}, new Uint32Array(count), () => true, true); renderers.push(r);
+  expect(r.gpu).toBe(false); expect(r.visible).toBe(visible); expect(r.positions).toBe(positions); expect(r.projection.source.length).toBe(m);
+  const fill = ctx.fill, move = ctx.moveTo; let dots = 0, lines = 0;
+  try {
+    ctx.fill = () => { dots++; }; ctx.moveTo = () => { lines++; }; r[compiled('drawCanvas')]();
+    expect(dots).toBeGreaterThan(0); expect(dots).toBeLessThanOrEqual(settings.canvasMaxDetailNodes); expect(lines).toBeGreaterThan(0); expect(lines).toBeLessThanOrEqual(settings.canvasMaxDetailEdges);
+    expect(r.canvasHint.hidden).toBe(false); expect(r.canvasHint.textContent).toBe(count === 20000 ? 'Sampled notes and connections' : 'Sampled connections');
+    if (count === 20000) {
+      const omitted = Array.from(visible.keys()).find(n => !r.paintedDots.has(n))!;
+      r[compiled('focusNote')](omitted); r[compiled('drawCanvas')](); expect(r.selected).toBe(omitted); expect(r.paintedDots.has(omitted)).toBe(true);
+      const n = count - 1; r.setCamera(1, 1, .02); r[compiled('drawCanvas')](); const point = r.screenPoint(n);
+      expect(r.pick(point.x, point.y)).toBe(n);
+    }
+    const narrow = new Uint8Array(count); narrow[0] = narrow[1] = 1; r.setView(narrow, {}); expect(r.canvasHint.hidden).toBe(true);
+  } finally { ctx.fill = fill; ctx.moveTo = move; }
+});
 const EMPTY = { x: 1, y: 599 };
 test('graduated production: a click is the one CPU tier authority, hover never retiers; every reset path clears', async () => {
   const f = await graduated([[0, 1], [1, 2], [2, 3]]), { r, k } = f;
@@ -911,13 +934,11 @@ test('travelling to a note already in the travel-reveal list does not add it twi
   r.isolate(0, 1, false); const s = r[k('isolation')]; s.shown = [2];
   r[k('travel')](2); expect(r[k('isolation')].shown).toEqual([2]); expect(r.selected).toBe(2);
 });
-test('neighbourhood expansion refuses Canvas overflow before changing mask, anchor or frontier', async () => {
+test('neighbourhood expansion keeps its anchor and adds the full mask above the Canvas drawing budget', async () => {
   const f = await graduated([[0, 1], [1, 2], [2, 3]]), { r, k } = f;
   r.isolate(0, 1, false); f.settings.canvasMaxDetailNodes = 2;
-  const mask = r[k('filterVisible')], region = r[k('isolation')], frontier = r[k('frontier')];
   r[k('expandNeighbourhood')](1);
-  expect(r[k('filterVisible')]).toBe(mask); expect(r[k('isolation')]).toBe(region); expect(r[k('frontier')]).toBe(frontier);
-  expect(r[k('isolationBar')].textContent).toContain('Too many notes to draw');
+  expect(r[k('filterVisible')][2]).toBe(1); expect(r[k('isolation')].node).toBe(0); expect(r.reducedCanvas).toBe(true);
 });
 test('Only connections refusal is detected by type: an unrelated error that merely mentions CANVAS_DETAIL_ still propagates', async () => {
   const f = await graduated([[0, 1], [1, 2], [2, 3]]), { r, k } = f;
@@ -1599,7 +1620,7 @@ test('review: a failed Back-to detail attempt consumes pending focus before any 
   const setFocus = () => { view[compiled('pendingFocus')] = { projection: view.projection, node: 2, lens: true }; };
   setFocus(); view.positions = undefined; await view[compiled('showDetails')](); expect(view[compiled('pendingFocus')]).toBeUndefined();
   view.positions = new Float32Array(6); view.gpu = { available: false, reason: 'synthetic refusal' };
-  view[compiled('admitDetail')] = () => false; view.showGroups = () => {}; setFocus(); let saves = 0; view.app = { ...view.app, workspace: { ...view.app?.workspace, requestSaveLayout: () => { saves++; } } };
+  view.stage = { empty() { throw Error('Synthetic unavailable stage'); } }; view.showGroups = () => {}; setFocus(); let saves = 0; view.app = { ...view.app, workspace: { ...view.app?.workspace, requestSaveLayout: () => { saves++; } } };
   await view[compiled('showDetails')](); expect(view[compiled('pendingFocus')]).toBeUndefined();
   expect(view.getState()).toEqual({ presentation: 'nodes' }); expect(saves).toBe(1);
 });

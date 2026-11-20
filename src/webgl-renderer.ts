@@ -4,7 +4,7 @@ import { plural } from './graph-information';
 import { carrierPairs, carrierThrough, carrierFocus, carrierAdmitted } from './carrier-lines';
 import { renderPath, type RenderProjection } from './render-projection';
 import type { Settings } from './settings';
-import { adaptiveRadius, PickGrid, PositionBounds, positionTexture, incidentEdges, focusTiers, tintedEdge, edgeBucket, tierNode, tierEdge, tierLabel, segmentDistance, shownTier, shownEdgeTier, tierCounts, tierLift, liftRadius, strongEdge, focusAlpha, offscreenPips, TIERS, ALL_TIERS, PIP_DIRECTIONS, canvasDetailEdges, CanvasLimit, resizeDrawingBuffer, LABEL_RATIOS, PATH_EDGE, pathStroke } from './render-data';
+import { adaptiveRadius, PickGrid, PositionBounds, positionTexture, incidentEdges, focusTiers, tintedEdge, edgeBucket, tierNode, tierEdge, tierLabel, segmentDistance, shownTier, shownEdgeTier, tierCounts, tierLift, liftRadius, strongEdge, focusAlpha, offscreenPips, TIERS, ALL_TIERS, PIP_DIRECTIONS, canvasDetailEdges, CanvasViewport, resizeDrawingBuffer, LABEL_RATIOS, PATH_EDGE, pathStroke } from './render-data';
 import { readTheme, type GraphTheme } from './render-theme';
 import { baseRadius, sizedRadius, sizingSettings, type NodeSizingValues } from './node-sizing';
 import { buildLabels, rankFocus, type LabelAtlas } from './render-labels';
@@ -367,6 +367,13 @@ export class DetailRenderer {
   }
   private finishPaint() { this.beforeLayoutPaint = undefined; this.releasePaint?.(); this.releasePaint = this.layoutPaint = undefined; }
   private restoreTimer: ReturnType<typeof setTimeout> | undefined;
+  private canvasHint?: HTMLElement;
+  private reducedCanvas = false;
+  private canvasIndex?: CanvasViewport;
+  private canvasNodes = new Set<number>();
+  private paintedDots = new Set<number>();
+  private paintedLines = new Set<number>();
+  private canvasBatches = [[], [], []] as [number[], number[], number[]];
   private canvasEdges = new Uint32Array();
   private disposed = false;
   private lost = false;
@@ -597,7 +604,7 @@ export class DetailRenderer {
     this.timings.context = performance.now() - started;
     this.gpu = Boolean(this.gl);
     if (!this.gl) {
-      try { this.canvasEdges = canvasDetailEdges(projection, visible, settings.canvasMaxDetailNodes, settings.canvasMaxDetailEdges); } catch (e) { this.canvas.remove(); this.overlay.remove(); throw e; }
+      this.canvasHint = stack.appendChild(el('small', '', 'graph-ng-summary-chip'));
       this.ctx = this.canvas.getContext('2d'); if (!this.ctx) { this.canvas.remove(); this.overlay.remove(); throw new Error('CANVAS_UNAVAILABLE'); }
     }
     this.packState(); this.setView(visible, view, false); if (!view.loading) this.fitAll(0);
@@ -627,8 +634,6 @@ export class DetailRenderer {
   clearTrail() { const n = this.card.node; this.card.history.clear(); if (n >= 0) { this.card.history.visit(n); this.card.render(); } this.refresh(); }
   private applyView(filterVisible: Uint8Array, view: RenderView, upload = true) {
     const started = performance.now(), n = filterVisible.length, p = this.projection;
-    // Software detail stays inside both refusal budgets: refuse before any state changes, never truncate.
-    const canvasEdges = !this.gl && this.ctx ? canvasDetailEdges(p, filterVisible, this.settings.canvasMaxDetailNodes, this.settings.canvasMaxDetailEdges) : undefined;
     invalidateSearch(this.canvas); this.input?.gestures.cancel();
     const visibleChanged = filterVisible !== this.filterVisible || view.collapsed !== this.view.collapsed || view.groupCodes !== this.view.groupCodes;
     this.filterVisible = filterVisible; this.view = view; this.groupCount = view.groupLabels?.length ?? 0; if (view.colors && view.colors.length === filterVisible.length) this.colors = view.colors;
@@ -638,7 +643,6 @@ export class DetailRenderer {
     for (let e = 0; e < p.source.length; e++) { const on = hiddenTypes?.[p.type[e]!] || this.isolationEdges && !this.isolationEdges.has(e) ? 0 : 1; this.edgeOn[e] = on; if (on && filterVisible[p.source[e]!] && filterVisible[p.target[e]!]) this.visibleEdges++; }
     this.visibleNodes = this.visibleCarriers = 0; const notes = p.carrierNodes;
     for (let i = 0; i < n; i++) { const o = i * 4; this.stateBytes[o] = filterVisible[i] ? 255 : 0; this.stateBytes[o + 2] = filterVisible[i] && !render[i] ? 255 : 0; this.stateBytes[o + 3] = notes[i] ? 255 : 0; if (render[i]) { this.visibleNodes++; if (notes[i]) this.visibleCarriers++; } }
-    if (canvasEdges) this.canvasEdges = canvasEdges;
     const card = this.card;
     card?.history.retain(n => !!this.baseVisible[n]);
     const path = this.pathView;
@@ -646,7 +650,9 @@ export class DetailRenderer {
     else if (card && card.node >= 0 && card.node === this.selected) card.render();
     this.lineRanks = edgeRanks(p.source, p.target, p.offsets, view.groupCodes, p.interest, this.edgeDrawn, p.carrier, p.carrierNodes);
     this.carrierGeometry = carrierPairs(p, this.edgeOn, filterVisible, this.lineRanks); this.pinCarriers(true);
+    const priorRows = this.canvasEdges;
     if (this.near.length || this.selected >= 0 && this.ready) this.emphasize(true);
+    if (this.ctx && priorRows === this.canvasEdges) this.prepareCanvasRows();
     this.recolor(); this.choosePolicy(); this.ink = undefined;
     if (this.lensAnchor >= 0) { if (!render[this.lensAnchor]) this.setLens(-1); this.rebuildLens(); }
     this.updateSizingRange();
@@ -680,7 +686,8 @@ export class DetailRenderer {
     }
     const coherent = Math.max(grid.width, grid.height) * .22;
     const halos = all.filter(h => !collapsed?.[h.group] && h.radius < coherent);
-    return { grid, display, visible: render, hubs, halos, picker: render !== grid.visible ? new PickGrid(positions, render) : grid instanceof PickGrid ? grid : undefined };
+    const canvasIndex = this.ctx && n > this.settings.canvasMaxDetailNodes ? new CanvasViewport(grid, render, !!view.loading) : undefined;
+    return { grid, display, canvasIndex, visible: render, hubs, halos, picker: render !== grid.visible ? new PickGrid(positions, render) : grid instanceof PickGrid ? grid : undefined };
 
   }
   private layoutActive = false;
@@ -701,8 +708,8 @@ export class DetailRenderer {
   /** Keep pan/zoom and the last layout, suppress stale labels and picking until adoption.
    * Failed/superseded applies restore CPU geometry without rolling back the user's camera. */
   beginLayout() {
-    const { positions, display, grid, picker, visible, hubs, halos, discData } = this;
-    const previous = { positions, display, grid, picker, visible, hubs, halos, discData }, view = this.view, filter = this.filterVisible;
+    const { positions, display, grid, picker, visible, hubs, halos, discData, canvasIndex } = this;
+    const previous = { positions, display, grid, picker, visible, hubs, halos, discData, canvasIndex }, view = this.view, filter = this.filterVisible;
     this.layoutActive = true; this.labelsRevision++; this.overlay.hidden = true; this.refresh();
     return (committed: boolean) => {
       this.layoutActive = false;
@@ -1044,6 +1051,7 @@ export class DetailRenderer {
   }
   private adaptSizes(zoom: number) {
     const s = this.sizingSettings(), keep = prominenceKeep(zoom, s.visuals.zoomAdapt && densityScale(this.width, this.height, this.visibleNodes, zoom, s.nodeSize, 0) < 1);
+    if (this.reducedCanvas) return; // Do not scan every note at zoom thresholds.
     if (keep !== this.keep) { this.keep = keep; this.uploadSizes(); }
   }
   private async waitForResize() {
@@ -1183,6 +1191,7 @@ export class DetailRenderer {
   /** Collect/sort once per explicit target or view change. Neither hover nor frames traverse edges. */
   private rebuildLens() {
     this.lensRows = lensConnections(this.lensAnchor, this.projection, this.edges, this.edgeOn, this.filterVisible, this.visible, n => this.name(n), this.interestOf(this.lensAnchor));
+    if (this.reducedCanvas) this.lensRows.length = Math.min(this.lensRows.length, this.settings.canvasMaxDetailNodes - 1);
     this.lensLabelWidth = 0;
     if (this.lensRows.length) {
       const m = this.measure ??= document.createElement('canvas').getContext('2d')!;
@@ -1266,6 +1275,14 @@ export class DetailRenderer {
     const w = this.worldPoint(x, y), s = this.sizingSettings(), ink = this.edgeQuiet(2 * Math.max(.5, this.edgeWidth()))[0], adaptive = s.visuals.emphasis === 'adaptive';
     // The graduated focus grows 60% (direct notes 25%): hit targets follow the drawn size.
     const f = s.visuals.hoverHighlight ? this.focusLevel : 0, grow = (n: number) => tierNode(this.stateBytes[n * 4 + 1]! / 255, true, n === this.focusNode, f, 0)[1];
+    if (this.reducedCanvas) {
+      let best = -1, distance = Infinity; const base = this.baseNodeRadius();
+      for (const n of this.paintedDots) {
+        const p = this.screenPoint(n), d = (p.x - x) ** 2 + (p.y - y) ** 2;
+        if (d <= (this.drawnRadius(n, n === this.selected || n === this.hoverFx.n, f, base) + 4) ** 2 && d < distance) { best = n; distance = d; }
+      }
+      return best;
+    }
     const lifted = this.pickTiered(x, y, w, f); if (lifted >= 0) return lifted;
     if (this.lensPoints?.size) {
       const legacy = s.nodeSizing.policy === 'legacy' && !adaptive, radius = (legacy ? s.nodeSize * (1 + s.visuals.degreeSizing) * (1 + .6 * f) + 4 : this.baseNodeRadius() * (1 + s.visuals.degreeSizing) * Math.max(1, s.visuals.carrierSize) * (1 + .6 * f) + 6 + (adaptive ? Math.max(7, s.visuals.tierMinSize) : 0)) / this.scale;
@@ -1324,6 +1341,12 @@ export class DetailRenderer {
     // Lines hidden by Edges mode or the shared ink budget are not pickable.
     if (mode === 'off' || !v.edgeOpacity || mode === 'focus' && !focus) return -1;
     const [ink, reach] = this.edgeQuiet(2 * Math.max(.5, this.edgeWidth())), through = this.carrierLevel().visibility, hoveredOwner = this.lineOwner(this.hoveredEdge);
+    if (this.reducedCanvas) {
+      for (const e of this.paintedLines) { const a = p.source[e]!, b = this.lineTarget(e, through); if (b < 0) continue;
+        const d = segmentDistance(w.x, w.y, this.renderCoordinate(a, 0), this.renderCoordinate(a, 1), this.renderCoordinate(b, 0), this.renderCoordinate(b, 1)); if (d < distance) { best = e; distance = d; }
+      }
+      return best;
+    }
     // Deliberately budgeted incident-edge picking, not an O(m) all-segment scan or GPU readback.
     const visit = (node: number) => {
       for (let j = this.edges.offsets[node]!; j < this.edges.offsets[node + 1]! && budget-- > 0; j++) {
@@ -1380,6 +1403,7 @@ export class DetailRenderer {
       const d = this.disclosed;
       if (!edges && d && d.node === node && this.lensAnchor < 0) { discloseTiers(node, d.direct, d.second, this.projection, this.edges, s, t, this.near, this.tierEdges); this.near = this.near.filter(n => s[n * 4 + 1]); this.tierEdges = this.tierEdges.filter(e => t[e]); }
       if (this.carrierGeometry) { carrierFocus(this.carrierGeometry, this.lineRanks, s, this.near); this.pinCarriers(true); }
+      if (this.ctx && this.visibleEdges > this.settings.canvasMaxDetailEdges) this.prepareCanvasRows();
       if (this.gl && this.ready && !this.lost) this.uploadTiers();
       const notes = this.projection.carrierNodes; this.tierTotals = tierCounts(this.focusNode, this.near, s, notes);
       if (edges) this.tierTotals[0] = this.near.filter(n => !notes[n]).length;
@@ -1511,13 +1535,9 @@ export class DetailRenderer {
   }
   /** Temporary neighbourhood, intersected with the host filter. Reach changes reset expansion. */
   isolate(node: number, hops = 1, fit = true, expanded = new Set<number>(), shown: number[] = []) {
-    const previous = this.isolation, frontier = this.frontier, partial = this.neighbourhoodPartial, edges = this.isolationEdges;
+    const previous = this.isolation;
     this.isolation = node >= 0 && this.baseVisible[node] ? { node, hops: Math.max(0, Math.min(3, hops)), expanded, shown } : undefined;
-    try { this.applyView(this.isolationMask(this.baseVisible, this.view), this.view); }
-    catch (error) {
-      if (!(error instanceof CanvasLimit)) throw error;
-      this.isolation = previous; this.isolationEdges = edges; this.frontier = frontier; this.neighbourhoodPartial = partial; this.showIsolation(); this.isolationBar.append(el('small', 'Too many notes to draw')); return;
-    }
+    this.applyView(this.isolationMask(this.baseVisible, this.view), this.view);
     if (this.isolation && !this.filterVisible[this.selected]) this.selectNote(node, true);
     this.showIsolation();
     if (this.isolation && (!previous || fit)) this.frameNodes(Array.from(this.filterVisible.keys()).filter(n => !!this.filterVisible[n]));
@@ -1725,6 +1745,9 @@ export class DetailRenderer {
   /** Current label level with hysteresis; idempotent for an unchanged camera ratio. */
   private lodLevel() { return this.labelLevel = stickyLevel(this.labelLevel, this.camera.ratio, LABEL_RATIOS); }
   /** DOM text for the hovered note and collapsed groups only: bounded, text-only. */
+  private labelNeighbours() {
+    return this.reducedCanvas && this.near.length > this.settings.canvasMaxDetailNodes ? this.near.slice(0, this.settings.canvasMaxDetailNodes) : this.near;
+  }
   private placeOverlay() {
     if (this.view.loading || this.layoutActive) return;
     this.onSizingChange?.();
@@ -1765,8 +1788,9 @@ export class DetailRenderer {
       // Placement measures each bounded candidate once with the font and text the DOM label then uses, at the radius offset it is shown with.
       const k = this.scale * this.camera.ratio / LABEL_RATIOS[lod]!, budget = Math.max(1, Math.min(s.labelsMaxPerViewport, FOCUS_LABELS, Math.floor(this.width * this.height / s.labelGridCellSize ** 2 * s.labelDensity))), m = this.measure ??= document.createElement('canvas').getContext('2d')!;
       const pad = v.labelPlates ? 16 : 4, text = (n: number, rank: number) => n === ego ? this.noteCaption(n) : middleTruncate(this.name(n), LABEL_CHARS[rank]!);
-      const { list, direct } = rankFocus(ego, this.near, this.stateBytes, this.visible, this.projection.offsets, budget * s.labelCandidateMultiplier, this.projection.carrierNodes, ego >= 0 ? this.interestOf(ego) : undefined, DIRECT_LABELS);
-      const items = list.map(([n, rank]) => { m.font = tierFont(rank, s.labelSize, tier, this.theme.font); const h = tierType(rank, s.labelSize, tier).size * 1.5 + 4; return { node: n, rank, x: this.renderCoordinate(n, 0, 1) * k, y: this.renderCoordinate(n, 1, 1) * k, r: radius(n), w: m.measureText(text(n, rank)).width + pad, h }; });
+      const ranked = rankFocus(ego, this.labelNeighbours(), this.stateBytes, this.visible, this.projection.offsets, budget * s.labelCandidateMultiplier, this.projection.carrierNodes, ego >= 0 ? this.interestOf(ego) : undefined, DIRECT_LABELS);
+      const direct = this.reducedCanvas ? this.directs.length : ranked.direct;
+      const items = ranked.list.map(([n, rank]) => { m.font = tierFont(rank, s.labelSize, tier, this.theme.font); const h = tierType(rank, s.labelSize, tier).size * 1.5 + 4; return { node: n, rank, x: this.renderCoordinate(n, 0, 1) * k, y: this.renderCoordinate(n, 1, 1) * k, r: radius(n), w: m.measureText(text(n, rank)).width + pad, h }; });
       m.font = tierFont(1, s.labelSize, tier, this.theme.font); this.moreSize = [m.measureText(`+${direct} more`).width + 24, 32]; this.moreTotal = direct;
       const layout = radialLabels(items, budget, direct > DIRECT_LABELS ? 6 : DIRECT_LABELS, ego >= 0 ? direct : 0, this.moreSize[0]!, 32);
       this.rankedLabels = layout.slots.filter(x => x.node !== ego); this.moreAt = layout.more;
@@ -1789,7 +1813,7 @@ export class DetailRenderer {
     if (!this.rankedLabels.length) { while (this.tierLabels.length) this.tierLabels.pop()!.remove(); while (this.tierLeaders.length) this.tierLeaders.pop()!.remove(); }
     let j = 0, shown = 0;
     this.rankedLabels.forEach(({ node: n, rank, dx, dy, w, h, leader }, i) => {
-      const el = this.tierLabels[i]!, p = this.screenPoint(n), x = leader ? p.x + dx : p.x + radius(n) + 4, y = leader ? p.y + dy : p.y; el.hidden = !!this.carrierCount && !this.carrierShown(n, ink, focus) || under(x, y - h / 2, w, h) || under(p.x, p.y); if (!el.hidden) { taken.push([x, y - h / 2, w, h]); shown += +(rank === 1); } el.style.opacity = String(focus); el.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px) translateY(-50%)`;
+      const el = this.tierLabels[i]!, p = this.screenPoint(n), x = leader ? p.x + dx : p.x + radius(n) + 4, y = leader ? p.y + dy : p.y; el.hidden = this.reducedCanvas && !this.paintedDots.has(n) || !!this.carrierCount && !this.carrierShown(n, ink, focus) || under(x, y - h / 2, w, h) || under(p.x, p.y); if (!el.hidden) { taken.push([x, y - h / 2, w, h]); shown += +(rank === 1); } el.style.opacity = String(focus); el.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px) translateY(-50%)`;
       if (leader) { const line = this.tierLeaders[j++]!; line.hidden = el.hidden; line.style.opacity = String(focus); line.style.transform = `translate(${Math.round(p.x + leader[0])}px, ${Math.round(p.y + leader[1])}px) rotate(${Math.atan2(leader[3] - leader[1], leader[2] - leader[0])}rad)`; }
     });
     if (this.moreButton) {
@@ -1831,14 +1855,16 @@ export class DetailRenderer {
     if (key.some((v, i) => v !== this.anchorKey[i])) {
       const m = this.measure ??= document.createElement('canvas').getContext('2d')!;
       m.font = `${size}px ${this.theme.font}`;
-      const overview = s.visuals.namePriority === 'all' ? [...this.atlas?.widths.keys() ?? []] : Array.from(this.atlas?.nodes[lod] ?? []);
+      const overview = s.visuals.namePriority === 'all' && !this.reducedCanvas ? [...this.atlas?.widths.keys() ?? []] : Array.from(this.atlas?.nodes[lod] ?? []);
       // Naming follows selection even when highlight focus is off or held on a different lens.
-      let near = this.near, state = this.stateBytes;
-      if (ego >= 0 && ego !== this.focusNode) {
+      let near = this.labelNeighbours(), state = this.stateBytes;
+      if (this.reducedCanvas && ego !== this.focusNode) near = [];
+      else if (ego >= 0 && ego !== this.focusNode) {
         near = []; state = new Uint8Array(state.length);
         focusTiers(ego, this.edges, this.projection, this.edgeOn, this.filterVisible, state, new Uint8Array(this.edgeTier.length), near, [], 65536, this.settings.declaration.groupContext ? this.view.groupCodes : undefined);
       }
       const ranked = ego < 0 ? { list: [] as (readonly [number, number])[], direct: 0 } : rankFocus(ego, near, state, this.visible, this.projection.offsets, ANCHORED_CANDIDATES, this.projection.carrierNodes, this.interestOf(ego), DIRECT_LABELS);
+      if (this.reducedCanvas && ego >= 0 && ego === this.focusNode) ranked.direct = this.directs.length;
       if (s.visuals.namePriority !== 'selection') { const seen = new Set(ranked.list.map(([n]) => n)); for (const n of overview) if (!seen.has(n) && (ego < 0 || ranked.list.length < ANCHORED_CANDIDATES)) ranked.list.push([n, 5]); }
       this.moreTotal = ranked.direct; this.moreSize = [m.measureText(plural(ranked.direct, 'more connection')).width + 32, Math.max(32, h + 4)];
       const list = node >= 0 ? [[node, 0] as const, ...ranked.list.filter(([n]) => n !== node)] : ranked.list;
@@ -1850,7 +1876,7 @@ export class DetailRenderer {
     // Reuse the ranked grid's bounded LOD placements. Cull offscreen notes BEFORE the collision cap.
     const names: (LabelItem & { text: string; tier: number })[] = [], ink = this.carrierCount ? this.edgeQuiet(2 * Math.max(.5, this.edgeWidth()))[0] : 1;
     for (const it of this.anchorNames) {
-      if (!this.visible[it.node] || this.carrierCount && !this.carrierShown(it.node, ink, focus) || it.rank < 5 && ego >= 0 && it.node !== ego && it.node !== node && !shownTier(it.tier, this.tierMask)) continue;
+      if (this.reducedCanvas && !this.paintedDots.has(it.node) || !this.visible[it.node] || this.carrierCount && !this.carrierShown(it.node, ink, focus) || it.rank < 5 && ego >= 0 && it.node !== ego && it.node !== node && !shownTier(it.tier, this.tierMask)) continue;
       const p = this.screenPoint(it.node); if (under(p.x, p.y, 0, 0)) continue;
       names.push({ ...it, ...p, r: radius(it.node), h }); if (names.length >= ANCHORED_CANDIDATES) break;
     }
@@ -1906,7 +1932,7 @@ export class DetailRenderer {
   private placeHighlights(focus: number) {
     const v = this.settings.visuals, on = v.hoverHighlight && this.focusTarget > 0;
     this.legend.hidden = !(on && v.tierLegend && this.tierTotals.some(Boolean)) || !!this.pathView;
-    const ids = on && focus > 0 && v.offscreenPips && this.tierMask & 1 ? this.directs : [];
+    const ids = on && focus > 0 && v.offscreenPips && !(this.reducedCanvas && this.directs.length > this.settings.canvasMaxDetailNodes) && this.tierMask & 1 ? this.directs : [];
     if (this.pipXY.length < ids.length * 2) this.pipXY = new Float64Array(ids.length * 2);
     const xy = this.pipXY;
     for (let i = 0; i < ids.length; i++) { const p = this.screenPoint(ids[i]!); xy[i * 2] = p.x; xy[i * 2 + 1] = p.y; }
@@ -1950,6 +1976,23 @@ export class DetailRenderer {
     line.hidden = length < 4; line.style.width = `${Math.round(length)}px`; line.style.transform = `translate(${Math.round(ax)}px, ${Math.round(ay)}px) rotate(${Math.atan2(y - ay, x - ax)}rad)`;
     return changed;
   }
+  private prepareCanvasRows() {
+    const p = this.projection, ranks = this.lineRanks, cap = this.settings.canvasMaxDetailEdges;
+    const rank = (e: number) => {
+      const r = ranks[e]!;
+      // Preserve whole carrier units. Only independent rows get individual focus priority.
+      return (r & 0xffffff) + (r & 0x3000000 || !this.edgeTier[e] ? 0x2000000 : this.edgeTier[e]! > 200 ? 0 : 0x1000000);
+    };
+    this.canvasEdges = canvasDetailEdges(p.source.length, this.visibleEdges, cap, this.edgeDrawn, rank);
+    this.reducedCanvas = this.visibleNodes > this.settings.canvasMaxDetailNodes || this.visibleEdges > cap;
+    this.paintedDots?.clear(); this.paintedLines?.clear();
+    if (this.canvasHint) {
+      this.canvasHint.hidden = !this.reducedCanvas;
+      const notes = this.visibleNodes > this.settings.canvasMaxDetailNodes;
+      this.canvasHint.textContent = `Sampled ${notes ? this.visibleEdges > cap ? 'notes and connections' : 'notes' : 'connections'}`;
+      this.canvasHint.title = 'Zoom or filter for a closer view. The graph and its counts are unchanged.';
+    }
+  }
   private drawCanvas() {
     const ctx = this.ctx!, s = this.settings, c = this.colorBytes, focus = s.visuals.hoverHighlight ? this.focusLevel : 0, dim = this.emphasisDim(), budget = this.emphasisBudget(), g = this.stateBytes;
     // Frame invariants, not per endpoint/node work (including an unsaved sizing preview).
@@ -1960,18 +2003,28 @@ export class DetailRenderer {
     // The edge shader's tier weights: rest, neighbours of neighbours, then direct strokes on top.
     const zoom = this.camera.ratio / this.homeRatio, base = edgeAlpha(s.visuals, s.visuals.zoomAdapt ? 0 : this.visibleEdges, s.visuals.zoomAdapt ? 1 : zoom, this.policy.dark), width = 2 * Math.max(.5, this.edgeWidth(zoom));
     const level = this.carrierLevel(zoom, radius), hoveredOwner = this.lineOwner(this.hoveredEdge), mask = this.tierMask, strong = s.visuals.focusEdges ? focusAlpha(this.directs.length) : 0, mode = s.visuals.edgeMode, [ink, reach] = this.edgeQuiet(width);
-    // The same quantile admission and long-line threshold as the shader; focus tiers are never sampled.
+    const sampled = this.reducedCanvas && this.canvasIndex, nodesToDraw = this.canvasNodes;
+    this.paintedDots.clear(); this.paintedLines.clear();
+    if (sampled) {
+      nodesToDraw.clear(); const cap = s.canvasMaxDetailNodes;
+      for (const n of [this.selected, this.hoverFx.n, this.lensAnchor]) if (this.visible[n] && nodesToDraw.size < cap) nodesToDraw.add(n);
+      // Lens positions are in screen space, outside their original spatial cells.
+      if (this.lensAnchor >= 0) for (const n of this.lensPoints.keys()) { if (nodesToDraw.size >= cap) break; nodesToDraw.add(n); }
+      const pad = 8 + Math.max(s.visuals.tierMinSize, radius * (1 + s.visuals.degreeSizing) * Math.max(1, s.visuals.carrierSize)) * 3;
+      sampled.sample(cx, cy, (hw + pad) / scale, (hh + pad) / scale, cap - nodesToDraw.size, n => nodesToDraw.add(n));
+    }
+    // Shared ink rules apply inside the software draw list.
     const drawEdges = () => { for (const tier of mode === 'off' ? [] : focus ? mode === 'focus' ? [128, 255] : [0, 128, 255] : [-1]) {
       let [alpha, wide] = tierEdge(tier, base * (mode === 'focus' ? focus : 1), tier < 0 ? 0 : focus, dim);
       if (strong && tier >= 0) { const [a2, w2] = strongEdge(tier, alpha, focus, strong); alpha = a2; wide *= w2; }
-      ctx.lineWidth = width * wide; const lines: number[] = [], legs: number[] = [], hue: number[] = [], line = (e: number) => { const a = this.projection.source[e]!, b = this.lineTarget(e, level.visibility); if (b < 0 || this.carrierGeometry.enabled[e] === 0 || this.lineRanks[e]! & 0x2000000 && (!level.alpha || !this.carrierLineShown(e, ink))) return; ctx.moveTo(x(a), y(a)); ctx.lineTo(x(b), y(b)); };
+      ctx.lineWidth = width * wide; const [lines, legs, hue] = this.canvasBatches; lines.length = legs.length = hue.length = 0; const line = (e: number) => { const a = this.projection.source[e]!, b = this.lineTarget(e, level.visibility); if (b < 0 || this.carrierGeometry.enabled[e] === 0 || this.lineRanks[e]! & 0x2000000 && (!level.alpha || !this.carrierLineShown(e, ink))) return; const ax = x(a), ay = y(a), bx = x(b), by = y(b); if (this.reducedCanvas && (Math.max(ax, bx) < -width || Math.min(ax, bx) > this.width + width || Math.max(ay, by) < -width || Math.min(ay, by) > this.height + width)) return; ctx.moveTo(ax, ay); ctx.lineTo(bx, by); if (this.reducedCanvas) this.paintedLines.add(e); };
       for (const e of this.canvasEdges) { const a = this.projection.source[e]!, b = this.lineTarget(e, level.visibility); if (b < 0 || this.carrierGeometry.enabled[e] === 0) continue; const owner = this.lineOwner(e), retained = !!(this.lineRanks[e]! & 0x2000000), t = this.carrierPinned(e) || this.edgeTier[e] === PATH_EDGE ? 255 : owner < 0 ? shownEdgeTier(this.edgeTier[e]!, mask) : this.carrierTier(owner), hot = e === this.hoveredEdge || owner >= 0 && (owner === this.selected || owner === this.hoverFx.n || owner === hoveredOwner); if (!this.edgeDrawn(e) || mode === 'focus' && (!t || !focus) && !this.carrierPinned(e) || retained && (!level.alpha || !this.carrierLineShown(e, ink)) || tier >= 0 && edgeBucket(t) !== tier) continue; if (!retained && !(t && focus) && !hot && !lineAdmitted(this.lineRanks[e]!, ink, Math.hypot(x(b) - x(a), y(b) - y(a)), Math.min(reach, 1e9))) continue; if (tier >= 0 && tintedEdge(t)) hue.push(e); (owner >= 0 && (retained || level.visibility) ? legs : lines).push(e); }
       ctx.globalAlpha = alpha; if (s.visuals.edgeOpacity > 0 && lines.length) { ctx.beginPath(); lines.forEach(line); ctx.stroke(); }
       if (s.visuals.edgeOpacity > 0 && legs.length) { ctx.globalAlpha = Math.max(.25, alpha); ctx.beginPath(); legs.forEach(line); ctx.stroke(); }
       // Tinted relationship layer: the shader mixes the accent by focus / 2 at the same weight.
       if (s.visuals.edgeOpacity > 0 && hue.length) { ctx.strokeStyle = this.theme.accent; ctx.globalAlpha = alpha * focus * .5; ctx.beginPath(); hue.forEach(line); ctx.stroke(); ctx.strokeStyle = this.theme.edge; }
       // Path tier on top, as the shader's 253 branch: accent, pathStroke alpha and width.
-      if (tier === 255 && this.pathView && s.visuals.edgeOpacity > 0) { const [pa, pw] = pathStroke(alpha, focus); ctx.strokeStyle = this.theme.accent; ctx.globalAlpha = pa; ctx.lineWidth = width * wide * pw; ctx.beginPath(); for (const e of this.pathView.edges) if (this.edgeTier[e] === PATH_EDGE) line(e); ctx.stroke(); ctx.strokeStyle = this.theme.edge; }
+      if (tier === 255 && this.pathView && s.visuals.edgeOpacity > 0) { const [pa, pw] = pathStroke(alpha, focus); ctx.strokeStyle = this.theme.accent; ctx.globalAlpha = pa; ctx.lineWidth = width * wide * pw; ctx.beginPath(); for (const e of this.pathView.edges) if (this.edgeTier[e] === PATH_EDGE && (!this.reducedCanvas || this.paintedLines.has(e))) line(e); ctx.stroke(); ctx.strokeStyle = this.theme.edge; }
     }
     };
     const edgesOnTop = !!this.isolation && focus > 0; if (!edgesOnTop) drawEdges();
@@ -1979,12 +2032,14 @@ export class DetailRenderer {
     // Edge notes first (beneath), then the other nodes.
     for (const layer of [1, 0, 2]) {
     if (layer === 2 && edgesOnTop) drawEdges();
-    for (let n = layer === 2 ? this.selected : 0; n >= 0 && n < (layer === 2 ? this.selected + 1 : this.visible.length); n++) if (this.visible[n] && (layer === 2 || n !== this.selected && +!!notes[n] === layer)) {
+    for (const n of layer === 2 ? [this.selected] : sampled ? nodesToDraw : this.canvasIndex?.ids ?? this.visible.keys()) if (this.visible[n] && (layer === 2 || n !== this.selected && +!!notes[n] === layer)) {
       if (!this.carrierShown(n, ink, focus, level.visibility)) continue;
       const hot = n === this.selected || n === this.hoverFx.n, k = n * 4, p = this.theme.palette, coverage = notes[n] ? level.alpha : 1;
       const a = coverage * (hot ? p[19]! : c[k + 3]!) / 255;
       if (coverage < .004 || a <= 0) continue;
+
       const ego = n === this.focusNode, shown = (notes[n] ? this.carrierTier(n) : shownTier(g[k + 1]!, this.tierMask, ego)) / 255, [fade, , tr] = tierNode(shown, hot, ego, focus, dim), r = this.drawnRadius(n, hot, focus, radius, budget);
+      if (this.reducedCanvas) { const sx = x(n), sy = y(n), pad = r * 2 + 2; if (sx < -pad || sy < -pad || sx > this.width + pad || sy > this.height + pad) continue; this.paintedDots.add(n); }
       const ring = Math.max(n === this.selected ? 1 : tr, n === this.hoverFx.n ? this.fx[1]! : 0);
       ctx.globalAlpha = notes[n] || this.carrierGeometry.nodes[n] !== 0xffffffff && this.carrierGeometry.nodes[n]! & 0x4000000 ? Math.max(.25, a * fade) : a * fade; ctx.fillStyle = ctx.strokeStyle = hot ? `rgb(${p[16]},${p[17]},${p[18]})` : `rgb(${c[k]},${c[k + 1]},${c[k + 2]})`; ctx.beginPath(); ctx.arc(x(n), y(n), r, 0, Math.PI * 2); ctx.fill();
       // The shader's outer ring band (1.1–1.34 radii) as one stroke.
@@ -2000,6 +2055,7 @@ export class DetailRenderer {
     const lod = this.lodLevel(), fade = labelFade(s.nodeSize, s.labelRenderedSizeThreshold, this.camera.ratio, LABEL_RATIOS, s.visuals.labelFade && s.visuals.namePriority !== 'all', lod), nodes = this.atlas?.nodes[lod], scales = this.atlas?.scales[lod];
     ctx.textBaseline = 'top';
     if (!this.view.loading && !this.layoutActive && s.visuals.labelStyle === 'ranked' && s.visuals.namePriority !== 'selection' && nodes && scales && fade.alpha > .004) nodes.forEach((n, i) => {
+      if (this.reducedCanvas && !this.paintedDots.has(n)) return;
       const cut = Math.min(1, Math.max(0, (1 - i / nodes.length - fade.cut) / .15)); ctx.globalAlpha = tierLabel(g[n * 4 + 1]! / 255, fade.alpha * cut * cut * (3 - 2 * cut), focus, dim);
       if (ctx.globalAlpha <= .004) return; ctx.font = `${s.labelSize * scales[i]!}px ${this.theme.font}`;
       const name = this.name(n), lx = x(n) + this.nodeRadius(n, false, radius) + 4, ly = y(n) - s.labelSize * scales[i]! / 2;

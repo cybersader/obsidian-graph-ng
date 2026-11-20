@@ -179,17 +179,54 @@ export function offscreenPips(ids: ArrayLike<number>, xy: ArrayLike<number>, w: 
   return pips.filter((p): p is Pip => !!p);
 }
 export const PIP_DIRECTIONS = ['right', 'lower right', 'below', 'lower left', 'left', 'upper left', 'above', 'upper right'] as const;
-/** Thrown when software drawing would exceed its node or edge bound; callers test the type, not the message. */
-export class CanvasLimit extends Error {}
-/** Bound software draw work by both visible nodes and visible edges; never silently truncate. */
-export function canvasDetailEdges(p: Pick<Projection, 'source' | 'target'>, visible: Uint8Array, maxNodes: number, maxEdges: number) {
-  if (visible.reduce((n, v) => n + (v ? 1 : 0), 0) > maxNodes) throw new CanvasLimit('CANVAS_DETAIL_NODE_LIMIT: use group member lists');
-  const edges: number[] = [];
-  for (let e = 0; e < p.source.length; e++) if (visible[p.source[e]!] && visible[p.target[e]!]) {
-    if (edges.length >= maxEdges) throw new CanvasLimit('CANVAS_DETAIL_EDGE_LIMIT: use group member lists');
-    edges.push(e);
+/** Packed visible ids by spatial cell. A viewport intersects at most 128 row spans;
+ * sample equally spaced ranks across those spans without walking crowded cells. */
+export class CanvasViewport {
+  private side: number;
+  private offsets: Uint32Array;
+  readonly ids: Uint32Array;
+  constructor(private bounds: PositionBounds, visible: Uint8Array, preview: boolean) {
+    const side = this.side = preview ? 1 : Math.min(128, Math.ceil(Math.sqrt(visible.length / 8)));
+    const offsets = this.offsets = new Uint32Array(side * side + 1), p = bounds.positions;
+    const cell = (i: number) => this.bin(p[2 * i]!, false) + side * this.bin(p[2 * i + 1]!, true);
+    for (let i = 0; i < visible.length; i++) if (visible[i]) offsets[cell(i) + 1]!++;
+    for (let j = 1; j < offsets.length; j++) offsets[j]! += offsets[j - 1]!;
+    const cursor = offsets.slice(); this.ids = new Uint32Array(offsets[offsets.length - 1]!);
+    for (let i = 0; i < visible.length; i++) if (visible[i]) this.ids[cursor[cell(i)]!++] = i;
   }
-  return Uint32Array.from(edges);
+  private bin(v: number, y: boolean) {
+    const b = this.bounds; return Math.max(0, Math.min(this.side - 1, Math.floor(this.side * (v - (y ? b.minY : b.minX)) / (y ? b.height : b.width))));
+  }
+  sample(x: number, y: number, w: number, h: number, cap: number, add: (n: number) => void) {
+    const left = this.bin(x - w, false), right = this.bin(x + w, false) + 1, first = this.bin(y - h, true), last = this.bin(y + h, true), a = this.offsets;
+    let count = 0;
+    for (let row = first; row <= last; row++) count += a[row * this.side + right]! - a[row * this.side + left]!;
+    let i = 0, before = 0; const take = Math.min(count, cap);
+    for (let row = first; row <= last && i < take; row++) {
+      const start = a[row * this.side + left]!, end = before + a[row * this.side + right]! - start;
+      while (i < take && Math.floor((i + .5) * count / take) < end) add(this.ids[start + Math.floor((i++ + .5) * count / take) - before]!);
+      before = end;
+    }
+  }
+}
+/** Select the lowest ranked visible rows on view/focus changes. The packed rank already
+ * groups relationship legs. A tie crossing the budget is skipped as a unit, never split.
+ * Four byte histograms avoid sorting or allocating one more full edge column. */
+export function canvasDetailEdges(total: number, eligible: number, cap: number, on: (e: number) => boolean, rank: (e: number) => number) {
+  const out = new Uint32Array(Math.min(eligible, cap)); let limit = Infinity;
+  if (eligible > cap) {
+    const bins = new Uint32Array(256); let prefix = 0, left = cap;
+    for (const shift of [24, 16, 8, 0]) {
+      bins.fill(0);
+      for (let e = 0; e < total; e++) if (on(e)) { const k = rank(e) >>> shift; if ((k >>> 8) === prefix) bins[k & 255]!++; }
+      let b = 0; while (bins[b]! <= left) left -= bins[b++]!;
+      prefix = prefix * 256 + b;
+    }
+    limit = prefix;
+  }
+  let i = 0;
+  for (let e = 0; e < total && i < out.length; e++) if (on(e) && (limit === Infinity || rank(e) < limit)) out[i++] = e;
+  return out.subarray(0, i);
 }
 export function segmentDistance(x: number, y: number, ax: number, ay: number, bx: number, by: number) {
   const dx = bx - ax, dy = by - ay, t = Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy || 1)));

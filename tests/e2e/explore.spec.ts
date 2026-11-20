@@ -51,7 +51,7 @@ describe('Graph NG explore controls and visuals', () => {
     await theme('dark');
     await measured('detailOpen', async () => { await $('.graph-ng-toolbar button:nth-child(2)').click(); await browser.waitUntil(async () => (await view().getAttribute('data-mode')) !== 'nodes-building', { timeout: 120000 }); });
     const mode = await view().getAttribute('data-mode'); evidence.mode = mode;
-    if (mode !== 'nodes') { assert.ok(software); await shot('fallback'); return; }
+    assert.equal(mode, 'nodes', 'Canvas draw budgets must not return filtered Notes to Groups');
     await settle(800); await shot('dark-detail');
     evidence.policy = await browser.executeObsidian(({ app }) => (app.workspace.getLeavesOfType('graph-ng')[0]!.view as any).detailRenderer.policy);
     const target = await browser.executeObsidian(({ app }) => {

@@ -10,7 +10,7 @@ export const MANGLED_PROPS = ['onViewStateChange', 'tuneViewState', 'showViewGro
   'viewConfiguration', 'exploreCompletion', 'cardInset', 'toolsInset', 'tierLabels', 'expressionField',
   'setQuery', 'tool', 'physicsNote', 'sizingTimer', 'viewSaved', 'centerX',
   'centerY', 'drafts', 'navTimer', 'sizingOutput', 'relationBusy', 'hoverFx',
-  'rankedKey', 'sizingDraft', 'openRequest', 'admitDetail', 'representations', 'physicsAdvanced',
+  'rankedKey', 'sizingDraft', 'openRequest', 'representations', 'physicsAdvanced',
   'viewDefinition', 'miniWanted', 'saveViewDraft', 'detailVisible', 'menuToken', 'noteCount',
   'navShown', 'hoverHub', 'sizingRange', 'uploadSizes', 'centreOn', 'relationshipDisplay',
   'endPreview', 'guards', 'memberList', 'previewExpression', 'toolTitle', 'scopeName',

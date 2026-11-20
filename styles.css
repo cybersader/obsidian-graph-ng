@@ -275,6 +275,7 @@ button.graph-ng-stat > .graph-ng-stat-label { text-align:start; }
 .graph-ng-issues > li { padding:var(--gng-space-2) var(--gng-space-2); border-left:3px solid var(--text-warning); background:var(--background-secondary); border-radius:0 var(--radius-s) var(--radius-s) 0; }
 .graph-ng-issues > li > div { color:var(--gng-text-muted); font-size:var(--gng-text-xs); }
 .graph-ng-summary { font-size:var(--gng-text-sm); position:absolute; left:8px; bottom:8px; z-index:2; max-width:calc(100% - 16px); box-sizing:border-box; overflow-wrap:anywhere; white-space:normal; display:flex; flex-wrap:wrap; align-items:center; gap:var(--gng-space-1) var(--gng-space-3); font-variant-numeric:tabular-nums; }
+.graph-ng-summary-chip[hidden] { display:none; }
 .graph-ng-summary-chip { min-height:var(--gng-row-h); display:inline-flex; align-items:center; min-width:0; max-width:100%; box-sizing:border-box; padding:0 var(--gng-space-2); border-radius:var(--radius-s); background:var(--background-modifier-hover); }
 .graph-ng-readout { display:inline-flex; flex-wrap:wrap; align-items:center; gap:var(--gng-space-1); }
 .graph-ng-summary-info > .graph-ng-count { font-size:inherit; }

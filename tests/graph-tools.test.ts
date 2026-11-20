@@ -372,63 +372,29 @@ test('TBR-3 Members exposes controlled region and expanded state across open, sw
 async function softwareNavigationFixture(maxNodes: number, maxEdges: number) {
   const f = await navigationFixture(), p = f.renderer.projection;
   Object.assign(p, { offsets: new Uint32Array([0, 2, 4, 6]), source: new Uint32Array([0, 1, 0]), target: new Uint32Array([1, 2, 2]), type: new Uint32Array(3) });
-  Object.assign(f.renderer, { gpu: false, gl: null, ctx: {}, edgeOn: new Uint8Array(3), edgeDrawn: (e: number) => !!f.renderer.edgeOn[e] && !!f.renderer.filterVisible[p.source[e]!] && !!f.renderer.filterVisible[p.target[e]!] });
+  Object.assign(f.renderer, { gpu: false, gl: null, ctx: {}, edgeOn: new Uint8Array(3), edgeTier: new Uint8Array(3), edgeDrawn: (e: number) => !!f.renderer.edgeOn[e] && !!f.renderer.filterVisible[p.source[e]!] && !!f.renderer.filterVisible[p.target[e]!] });
   Object.assign(f.view.plugin.settings, { canvasMaxDetailNodes: maxNodes, canvasMaxDetailEdges: maxEdges });
   Object.assign(f.view, { renderer: f.renderer, detailRenderer: f.renderer, visible: new Uint8Array([1, 1, 1]), detailScope: new Uint8Array([1, 1, 0]), gpu: { available: false, reason: 'Synthetic software renderer' } });
   f.view.contentEl.dataset.mode = 'nodes'; f.renderer.setView(f.view.detailScope, {}); f.view.explorePanel.render();
   expect([...f.renderer.canvasEdges]).toEqual([0]); expect(f.renderer.visibleEdges).toBe(1);
   return f;
 }
-for (const [nodes, edges, reason] of [[2, 3, 'CANVAS_DETAIL_NODE_LIMIT'], [3, 1, 'CANVAS_DETAIL_EDGE_LIMIT']] as const) {
-  test(`TBR-2R software Workspace refuses ${reason} before mutating live scope or renderer`, async () => {
+for (const [nodes, edges] of [[2, 3], [3, 1]] as const) {
+  test(`software detail applies expanded scope and full query mask within ${nodes}/${edges} drawing budgets`, async () => {
     const f = await softwareNavigationFixture(nodes, edges);
     try {
-      const scope = f.view.detailScope, visible = f.renderer.filterVisible, oldEdges = f.renderer.canvasEdges, camera = f.renderer.camera, state = [...f.renderer.stateBytes], query = JSON.stringify(f.view.view), counts = f.counts();
+      const camera = f.renderer.camera;
       await (control(f.view.toolbar, 'Workspace scope') as any).onclick();
-      expect(f.view.detailScope).toBe(scope); expect(f.view.contentEl.dataset.mode).toBe('nodes'); expect(f.view.detailRenderer).toBe(f.renderer);
-      expect(f.renderer.filterVisible).toBe(visible); expect([...visible]).toEqual([1, 1, 0]); expect(f.renderer.visibleNodes).toBe(2);
-      expect(f.renderer.canvasEdges).toBe(oldEdges); expect([...oldEdges]).toEqual([0]); expect(f.renderer.visibleEdges).toBe(1); expect([...f.renderer.stateBytes]).toEqual(state);
-      expect(f.renderer.camera).toBe(camera); expect(camera).toEqual({ x: .3, y: .4, ratio: .2 }); expect(f.renderer.selected).toBe(0);
-      expect(f.view.stage.children).toContain(f.canvas); expect(f.renderer.canvas).toBe(f.canvas); expect(f.counts()).toEqual(counts); expect(f.requests).toEqual([]);
-      expect(JSON.stringify(f.view.view)).toBe(query); expect(f.view.status.textContent).toContain('limit'); expect(f.view.status.textContent).not.toContain('Showing Groups');
+      expect(f.view.detailScope).toBeUndefined(); expect(f.renderer.camera).toBe(camera); expect(f.renderer.selected).toBe(0);
+      const result = { groupKeys: ['A'], groupCodes: new Uint32Array(3), groupLabels: ['A'], types: [], facets: [], nodes: 3, edges: 3, visible: Uint8Array.of(1,1,1), visibleEdges: 3 };
+      Object.assign(f.view, { explored: { ...result, facets: [{key: 'category', values: []}] }, activeRevision: 1, detailGeneration: 1, members: new Map(), contributions: new Map(), contributionPage: { clear() {}, update() {} } });
+      f.view.plugin.pipeline = { async request() { return { explore: result, colors: new Uint32Array(3), groups: { groups: [], groupEdges: [] }, view: 3 }; }, cancelEvaluation() {} };
+      f.view.setView({ ...f.view.view, query: '' }); for (let i = 0; i < 12; i++) await Promise.resolve();
+      expect(f.view.explored).toBe(result); expect(f.view.detailRenderer).toBe(f.renderer); expect(f.view.contentEl.dataset.mode).toBe('nodes');
+      expect(f.renderer.filterVisible).toBe(result.visible); expect(f.renderer.visibleEdges).toBe(3); expect(f.renderer.canvasEdges.length).toBe(edges); expect(f.renderer.reducedCanvas).toBe(true);
     } finally { f.restore(); }
   });
 }
-const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
-for (const [nodes, edges, reason] of [[2, 3, 'CANVAS_DETAIL_NODE_LIMIT'], [3, 1, 'CANVAS_DETAIL_EDGE_LIMIT']] as const) {
-  test(`batch 4 L1 ordinary software view over ${reason} is applied but shown as Groups, never drawn or truncated`, async () => {
-    const f = await softwareNavigationFixture(nodes, edges);
-    try {
-      const shown = new Uint8Array([1, 1, 0]), dictionary = { groupKeys: ['A'], groupCodes: new Uint32Array(3), groupLabels: ['A'], types: [], facets: [{ key: 'category', values: [] }], nodes: 3, edges: 3 };
-      const result = { ...dictionary, visible: new Uint8Array([1, 1, 1]), visibleEdges: 3 };
-      Object.assign(f.view, { detailScope: undefined, visible: shown, explored: { ...dictionary, visible: shown, visibleEdges: 1 }, activeRevision: 1, detailGeneration: 1, members: new Map(), contributions: new Map(), contributionPage: { clear() {}, update() {} } });
-      f.renderer.setView(shown, {}); const filterVisible = f.renderer.filterVisible, canvasEdges = f.renderer.canvasEdges, state = [...f.renderer.stateBytes];
-      f.view.plugin.pipeline = { async request(_revision: number, message: any) { f.requests.push(message.kind); return { explore: result, colors: new Uint32Array(3), groups: { groups: [], groupEdges: [] }, view: 3 }; }, cancelEvaluation() {} };
-      let groups = 0; f.view.showGroups = () => { groups++; f.view.detailRenderer = undefined; f.view.contentEl.dataset.mode = 'groups'; };
-      f.view.setView({ ...f.view.view, query: '' }); await flush();
-      // Requested view is adopted (settings, counts, groups) …
-      expect(f.requests).toEqual(['explore']); expect(f.view.explored).toBe(result); expect(f.view.plugin.settings.explore.view.query).toBe(''); expect(f.view.view.query).toBe('');
-      // … but the software renderer never adopts an over-budget mask or keeps a stale edge subset.
-      expect(groups).toBe(1); expect(f.view.contentEl.dataset.mode).toBe('groups'); expect(f.renderer.filterVisible).toBe(filterVisible); expect(f.renderer.canvasEdges).toBe(canvasEdges);
-      expect(f.renderer.visibleNodes).toBe(2); expect([...f.renderer.stateBytes]).toEqual(state);
-      expect(f.view.statusSummary.textContent).toContain('limit'); expect(f.view.statusSummary.textContent).toContain('Narrow filters to see notes');
-      expect(f.view.explorePanel.alert.querySelectorAll('button').length).toBe(0); expect(f.view.status.textContent).toContain('limit');
-      // Narrowing a refused Notes view retries Notes; explicit Groups does not.
-      result.visible = shown; result.visibleEdges = 1; let notes = 0;
-      f.view.showDetails = async () => { expect(f.view.admitDetail(f.view.visible, true)).toBe(true); notes++; };
-      f.view.presentation = 'nodes'; f.view.setView({ ...f.view.view, query: 'narrow' }); await flush(); expect(notes).toBe(1);
-      f.view.presentation = 'groups'; f.view.setView({ ...f.view.view, query: 'narrower' }); await flush(); expect(notes).toBe(1);
-    } finally { f.restore(); }
-  });
-}
-test('batch 4 L1 software renderer refuses an over-budget mask before mutating any state', async () => {
-  const f = await softwareNavigationFixture(2, 3);
-  try {
-    const filterVisible = f.renderer.filterVisible, canvasEdges = f.renderer.canvasEdges, state = [...f.renderer.stateBytes];
-    expect(() => f.renderer.setView(new Uint8Array([1, 1, 1]), {})).toThrow('CANVAS_DETAIL_NODE_LIMIT');
-    expect(f.renderer.filterVisible).toBe(filterVisible); expect(f.renderer.canvasEdges).toBe(canvasEdges); expect(f.renderer.visibleNodes).toBe(2); expect(f.renderer.visibleEdges).toBe(1); expect([...f.renderer.stateBytes]).toEqual(state);
-  } finally { f.restore(); }
-});
 test('TBR-2R admitted software Workspace updates real Canvas edge membership in place', async () => {
   const f = await softwareNavigationFixture(3, 3);
   try {

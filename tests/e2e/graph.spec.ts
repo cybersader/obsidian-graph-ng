@@ -108,7 +108,7 @@ describe('Graph NG synthetic Obsidian path', () => {
     await browser.waitUntil(async () => (await $('.graph-ng-view').getAttribute('data-mode')) !== 'nodes-building');
     evidence.detailTasks = await browser.executeObsidian(() => { const state = window as any; state.graphDetailTasks.push(...state.graphDetailObserver.takeRecords()); state.graphDetailObserver.disconnect(); const durations = state.graphDetailTasks.map((t: PerformanceEntry) => t.duration).sort((a: number, b: number) => a - b); return { count: durations.length, durations, entries: state.graphDetailTasks.map((t: PerformanceEntry) => ({ start: t.startTime, duration: t.duration })), p95Ms: durations.length ? durations[Math.floor(durations.length * .95)] : null, maxMs: durations.at(-1) ?? null }; });
     const mode = await $('.graph-ng-view').getAttribute('data-mode'); evidence.mode = mode;
-    if (mode !== 'nodes') { assert.ok(software || (await $('.graph-ng-status').getText()).includes('GPU unavailable')); await screenshot('fallback'); return; }
+    assert.equal(mode, 'nodes', 'Synthetic software and hardware fixtures must both open Notes');
     assert.equal(await browser.executeObsidian(({ app }) => (app.workspace.getLeavesOfType('graph-ng')[0]!.view as any).detailRenderer.gpu), !software);
     await screenshot('nodes');
     const point = await browser.executeObsidian(({ app }) => {
@@ -215,8 +215,8 @@ describe('Graph NG synthetic Obsidian path', () => {
         (window as any).previousRestoreTimeout = v.plugin.settings.contextRestoreTimeoutMs;
         v.plugin.settings.contextRestoreTimeoutMs = 25; r.gl.getExtension('WEBGL_lose_context').loseContext();
       });
-      await browser.waitUntil(async () => browser.executeObsidian(({ app }, large) => { const v = app.workspace.getLeavesOfType('graph-ng')[0]!.view as any; return large ? v.contentEl.dataset.mode === 'groups' && !v.detailRenderer : v.contentEl.dataset.mode === 'nodes' && v.detailRenderer?.gpu === false; }, large));
-      evidence.permanentContextFallback = large ? 'group/member canvas' : 'bounded Canvas2D detail';
+      await browser.waitUntil(async () => browser.executeObsidian(({ app }) => { const v = app.workspace.getLeavesOfType('graph-ng')[0]!.view as any; return v.contentEl.dataset.mode === 'nodes' && v.detailRenderer?.gpu === false; }));
+      evidence.permanentContextFallback = 'bounded Canvas2D detail';
       await screenshot('context-permanent-fallback');
       await browser.executeObsidian(({ app }) => { (app.workspace.getLeavesOfType('graph-ng')[0]!.view as any).plugin.settings.contextRestoreTimeoutMs = (window as any).previousRestoreTimeout; });
     } else evidence.contextRestored = 'Not applicable: Canvas fallback or no extension';

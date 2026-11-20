@@ -378,9 +378,9 @@ test('presentation state is per view, validates unknown values and restores only
     await c.view.setState({ presentation: 'nodes' }, {}); expect(c.shown).toEqual([]);
     c.view.contentEl.dataset.mode = 'groups'; await c.view.setState({ presentation: 'groups' }, {}); expect(c.shown).toEqual([]);
     c.view.contentEl.dataset.mode = 'nodes-building'; await c.view.setState({ presentation: 'groups' }, {}); expect(c.shown).toEqual(['groups']);
-    // A refused admission changes what is shown, never the user's requested presentation.
+    // A renderer failure changes what is shown, never the user's requested presentation.
     const d = make(); d.view.positions = new Float32Array(2); d.view.projection = {}; d.view.visible = new Uint32Array(1);
-    d.view.presentation = 'nodes'; d.view.gpu = { available: true, reason: '' }; d.view.admitDetail = () => false; d.view.showGroups = () => { d.view.contentEl.dataset.mode = 'groups'; }; delete d.view.showDetails;
+    d.view.presentation = 'nodes'; d.view.gpu = { available: true, reason: '' }; d.view.status = new ControlElement(); d.view.statusSummary = new ControlElement(); d.view.stage = { empty() { throw Error("Synthetic stage unavailable"); } }; d.view.showGroups = () => { d.view.contentEl.dataset.mode = 'groups'; }; delete d.view.showDetails;
     await d.view.showDetails(); expect(d.view.getState()).toEqual({ presentation: 'nodes' }); expect(d.view.contentEl.dataset.mode).toBe('groups');
   } finally { if (old) base.setState = old; else delete base.setState; }
 });
@@ -534,9 +534,9 @@ test('a failed preview stops new admissions without stopping the final layout', 
   expect(creates).toBe(1); expect(errors).toBe(1); expect(recycled.length).toBe(2);
 });
 
-test('16k-note refresh preserves Notes intent, refuses software overflow visibly, and never opens seed coordinates', async () => {
+test('16k-note refresh sends progressed coordinates and the full default mask to software Notes, never the seed', async () => {
   const { GraphView } = await import('../src/main'), { defaults } = await import('../src/settings');
-  const settings = defaults('fixture'); settings.persistLayout = false; settings.canvasMaxDetailNodes = 2000;
+  const settings = defaults('fixture'); settings.persistLayout = false;
   const count = 16001, visible = new Uint8Array(count).fill(1), projection = { nodeCount: count, source: new Uint32Array(), target: new Uint32Array(), quarantined: [] };
   const explored = { nodes: count, visible, matched: count, filters: [], filterHidden: [], queryHidden: 0, visibleEdges: 0, ruleVisible: [], edgeHidden: [], groupKeys: [], groupLabels: [], groupCodes: new Uint32Array(count), types: [] };
   let shown = 0, saves = 0, released!: (v: unknown) => void, started!: () => void;
@@ -555,6 +555,12 @@ test('16k-note refresh preserves Notes intent, refuses software overflow visibly
     contentEl: { dataset: {} }, status: new ControlElement(), statusSummary: new ControlElement(), stage: new ControlElement(), view: emptyView(), presentation: 'nodes', revision: 0, renderRevision: 0,
     members: new Map(), contributions: new Map(), startupTrace: [], cacheTrace: [], contributionPage: { clear() {}, suspend() {}, update() {}, fail() {} }, gpu: { available: false, reason: 'Synthetic software renderer' },
     showGroups() { shown++; view.contentEl.dataset.mode = 'groups'; } });
+  const { DetailRenderer } = await import('../src/webgl-renderer'), create = DetailRenderer.create, calls: number[] = [];
+  view.panel = new ControlElement(); view.renderView = () => ({});
+  DetailRenderer.create = async (_host, _p, positions, bits, _s, _n, _z, _c, _current, software) => {
+    expect(software).toBe(true); calls.push(bits.length); return { positions, adoptCamera() {}, fitAll() {}, dispose() {}, timings: {}, policy: { reasons: [] } } as any;
+  };
+  try {
   const work = view.refreshOnce(); await waiting;
   expect(shown).toBe(0); expect(view.positions).toBeUndefined();
   const revision = view.activeRevision, seed = new Float32Array(count * 2);
@@ -563,11 +569,10 @@ test('16k-note refresh preserves Notes intent, refuses software overflow visibly
   await view.showDetails(); expect(view.positions).toBeUndefined(); expect(view.getState()).toEqual({ presentation: 'nodes' });
   pipeline.onPositions({ revision, positions: new Float32Array(count * 2), iteration: settings.streamEveryIterations * 2, total: 100 });
   await new Promise(resolve => setTimeout(resolve, 0));
-  expect(view.statusSummary.textContent).toContain("16,001 notes exceed this renderer's 2,000-note limit");
-  expect(view.statusSummary.textContent).toContain('Narrow filters to see notes'); expect(view.getState()).toEqual({ presentation: 'nodes' });
+  expect(calls).toEqual([count]); expect(view.getState()).toEqual({ presentation: 'nodes' });
   released({ positions: new Float32Array(count * 2), milliseconds: 1, cached: false }); await work;
-  expect(view.contentEl.dataset.state).toBe('ready'); expect(view.contentEl.dataset.mode).toBe('groups'); expect(view.getState()).toEqual({ presentation: 'nodes' });
-  expect(saves).toBeGreaterThan(0); expect(shown).toBeGreaterThan(0);
+  expect(calls).toEqual([count,count]); expect(view.contentEl.dataset.state).toBe('ready'); expect(view.contentEl.dataset.mode).toBe('nodes'); expect(saves).toBeGreaterThan(0);
+  } finally { DetailRenderer.create = create; }
 });
 
 test('failed or timed-out Notes refresh paints available groups without changing Notes intent', async () => {
@@ -618,7 +623,7 @@ test('final renderer replaces the retained preview only after create confirms it
   Object.assign(view, { contentEl: { dataset: { state: 'ready', mode: 'nodes-building' } }, renderer: preview, detailRenderer: undefined,
     projection: {}, positions: new Float32Array(2), visible: new Uint8Array([1]), colors: new Uint32Array(1), gpu: { available: true, reason: 'fixture' },
     renderRevision: 1, plugin: { settings: {}, pipeline: {} }, app: {}, stage: { empty() { emptied++; } }, panel: { empty() {} },
-    contributionPage: { clear() {} }, rememberPresentation() {}, admitDetail: () => true, renderView: () => ({}), status: new ControlElement(), statusSummary: new ControlElement() });
+    contributionPage: { clear() {} }, rememberPresentation() {}, renderView: () => ({}), status: new ControlElement(), statusSummary: new ControlElement() });
   DetailRenderer.create = async () => { await new Promise<void>(resolve => { release = resolve; }); painted = true; return final; };
   try {
     const pending = view.showDetails(); expect(disposed).toBe(0); expect(emptied).toBe(0); expect(preview.canvas.style.position).toBe('absolute');

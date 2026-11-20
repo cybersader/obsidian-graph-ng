@@ -23,7 +23,6 @@ import { graphStats, layoutAdvice, recommend, suggestionSettings, type GraphStat
 import { categorical, NEUTRAL_GROUPS } from './render-effects';
 import { readTheme } from './render-theme';
 import { renderPath, type RenderProjection } from './render-projection';
-import { CanvasLimit, canvasDetailEdges } from './render-data';
 import { carrierIndexer, indexCarriers, type GroupProjection } from './core/group-projection';
 import { BinaryLayoutStore, type BinaryGeneration } from './core/binary-layout';
 import { yieldTask, sliced } from './core/scheduler';
@@ -596,7 +595,6 @@ export class GraphView extends ItemView {
         if (mode === 'workspace') {
           if (!this.detailScope) return;
           if (this.detailRenderer && this.contentEl.dataset.mode === 'nodes') {
-            if (!this.admitDetail(this.visible!, !this.detailRenderer.gpu, false)) return;
             this.detailScope = undefined; this.detailRenderer.setView(this.visible!, this.renderView()); this.explorePanel?.render(); return;
           }
           this.detailScope = undefined; mode = 'nodes';
@@ -817,7 +815,6 @@ export class GraphView extends ItemView {
       preview = new LayoutPreview(async (positions, active) => {
         if (this.gpu.reason === 'Not probed') this.gpu = gpuStatus();
         const bits = this.detailVisible()!;
-        if (!this.admitDetail(bits)) throw new Error(this.detailFallback);
         const previous = this.renderer instanceof DetailRenderer ? this.renderer : undefined;
         this.renderer?.dispose(); this.stage.empty(); this.contentEl.dataset.mode = 'nodes-building';
         const renderer = await DetailRenderer.create(this.stage, this.projection!, positions, bits, settings, () => {}, () => {}, this.colors!, active, !this.gpu.available, () => {
@@ -1242,17 +1239,14 @@ export class GraphView extends ItemView {
           const absent = [...sent.hiddenGroups, ...sent.collapsedGroups].filter(k => !result.explore.groupKeys.includes(k));
           if (absent.length) throw new Error(`Not present in the saved grouping: ${absent.join(', ')}. Review the saved definition before opening.`);
         }
-        // One admission for every caller, on the scope-intersected mask the renderer would draw.
-        const detail = this.contentEl.dataset.mode === 'nodes' ? this.detailRenderer : undefined, scope = this.detailScope;
-        const fits = !detail || this.admitDetail(scope ? result.explore.visible.map((v, i) => v & scope[i]!) : result.explore.visible, !detail.gpu, !completion);
-        if (!fits && completion) throw new Error('Detail limit exceeded; displayed graph is unchanged');
+        const detail = this.contentEl.dataset.mode === 'nodes' ? this.detailRenderer : undefined;
         this.appliedView = sent; this.explored = result.explore; this.colors = result.colors; this.visible = result.explore.visible; this.groupGraph = result.groups; this.groupGeneration = revision;
         if (this.viewGeneration !== result.view) this.clearMemberRows();
         this.viewGeneration = result.view; this.viewSource = this.sourceKey(sent);
         this.contentEl.dataset.exploreMs = String(performance.now() - started); const g = this.view.group; this.contentEl.dataset.groupSource = !g ? 'declared' : g.from === 'folder' ? `folder:${g.depth}` : g.from === 'expr' ? 'expression' : `${g.from}:${g.key}`; this.contentEl.dataset.visibleNodes = String(sum(result.explore.visible));
         this.contributionPage.update(this.contributionContext()); this.statusText = this.statusText;
-        if (detail && fits) detail.setView(this.detailVisible()!, this.renderView());
-        else if (detail || this.contentEl.dataset.mode === 'groups') { this.showGroups(true); if (this.presentation === 'nodes' && fits) await this.showDetails(); }
+        if (detail) detail.setView(this.detailVisible()!, this.renderView());
+        else if (this.contentEl.dataset.mode === 'groups') { this.showGroups(true); if (this.presentation === 'nodes') await this.showDetails(); }
         this.explorePanel?.setState(this.view); after?.(); if (owns()) this.viewFeedback(); finish();
       } catch (error) {
         finish(error);
@@ -1333,18 +1327,6 @@ export class GraphView extends ItemView {
     if (this.detailRenderer && this.contentEl.dataset.mode === 'nodes') this.detailRenderer.flyTo(camera.x, camera.y, camera.ratio);
     else { this.pendingCamera = camera; this.detailScope = undefined; void this.showDetails(); }
   }
-  private admitDetail(bits: Uint8Array, software = !this.gpu.available, fallback = true) {
-    try {
-      const s = this.plugin.settings;
-      if (software) canvasDetailEdges(this.projection!, bits, s.canvasMaxDetailNodes, s.canvasMaxDetailEdges);
-      return true;
-    } catch (e) {
-      const s = this.plugin.settings, count = sum(bits);
-      const reason = e instanceof CanvasLimit ? count > s.canvasMaxDetailNodes ? `${num(count)} notes exceed this renderer's ${num(s.canvasMaxDetailNodes)}-note limit` : `More than ${num(s.canvasMaxDetailEdges)} edges exceed this renderer's edge limit` : String(e);
-      if (fallback) { this.detailFallback = `${reason}. ${CANVAS_FALLBACK}`; this.statusText = this.statusText; } else new Notice(this.statusText = reason);
-      return false;
-    }
-  }
   private detailVisible() { return this.detailScope ? this.visible?.map((v, i) => v & this.detailScope![i]!) : this.visible; }
   async showDetails(bits = this.detailVisible(), clearPanel = true) {
     const focus = this.pendingFocus; this.pendingFocus = undefined;
@@ -1356,7 +1338,6 @@ export class GraphView extends ItemView {
     try {
       if (this.gpu.reason === 'Not probed') this.gpu = await this.plugin.pipeline.request<typeof this.gpu | undefined>(this.activeRevision, { kind: 'gpu' }) ?? gpuStatus();
       if (renderRevision !== this.renderRevision || this.closed) return;
-      if (!this.admitDetail(bits)) { this.showGroups(true); return; }
       const preview = this.renderer instanceof DetailRenderer && (this.layoutWorking || this.renderer !== this.detailRenderer) ? this.renderer : undefined;
       if (preview) preview.canvas.style.position = 'absolute';
       else { this.renderer?.dispose(); this.stage.empty(); }
@@ -1399,7 +1380,6 @@ export class GraphView extends ItemView {
     } catch (e) { if (renderRevision !== this.renderRevision) return; this.gpu = { available: false, reason: String(e) }; this.detailFallback = `Notes could not be drawn: ${String(e)}. Showing Groups.`; this.showGroups(); this.statusText = ''; }
   }
 }
-const CANVAS_FALLBACK = 'Showing Groups. Narrow filters to see notes.';
 /** Whether a view hides anything relative to the unfiltered declared grouping. */
 const viewNarrows = (v: ExploreView) => Boolean(v.query.trim() || v.filters.length || v.group || v.hiddenGroups.length || v.hiddenColors.length || v.hiddenTypes.length);
 class GraphSettings extends PluginSettingTab {
