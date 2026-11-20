@@ -654,7 +654,7 @@ export class DetailRenderer {
     else if (card && card.node >= 0 && card.node === this.selected) card.render();
     this.lineRanks = edgeRanks(p.source, p.target, p.offsets, view.groupCodes, p.interest, this.edgeDrawn, p.carrier, p.carrierNodes);
     this.carrierGeometry = carrierPairs(p, this.edgeOn, filterVisible, this.lineRanks); this.pinCarriers(true);
-    this.canvasIndex = this.makeCanvasIndex(this.grid, render, view);
+    this.canvasIndex = this.makeCanvasIndex(this.grid, render, !!view.loading);
     const priorRows = this.canvasEdges;
     if (this.near.length || this.selected >= 0 && this.ready) this.emphasize(true);
     if (this.ctx && priorRows === this.canvasEdges) this.prepareCanvasRows();
@@ -671,9 +671,9 @@ export class DetailRenderer {
   private replayViewHover() {
     if (this.reducedCanvas) this.replayAfterPaint = true; else this.input?.replayHover();
   }
-  private makeCanvasIndex(grid: PositionBounds, visible: Uint8Array, view: RenderView) {
+  private makeCanvasIndex(grid: PositionBounds, visible: Uint8Array, preview: boolean) {
     if (!this.ctx || visible.length <= this.settings.canvasMaxDetailNodes) return;
-    return new CanvasViewport(grid, visible, !!view.loading, n => !this.projection.carrierNodes[n] ? 0 : this.carrierGeometry.nodes[n] === 0xffffffff ? -1 : this.carrierGeometry.nodes[n]! & 0x2000000 ? 2 : 1);
+    return new CanvasViewport(grid, visible, preview, n => !this.projection.carrierNodes[n] ? 0 : this.carrierGeometry.nodes[n] === 0xffffffff ? -1 : this.carrierGeometry.nodes[n]! & 0x2000000 ? 2 : 1);
   }
   /** Pure coordinate derivation shared by ordinary view updates and transactional preparation. */
   private plainPreview(view: RenderView) { return view.loading && !view.groupCodes && !view.collapsed && this.lensAnchor < 0; }
@@ -698,7 +698,7 @@ export class DetailRenderer {
     }
     const coherent = Math.max(grid.width, grid.height) * .22;
     const halos = all.filter(h => !collapsed?.[h.group] && h.radius < coherent);
-    const canvasIndex = index ? this.makeCanvasIndex(grid, render, view) : undefined;
+    const canvasIndex = index ? this.makeCanvasIndex(grid, render, !!view.loading) : undefined;
     return { grid, display, canvasIndex, visible: render, hubs, halos, picker: render !== grid.visible ? new PickGrid(positions, render) : grid instanceof PickGrid ? grid : undefined };
 
   }
@@ -748,7 +748,12 @@ export class DetailRenderer {
       this.grid = new PositionBounds(next, this.filterVisible); this.picker = undefined; this.display = next;
     } else {
       if (!next.every(Number.isFinite)) throw new Error('Layout preview unavailable');
-      Object.assign(this, this.coordinateState(next, this.filterVisible, this.view)); this.discData = this.discs(this.halos, this.hubs);
+      const geometry = this.coordinateState(next, this.filterVisible, this.view, false), prior = this.canvasIndex;
+      // While arranging, sample by membership, never by another pose's spatial order.
+      // applyView replaces the index when drawable classes change; collapsed masks may be newly allocated.
+      geometry.canvasIndex = prior && !prior.bounds && (geometry.visible === this.visible || geometry.visible.every((v, i) => v === this.visible[i]))
+        ? prior : this.makeCanvasIndex(geometry.grid, geometry.visible, true);
+      Object.assign(this, geometry); this.discData = this.discs(this.halos, this.hubs);
     }
     this.positions = next;
     if (this.gl) this.uploadCoordinates();
@@ -2188,7 +2193,7 @@ export class DetailRenderer {
     void this.initialize().then(() => { if (current()) { this.canvas.dataset.context = 'restored'; this.onPreviewMotion?.(); } }).catch(() => { if (current()) { this.canvas.dataset.context = 'failed'; this.onUnavailable(); } });
   };
   dispose() { clearTimeout(this.sizingTimer);
-    if (this.disposed) return; this.disposed = true; this.finishPaint(); this.labelsRevision++; clearTimeout(this.restoreTimer); this.restoreTimer = undefined; cancelAnimationFrame(this.frameId); clearTimeout(this.frameTimer); this.frameTimer = undefined; this.observer.disconnect(); this.panelObserver?.disconnect(); this.media.removeEventListener('change', this.refreshTheme); this.motionMedia.removeEventListener('change', this.motionChanged);
+    if (this.disposed) return; this.disposed = true; this.canvasIndex = undefined; this.finishPaint(); this.labelsRevision++; clearTimeout(this.restoreTimer); this.restoreTimer = undefined; cancelAnimationFrame(this.frameId); clearTimeout(this.frameTimer); this.frameTimer = undefined; this.observer.disconnect(); this.panelObserver?.disconnect(); this.media.removeEventListener('change', this.refreshTheme); this.motionMedia.removeEventListener('change', this.motionChanged);
     this.input.detach(this.container); this.limitChip.stop(); disposeSearch(this.canvas); this.miniMap.dispose();
     this.canvas.removeEventListener('webglcontextlost', this.contextLost); this.canvas.removeEventListener('webglcontextrestored', this.contextRestored);
     const gl = this.gl; if (gl && !this.lost) { gl.deleteFramebuffer(this.densityBuffer); for (const p of this.programs) gl.deleteProgram(p.handle); for (const b of [...this.buffers, ...this.labelBuffers, ...this.discBuffers]) if (b) gl.deleteBuffer(b); for (const v of [...this.vaos, ...this.labelVaos]) gl.deleteVertexArray(v); for (const t of this.textures) gl.deleteTexture(t); }

@@ -679,6 +679,68 @@ test('folded relationship dots do not reserve slots in the ordinary note sample'
   settings.visuals.carrierLines = 'direct'; r.setView(new Uint8Array(n).fill(1),{}); r[k('drawCanvas')]();
   expect([...r.paintedDots].sort((a,b) => Number(a)-Number(b))).toEqual(Array.from({length:n/2},(_,i) => 2*i));
 });
+test('streamed Canvas poses reuse one membership index and publish exact geometry only at commit', async () => {
+  const n = 256, { r, k } = await graduated([], n, 16), original = r.positions;
+  const index = () => r[k('canvasIndex')], initial = index(), make = r[k('makeCanvasIndex')].bind(r);
+  const builds: { index: any; bytes: number }[] = [];
+  r[k('makeCanvasIndex')] = (...args: any[]) => {
+    const built = make(...args), arrays = new Set<Uint32Array>([built.ids, ...built[k('levels')]]);
+    builds.push({ index: built, bytes: [...arrays].reduce((sum, a) => sum + a.byteLength, 0) }); return built;
+  };
+  const pose = (phase: number) => Float32Array.from({ length: n * 2 }, (_, j) =>
+    j % 2 ? (j >> 1) % 16 + phase : ((j >> 1) * 31 % n) + phase * n);
+  const assertExact = (xy: Float32Array) => {
+    expect(r.positions).toBe(xy); expect(r.grid.positions).toBe(xy);
+    // Every new coordinate resolves its own row, not an approximate overview or the previous pose.
+    for (let i = 0; i < n; i++) {
+      const hits: number[] = []; index()[k('sample')](xy[2*i], xy[2*i+1], 0, 0, 16, (id: number) => hits.push(id));
+      expect(hits).toEqual([i]);
+    }
+  };
+  for (const commit of [false, true]) {
+    builds.length = 0; const finish = r[k('beginLayout')]();
+    for (let j = 1; j <= 4; j++) {
+      const next = pose(j); r[k('streamPositions')](next, 'drawing');
+      expect(r.positions).toBe(next); expect(r.grid.positions).toBe(next);
+    }
+    expect(builds.map(b => b.bytes)).toEqual([n * 4]);
+    const transient = index(); expect(transient).toBe(builds[0]!.index); expect(transient[k('levels')]).toHaveLength(0);
+    expect(transient[k('bounds')]).toBeUndefined(); // previous pose buffers are recyclable
+    const final = pose(5), token = await prepare(r, final, () => true);
+    expect(builds).toHaveLength(2); const exact = builds[1]!.index;
+    expect(builds[1]!.bytes).toBe(initial[k('levels')].length * n * 4);
+    expect(index()).toBe(transient); expect(r.positions).not.toBe(final);
+    token.commit(); expect(index()).toBe(exact); assertExact(final);
+    if (!commit) { token.rollback(); expect(index()).toBe(transient); }
+    token.discard(); finish(commit);
+    expect(index()).toBe(commit ? exact : initial); assertExact(commit ? final : original);
+    expect(builds).toHaveLength(2);
+  }
+});
+test('stream rollback after a filter change indexes the original pose with current membership', async () => {
+  const n = 64, { r, k } = await graduated([], n, 8), original = r.positions, index = () => r[k('canvasIndex')];
+  const finish = r[k('beginLayout')](), moved = original.map((v: number) => v + 20000);
+  r[k('streamPositions')](moved, 'drawing'); const all = index();
+  const visible = Uint8Array.from({ length: n }, (_, i) => i % 2); r.setView(visible, {});
+  r[k('streamPositions')](moved.slice(), 'drawing'); expect(index()).not.toBe(all);
+  expect([...index().ids]).toEqual(Array.from({ length: n / 2 }, (_, i) => 2*i+1));
+  finish(false); expect(r.positions).toBe(original); expect(index()[k('bounds')]).toBe(r.grid);
+  for (let i = 0; i < n; i++) {
+    const hits: number[] = []; index()[k('sample')](original[2*i], original[2*i+1], 0, 0, 8, (id: number) => hits.push(id));
+    expect(hits).toEqual(i % 2 ? [i] : []);
+  }
+});
+test('lost or disposed renderer cannot adopt a prepared Canvas index', async () => {
+  for (const dispose of [false, true]) {
+    const { r, k } = await graduated([], 64, 16), original = r.positions, initial = r[k('canvasIndex')];
+    const finish = r[k('beginLayout')](); r[k('streamPositions')](original.slice(), 'drawing');
+    const token = await prepare(r, original.slice(), () => true);
+    if (dispose) r.dispose(); else r.canvas.listeners.get('webglcontextlost')({ preventDefault() {} });
+    expect(token.current()).toBe(false); expect(() => token.commit()).toThrow(); token.discard(); finish(false);
+    if (!dispose) { expect(r.positions).toBe(original); expect(r[k('canvasIndex')]).toBe(initial); }
+    r.dispose(); expect(r[k('canvasIndex')]).toBeUndefined();
+  }
+});
 test('selected and path geometry get a whole unit; disabled and non-fitting units yield their slots', async () => {
   const m = 60, pairs: [number,number][] = Array.from({length:m}, () => [0,1]);
   pairs.push([2,3],[3,4],[2,3],[3,5]);

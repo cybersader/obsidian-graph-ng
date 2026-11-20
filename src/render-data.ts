@@ -181,12 +181,14 @@ export function offscreenPips(ids: ArrayLike<number>, xy: ArrayLike<number>, w: 
 export const PIP_DIRECTIONS = ['right', 'lower right', 'below', 'lower left', 'left', 'upper left', 'above', 'upper right'] as const;
 /** Exact 2-D rank sampling: order by class and x; each aligned power-of-two x span
  * also has a y order. Two binary searches on y trim a span even at a crowded boundary.
- * Interactive preparation costs O(N log N) time/ids. Loading previews keep just the ids. */
+ * Settled preparation costs O(N log N) time/ids. Stream previews keep only membership,
+ * never a reference to coordinates that can be recycled on the next frame. */
 export class CanvasViewport {
+  readonly bounds?: PositionBounds;
   readonly ids: Uint32Array;
   private levels: Uint32Array[] = [];
   private offsets = [0, 0, 0, 0];
-  constructor(private bounds: PositionBounds, visible: Uint8Array, preview: boolean, kind = (_n: number) => 0) {
+  constructor(bounds: PositionBounds, visible: Uint8Array, preview: boolean, kind = (_n: number) => 0) {
     // Ordinary, foldable relationship, retained relationship. Disabled geometry is absent.
     const p = bounds.positions, at = this.offsets;
     for (let i = 0; i < visible.length; i++) if (visible[i]) { const k = kind(i); if (k >= 0) at[k + 1]!++; }
@@ -194,6 +196,7 @@ export class CanvasViewport {
     const ids = this.ids = new Uint32Array(at[3]!), cursor = at.slice();
     for (let i = 0; i < visible.length; i++) if (visible[i]) { const k = kind(i); if (k >= 0) ids[cursor[k]!++] = i; }
     if (preview) return;
+    this.bounds = bounds;
     for (let k = 0; k < 3; k++) ids.subarray(at[k], at[k + 1]).sort((a, b) => p[2 * a]! - p[2 * b]! || a - b);
     this.levels.push(ids);
     for (let width = 1; width < ids.length; width *= 2) {
@@ -207,9 +210,10 @@ export class CanvasViewport {
     }
   }
   sample(x: number, y: number, w: number, h: number, cap: number, add: (n: number) => void, classes = 7) {
-    const p = this.bounds.positions, spans: [Uint32Array, number, number][] = [];
+    const spans: [Uint32Array, number, number][] = [];
     let count = 0;
     const bound = (ids: Uint32Array, l: number, r: number, axis: number, value: number, upper: boolean) => {
+      const p = this.bounds!.positions;
       while (l < r) {
         const m = Math.floor((l + r) / 2), v = p[2 * ids[m]! + axis]!;
         if (v < value || upper && v === value) l = m + 1; else r = m;
