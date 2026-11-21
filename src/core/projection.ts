@@ -16,7 +16,7 @@ export interface Projection {
   target: Uint32Array;
   type: Uint32Array;
   carrier: Uint32Array;
-  /** Per edge: index of the declaring `edges[]` rule (worker-side, for relationship details). */
+  /** Per edge: index of the declaring `edges[]` rule, for relationship details and multi-rule carrier traversal. */
   rule?: Uint32Array;
   /** Per node: 1 + its `carrier` row when the node is a reified edge declaration drawn as a
    * node (literal display), else 0. An edge belongs to that note when `carrier[e] + 1` matches. */

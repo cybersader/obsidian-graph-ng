@@ -1,6 +1,9 @@
 import { test, expect, beforeAll, afterAll } from 'bun:test';
 import { connectionGroups, navigatorSections, filterConnections, entryTitle, ConnectionCard, NAV_DEBOUNCE_MS, type CardHost, reach, neighbourhood, NavHistory, dockCard, sheetCard, DOCK_ROOM, SHEET_WIDTH } from '../src/connection-card';
 import { incidentEdges } from '../src/render-data';
+import { buildProjection } from '../src/core/projection';
+import { validateDeclaration, type GraphDeclaration } from '../src/core/declaration';
+import { renderProjection } from '../src/render-projection';
 
 // Synthetic graph. Types: 0 'cites', 1 'part of'. Node 9 is a relationship-note dot owned by row 0
 // (carrierNodes[9] = 1 = carrier row 0 + 1); its far endpoint 10 is a direct connection of 0.
@@ -40,6 +43,52 @@ test('connections group by type and direction; groups largest first, then type, 
   // Ties sort by the supplied comparator (here: names), deterministically.
   const names = ['z', 'b', 'a', 'c', 'd', '', '', '', '', '', 'e'], byName = (a: number, b: number) => names[a]!.localeCompare(names[b]!);
   expect(connectionGroups(0, g.inc, g.p, g.on, g.all, byName).groups[0]!.nodes).toEqual([2, 1, 10]);
+});
+
+function carrierFixture(sources: number[], targets: number[]) {
+  const dot = 3, links = [...sources.map(n => [n, dot]), ...targets.map(n => [dot, n])];
+  const p = { nodeCount: 4, source: Uint32Array.from(links, e => e[0]!), target: Uint32Array.from(links, e => e[1]!),
+    type: new Uint32Array(links.length), types: ['relates'], carrier: new Uint32Array(links.length), carrierNodes: Uint32Array.of(0, 0, 0, 1) };
+  return { p, inc: incidentEdges(p), visible: Uint8Array.of(1, 1, 1, 1) };
+}
+
+test('card final review: a real shared carrier keeps each declaring rule and counts its neighbour once', () => {
+  const d: GraphDeclaration = { version: 2, identity: [{ key: 'item' }], groups: [], colors: [], columns: [], display: { reifiedAsNodes: true }, edges: [
+    { kind: 'reified', name: 'cites', sourceProperty: 'citing', targetProperty: 'cited' },
+    { kind: 'reified', name: 'supports', sourceProperty: 'supporting', targetProperty: 'supported' },
+  ] };
+  validateDeclaration(d);
+  const card = (supported: string, supporting = 'A') => {
+    const rows = ['A', 'B', 'C', 'D'].map(item => ({ path: item + '.md', properties: { item } }));
+    const raw = buildProjection([...rows, { path: 'R.md', properties: { item: 'R', citing: 'A', cited: 'B', supporting, supported } }], d);
+    const p = renderProjection(raw, d), visible = new Uint8Array(p.nodeCount).fill(1);
+    expect(p.rule).toBe(raw.rule);
+    expect(renderProjection(raw, { ...d, edges: d.edges.slice(0, 1) })).not.toHaveProperty('rule');
+    expect(renderProjection(raw, { ...d, display: { reifiedAsNodes: false } })).not.toHaveProperty('rule');
+    return connectionGroups(raw.paths.indexOf('A.md'), incidentEdges(p), p, () => true, visible, (a, b) => a - b);
+  };
+  expect(card('B')).toEqual({ direct: 1, groups: [{ type: 'cites', out: true, nodes: [1] }, { type: 'supports', out: true, nodes: [1] }] });
+  expect(card('C').groups).toEqual([{ type: 'cites', out: true, nodes: [1] }, { type: 'supports', out: true, nodes: [2] }]);
+  // Distinct rules can intentionally share a display type. Neither name nor type identifies the paired leg.
+  for (const edge of d.edges) if (edge.kind === 'reified') edge.type = 'link';
+  expect(card('D', 'C')).toEqual({ direct: 1, groups: [{ type: 'link', out: true, nodes: [1] }] });
+});
+
+test('card second review: carrier crossings exclude co-sources with and without the target visible', () => {
+  const { p, inc, visible } = carrierFixture([0, 2], [1]);
+  const card = (n: number) => connectionGroups(n, inc, p, () => true, visible, (a, b) => a - b);
+  expect(card(0).groups).toEqual([{ type: 'relates', out: true, nodes: [1] }]);
+  expect(card(1).groups).toEqual([{ type: 'relates', out: false, nodes: [0, 2] }]);
+  visible[1] = 0; expect(card(0)).toEqual({ direct: 0, groups: [], hidden: true });
+});
+
+test('card second review: proving a hidden repeated self-relationship empty inspects linear incident rows', () => {
+  const { p, inc, visible } = carrierFixture(Array(128).fill(0), [0]);
+  let inspected = 0;
+  const edges = new Proxy(inc.edges, { get(target, key) { if (typeof key === 'string' && /^\d+$/.test(key)) inspected++; return Reflect.get(target, key, target); } });
+  expect(connectionGroups(0, { ...inc, edges }, p, () => false, visible, (a, b) => a - b)).toEqual({ groups: [], direct: 0 });
+  // Visible pass + unfiltered pass over the anchor, and at most one carrier scan per direction.
+  expect(inspected).toBeLessThanOrEqual(4 * p.source.length);
 });
 
 test('show only connections: focus plus direct connections, 2-hop adds neighbours of neighbours, dots kept', () => {
@@ -133,7 +182,7 @@ class El {
   setAttribute(k: string, v: string) { this.attrs[k] = v; }
   getAttribute(k: string) { return this.attrs[k] ?? null; }
   removeAttribute(k: string) { delete this.attrs[k]; }
-  querySelector(selector: string) { return this.all().find(c => selector.startsWith('[data-group=') ? c.dataset.group === selector.split('"')[1] : c.tagName === selector) ?? null; }
+  querySelector(selector: string) { return this.all().find(c => selector.startsWith('[data-group=') ? c.dataset.group === selector.split('"')[1] : selector.startsWith('.') ? c.className.split(' ').includes(selector.slice(1)) : c.tagName === selector) ?? null; }
   focus() { El.active = this; this.onfocus?.(); }
   click() { this.onclick?.({ preventDefault() {} }); }
   all(): El[] { return this.children.flatMap(c => [c, ...c.all()]); }
@@ -151,12 +200,12 @@ beforeAll(() => {
 afterAll(() => { for (const [k, v] of Object.entries(real)) if (v === undefined) delete g[k]; else g[k] = v; });
 
 /** A focus note 0 with `count` connections spread over three groups; counts title lookups per connection. */
-function rig(count = 120) {
+function rig(count = 120, extra: Partial<CardHost> = {}) {
   const lookups: number[] = [], calls: string[] = [], nodes = Array.from({ length: count }, (_, i) => i + 1);
   const host: CardHost = {
     name: n => `ID-${n}`, color: () => 'red', title: n => { if (n) lookups.push(n); return `Note ${n}`; },
     group: n => ({ key: n % 3, label: `Group ${n % 3}` }), groups: () => ({ groups: [{ type: 'maps', out: true, nodes }], direct: count }),
-    isolated: () => false, act() {}, travel: n => calls.push(`travel ${n}`), cue() {}, close: () => calls.push('close'),
+    isolated: () => false, act() {}, travel: n => calls.push(`travel ${n}`), cue() {}, close: () => calls.push('close'), ...extra,
   };
   const root = new El('div'), card = new ConnectionCard(root as unknown as HTMLElement, host); timers = []; card.show(0);
   const input = root.tag('input')[0]!, list = root.find('graph-ng-connections')[0]!;
@@ -239,7 +288,9 @@ test('neighbourhood mask: zero through three hops, distinct frontier, transparen
   expect(run(3, new Set(), g.all, () => false).mask.reduce((a, b) => a + b)).toBe(1);
 });
 test('neighbourhood scan budget includes carrier fan-out and visibly reports incomplete traversal', () => {
-  const n = 600, source = Uint32Array.from({ length: n - 1 }, (_, i) => i + 1), target = new Uint32Array(n - 1);
+  // One incoming source leg and 598 outgoing target legs, not 599 unrelated co-sources.
+  const n = 600, source = new Uint32Array(n - 1), target = Uint32Array.from({ length: n - 1 }, (_, i) => i + 1);
+  source[0] = 1; target[0] = 0;
   const p = { nodeCount: n, source, target, type: new Uint32Array(n - 1), types: ['link'], carrier: new Uint32Array(n - 1), carrierNodes: new Uint32Array(n) }; p.carrierNodes[0] = 1;
   const inc = incidentEdges(p), all = new Uint8Array(n).fill(1);
   const bounded = reach(1, inc, p, () => true, all, 1, 2); expect(bounded.truncated).toBe(true); expect(bounded.nodes.size).toBeLessThan(4);
@@ -300,12 +351,12 @@ test('group disclosures retain counts, declared names and focus after toggling',
 
 test('card rows use concise referenced names, readable relationship endpoints and middle truncation', () => {
   const root = new El('div'), long = 'Source '.repeat(20) + 'ending';
-  const host: CardHost = { name: n => n ? 'opaque-record' : 'Anchor', color: () => 'red', relationship: n => n ? { name: long + ' → Target', type: 'supports' } : undefined, groups: () => ({ groups: [{ type: 'link', out: true, nodes: [1] }], direct: 1 }), isolated: () => false, act() {}, travel() {}, cue() {}, close() {} };
+  const host: CardHost = { name: n => n ? 'opaque-record' : 'Anchor', title: n => n ? long + ' note' : '', color: () => 'red', relationship: n => n ? { name: long + ' → Target', type: 'supports' } : undefined, groups: () => ({ groups: [{ type: 'link', out: true, nodes: [1] }], direct: 1 }), isolated: () => false, act() {}, travel() {}, cue() {}, close() {} };
   const card = new ConnectionCard(root as unknown as HTMLElement, host); card.show(0);
   const row = card.rows[0] as unknown as El, label = row.find('graph-ng-connection-title')[0]!;
   expect(row.attrs['aria-label']).toBeUndefined(); expect(row.attrs['aria-labelledby']).toBe(label.id);
-  expect(label.textContent).toContain('…'); expect(label.textContent.endsWith('→ Target')).toBe(true); expect(label.title).toBe(long + ' → Target');
-  expect(row.textContent).toContain('supports'); expect(row.textContent).not.toContain('opaque-record');
+  expect(label.textContent).toContain('…'); expect(label.textContent.endsWith('ending note')).toBe(true); expect(label.title).toBe(long + ' note');
+  expect(row.textContent).toContain('→ Target (supports)'); expect(row.textContent).toContain('→ link'); expect(row.textContent).toContain('opaque-record');
   card.size = [320, 200]; row.focus(); expect(label.textContent).toBe(label.title); expect(card.size).toBeUndefined();
   card.size = [320, 240]; (row as any).onblur(); expect(label.textContent).toContain('…'); expect(card.size).toBeUndefined();
 });
@@ -319,4 +370,68 @@ test('isolation retains traversed legs, not unrelated links between retained nei
   expect(run(2).edges.has(7)).toBe(true); expect(run(1, new Set([1])).edges.has(5)).toBe(true);
   expect(run(1, new Set(), e => g.p.type[e] === 1).edges).toEqual(new Set([2, 3, 4]));
   const travel = run(1, new Set(), g.on, [5]); expect(travel.edges.has(5)).toBe(true); expect(travel.mask[5]).toBe(1);
+});
+
+
+test('card clarity: equal filenames retain their own group and full folder', () => {
+  const folders = ['West/Long/'.repeat(8) + 'Shelf', 'East/Shelf'];
+  const r = rig(1, { name: () => 'Index', path: n => `${folders[n]}/Index.md` });
+  for (const n of [0, 1]) {
+    r.card.show(n); const line = r.root.find('graph-ng-card-identity')[0]!;
+    expect(line.textContent).toContain(`Group ${n}`); expect(line.title).toContain(folders[n]!);
+    expect(line.textContent).toContain('Shelf');
+  }
+});
+test('card identity shows a matching first folder only once and keeps the full note path in the tooltip', () => {
+  for (const folder of ['Group 0', 'Group 0/Nearest', 'Group 01/Nearest']) {
+    const path = `${folder}/Index.md`, line = rig(0, { path: () => path }).root.find('graph-ng-card-identity')[0]!;
+    expect(line.children.map(c => c.textContent)).toEqual(folder === 'Group 0' ? ['Group 0'] : ['Group 0', folder.startsWith('Group 0/') ? 'Nearest' : folder]);
+    expect(line.title).toContain(path);
+  }
+});
+test('card clarity: only existing neighbours get declared parent and child roles', () => {
+  // 0 has parents 1 and 4; 2 has parents 0 and 1. 4 is not a listed neighbour.
+  const up = { offsets: Uint32Array.of(0, 2, 2, 4, 4, 4), targets: Uint32Array.of(1, 4, 0, 1) };
+  for (const hierarchy of [up, undefined]) {
+    const r = rig(3, { up: hierarchy }); const rows = r.rows(); expect(rows).toHaveLength(3);
+    const meta = (n: number) => rows.find(row => row.textContent.includes(`Note ${n}`))!.find('graph-ng-connection-relation')[0]!.textContent;
+    expect(meta(1)).toBe(hierarchy ? 'Parent, → maps' : '→ maps'); expect(meta(2)).toBe(hierarchy ? 'Child, → maps' : '→ maps'); expect(meta(3)).toBe('→ maps');
+  }
+});
+test('card clarity: a folded empty card has a visible summary outside its navigator', () => {
+  const r = rig(0); r.root.dataset.folded = 'true';
+  expect(r.root.children.find(c => c.className === 'graph-ng-card-empty')?.textContent).toContain('No connections');
+  const empty = r.root.find('graph-ng-card-empty')[0]!;
+  expect(empty.attrs.role).toBe('status'); expect(r.root.children.indexOf(empty)).toBeGreaterThan(r.root.children.indexOf(r.root.find('graph-ng-card-primary')[0]!));
+  expect(r.root.tag('input')).toHaveLength(0); expect(r.root.find('graph-ng-nav-status')).toHaveLength(0); expect(r.root.find('graph-ng-isolate-toggle')).toHaveLength(0);
+  expect(rig(0, { isolated: () => true }).root.find('graph-ng-isolate-toggle')[0]!.textContent).toBe('Show all notes');
+  expect(() => r.card.showAll()).not.toThrow(); expect(rig(1).root.find('graph-ng-card-empty')).toHaveLength(0);
+});
+test('card clarity: one connection is singular in the group accessibility label and live count', () => {
+  const r = rig(1); expect(r.list.find('graph-ng-connection-group')[0]!.attrs['aria-label']).toBe('Group 1, 1 connection'); expect(r.status()).toBe('1 direct connection in 1 group');
+});
+
+test('card review: hidden type and hidden neighbour qualify the empty status but self-loops do not', () => {
+  const g = graph(), mask = g.all.slice(); mask[0] = 0;
+  for (const [node,on,vis,want] of [[6,()=>false,g.all,'No connections in this view'],[3,g.on,mask,'No connections in this view'],[7,g.on,g.all,'No connections']] as const) {
+    const r=rig(0,{groups:()=>connectionGroups(node,g.inc,g.p,on,vis,g.order)});
+    const status=r.root.find('graph-ng-card-empty')[0]!; expect(status.attrs.role).toBe('status'); expect(status.text).toBe(want);
+  }
+});
+test('card review: parent row identifies the travelled relationship note and its actual mentions edge', () => {
+  const r=rig(1,{ name:n=>n?'R':'C', title:()=>'',up:{offsets:Uint32Array.of(0,1,1),targets:Uint32Array.of(1)}, relationship:()=>({name:'S → T',type:'relates'}),groups:()=>({groups:[{type:'mentions',out:true,nodes:[1]}],direct:1}) });
+  const row=r.rows()[0]!; expect(row.find('graph-ng-connection-title')[0]!.textContent).toBe('R'); expect(row.textContent).toContain('S → T'); expect(row.textContent).toContain('relates'); expect(row.textContent).toContain('Parent, → mentions'); row.click(); expect(r.calls).toEqual(['travel 1']);
+});
+test('card review: leaving isolation from an empty card focuses Open note', () => {
+  let active=true;const r=rig(0,{isolated:()=>active,act:()=>{active=false;r.card.render();}});const old=r.root.find('graph-ng-isolate-toggle')[0]!;old.focus();old.click();expect(El.active).toBe(r.root.find('mod-cta')[0]!);
+});
+
+
+test('card second review: large endpoint caption has bounded readable text and a full tooltip', () => {
+  const endpoints = Array.from({ length: 300 }, (_, i) => `Note ${i}`).join(', ') + ' → Last', caption = `${endpoints} (relates)`;
+  const r = rig(1, { name: n => n ? 'Destination' : 'Selected', title: () => '', relationship: () => ({ name: endpoints, type: 'relates' }), groups: () => ({ groups: [{ type: 'mentions', out: true, nodes: [1] }], direct: 1 }) });
+  const row = r.rows()[0]!, secondary = row.find('graph-ng-endpoints')[0]!, detail = row.find('graph-ng-connection-relation')[0]!;
+  expect(secondary.textContent.length).toBeLessThanOrEqual(72); expect(secondary.textContent).toContain('…'); expect(secondary.title).toBe(caption);
+  expect(row.attrs['aria-describedby']).toBe(detail.id); expect(detail.textContent).not.toContain(endpoints); expect(detail.textContent).toContain('→ mentions');
+  expect(row.find('graph-ng-connection-title')[0]!.textContent).toBe('Destination');
 });

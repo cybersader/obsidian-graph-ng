@@ -24,7 +24,7 @@ export class GroupRenderer implements Renderer {
   private media = matchMedia('(prefers-color-scheme: dark)');
   private base: Settings;
   constructor(private container: HTMLElement, private p: GroupProjection, private s: Settings,
-    private onGroup: (id: string) => void, private onEdge: (edge: GroupProjection['groupEdges'][number]) => void, private colorOf?: (id: string) => string, private ring?: string, private measureTools = () => 0, private largest = Math.max(1, ...p.groups.map(g => g.count))) {
+    private onGroup: (id: string) => void, private onEdge: (edge: GroupProjection['groupEdges'][number]) => void, private colorOf?: (id: string) => string, private ring?: string, private measureTools = () => 0, private largest = Math.max(1, ...p.groups.map(g => g.count)), private display = (label: string) => label) {
     this.base = s; this.refreshTheme();
     this.media.addEventListener('change', this.refreshTheme);
     this.canvas = document.createElement('canvas'); this.canvas.className = 'graph-ng-groups'; this.canvas.setAttribute('aria-label', 'Declared groups and counted relationships'); container.append(this.canvas);
@@ -50,7 +50,7 @@ export class GroupRenderer implements Renderer {
   private click = (e: MouseEvent) => { const p = this.point(e), g = this.nodeAt(p); if (g) this.onGroup(g.id); else { const edge = this.edgeAt(p); if (edge) this.onEdge(edge.edge); } };
   private hover = (e: MouseEvent) => {
     const p = this.point(e), g = this.nodeAt(p), edge = this.edgeAt(p);
-    this.tooltip.textContent = g ? `${g.label}: ${g.count.toLocaleString()} members` : edge ? `${this.p.groups.find(g => g.id === edge.edge.a)?.label} ↔ ${this.p.groups.find(g => g.id === edge.edge.b)?.label}: ${Object.entries(edge.edge.typeCounts).map(([t, n]) => `${t}: ${n.toLocaleString()}`).join(', ')}` : '';
+    this.tooltip.textContent = g ? `${this.display(g.label)}: ${g.count.toLocaleString()} members` : edge ? `${this.display(this.p.groups.find(g => g.id === edge.edge.a)!.label)} ↔ ${this.display(this.p.groups.find(g => g.id === edge.edge.b)!.label)}: ${Object.entries(edge.edge.typeCounts).map(([t, n]) => `${t}: ${n.toLocaleString()}`).join(', ')}` : '';
     this.tooltip.style.left = `${Math.max(8, Math.min(p.x + 10, this.canvas.clientWidth - this.tooltip.offsetWidth - 8))}px`; this.tooltip.style.top = `${Math.max(8, Math.min(p.y + 10, this.container.clientHeight - this.tooltip.offsetHeight - 8))}px`;
     this.canvas.style.cursor = g || edge ? 'pointer' : 'default';
   };
@@ -109,8 +109,8 @@ export class GroupRenderer implements Renderer {
       ctx.beginPath(); ctx.arc(p.x, p.y, r - 1.5, 0, Math.PI * 2); ctx.strokeStyle = bg; ctx.globalAlpha = .35; ctx.lineWidth = 2; ctx.stroke(); ctx.globalAlpha = 1;
       ctx.font = `600 ${this.s.labelSize}px sans-serif`; ctx.textAlign = 'center';
       const countLabel = `${g.count.toLocaleString()} members`, maxWidth = Math.min(220, w / Math.max(1, columns) - 16);
-      let title = g.label, length = Math.min(80, title.length);
-      while (length > 2 && ctx.measureText(title).width > maxWidth) { length--; title = g.label.slice(0, Math.ceil(length / 2)) + '…' + g.label.slice(-Math.floor(length / 2)); }
+      const full = this.display(g.label); let title = full, length = Math.min(80, title.length);
+      while (length > 2 && ctx.measureText(title).width > maxWidth) { length--; title = full.slice(0, Math.ceil(length / 2)) + '…' + full.slice(-Math.floor(length / 2)); }
       const labelWidth = Math.max(ctx.measureText(title).width, ctx.measureText(countLabel).width);
       ctx.fillStyle = this.s.backgroundColor; ctx.fillRect(p.x - labelWidth / 2 - 4, p.y + maxRadius + 4, labelWidth + 8, this.s.labelSize * 3);
       ctx.fillStyle = this.s.textColor; ctx.fillText(title, p.x, p.y + maxRadius + this.s.labelSize * 1.5);

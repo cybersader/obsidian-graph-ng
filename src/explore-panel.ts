@@ -12,7 +12,7 @@ import { filterSummary, setToggles, toggleable, toggledValues } from './filter-s
 import { countSpan, num, plural, statRow, sum } from './graph-information';
 import { suggestions } from './core/expr/autocomplete';
 import { declaredKeys } from './core/columns';
-import { describePredicate, groupLabel, NO_COLOR, VIEW_LIMITS, validateSaved, validateView, type ExploreResult, type ExploreView, type SavedView, type ViewCamera } from './core/explore';
+import { describePredicate, groupDisplay, outsideKey, prefixedFolder, groupLabel, NO_COLOR, VIEW_LIMITS, validateSaved, validateView, type ExploreResult, type ExploreView, type SavedView, type ViewCamera } from './core/explore';
 import { canonical, validateDerivedGroup, validatePredicate, type GraphDeclaration, type GroupSource, type Predicate, type Scalar } from './core/declaration';
 import { defaults, defaultVisuals, type EdgeMode, type Settings, type Visuals } from './settings';
 import { progressiveSlider, type Curve, type SliderOptions } from './progressive-slider';
@@ -26,6 +26,7 @@ export interface PanelHost {
   loading?(): { stage: string; indexed?: number; listed?: number } | undefined;
   information?: HTMLElement;
   members?: HTMLElement;
+  memberGroupText?(label: string): string;
   memberGroups?(): readonly { id: string; label: string; count: number }[] | undefined;
   openGroup?(id: string): void;
   scope?(): string;
@@ -267,13 +268,14 @@ export class ExplorePanel {
     const list = host.createDiv({ cls: 'graph-ng-legend graph-ng-group-legend' });
     const more = panelButton(host, 'Show more groups', () => { limit += this.settings.listPageSize; draw(); });
     let limit = this.settings.listPageSize;
+    const text = (label: string) => this.host.memberGroupText?.(label) ?? label;
     const draw = () => {
-      list.empty(); const query = this.memberQuery.trim().toLocaleLowerCase(), matches = groups.filter(g => g.label.toLocaleLowerCase().includes(query));
+      list.empty(); const query = this.memberQuery.trim().toLocaleLowerCase(), matches = groups.filter(g => text(g.label).toLocaleLowerCase().includes(query));
       if (focus) limit = Math.max(limit, matches.findIndex(g => g.id === focus) + 1);
       for (const group of matches.slice(0, limit)) {
         const row = list.createDiv({ cls: 'graph-ng-legend-row' });
         const swatch = row.createSpan({ cls: 'graph-ng-swatch' }); swatch.style.background = this.host.groupColor(Number(group.id)); swatch.style.gridColumn = '2';
-        const button = panelButton(row, group.label, () => this.host.openGroup?.(group.id), false, 'graph-ng-legend-name', { 'aria-label': `Open members of ${group.label}` });
+        const button = panelButton(row, text(group.label), () => this.host.openGroup?.(group.id), false, 'graph-ng-legend-name', { 'aria-label': `Open members of ${text(group.label)}` });
         countSpan(row, plural(group.count, 'note'));
         if (group.id === focus) button.focus();
       }
@@ -493,7 +495,7 @@ export class ExplorePanel {
     if (this.view.hiddenGroups.length) panelButton(actions, 'Show all', () => this.update({ hiddenGroups: [] }));
     const list = host.createDiv({ cls: 'graph-ng-legend graph-ng-group-legend', attr: { role: 'list', 'aria-label': 'Groups and notes shown' } }), hidden = new Set(this.view.hiddenGroups), collapsed = new Set(this.view.collapsedGroups);
     for (const i of order.slice(0, this.groupLimit)) {
-      const key = r.groupKeys[i]!, label = r.groupLabels[i]!, item = list.createDiv({ cls: 'graph-ng-legend-row', attr: { role: 'listitem' } });
+      const key = r.groupKeys[i]!, label = groupDisplay(r.groupLabels[i]!, r.outsideFolder), item = list.createDiv({ cls: 'graph-ng-legend-row', attr: { role: 'listitem' } });
       const eye = item.createEl('input', { attr: { type: 'checkbox', 'aria-label': `Show ${label}` } }); eye.checked = !hidden.has(key);
       // Persisted keys are capped; an over-long key cannot be hidden or collapsed by name.
       const storable = key.length <= VIEW_LIMITS.keyLength; eye.disabled = !storable && eye.checked;
@@ -893,8 +895,9 @@ export class ExplorePanel {
     if (this.relationMessage) workingText(host.createDiv({ cls: 'graph-ng-explore-note', attr: { role: 'status' } }), this.relationMessage, this.relationBusy);
   }
   private viewDefinition(host: HTMLElement, saved: SavedView) {
-    const v = saved.view, none = (x: string[]) => x.join(', ') || '(none)';
-    const rows = [['Search', v.query || '(none)'], ['Filters', v.filters.map(describePredicate).join('; ') || '(none)'], ['Grouping', v.group ? groupLabel(v.group) : 'Current declared default'], ['Hidden groups', none(v.hiddenGroups)], ['Collapsed', none(v.collapsedGroups)], ['Hidden colors', none(v.hiddenColors)], ['Hidden relationships', none(v.hiddenTypes)], ['Camera', saved.camera ? 'Saved camera applies in Notes' : 'Keep current camera when opened']];
+    const v = saved.view, outside = prefixedFolder(v.group ?? this.settings.declaration.groups[this.settings.groupLevel]) && (v.hiddenGroups.includes(outsideKey) || v.collapsedGroups.includes(outsideKey));
+    const display = (k: string) => groupDisplay(k, outside), none = (x: string[]) => x.join(', ') || '(none)';
+    const rows = [['Search', v.query || '(none)'], ['Filters', v.filters.map(describePredicate).join('; ') || '(none)'], ['Grouping', v.group ? groupLabel(v.group) : 'Current declared default'], ['Hidden groups', none(v.hiddenGroups.map(display))], ['Collapsed', none(v.collapsedGroups.map(display))], ['Hidden colors', none(v.hiddenColors)], ['Hidden relationships', none(v.hiddenTypes)], ['Camera', saved.camera ? 'Saved camera applies in Notes' : 'Keep current camera when opened']];
     const box = host.createDiv({ cls: 'graph-ng-explore-note' });
     for (const [label, value] of rows) box.createDiv({ text: `${label}: ${value}` });
   }

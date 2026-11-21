@@ -1099,7 +1099,7 @@ test('graduated labels fold unlabelled direct connections into a "+N more" butto
   // "+N more" counts direct connections without a label shown this frame (one may sit under the card).
   const more = r[k('moreButton')], shown = r[k('tierLabels')].filter((el: any, i: number) => !el.hidden && r[k('rankedLabels')][i].rank === 1).length, hidden = 40 - shown;
   expect(shown).toBeGreaterThan(0); expect(shown).toBeLessThanOrEqual(24); expect(more.hidden).toBe(false); expect(more.tagName).toBe('BUTTON');
-  expect(more.textContent).toBe(`+${hidden} more`); expect(more.attributes['aria-label']).toBe(`Show ${hidden} more direct connections of ${r[k('name')](0)}`);
+  expect(more.textContent).toBe(`+${hidden} more`); expect(more.attributes['aria-label']).toBe(`Show ${hidden} more direct connection${hidden === 1 ? '' : 's'} for ${r[k('name')](0)}`);
   // The default hook is a safe no-op; a host hook receives the focus.
   more.click(); r[compiled('onMoreConnections')] = (n: number) => asked.push(n); more.click(); expect(asked).toEqual([0]); expect(f.opened).toEqual([]);
   // Labels carry the full name for assistive technology without hover tooltips.
@@ -2529,8 +2529,8 @@ test('relationship row presentation follows explicit carrier-owned directed legs
   const f = await graduated([[0, 1], [1, 2], [3, 1]], 4, 0, ['Source.md', 'opaque-record.md', 'Target.md', 'Anchor.md']), { r, k } = f;
   r.projection.carrierNodes[1] = 1; r.projection.carrier[0] = r.projection.carrier[1] = 0;
   f.tap(3); const row = r[k('noteCard')].querySelectorAll('button').find((b: any) => b.className === 'graph-ng-connection');
-  expect(row.textContent).toBe('Source → Targetlink'); expect(row.attributes['aria-label']).toBeUndefined();
-  r.projection.carrier[0] = 99; r.card.render(); expect(r[k('noteCard')].textContent).toContain('opaque-record');
+  expect(row.textContent).toContain('opaque-record'); expect(row.textContent).toContain('→ link'); expect(row.textContent).toContain('Source → Target (link)'); expect(row.attributes['aria-label']).toBeUndefined();
+  r.projection.carrier[0] = 99; r.card.render(); expect(r[k('noteCard')].textContent).toContain('opaque-record'); expect(r[k('noteCard')].textContent).not.toContain('Source → Target');
 });
 
 test('only note sheets fold beside tools; edge and path cards stay readable', async () => {
@@ -3187,4 +3187,11 @@ for (const gpu of [false, true]) test(`review: handoff retains zoom near the lim
     final.controls()[k('panBy')](10, 10); final.controls()[k('zoomAt')](1, 0, 0);
     expect(final[k('scale')]).toBeCloseTo(preview[k('scale')], 8);
   } finally { h.dispose(final); h.dispose(preview); }
+});
+
+test('card review: same overflow count after moving to another hub names the current note', async () => {
+  const f=await graduated(Array.from({length:40},(_,i)=>[[0,i+2],[1,i+2]] as [number,number][]).flat(),42), {r,k}=f;
+  f.settings.labelsMaxPerViewport=1;
+  const paint=(n:number)=>{f.tap(n);r[k('focusLevel')]=1;r[k('placeOverlay')]();return r[k('moreButton')];};
+  const first=paint(0), count=first.textContent, second=paint(1);expect(second.textContent).toBe(count); expect(second.attributes['aria-label']).toEndWith('for '+r[k('name')](1));
 });

@@ -3,6 +3,7 @@ import { FixtureFile } from './support/obsidian-fixture';
 import { ControlElement, control as findControl } from './support/controls-dom';
 import GraphPlugin, { GraphView } from '../src/main';
 import { folderPredicate, folderView } from '../src/saved-views';
+import { ContributionPage } from '../src/contribution-page';
 import { renderProjection } from '../src/render-projection';
 import { emptyView, explore, validateSaved, type SavedView } from '../src/core/explore';
 import { buildProjection, colorGroups } from '../src/core/projection';
@@ -396,7 +397,7 @@ test('Open failure leaves displayed result intact; retry can display software No
   await (control(f.panel.body, 'Open') as any).onclick(); expect(f.panel.body.textContent).toContain('Displayed graph may still show the previous result');
   expect(f.view.explored).toBe(displayed); expect(f.plugin.settings.explore.view).toEqual(saved.view); expect(f.renderer.calls).toEqual([]);
   expect(f.panel.buttons.get('views').title).toBe('Saved views (requested: Focus)');
-  f.plugin.pipeline.request = async () => ({ explore: f.result(saved.view), colors: new Uint32Array(4), groups: {}, view: 2 });
+  f.plugin.pipeline.request = async () => ({ explore: f.result(saved.view), colors: new Uint32Array(4), groups: { groups: [], groupEdges: [] }, view: 2 });
   f.renderer.gpu = false; f.plugin.settings.canvasMaxDetailNodes = 1;
   await f.view.openSavedView(saved); expect(f.view.explored).not.toBe(displayed); expect(f.renderer.calls).toContain('display'); f.panel.dispose();
 });
@@ -407,9 +408,9 @@ test('superseded Open cannot display or restore camera; latest success restores 
   f.plugin.pipeline.request = () => { const gate = deferred<any>(); gates.push(gate); return gate.promise; };
   const a = f.view.openSavedView(first);
   const b = f.view.openSavedView(second); await expect(a).rejects.toThrow('superseded');
-  gates[0]!.resolve({ explore: f.result(first.view), colors: new Uint32Array(4), groups: {}, view: 2 }); await tick();
+  gates[0]!.resolve({ explore: f.result(first.view), colors: new Uint32Array(4), groups: { groups: [], groupEdges: [] }, view: 2 }); await tick();
   expect(f.renderer.calls).toEqual([]);
-  gates[1]!.resolve({ explore: f.result(second.view), colors: new Uint32Array(4), groups: {}, view: 3 }); await b;
+  gates[1]!.resolve({ explore: f.result(second.view), colors: new Uint32Array(4), groups: { groups: [], groupEdges: [] }, view: 3 }); await b;
   expect(f.renderer.calls).toEqual(['display', 'camera']); expect(f.camera).toEqual(second.camera); f.panel.dispose();
 });
 
@@ -417,7 +418,7 @@ test('generation/configuration change during Open rejects completion and camera;
   for (const mutate of [(f: any) => f.view.activeRevision++, (f: any) => f.plugin.settings.declaration.columns.push('changed'), (f: any) => { f.view.closed = true; }]) {
     const f = await fixture(), gate = deferred<any>(), saved = { ...folderView('Notes', 'Focus'), camera: { x: .1, y: .2, ratio: .3 } };
     f.plugin.pipeline.request = () => gate.promise; const pending = f.view.openSavedView(saved); mutate(f);
-    gate.resolve({ explore: f.result(saved.view), colors: new Uint32Array(4), groups: {}, view: 2 }); await expect(pending).rejects.toThrow('changed'); expect(f.renderer.calls).toEqual([]); f.panel.dispose();
+    gate.resolve({ explore: f.result(saved.view), colors: new Uint32Array(4), groups: { groups: [], groupEdges: [] }, view: 2 }); await expect(pending).rejects.toThrow('changed'); expect(f.renderer.calls).toEqual([]); f.panel.dispose();
   }
   const f = await fixture(); f.view.contentEl.dataset.mode = 'groups'; let groups = 0; f.view.showGroups = () => { groups++; };
   await f.view.openSavedView({ ...folderView('Notes', 'Focus'), camera: { x: 0, y: 0, ratio: 1 } });
@@ -448,4 +449,31 @@ test('a matching saved view is marked on reopen without an Open click; failed Op
   f.panel.viewOrigin = undefined; f.view.view = emptyView(); f.panel.setState(f.view.view); f.panel.host.openSavedView = async () => { throw Error('Synthetic rejection'); };
   await (control(f.panel.body, 'Open view Folder focus') as any).onclick();
   expect(f.panel.body.querySelectorAll('.graph-ng-view-state')).toHaveLength(0); f.panel.dispose();
+});
+
+
+test('card review: failed load becomes neutral pending until displayed rows are verified', async () => {
+  const { plugin, view } = await fixture();
+  try {
+    for (const [retry, pending, shown] of [[() => {}, 1, true], [null, 1, 'pending'], [undefined, 1, 'pending'], [undefined, 0, false], [() => {}, 0, false]] as const) {
+      plugin.retryProperties = retry;
+      // Coverage belongs to the currently displayed projection, not a new source.
+      view.report = { nodes: 0, edges: 0, listed: 0, pendingProperties: pending, unresolved: 0, duplicates: 0, rows: 0, rules: [] };
+      view.updateHydrationStatus(); expect(view.contentEl.dataset.roomIncomplete).toBe(String(shown));
+    }
+  } finally {view.explorePanel.dispose();}
+});
+
+test('card review: legacy outside edge must not resolve to a real Other notes folder', async () => {
+  const { view, plugin, projection } = await fixture(), calls: unknown[] = [], pager = new ContributionPage(10, async (...args) => { calls.push(args); return { total: 0, items: [] }; }, () => {});
+  try {
+    plugin.settings.declaration.groups = [{ from: 'folder', depth: 1, prefix: 'Library' }];
+    const graph = (label: string, keyed: boolean) => ({ groups: [label,'A'].map((label,i) => ({ label, id: String(i), count: 1, ...(keyed ? {key:label} : {}) })), groupEdges: [{ a:'0', b:'1', total:1, typeCounts:{link:1}, carriers:{kind:'note-path',ids:[]} }] });
+    const old = view.localGroups(graph('(outside prefix)', false));
+    expect(view.groupText('(outside prefix)')).toBe('Other notes');
+    const live = view.localGroups(graph('Other notes', true));
+    expect(view.groupText('Other notes')).toBe('Other notes');
+    pager.select('0','1',1,old); pager.update({active:2,groups:2,detail:2,level:0,projection,graph:live,values:['Other notes','A']});
+    expect(calls).toHaveLength(0); expect(old.groups[0].label).toBe('(outside prefix)'); expect(live.groups[0].label).toBe('Other notes');
+  } finally { view.explorePanel.dispose(); }
 });

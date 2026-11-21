@@ -1,0 +1,55 @@
+[
+  {
+    "name": "Synthetic room timeout; native metadata deliberately absent for one note",
+    "assert": "(app)=>{const get=HTMLCanvasElement.prototype.getContext;HTMLCanvasElement.prototype.getContext=function(kind,...args){return kind.startsWith('webgl')?null:get.call(this,kind,...args)};const original=app.metadataCache.getFileCache.bind(app.metadataCache); let missing=true; app.metadataCache.getFileCache=f=>missing && f.path==='Archive/Quiet.md' ? null : original(f); window.fixtureLoads=0;window.openclast.propertyFacts={rooms:()=>[],roomFor:()=>undefined,get:()=>undefined,async load(){if(++window.fixtureLoads===1)return [{status:'timeout'}];missing=false; setTimeout(()=>window.dispatchEvent(new CustomEvent('oc:property-facts-changed',{detail:{invalidated:false}})),1);return [{status:'loaded'}];}};window.dispatchEvent(new Event('oc:property-facts-changed')); return true}"
+  },
+  {
+    "click": "[aria-label='Graph NG']"
+  },
+  {
+    "waitFor": ".graph-ng-view[data-state='ready']"
+  },
+  {
+    "name": "Size the host pane to the narrow arrangement breakpoint",
+    "assert": "()=>{document.querySelector('.graph-ng-view').style.width='420px';return true}"
+  },
+  {
+    "click": ".graph-ng-representations [aria-label='Notes']"
+  },
+  {
+    "waitFor": ".graph-ng-summary.graph-ng-layout-active .graph-ng-layout-stop[aria-label=\"Explore now\"]"
+  },
+  {
+    "name": "A retry footer reserves the panel bottom once during a real arranging pass",
+    "assert": "()=>{const q=s=>document.querySelector(s),g=q('.graph-ng-stage').getBoundingClientRect(),p=q('.graph-ng-explore').getBoundingClientRect(),b=q('.graph-ng-retry').getBoundingClientRect();if(Math.abs(g.bottom-p.bottom-8)>1)throw Error('Inspector bottom inset '+(g.bottom-p.bottom));return b.top>=g.bottom}"
+  },
+  {
+    "waitFor": ".graph-ng-view[data-mode='nodes'][data-state='ready']"
+  },
+  {
+    "waitFor": ".graph-ng-stage small:text-is(\"Sampled notes\")"
+  },
+  {
+    "name": "Retry remains a real pointer target while Notes is sampled",
+    "assert": "()=>{const b=document.querySelector('.graph-ng-retry'),r=b.getBoundingClientRect();return b.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))}"
+  },
+  {
+    "click": ".graph-ng-tools [aria-label=\"Graph information\"]"
+  },
+  {
+    "waitFor": ".graph-ng-status .graph-ng-retry"
+  },
+  {
+    "name": "Focus the retry action in the information panel",
+    "assert": "()=>{const b=document.querySelector('.graph-ng-status .graph-ng-retry');b.focus();return document.activeElement===b}"
+  },
+  {
+    "press": "Enter"
+  },
+  {
+    "waitFor": ".graph-ng-view[data-verified=\"true\"]"
+  },
+  {
+    "assert": "()=>window.fixtureLoads===2"
+  }
+]

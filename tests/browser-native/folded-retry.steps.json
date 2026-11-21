@@ -1,0 +1,117 @@
+[
+  {
+    "name": "Synthetic room timeout; native metadata deliberately absent for one note",
+    "assert": "(app)=>{const original=app.metadataCache.getFileCache.bind(app.metadataCache); let missing=true; app.metadataCache.getFileCache=f=>missing && f.path==='Archive/Quiet.md' ? null : original(f); window.verifyFixtureRow=()=>{missing=false;const f=app.vault.getAbstractFileByPath('Archive/Quiet.md');app.metadataCache.trigger('changed',f,'',original(f));window.dispatchEvent(new CustomEvent('oc:property-facts-changed',{detail:{invalidated:false}}))};window.fixtureLoads=0;window.openclast.propertyFacts={rooms:()=>[],roomFor:()=>undefined,get:()=>undefined,async load(){if(++window.fixtureLoads===1)return [{status:'timeout'}];return [{status:'loaded'}];}};window.dispatchEvent(new Event('oc:property-facts-changed')); return true}"
+  },
+  {
+    "click": "[aria-label='Graph NG']"
+  },
+  {
+    "waitFor": ".graph-ng-view[data-state='ready']"
+  },
+  {
+    "click": ".graph-ng-representations [aria-label='Notes']"
+  },
+  {
+    "waitFor": ".graph-ng-view[data-mode='nodes'][data-state='ready']"
+  },
+  {
+    "waitFor": ".graph-ng-view[data-room-incomplete=true]"
+  },
+  {
+    "assert": "()=>{document.querySelector('canvas.graph-ng-detail').focus();return document.activeElement.matches('canvas.graph-ng-detail')}"
+  },
+  {
+    "press": "/"
+  },
+  {
+    "fill": ".graph-ng-find-input",
+    "value": "Quiet"
+  },
+  {
+    "waitFor": ".graph-ng-find-row:has(.graph-ng-find-path:text-is('Archive/Quiet.md'))"
+  },
+  {
+    "click": ".graph-ng-find-row:has(.graph-ng-find-path:text-is('Archive/Quiet.md'))"
+  },
+  {
+    "waitFor": ".graph-ng-card[aria-label='Connections of Quiet'] .graph-ng-card-identity[title$='Archive/Quiet.md']"
+  },
+  {
+    "waitFor": ".graph-ng-card[data-folded=true] .graph-ng-card-empty"
+  },
+  {
+    "name": "Warning and identity stay visible with the navigator folded",
+    "assert": "()=>window.fixtureLoads===1 && document.querySelector('.graph-ng-card-empty').innerText.includes('Some room properties did not load') && !!document.querySelector('.graph-ng-card-identity').offsetHeight && !document.querySelector('.graph-ng-connection-filter')"
+  },
+  {
+    "screenshot": "folded-empty-room-timeout",
+    "selector": ".graph-ng-card"
+  },
+  {
+    "name": "Retry owns its pointer target across widths, including the narrow folded sheet",
+    "assert": "async()=>{\n  const get=s=>document.querySelector(s), pane=get('.graph-ng-view'), panel=get('.graph-ng-explore'), card=get('.graph-ng-card'), button=get('.graph-ng-retry');\n  const settle=()=>new Promise(done=>requestAnimationFrame(()=>requestAnimationFrame(()=>requestAnimationFrame(done))));\n  const rows=[];\n  for (const [width,tools] of [[1100,360],[760,280],[420,0],[320,0],[240,0],[520,240]]) {\n      pane.style.width=width+'px'; panel.style.width=tools?tools+'px':''; await settle();\n      const r=button.getBoundingClientRect(), c=card.getBoundingClientRect(), folded=card.dataset.folded==='true';\n      if (Math.round(pane.getBoundingClientRect().width)!==width || (tools && !folded) || r.top<c.bottom || r.top<panel.getBoundingClientRect().bottom || !button.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))) throw Error('Retry overlap or wrong layout at '+width+'px');\n      rows.push({pane:width,sheet:c.width,folded});\n  }\n  return rows;\n}"
+  },
+  {
+    "name": "Retry is below the sheet and owns its pointer target",
+    "assert": "()=>{const b=document.querySelector('.graph-ng-retry'),r=b.getBoundingClientRect(),c=document.querySelector('.graph-ng-card').getBoundingClientRect(),v=document.querySelector('.graph-ng-view').getBoundingClientRect(),p=document.querySelector('.graph-ng-explore').getBoundingClientRect();if(r.top<c.bottom||!b.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)))return false;return {pane:v.width,panel:p.width,sheet:c.width,folded:document.querySelector('.graph-ng-card').dataset.folded,clearance:r.top-c.bottom}}"
+  },
+  {
+    "screenshot": "narrow-folded-retry",
+    "selector": ".graph-ng-body"
+  },
+  {
+    "click": ".graph-ng-retry"
+  },
+  {
+    "waitFor": ".graph-ng-view[data-room-incomplete=pending] .graph-ng-room-pending"
+  },
+  {
+    "name": "Transport success does not verify a still-missing property row",
+    "assert": "app=>window.fixtureLoads===2&&!app.metadataCache.getFileCache(app.vault.getAbstractFileByPath('Archive/Quiet.md'))&&!document.querySelector('.graph-ng-room-warning').offsetHeight&&document.querySelector('.graph-ng-room-pending').offsetHeight>0"
+  },
+  {
+    "name": "Release the synthetic metadata row",
+    "assert": "()=>{window.verifyFixtureRow();return true}"
+  },
+  {
+    "waitFor": ".graph-ng-view[data-verified=true][data-room-incomplete=false]"
+  },
+  {
+    "waitFor": ".graph-ng-view[data-room-incomplete=false]"
+  },
+  {
+    "name": "The warning clears after one explicit retry",
+    "assert": "()=>window.fixtureLoads===2 && !document.querySelector('.graph-ng-view[data-room-incomplete=true]') && !document.querySelector('.graph-ng-room-warning')?.offsetHeight"
+  },
+  {
+    "name": "Restore the pane before reopening the same note",
+    "assert": "async()=>{document.querySelector('.graph-ng-view').style.width='';document.querySelector('.graph-ng-explore').style.width='';await new Promise(done=>requestAnimationFrame(()=>requestAnimationFrame(done)));return true}"
+  },
+  {
+    "waitFor": ".graph-ng-view[data-mode='nodes'][data-state='ready']"
+  },
+  {
+    "assert": "()=>{document.querySelector('canvas.graph-ng-detail').focus();return document.activeElement.matches('canvas.graph-ng-detail')}"
+  },
+  {
+    "press": "/"
+  },
+  {
+    "fill": ".graph-ng-find-input",
+    "value": "Quiet"
+  },
+  {
+    "waitFor": ".graph-ng-find-row:has(.graph-ng-find-path:text-is('Archive/Quiet.md'))"
+  },
+  {
+    "click": ".graph-ng-find-row:has(.graph-ng-find-path:text-is('Archive/Quiet.md'))"
+  },
+  {
+    "waitFor": ".graph-ng-card[aria-label='Connections of Quiet'] .graph-ng-card-identity[title$='Archive/Quiet.md']"
+  },
+  {
+    "name": "The same note still reports no connections without the warning after refresh",
+    "assert": "app=>{const e=document.querySelector('.graph-ng-card-empty');return app.metadataCache.getFileCache(app.vault.getAbstractFileByPath('Archive/Quiet.md'))?.frontmatter?.item==='quiet' && window.fixtureLoads===2 && e?.innerText==='No connections' && !e.querySelector('.graph-ng-room-warning').offsetHeight}"
+  }
+]

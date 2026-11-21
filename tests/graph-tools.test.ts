@@ -4,6 +4,7 @@ import './support/obsidian-fixture';
 import { ControlElement, control } from './support/controls-dom';
 import { ExplorePanel, setRelationshipDisplay } from '../src/explore-panel';
 import { defaults } from '../src/settings';
+import { groupDisplay } from '../src/core/explore';
 import { emptyView, explore } from '../src/core/explore';
 import { buildProjection, colorGroups } from '../src/core/projection';
 import { renderProjection } from '../src/render-projection';
@@ -227,7 +228,7 @@ test('UX actual group Canvas draw suppresses edge strokes at zero without deleti
   const s = defaults('links'); let kind = '', strokes: number[] = [];
   const ctx: any = new Proxy({ globalAlpha: 1, beginPath() { kind = ''; }, moveTo() { kind = 'edge'; }, arc() { kind = 'node'; }, stroke() { if (kind === 'edge') strokes.push(this.globalAlpha); }, createLinearGradient: () => ({ addColorStop() {} }), measureText: () => ({ width: 20 }) }, { get: (o: any, k: any) => k in o ? o[k] : () => {} });
   const graph = { groups: [{ id: 'a', label: 'Alpha', count: 1 }, { id: 'b', label: 'Beta', count: 1 }], groupEdges: [{ a: 'a', b: 'b', typeCounts: { link: 1 }, total: 1 }] };
-  const renderer: any = Object.create(GroupRenderer.prototype); Object.assign(renderer, { s, p: graph, largest: 20, container: { clientWidth: 800, clientHeight: 600 }, canvas: { clientWidth: 800, style: {}, getContext: () => ctx }, nodes: new Map(), radii: new Map(), groupColors: [] });
+  const renderer: any = Object.create(GroupRenderer.prototype); Object.assign(renderer, { display: (v:string) => v, s, p: graph, largest: 20, container: { clientWidth: 800, clientHeight: 600 }, canvas: { clientWidth: 800, style: {}, getContext: () => ctx }, nodes: new Map(), radii: new Map(), groupColors: [] });
   for (const opacity of [0, .0001, .5]) { s.visuals.edgeOpacity = opacity; strokes = []; renderer.draw(); expect(strokes.length).toBe(opacity ? 1 : 0); if (opacity) expect(strokes[0]).toBeCloseTo(edgeAlpha(s.visuals, 1, 1, false), 12); expect(graph.groupEdges.length).toBe(1); }
 });
 
@@ -251,7 +252,7 @@ test('group circles, labels and hit targets fit the available canvas, not the co
   const s = defaults('links'), ctx: any = new Proxy({ measureText: (text: string) => ({ width: text.length * 7 }) }, { get: (o: any, k: any) => k in o ? o[k] : () => {} });
   const graph = { groups: Array.from({ length: 6 }, (_, i) => ({ id: String(i), label: `Group ${i}`, count: 20 })), groupEdges: [] };
   const canvas = { clientWidth: 712, style: {}, getContext: () => ctx }, renderer: any = Object.create(GroupRenderer.prototype);
-  Object.assign(renderer, { s, p: graph, largest: 20, container: { clientWidth: 1080, clientHeight: 674 }, canvas, nodes: new Map(), radii: new Map(), groupColors: [] });
+  Object.assign(renderer, { display: (v:string) => v, s, p: graph, largest: 20, container: { clientWidth: 1080, clientHeight: 674 }, canvas, nodes: new Map(), radii: new Map(), groupColors: [] });
   for (const width of [712, 1080, 500]) {
     canvas.clientWidth = width; renderer.draw();
     for (const g of graph.groups) {
@@ -549,6 +550,21 @@ test('Filter chips name hidden notes and remove their filter without duplicate e
   expect(f.state.view.filters).toEqual([]); expect(f.panel.body.querySelector('.graph-ng-chip')).toBeUndefined();
   expect(f.panel.body.textContent).not.toContain('Every note is shown'); f.panel.dispose();
 });
+test('card second review: filter legend uses the displayed grouping and disambiguates only a real collision', () => {
+  const f = fixture(), d = f.settings.declaration, folder = { from: 'folder', prefix: 'Library', depth: 1 } as const;
+  d.columns.push('category'); f.host.groupColor = () => '#808080'; f.host.focusGroup = () => {};
+  const rows = [{ path: 'Library/Other notes/A.md', properties: { category: 'Other notes' } }, { path: 'Outside/B.md', properties: { category: '(outside prefix)' } }];
+  const result = (group: typeof folder | { from: 'key'; key: string }, outside: boolean) => {
+    const p = buildProjection(outside ? rows : rows.slice(0, 1), d);
+    return explore(p, d, { ...emptyView(), group }, colorGroups(p, d), 0, { facetValues: 10 });
+  };
+  let shown = result({ from: 'key', key: 'category' }, true); f.host.result = () => shown;
+  f.panel.show('filters'); f.panel.setState({ ...emptyView(), group: folder });
+  const names = () => f.panel.body.querySelector('.graph-ng-group-legend').querySelectorAll('.graph-ng-legend-name').map((e: ControlElement) => e.textContent).sort();
+  expect(names()).toEqual(['(outside prefix)', 'Other notes']);
+  shown = result(folder, false); f.panel.render(); expect(names()).toEqual(['Other notes']);
+  shown = result(folder, true); f.panel.render(); expect(names()).toEqual(['Folder: Other notes', 'Other notes']); f.panel.dispose();
+});
 test('Legend separates shown and hidden counts and retains one-note underscore folders', () => {
   const f = fixture(), p = buildProjection([{ path: '_local/Note.md', properties: {} }], f.settings.declaration);
   f.state.view.group = { from: 'folder', depth: 1 };
@@ -644,12 +660,17 @@ test('ranked bubbles use global member-area scale, shared colours and middle-tru
   const long = 'Shared prefix with a very long collection name and distinctive suffix';
   const graph = { groups: [{ id: 'a', label: long, count: 400 }, { id: 'b', label: 'Small group', count: 100 }], groupEdges: [] };
   const renderer: any = Object.create(GroupRenderer.prototype);
-  Object.assign(renderer, { s, p: graph, largest: 400, container: { clientHeight: 700 }, canvas: { clientWidth: 500, style: {}, getContext: () => ctx }, nodes: new Map(), radii: new Map(), groupColors: [], colorOf: (id: string) => id === 'a' ? '#2468aa' : '#aa6824' });
+  Object.assign(renderer, { display: (v:string) => v, s, p: graph, largest: 400, container: { clientHeight: 700 }, canvas: { clientWidth: 500, style: {}, getContext: () => ctx }, nodes: new Map(), radii: new Map(), groupColors: [], colorOf: (id: string) => id === 'a' ? '#2468aa' : '#aa6824' });
   renderer.draw(); expect(renderer.radii.get('a') ** 2 / renderer.radii.get('b') ** 2).toBeCloseTo(4, 6);
   expect(fills).toEqual(['#2468aa', '#aa6824']);
   expect(labels[0]).toContain('…'); expect(long.startsWith(labels[0]!.split('…')[0]!)).toBe(true); expect(long.endsWith(labels[0]!.split('…')[1]!)).toBe(true);
   const centre = renderer.nodes.get('a'); expect(renderer.nodeAt({ x: centre.x, y: centre.y + 50 })?.label).toBe(long);
   graph.groups = [graph.groups[1]!]; renderer.draw(); expect(renderer.radii.get('b')).toBeCloseTo(19.5, 6); // no page-local rescaling
+  graph.groups = [{ id: 'a', label: '(outside prefix)', count: 4 }, { id: 'b', label: 'Other notes', count: 2 }];
+  s.declaration.colors = [{ name: 'Other notes', predicate: { kind: 'exists', key: 'kind' }, color: '#445566' }];
+  renderer.groupColors = ['#445566']; renderer.display = (v: string) => groupDisplay(v, true);
+  fills.length = labels.length = 0; renderer.draw();
+  expect(fills).toEqual(['#2468aa', '#445566']); expect(labels).toContain('Other notes'); expect(labels).toContain('Folder: Other notes');
 });
 
 test('UX click intent and note-name priority are explicit Appearance choices', () => {

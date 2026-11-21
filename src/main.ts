@@ -17,7 +17,7 @@ import { obsidianMenu } from './context-menu';
 import { LocalAdapter, type PropertySource } from './adapter/local';
 import { FactCache } from './adapter/fact-cache';
 import { canonical, digest, layoutDeclaration, migrateDeclaration, validateDeclaration, type GraphDeclaration, type Predicate } from './core/declaration';
-import { groupLabel, canonicalView, validateSaved, NO_COLOR, type SavedView, type ExploreResult, type ExploreView, type ViewCamera } from './core/explore';
+import { groupDisplay, outsideKey, prefixedFolder, groupLabel, canonicalView, validateSaved, NO_COLOR, type SavedView, type ExploreResult, type ExploreView, type ViewCamera } from './core/explore';
 import { ExplorePanel, setRelationshipDisplay } from './explore-panel';
 import { graphStats, layoutAdvice, recommend, suggestionSettings, type GraphStats, type Suggestion } from './recommend';
 import { categorical, NEUTRAL_GROUPS } from './render-effects';
@@ -495,6 +495,7 @@ export class GraphView extends ItemView {
     (this.explorePanel as (ExplorePanel & { updateSummary?(): void }) | undefined)?.updateSummary?.();
     const state = this.contentEl.dataset.state;
     renderInformation(this.status, [text, this.detailFallback, this.plugin.hydrationStatus].filter(Boolean).join(' '), this.layoutWorking ? 'building' : state, this.report, this.explored, this.informationActions, this.loading());
+    this.contentEl.dataset.roomIncomplete = this.report?.pendingProperties ? this.plugin.retryProperties ? 'true' : 'pending' : 'false';
     const adapter = this.plugin.adapter;
     if (adapter?.factError) this.status.createDiv({ text: 'Saved facts unavailable. Using host properties.' });
     if (adapter?.inventoryError && this.plugin.hydrationStatus !== 'Room inventory unavailable') this.status.createDiv({ text: 'Room inventory unavailable' });
@@ -615,7 +616,7 @@ export class GraphView extends ItemView {
     this.explorePanel = new ExplorePanel(this.body, {
       information: this.status, members: this.panel,
       performanceControls: host => performanceControls(host, this.plugin),
-      memberGroups: () => this.groupGraph?.groups, openGroup: id => { void this.drill(id, true); },
+      memberGroups: () => this.groupGraph?.groups, memberGroupText: label => this.groupText(label), openGroup: id => { void this.drill(id, true); },
       scope: () => this.detailScope ? this.scopeName : 'Workspace', scoped: () => Boolean(this.detailScope),
       presentation: mode => {
         if (mode === 'workspace') return this.workspaceNotes();
@@ -712,7 +713,7 @@ export class GraphView extends ItemView {
         if (bytes.byteLength > settings.maxProjectionBytes) throw new Error('Projection byte limit exceeded');
         const p = await this.plugin.pipeline.request<GroupProjection>(revision, { kind: 'external', bytes, maxBytes: settings.maxProjectionBytes, limits: { groups: settings.maxProjectionGroups, pairs: settings.maxProjectionPairs, carriers: settings.maxProjectionCarriers } });
         if (!current()) return;
-        this.projection = undefined; this.positions = undefined; this.explored = undefined; this.groupGraph = p; this.groupGeneration = revision; this.viewGeneration = -1; this.viewSource = 'external';
+        this.projection = undefined; this.positions = undefined; this.explored = undefined; this.outsideFolder = false; this.groupGraph = p; this.groupGeneration = revision; this.viewGeneration = -1; this.viewSource = 'external';
         this.contentEl.dataset.state = 'ready'; this.statusText = `External aggregate: ${num(p.groups.length)} groups and ${num(p.groupEdges.length)} counted group pairs. Not verified and not merged with live notes.`;
         this.showGroups(); return;
       }
@@ -729,7 +730,7 @@ export class GraphView extends ItemView {
           try {
             const cache = await this.plugin.pipeline.request<{ groups?: GroupProjection } | undefined>(revision, { kind: 'load', generation: saved });
             if (cache?.groups && this.presentation !== 'nodes' && current() && !this.predicate && !(this.view && viewNarrows(this.view))) {
-              this.projection = undefined; this.positions = undefined; this.groupGraph = cache.groups; this.groupGeneration = -revision; this.viewGeneration = -1; this.viewSource = this.sourceKey(null); this.showGroups(true);
+              this.projection = undefined; this.positions = undefined; this.groupGraph = this.localGroups(cache.groups, null); this.groupGeneration = -revision; this.viewGeneration = -1; this.viewSource = this.sourceKey(null); this.showGroups(true);
               this.statusText = 'Reading notes';
               this.contentEl.dataset.cachedPaintMs = String(performance.now() - start); await yieldTask();
             }
@@ -748,7 +749,7 @@ export class GraphView extends ItemView {
       this.plugin.pipeline.onGroups = event => {
         if (event.revision !== revision || !current()) return;
         const groupsAt = performance.now();
-        this.appliedView = config.view; this.groupGraph = event.projection; this.groupGeneration = revision; this.viewGeneration = event.view; this.viewSource = configuredSource; if (this.presentation !== 'nodes') this.showGroups(true); settled();
+        this.appliedView = config.view; this.groupGraph = this.localGroups(event.projection, config.view); this.groupGeneration = revision; this.viewGeneration = event.view; this.viewSource = configuredSource; if (this.presentation !== 'nodes') this.showGroups(true); settled();
         const painted = performance.now(), firstGroupMs = painted - start;
         this.startupTrace.push({ revision, start, groupsAt, drawMs: painted - groupsAt, firstGroupMs }); if (this.startupTrace.length > 16) this.startupTrace.shift();
         // A queued metadata refresh must not relabel its later paint as cold startup.
@@ -905,7 +906,7 @@ export class GraphView extends ItemView {
     const draw = (focus = '') => {
       this.renderer?.dispose(); this.stage.empty();
       const selected = pages.canvas(canvasPage);
-      this.renderer = new GroupRenderer(this.stage, selected, settings, id => this.drill(id), edge => this.edgeList(edge, projection, generation, source), id => this.groupColor(Number(id)), ring, () => this.toolsOverlap(), pages.ranked[0]?.count);
+      this.renderer = new GroupRenderer(this.stage, selected, settings, id => this.drill(id), edge => this.edgeList(edge, projection, generation, source), id => this.groupColor(Number(id)), ring, () => this.toolsOverlap(), pages.ranked[0]?.count, label => this.groupText(label));
       if (this.detailFallback) this.stage.createEl('button', { cls: 'graph-ng-back-chip', text: 'Narrow filters to see notes' }).onclick = () => this.explorePanel?.show('filters');
       if (back) this.stage.createEl('button', { cls: 'graph-ng-back-chip', text: 'Back to ' + back.name }).onclick = () => { this.pendingCamera = back.camera; this.pendingFocus = back; void this.showDetails(); };
       const head = this.stage.createDiv({ cls: 'graph-ng-groups-heading' });
@@ -927,10 +928,10 @@ export class GraphView extends ItemView {
       this.contentEl.dataset.canvasGroups = String(selected.groups.length);
     };
     draw();
-    this.paginate(pages.ranked, (g, host) => { const b = host.createEl('button', { cls: 'graph-ng-count-row', attr: { 'data-group': g.id } }); b.createSpan({ text: g.label }); b.createSpan({ cls: 'graph-ng-count', text: plural(g.count, 'note') }); b.onclick = () => this.drill(g.id); }, this.panel, 'graph-ng-group-controls', 'Groups');
+    this.paginate(pages.ranked, (g, host) => { const b = host.createEl('button', { cls: 'graph-ng-count-row', attr: { 'data-group': g.id } }); b.createSpan({ text: this.groupText(g.label) }); b.createSpan({ cls: 'graph-ng-count', text: plural(g.count, 'note') }); b.onclick = () => this.drill(g.id); }, this.panel, 'graph-ng-group-controls', 'Groups');
     const edges = this.section('relationships'); disclosure(edges, `Relationships (${plural(projection.groupEdges.length, 'group pair')})`);
     this.paginate(projection.groupEdges, (edge, host) => {
-      host.createEl('button', { text: `${pages.labels.get(edge.a)} ↔ ${pages.labels.get(edge.b)} (${plural(edge.total, 'edge')})`, cls: 'graph-ng-edge' }).onclick = () => this.edgeList(edge, projection, generation, source);
+      host.createEl('button', { text: `${this.groupText(pages.labels.get(edge.a)!)} ↔ ${this.groupText(pages.labels.get(edge.b)!)} (${plural(edge.total, 'edge')})`, cls: 'graph-ng-edge' }).onclick = () => this.edgeList(edge, projection, generation, source);
     }, disclosureBody(edges));
     if (this.projection?.quarantined.length) {
       const conflicts = this.section('quarantine', 'graph-ng-quarantine');
@@ -1004,7 +1005,7 @@ export class GraphView extends ItemView {
     this.panel.empty();
     const heading = this.panel.createDiv({ cls: 'graph-ng-member-heading' }), title = browse ? heading.createDiv({ cls: 'graph-ng-row' }) : heading;
     if (browse) iconButton(title, 'Back to groups', 'arrow-left').onclick = () => this.explorePanel?.browseGroups(id);
-    title.createEl('strong', { text: group.label });
+    title.createEl('strong', { text: this.groupText(group.label) });
     heading.createSpan({ text: `${plural(group.count, 'note')} in group${this.provisional ? ' (provisional)' : ''}` });
     const revision = this.activeRevision, projection = this.projection, renderRevision = browse ? this.renderRevision : ++this.renderRevision, view = this.viewGeneration;
     const status = this.panel.createDiv({ text: 'Loading members…', attr: { role: 'status', 'aria-live': 'polite' } });
@@ -1043,7 +1044,7 @@ export class GraphView extends ItemView {
       if (this.closed || projection !== this.projection || revision !== this.activeRevision || view !== this.viewGeneration || renderRevision !== this.renderRevision) return;
       this.scopeGroup = group.key === undefined ? undefined : { key: group.key, source: this.viewSource };
       const bits = new Uint8Array(p.nodeCount); for (const i of members) bits[i] = 1;
-      this.detailScope = bits; this.scopeName = group.label; return this.showDetails(false);
+      this.detailScope = bits; this.scopeName = this.groupText(group.label); return this.showDetails(false);
     };
     this.memberList(Array.from(members), i => renderPath(p, i), browse);
   }
@@ -1083,6 +1084,13 @@ export class GraphView extends ItemView {
   }
   private contributionContext(): ContributionContext {
     return { active: this.activeRevision, groups: this.groupGeneration, detail: this.detailGeneration, level: this.plugin.settings.groupLevel, projection: this.projection, graph: this.groupGraph, values: this.explored?.groupKeys, view: this.viewGeneration, source: this.viewSource };
+  }
+  private grouping(view?: ExploreView | null) { return view?.group ?? this.plugin.settings.declaration.groups[this.plugin.settings.groupLevel]; }
+  private outsideFolder = false;
+  private groupText(label: string) { return groupDisplay(label, this.outsideFolder); }
+  /** Keep raw keys and labels intact, including for legacy keyless contribution recovery. */
+  private localGroups(graph: GroupProjection, view?: ExploreView | null) {
+    this.outsideFolder = prefixedFolder(this.grouping(view)) && graph.groups.some(g => g.label === outsideKey); return graph;
   }
   /** Grouping identity: the runtime group source (or declared default at the configured level). */
   private sourceKey(view: ExploreView | null | undefined) {
@@ -1186,7 +1194,7 @@ export class GraphView extends ItemView {
     if (loading) return { loading, typeHidden, colors: this.colors };
     const collapsed = new Uint8Array(r.groupKeys.length), keys = new Set(applied.collapsedGroups);
     r.groupKeys.forEach((k, i) => { if (keys.has(k)) collapsed[i] = 1; });
-    return { groupCodes: r.groupCodes, groupLabels: r.groupLabels, collapsed, typeHidden, colors: this.colors };
+    return { groupCodes: r.groupCodes, groupLabels: r.groupLabels, outsideFolder: r.outsideFolder, collapsed, typeHidden, colors: this.colors };
   }
   savedViewIssue(saved: SavedView): string {
     try {
@@ -1252,9 +1260,9 @@ export class GraphView extends ItemView {
           // Group keys belong to the requested grouping, not the displayed one.
           // Validate the existing worker result before adopting it; no extra evaluation.
           const absent = [...sent.hiddenGroups, ...sent.collapsedGroups].filter(k => !result.explore.groupKeys.includes(k));
-          if (absent.length) throw new Error(`Not present in the saved grouping: ${absent.join(', ')}. Review the saved definition before opening.`);
+          if (absent.length) throw new Error(`Not present in the saved grouping: ${absent.map(k => groupDisplay(k, result.explore.outsideFolder || k === outsideKey && prefixedFolder(this.grouping(sent)))).join(', ')}. Review the saved definition before opening.`);
         }
-        this.appliedView = sent; this.explored = result.explore; this.colors = result.colors; this.visible = result.explore.visible; this.groupGraph = result.groups; this.groupGeneration = revision;
+        this.appliedView = sent; this.explored = result.explore; this.colors = result.colors; this.visible = result.explore.visible; this.groupGraph = this.localGroups(result.groups, sent); this.groupGeneration = revision;
         if (this.viewGeneration !== result.view) this.clearMemberRows();
         this.viewGeneration = result.view; this.viewSource = this.sourceKey(sent);
         this.contentEl.dataset.exploreMs = String(performance.now() - started); const g = this.view.group; this.contentEl.dataset.groupSource = !g ? 'declared' : g.from === 'folder' ? `folder:${g.depth}` : g.from === 'expr' ? 'expression' : `${g.from}:${g.key}`; this.contentEl.dataset.visibleNodes = String(sum(result.explore.visible));

@@ -64,6 +64,10 @@ export function canonicalView(v: ExploreView): ExploreView {
   return copy;
 }
 const derivedLabel = (g: Extract<GroupSource, { from: 'derived' }>) => { const part = describeTransform(g.transform); return `${part[0]!.toUpperCase()}${part.slice(1)} of ${g.key === '$identity' ? 'ID' : g.key === '$path' ? 'path' : g.key} (split at “${g.transform.delimiter}”)`; };
+/** Presentation only: saved views, palette matching and worker dictionaries keep the original group key. */
+export const prefixedFolder = (source?: GroupSource) => source?.from === 'folder' && !!source.prefix && !!folderPath(source.prefix);
+export const outsideKey = '(outside prefix)';
+export const groupDisplay = (label: string, outsideFolder?: boolean) => !outsideFolder ? label : label === outsideKey ? 'Other notes' : label === 'Other notes' ? 'Folder: Other notes' : label;
 export const groupLabel = (g: GroupSource) => g.from === 'expr' ? `Expression: ${g.expr}` : g.from === 'key' ? `Property: ${g.key}` : g.from === 'derived' ? derivedLabel(g) : `Folder depth ${g.depth}${g.prefix !== undefined && folderPath(g.prefix) ? ` under ${folderPath(g.prefix)}` : ''}`;
 /** Display text for a dictionary value: decoded JSON scalars, explicit missing. */
 export function valueLabel(raw: string): string {
@@ -104,6 +108,8 @@ export interface ExploreResult {
   groupCodes: Uint32Array;
   groupKeys: string[];
   groupLabels: string[];
+  /** This dictionary, not the requested view, contains a prefixed-folder fallback bucket. */
+  outsideFolder?: boolean;
   groupTotals: Uint32Array;
   groupVisible: Uint32Array;
   types: string[];
@@ -222,7 +228,7 @@ export function explore(p: Projection, d: GraphDeclaration, view: ExploreView, c
     const order = Array.from(c.values.keys()).sort((a, b) => total[b]! - total[a]! || (c.values[a]! < c.values[b]! ? -1 : 1)).slice(0, limits.facetValues);
     facets.push({ key, distinct: c.values.length, values: order.map(i => ({ raw: c.values[i]!, label: valueLabel(c.values[i]!), count: total[i]!, visible: shown[i]! })) });
   }
-  return { visible, groupCodes: g.codes, groupKeys: g.values, groupLabels: g.encoded ? g.values.map(valueLabel) : g.values, groupTotals, groupVisible,
+  return { visible, outsideFolder: prefixedFolder(view.group ?? d.groups[level]) && g.values.includes(outsideKey), groupCodes: g.codes, groupKeys: g.values, groupLabels: g.encoded ? g.values.map(valueLabel) : g.values, groupTotals, groupVisible,
     types: p.types, typeTotals, typeVisible, colorCounts, matched, nodes: n, edges: p.source.length, visibleEdges, facets, filters: view.filters, filterHidden, queryHidden, ruleVisible, edgeHidden };
 }
 /** Projection view with hidden relation types removed, for group contraction. */

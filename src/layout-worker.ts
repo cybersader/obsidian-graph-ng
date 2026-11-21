@@ -168,7 +168,7 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
     case 'detail': {
       // Copies are made in the worker only: the renderer borrows transferred buffers;
       // the authoritative worker buffers remain live for incremental edits and cache encoding.
-      return structuredClone({ projection: renderProjection(projection), visible, colors, explore: explored, view: viewGeneration });
+      return structuredClone({ projection: renderProjection(projection, config.declaration), visible, colors, explore: explored, view: viewGeneration });
     }
     case 'recompute': {
       if (revision !== projectionRevision || !positions) throw new Error('Projection generation changed');

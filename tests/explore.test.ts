@@ -1,7 +1,7 @@
 import { test, expect } from 'bun:test';
 import { buildProjection, filterNodes, colorGroups, type FactRow } from '../src/core/projection';
 import { defaultDeclaration, digest, layoutDeclaration, migrateDeclaration, validatePredicate, type GraphDeclaration, type Predicate } from '../src/core/declaration';
-import { canonicalView, emptyView, explore, groupColumn, validateSaved, validateView, withoutTypes, NO_COLOR, type ExploreView } from '../src/core/explore';
+import { canonicalView, emptyView, explore, groupColumn, groupDisplay, validateSaved, validateView, withoutTypes, NO_COLOR, type ExploreView } from '../src/core/explore';
 import { generationKey } from '../src/core/generation';
 import { DEFAULT_LAYOUT } from '../src/core/layout-options';
 import { canonicalExplore, decodeText, defaults, encodeText, loadSettings, persistedSettings, settingsForSave, upgradeSettings, validateSettings, validateVisuals } from '../src/settings';
@@ -363,3 +363,14 @@ test('saved settings with the removed Groups zoom threshold drop it and still va
   expect('lodZoomRatio' in upgraded).toBe(false); expect(saved.lodZoomRatio).toBe(2.5);
   expect(() => validateSettings({ ...upgraded, lodZoomRatio: 2.5 } as any)).toThrow('Unknown setting');
 });
+
+
+test('card clarity: Other notes is display-only for a prefixed folder group', () => {
+  const group = { from: 'folder', depth: 1, prefix: 'Notes' } as const, key = '(outside prefix)';
+  const d = declaration(), p = buildProjection(rows(), d), saved = canonicalView({ ...emptyView(), group, hiddenGroups: [key] });
+  const r = explore(p, d, saved, colorGroups(p, d), 0, { facetValues: 2 }); const i = r.groupKeys.indexOf(key);
+  expect(i).toBeGreaterThanOrEqual(0); expect(r.groupVisible[i]).toBe(0); expect(saved.hiddenGroups).toEqual([key]);
+  expect(groupDisplay(r.groupLabels[i]!, r.outsideFolder)).toBe('Other notes'); expect(groupDisplay(key, false)).toBe(key);
+});
+
+test('card review: actual Other notes folder and fallback have distinct visible names',() => { expect(groupDisplay('Other notes', true)).not.toBe(groupDisplay('(outside prefix)', true)); expect(groupDisplay('Other notes', false)).toBe('Other notes'); });

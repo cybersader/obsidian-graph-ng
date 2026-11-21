@@ -159,7 +159,7 @@ button.graph-ng-stat > .graph-ng-stat-label { text-align:start; }
 .graph-ng-card { line-height:var(--gng-leading); position:absolute; left:0; top:0; z-index:2; box-sizing:border-box; width:min(320px, calc(100% - 16px)); max-height:calc(100% - 16px); display:flex; flex-direction:column; gap:var(--gng-space-2); overflow-y:auto; scrollbar-gutter:auto; pointer-events:auto; overflow-wrap:anywhere; font-size:var(--gng-text-sm); color:var(--text-normal); background:var(--background-primary); border:1px solid var(--background-modifier-border); padding:var(--gng-space-3); border-radius:var(--gng-chrome-radius); box-shadow:var(--shadow-s); }
 .graph-ng-card .graph-ng-card-fold { display:none; }
 .graph-ng-card[data-compact=true] .graph-ng-card-fold { display:inline-flex; }
-.graph-ng-card[data-folded=true] > :not(.graph-ng-card-head):not(.graph-ng-card-primary), .graph-ng-card[data-folded=true] .graph-ng-card-primary > :not(:first-child) { display:none; }
+.graph-ng-card[data-folded=true] > :not(.graph-ng-card-head):not(.graph-ng-card-primary):not(.graph-ng-card-identity):not(.graph-ng-card-empty), .graph-ng-card[data-folded=true] .graph-ng-card-primary > :not(:first-child) { display:none; }
 .graph-ng-card-fold[aria-expanded=true] svg { transform:rotate(180deg); }
 .graph-ng-card:empty { display:none; }
 .graph-ng-card > * { flex-shrink:0; }
@@ -171,7 +171,15 @@ button.graph-ng-stat > .graph-ng-stat-label { text-align:start; }
 .graph-ng-card .graph-ng-card-nav:hover:not(:disabled) { background:var(--background-modifier-hover); color:var(--text-normal); }
 .graph-ng-card-icon { display:inline-flex; flex:none; }
 .graph-ng-card-icon svg { width:var(--size-4-4); height:var(--size-4-4); }
-.graph-ng-card-caption { color:var(--gng-text-muted); line-height:var(--gng-leading-tight); }
+.graph-ng-card-identity { display:flex; gap:var(--gng-space-2); font-size:var(--gng-text-xs); }
+.graph-ng-card-identity > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.graph-ng-card-identity > :first-child:not(:only-child) { max-width:45%; flex-shrink:0; }
+.graph-ng-card-identity > span + span { direction:rtl; text-align:start; }
+.graph-ng-room-warning, .graph-ng-room-pending { display:none; }
+.graph-ng-view[data-room-incomplete=pending] .graph-ng-room-pending { display:block; }
+.graph-ng-endpoints { display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.graph-ng-view[data-room-incomplete=true] .graph-ng-room-warning { display:block; }
+.graph-ng-card-identity, .graph-ng-room-warning, .graph-ng-room-pending, .graph-ng-card-caption { color:var(--gng-text-muted); line-height:var(--gng-leading-tight); }
 .graph-ng-card-primary, .graph-ng-card-actions { display:grid; gap:var(--gng-space-2); grid-auto-rows:1fr; }
 .graph-ng-card-actions { grid-template-columns:repeat(2,minmax(0,1fr)); padding-block:var(--gng-space-2); }
 .graph-ng-card-actions > button:last-child:nth-child(odd) { grid-column:1 / -1; }
@@ -193,7 +201,7 @@ button.graph-ng-stat > .graph-ng-stat-label { text-align:start; }
 .graph-ng-connection-meta { display:flex; flex-wrap:wrap; gap:var(--gng-space-1) var(--gng-space-2); }
 .graph-ng-connection-title { white-space:normal; line-height:var(--gng-leading-tight); }
 .graph-ng-connection-id, .graph-ng-connection-label, .graph-ng-connection-relation { color:var(--gng-text-muted); font-size:var(--gng-text-xs); white-space:normal; line-height:var(--gng-leading-tight); }
-.graph-ng-connection-relation { background:var(--background-secondary); border-radius:var(--radius-s); padding:0 var(--gng-space-1); }
+.graph-ng-connection-relation { min-width:0; max-width:100%; background:var(--background-secondary); border-radius:var(--radius-s); padding:0 var(--gng-space-1); }
 .graph-ng-connection-id { font-variant-numeric:tabular-nums; }
 .graph-ng-card .graph-ng-connection-more { font-variant-numeric:tabular-nums; width:100%; margin-block:var(--gng-space-1); }
 .graph-ng-card .graph-ng-section-second { width:100%; margin-bottom:var(--gng-space-1); font-size:var(--gng-text-xs); }
@@ -520,8 +528,13 @@ button.graph-ng-help-trigger:hover { color:var(--text-accent); }
 @container (max-width: 480px) {
   .graph-ng-body:has(> .graph-ng-explore:not([hidden])) > .graph-ng-summary:not(.graph-ng-layout-active) { display:none; }
   .graph-ng-body:has(> .graph-ng-explore:not([hidden])) > .graph-ng-summary.graph-ng-layout-active { max-width:calc(100% - 16px); z-index:4; }
-  .graph-ng-body:has(> .graph-ng-layout-active) > .graph-ng-explore { bottom:52px; }
+  .graph-ng-body:has(> .graph-ng-layout-active):not(:has(> .graph-ng-summary > .graph-ng-retry)) > .graph-ng-explore { bottom:52px; }
 }
+
+/* A retry in the canvas summary needs its own row, not a higher layer over the sheet or tools. */
+.graph-ng-body:has(> .graph-ng-summary > .graph-ng-retry) { display:grid; grid-template: minmax(0, 1fr) auto / minmax(0, 1fr); }
+.graph-ng-body:has(> .graph-ng-summary > .graph-ng-retry) > :is(.graph-ng-stage, .graph-ng-explore) { grid-area:1 / 1 / 2 / 2; }
+.graph-ng-body:has(> .graph-ng-summary > .graph-ng-retry) > .graph-ng-summary:not([hidden]) { grid-area:2 / 1; position:static; display:flex; max-width:100%; justify-self:start; }
 
 /* Touch targets grow without adding wrapped toolbar labels or changing pip geometry. */
 @media (pointer: coarse) {

@@ -1,3 +1,4 @@
+import { plural } from './graph-information';
 import { middleTruncate } from './label-layout';
 import type { Visuals } from './settings';
 import { setIcon } from 'obsidian';
@@ -5,23 +6,38 @@ import { disclosure, disclosureBody, panelHelp } from './panel-help';
 import type { RenderProjection } from './render-projection';
 /** Incident-edge CSR (`incidentEdges`): per node, every edge row touching it. */
 export interface Incidence { offsets: Uint32Array; edges: Uint32Array }
-type Columns = Pick<RenderProjection, 'source' | 'target' | 'type' | 'types' | 'carrier' | 'carrierNodes'>;
+type Columns = Pick<RenderProjection, 'source' | 'target' | 'type' | 'types' | 'carrier' | 'carrierNodes' | 'rule'>;
 type On = (edge: number) => boolean;
 /** One relationship type in one direction, relative to the focus. */
 export interface ConnectionGroup { type: string; out: boolean; nodes: number[] }
-/** Visit each drawn neighbour of `u` in O(degree). A relationship-note dot owned by the edge is
- * transparent: it is reported once as a dot, then its far endpoints as direct neighbours. */
-function neighbours(u: number, inc: Incidence, p: Columns, on: On, vis: ArrayLike<number>, visit: (edge: number, node: number, dot: boolean) => void, scan = () => true, trace?: (edge: number) => void) {
+/** Cross owned legs only along a directed source → carrier → target path (or its reverse).
+ * Trace parallel near legs, but inspect a carrier’s fan-out only once per direction. */
+function neighbours(u: number, inc: Incidence, p: Columns, on: On, vis: ArrayLike<number> | undefined, visit: (edge: number, node: number, dot: boolean) => void, scan = () => true, trace?: (edge: number) => void) {
   const own = (e: number, c: number) => !!p.carrierNodes[c] && p.carrier[e]! + 1 === p.carrierNodes[c];
   const other = (e: number, a: number) => p.source[e] === a ? p.target[e]! : p.source[e]!;
+  // One representative near leg per actual rule. Store near rows, not copies of carrier fan-out.
+  let carriers: Map<number, Map<number, number>> | undefined;
   for (let j = inc.offsets[u]!; j < inc.offsets[u + 1]!; j++) {
     if (!scan()) return;
     const e = inc.edges[j]!, v = other(e, u);
-    if (!on(e) || !vis[v] || v === u) continue;
+    if (!on(e) || vis && !vis[v] || v === u) continue;
     trace?.(e);
     if (!own(e, v)) { visit(e, v, false); continue; }
-    visit(e, v, true);
-    for (let k = inc.offsets[v]!; k < inc.offsets[v + 1]!; k++) { if (!scan()) return; const f = inc.edges[k]!, w = other(f, v); if (f !== e && on(f) && own(f, v) && w !== u && vis[w]) { trace?.(f); visit(e, w, false); } }
+    const key = 2 * v + Number(p.target[e] === v), rule = p.rule?.[e] ?? 0;
+    let near = (carriers ??= new Map()).get(key);
+    if (!near) carriers.set(key, near = new Map());
+    if (!near.has(rule)) { near.set(rule, e); visit(e, v, true); }
+  }
+  if (!carriers) return;
+  for (const [key, near] of carriers) {
+    const v = Math.floor(key / 2), out = key % 2;
+    for (let k = inc.offsets[v]!; k < inc.offsets[v + 1]!; k++) {
+      if (!scan()) return;
+      const f = inc.edges[k]!;
+      if ((out ? p.source[f] : p.target[f]) !== v || !on(f) || !own(f, v)) continue;
+      const e = near.get(p.rule?.[f] ?? 0), w = out ? p.target[f]! : p.source[f]!;
+      if (e !== undefined && w !== u && (!vis || vis[w])) { trace?.(f); visit(e, w, false); }
+    }
   }
 }
 /** Direct connections of `focus`, grouped by relationship type and direction. Groups run largest
@@ -35,7 +51,11 @@ export function connectionGroups(focus: number, inc: Incidence, p: Columns, on: 
     if (!g.seen.has(w)) { g.seen.add(w); g.nodes.push(w); } all.add(w);
   });
   const list = [...groups.values()].map(({ type, out, nodes }) => ({ type, out, nodes: nodes.sort(order) }));
-  return { groups: list.sort((a, b) => b.nodes.length - a.nodes.length || a.type.localeCompare(b.type) || +b.out - +a.out), direct: all.size };
+  // A scoped zero needs an existence check against the same eligible neighbour semantics,
+  // without the view mask. Stop at the first non-carrier row; no second ranking or full mask.
+  let hidden = false;
+  if (!all.size && focus >= 0) neighbours(focus, inc, p, () => true, undefined, (_, __, dot) => { if (!dot) hidden = true; }, () => !hidden);
+  return { ...(hidden ? { hidden: true } : {}), groups: list.sort((a, b) => b.nodes.length - a.nodes.length || a.type.localeCompare(b.type) || +b.out - +a.out), direct: all.size };
 }
 /** Undirected semantic hops: owned relationship-note dots are transparent but retained.
  * Work is bounded by incident rows, including carrier fan-out. `truncated` is never silent. */
@@ -127,9 +147,11 @@ export interface CardHost {
   color(n: number): string;
   /** Optional presentation metadata, never an identity or topology authority. */
   title?(n: number): string;
+  path?(n: number): string;
+  up?: RenderProjection['up'];
   relationship?(n: number): { name: string; type: string } | undefined;
   group?(n: number): { key: number; label: string };
-  groups(n: number): { groups: ConnectionGroup[]; direct: number };
+  groups(n: number): { groups: ConnectionGroup[]; direct: number; hidden?: boolean };
   isolated(): boolean;
   frontier?(n: number): number;
   /** Whether the connection rings is open on this note; hosts without a lens omit it (no Lens action). */
@@ -148,19 +170,22 @@ const ROWS = 50;
 /** Find-box debounce: one repaint per pause in typing, not per keystroke. */
 export const NAV_DEBOUNCE_MS = 80;
 /** `title` and `search` are filled on first use and live as long as the entry (one card build). */
-interface ConnectionEntry { node: number; name: string; label: string; relations: string[]; title?: string; search?: string }
+interface ConnectionEntry { node: number; name: string; label: string; kin?: string; relations: string[]; title?: string; search?: string }
 interface NavigatorSection { key: number; label: string; entries: ConnectionEntry[] }
 /** One row per connected note, under its declared group; retain all relationship directions.
  * Titles are not fetched here: only rows that are drawn or searched ask for one (`entryTitle`). */
-export function navigatorSections(groups: ConnectionGroup[], host: Pick<CardHost, 'name' | 'group'>): NavigatorSection[] {
+export function navigatorSections(groups: ConnectionGroup[], host: Pick<CardHost, 'name' | 'group' | 'up'>, focus = -1): NavigatorSection[] {
   const sections = new Map<number, NavigatorSection>(), notes = new Map<number, ConnectionEntry>();
+  const up = host.up, parents = up && new Set(up.targets.subarray(up.offsets[focus], up.offsets[focus + 1]));
   for (const g of groups) for (const node of g.nodes) {
     let row = notes.get(node);
     if (!row) {
       const group = host.group?.(node) ?? { key: -1, label: 'Ungrouped' };
       let section = sections.get(group.key);
       if (!section) sections.set(group.key, section = { ...group, entries: [] });
-      notes.set(node, row = { node, name: host.name(node), label: group.label, relations: [] }); section.entries.push(row);
+      const parent = parents?.has(node), child = up?.targets.subarray(up.offsets[node], up.offsets[node + 1]).includes(focus);
+      const kin = parent ? child ? 'Parent, Child' : 'Parent' : child ? 'Child' : undefined;
+      notes.set(node, row = { node, kin, name: host.name(node), label: group.label, relations: [] }); section.entries.push(row);
     }
     const relation = `${g.out ? '→' : '←'} ${g.type || 'relationship'}`;
     if (!row.relations.includes(relation)) row.relations.push(relation);
@@ -172,7 +197,7 @@ export const entryTitle = (e: ConnectionEntry, host: Pick<CardHost, 'title'>) =>
 /** Every entry matching all query terms, flat and in section order. */
 export function filterConnections(sections: NavigatorSection[], query: string, title: (e: ConnectionEntry) => string) {
   const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean), all = sections.flatMap(s => s.entries);
-  return terms.length ? all.filter(r => terms.every(t => (r.search ??= [r.label, title(r), r.name, ...r.relations].join(' ').toLocaleLowerCase()).includes(t))) : all;
+  return terms.length ? all.filter(r => terms.every(t => (r.search ??= [r.label, title(r), r.name, r.kin, ...r.relations].join(' ').toLocaleLowerCase()).includes(t))) : all;
 }
 let navigatorId = 0;
 export const el = (tag: string, text = '', cls = '') => Object.assign(document.createElement(tag), { textContent: text, className: cls });
@@ -230,8 +255,8 @@ export class ConnectionCard {
     if (kept) (this.rows[0] ?? this.root.querySelector('button'))?.focus();
   }
   render() {
-    const n = this.node, h = this.host, c = this.root, name = h.name(n), { groups, direct } = h.groups(n);
-    const before = this.navSections, initial = !before.length; this.navSections = navigatorSections(groups, h);
+    const n = this.node, h = this.host, c = this.root, name = h.name(n), { groups, direct, hidden: scopedEmpty } = h.groups(n);
+    const before = this.navSections, initial = !before.length; this.navSections = navigatorSections(groups, h, n);
     if (this.navTimer !== undefined) this.setQuery(this.navInput!.value); // typing still pending survives the rebuild
     // Section keys are group codes: after a regroup a code may name another group, so drop open/closed/page state
     // for any key whose group label changed or vanished (the graph would otherwise light the wrong section).
@@ -246,12 +271,21 @@ export class ConnectionCard {
     const fold = head.appendChild(iconButton('chevron-down', 'Expand connections', () => { c.dataset.folded = String(c.dataset.folded !== 'true'); fold.setAttribute('aria-expanded', String(c.dataset.folded !== 'true')); this.size = undefined; h.cue(-1); }, '', 'graph-ng-card-nav graph-ng-card-fold'));
     fold.setAttribute('aria-expanded', String(c.dataset.folded !== 'true'));
     head.append(closeButton(() => h.close()));
+    const path = h.path?.(n);
+    if (path) {
+      const folder = path.slice(0, Math.max(0, path.lastIndexOf('/'))) || '/', group = h.group?.(n)?.label ?? 'Ungrouped';
+      const line = c.appendChild(el('div', '', 'graph-ng-card-identity'));
+      const first = folder.split('/', 1)[0], rest = first === group ? folder.slice(first.length + 1) : folder;
+      line.title = first === group ? path : `${group}: ${path}`;
+      line.append(el('span', group));
+      if (rest) line.appendChild(el('span')).append(el('bdi', rest));
+    }
     const caption = h.title?.(n)?.trim().slice(0, 256);
     if (caption && caption !== name) c.append(el('div', caption, 'graph-ng-card-caption'));
-    const act = (a: CardAction) => () => { h.act(a, n); if (a === 'isolate') c.querySelector<HTMLElement>('.graph-ng-isolate-toggle')?.focus(); }, primary = c.appendChild(el('div', '', 'graph-ng-card-primary'));
+    const act = (a: CardAction) => () => { h.act(a, n); if (a === 'isolate') (c.querySelector<HTMLElement>('.graph-ng-isolate-toggle') ?? c.querySelector<HTMLElement>('.mod-cta'))?.focus(); }, primary = c.appendChild(el('div', '', 'graph-ng-card-primary'));
     primary.append(button('Open note', 'Open ' + name, act('open'), 'mod-cta'));
     const hidden = h.frontier?.(n) ?? 0;
-    primary.append(button(h.isolated() ? 'Show all notes' : 'Show only connections', h.isolated() ? 'Show all notes' : 'Show only connections of ' + name, act('isolate'), 'graph-ng-isolate-toggle'));
+    if (direct || h.isolated()) primary.append(button(h.isolated() ? 'Show all notes' : 'Show only connections', h.isolated() ? 'Show all notes' : 'Show only connections of ' + name, act('isolate'), 'graph-ng-isolate-toggle'));
     if (h.isolated() && hidden) primary.append(button(`Expand ${hidden} hidden neighbours`, `Add ${hidden} hidden neighbours of ${name}`, act('expand')));
     const more = this.more = c.appendChild(el('details', '', 'graph-ng-card-more')) as HTMLDetailsElement;
     disclosure(more, 'More actions');
@@ -260,6 +294,13 @@ export class ConnectionCard {
     tool('New tab', 'tab'); tool('Open to the right', 'split'); tool('Focus here', 'focus');
     this.lensToggle = h.lensed ? tool('Connection rings', 'lens') : undefined; this.syncLens();
     tool('Copy link', 'copy');
+    if (!direct) {
+      const empty = c.appendChild(el('div', scopedEmpty ? 'No connections in this view' : 'No connections', 'graph-ng-card-empty'));
+      empty.setAttribute('role', 'status');
+      empty.append(el('div', 'Some room properties did not load. This list may be incomplete.', 'graph-ng-room-warning'), el('div', 'Some note properties are not yet verified. This list may be incomplete.', 'graph-ng-room-pending'));
+      this.setQuery(''); this.navInput = this.navList = this.navStatus = undefined;
+      h.disclose?.(n, undefined, []); h.cue(-1); return;
+    }
     const nav = c.appendChild(el('div', '', 'graph-ng-navigator'));
     this.navStatus = nav.appendChild(el('div', '', 'graph-ng-nav-status')); this.navStatus.setAttribute('role', 'status');
     const field = nav.appendChild(el('label', '', 'graph-ng-connection-filter'));
@@ -281,7 +322,7 @@ export class ConnectionCard {
   private title = (e: ConnectionEntry) => entryTitle(e, this.host);
   /** One connection button; search results also name the group. */
   private row(entry: ConnectionEntry, flat: boolean) {
-    const relation = this.host.relationship?.(entry.node), title = relation?.name ?? this.title(entry);
+    const relation = this.host.relationship?.(entry.node), title = this.title(entry);
     const row = button('', '', () => this.go(entry.node), 'graph-ng-connection');
     // A referenced text label avoids Obsidian's aria-label tooltip on the row.
     row.removeAttribute('aria-label'); row.setAttribute('aria-labelledby', `${this.navId}-note-${entry.node}`);
@@ -291,8 +332,14 @@ export class ConnectionCard {
     label.id = `${this.navId}-note-${entry.node}`;
     const meta = text.appendChild(el('span', '', 'graph-ng-connection-meta'));
     if (flat) meta.append(el('span', entry.label, 'graph-ng-connection-label'));
-    if (!relation && title !== entry.name) { const id = meta.appendChild(el('span', middleTruncate(entry.name, 40), 'graph-ng-connection-id')); id.title = entry.name; }
-    meta.append(el('span', relation?.type ?? entry.relations.join(', '), 'graph-ng-connection-relation'));
+    if (title !== entry.name) { const id = meta.appendChild(el('span', middleTruncate(entry.name, 40), 'graph-ng-connection-id')); id.title = entry.name; }
+    const types = entry.relations.join(', ');
+    const detail = meta.appendChild(el('span', entry.kin ? `${entry.kin}, ${types}` : types, 'graph-ng-connection-relation'));
+    if (relation) {
+      const full = `${relation.name} (${relation.type})`;
+      detail.appendChild(el('span', middleTruncate(full, 72), 'graph-ng-endpoints')).title = full;
+    }
+    detail.id = label.id + '-relation'; row.setAttribute('aria-describedby', detail.id);
     row.onmouseenter = () => this.host.cue(entry.node); row.onmouseleave = () => this.host.cue(-1);
     row.onfocus = () => { label.textContent = title; this.size = undefined; this.host.cue(entry.node); };
     row.onblur = () => { label.textContent = middleTruncate(title, 72); this.size = undefined; this.host.cue(-1); }; this.rows.push(row);
@@ -308,19 +355,18 @@ export class ConnectionCard {
     list.textContent = ''; this.root.scrollTop = 0; this.rows = []; this.size = undefined;
     if (searching) {
       const found = filterConnections(sections, this.navQuery, this.title), shown = this.navShown;
-      this.navStatus!.textContent = `${found.length.toLocaleString()} matching connection${found.length === 1 ? '' : 's'}`;
+      this.navStatus!.textContent = plural(found.length, 'matching connection');
       if (!found.length) list.append(el('div', 'No matching connections', 'graph-ng-explore-note'));
       for (const entry of found.slice(0, shown)) list.append(this.row(entry, true));
       if (found.length > shown) list.append(button(`Show ${Math.min(ROWS, found.length - shown)} more`, 'Show more matching connections', () => {
         const scroll = this.root.scrollTop; this.navShown += ROWS; this.paintConnections(); this.root.scrollTop = scroll; this.rows[shown]?.focus();
       }, 'graph-ng-connection-more'));
     } else {
-      this.navStatus!.textContent = `${total.toLocaleString()} direct connection${total === 1 ? '' : 's'} in ${sections.length.toLocaleString()} group${sections.length === 1 ? '' : 's'}`;
-      if (!total) list.append(el('div', 'No direct connections', 'graph-ng-explore-note'));
+      this.navStatus!.textContent = `${plural(total, 'direct connection')} in ${plural(sections.length, 'group')}`;
       for (const section of sections.slice(0, this.navGroupLimit)) {
         const { key, label, entries } = section, expanded = this.navOpen.has(key);
         const block = list.appendChild(el('details', '', 'graph-ng-connection-section')) as HTMLDetailsElement; block.open = expanded;
-        const toggle = disclosure(block, label, { 'aria-label': `${label}, ${entries.length} connections` });
+        const toggle = disclosure(block, label, { 'aria-label': `${label}, ${plural(entries.length, 'connection')}` });
         toggle.className = 'graph-ng-connection-group';
         toggle.onclick = e => {
           e.preventDefault();
@@ -359,7 +405,7 @@ export class ConnectionCard {
   syncLens() { if (this.lensToggle && this.node >= 0) this.lensToggle.setAttribute('aria-pressed', String(!!this.host.lensed?.(this.node))); }
   /** "+N more" opens a predictable navigator destination, not an unbounded flat list. */
   showAll() {
-    if (this.node < 0) return;
+    if (!this.navInput) return;
     this.setQuery(''); this.navPages.clear(); this.navOpen.clear();
     const first = this.navSections[0]; if (first) this.navOpen.add(first.key);
     this.paintConnections(); this.navInput!.focus({ preventScroll: true }); this.root.scrollTop = 0;

@@ -1,0 +1,40 @@
+{
+  "settings": {
+    "settingsVersion": 2,
+    "persistLayout": false,
+    "declaration": {
+      "version": 2,
+      "identity": [
+        {
+          "key": "item"
+        }
+      ],
+      "edges": [],
+      "groups": [
+        {
+          "from": "folder",
+          "depth": 1,
+          "prefix": "Library"
+        }
+      ],
+      "columns": [],
+      "colors": [],
+      "display": {
+        "reifiedAsNodes": false
+      }
+    },
+    "visuals": {
+      "motion": "full",
+      "minimap": false,
+      "cardPlacement": "side"
+    },
+    "layout": {
+      "iterations": 12000,
+      "batchIterations": 1,
+      "finishFully": true
+    },
+    "quickStart": false,
+    "canvasMaxDetailNodes": 1,
+    "streamEveryIterations": 1
+  }
+}

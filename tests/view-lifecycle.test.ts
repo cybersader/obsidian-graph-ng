@@ -640,7 +640,7 @@ async function notesOpenFixture() {
   const view: any = Object.create(GraphView.prototype);
   Object.assign(view, { projection, visible, colors: new Uint32Array(3), positions: new Float32Array(6), explored: initial, view: emptyView(),
     detailScope: scope, contentEl: { dataset: { state: 'ready', mode: 'groups' } }, app: { workspace: { requestSaveLayout() {} } },
-    renderRevision: 0, detailGeneration: 1, activeRevision: 1, gpu: { available: true, reason: 'fixture' }, plugin: { settings: { explore: {} }, saveSoon() {},
+    renderRevision: 0, detailGeneration: 1, activeRevision: 1, gpu: { available: true, reason: 'fixture' }, plugin: { settings: { explore: {}, declaration: { groups: [] }, groupLevel: 0 }, saveSoon() {},
       pipeline: { request: async () => ({ explore: latest, colors, groups: {}, view: 2 }) } }, panel: new ControlElement(), stage: new ControlElement(),
     status: new ControlElement(), statusSummary: new ControlElement(), contributionPage: { clear() {}, update() {} },
     showGroups() { actions.push('groups'); view.renderRevision++; view.renderer?.dispose(); view.renderer = view.detailRenderer = undefined; view.contentEl.dataset.mode = 'groups'; } });

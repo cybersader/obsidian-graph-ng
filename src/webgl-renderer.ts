@@ -1,5 +1,6 @@
 import { devicePerformance, deviceTier } from './performance';
 import { namedViewState, stateChip, type ViewState } from './view-state';
+import { groupDisplay } from './core/explore';
 import { plural } from './graph-information';
 import { carrierPairs, carrierThrough, carrierFocus, carrierAdmitted } from './carrier-lines';
 import { CanvasEdgeIndex, CANVAS_INDEX_ROWS } from './canvas-edge-index';
@@ -288,7 +289,7 @@ const UNIFORMS = ['lensPositions', 'lensBlend', 'lensAnchor', 'positions', 'pale
 interface Program { handle: WebGLProgram; uniforms: Record<string, WebGLUniformLocation | null> }
 interface Camera { x: number; y: number; ratio: number }
 /** Runtime view masks from the worker's explore result; colors stay worker-computed. */
-export interface RenderView { loading?: boolean; groupCodes?: Uint32Array; groupLabels?: readonly string[]; collapsed?: Uint8Array; typeHidden?: Uint8Array; colors?: Uint32Array }
+export interface RenderView { outsideFolder?: boolean; loading?: boolean; groupCodes?: Uint32Array; groupLabels?: readonly string[]; collapsed?: Uint8Array; typeHidden?: Uint8Array; colors?: Uint32Array }
 interface Hub { group: number; x: number; y: number; count: number; radius: number }
 
 /** Draw directly from projection columns. Camera frames touch uniforms only. */
@@ -510,6 +511,7 @@ export class DetailRenderer {
   private anchorNames: { node: number; rank: number; tier: number; text: string; w: number }[] = [];
   private anchorPrevious = new Map<number, number>();
   /** Direct connections without a label fold into one "+N more" button beside the focus. */
+  private moreFor = -1;
   private moreButton?: HTMLButtonElement;
   private moreAt?: { dx: number; dy: number };
   /** The card's open hub sections, lit alone on the graph (see `discloseTiers`). */
@@ -846,7 +848,7 @@ export class DetailRenderer {
     this.discData = this.discs(this.halos, this.hubs);
     while (this.hubLabels.length > Math.min(64, this.hubs.length)) this.hubLabels.pop()!.remove();
     while (this.hubLabels.length < Math.min(64, this.hubs.length)) this.hubLabels.push(this.overlay.appendChild(el('div', '', 'graph-ng-hub-label')));
-    this.hubLabels.forEach((el, i) => { const h = this.hubs[i]!; el.textContent = `${this.view.groupLabels?.[h.group] ?? ''} (${h.count.toLocaleString()})`; });
+    this.hubLabels.forEach((el, i) => { const h = this.hubs[i]!; el.textContent = `${this.groupName(h.group)} (${h.count.toLocaleString()})`; });
   }
   private async program(vertex: string, fragment: string, current: () => boolean): Promise<Program> {
     const gl = this.gl!, shaders: WebGLShader[] = [], parallel = gl.getExtension('KHR_parallel_shader_compile');
@@ -1450,12 +1452,13 @@ export class DetailRenderer {
     this.selectedEdges = []; this.pathView = undefined; this.edgeAnchor = -1; this.edgeToken++; this.cue = -1; if (card || node < 0) this.hovered = -1; this.emphasize(); this.pinCarriers(); this.startRipple(node); this.refresh();
     if (card && node >= 0) { this.card.show(node); this.placeCard(); if (framing) this.frameSelection(this.settings.visuals.clickFraming); } else this.card.hide();
   }
+  private groupName(key: number) { return groupDisplay(this.view.groupLabels?.[key] ?? 'Ungrouped', this.view.outsideFolder); }
   /** The navigator's view of the graph: every lookup is O(degree) over the incident-edge CSR. Rows
    * list connections under the host filter, so a neighbourhood mask never hides them. */
   private cardHost(): CardHost {
     const p = this.projection, on = (e: number) => !this.view.typeHidden?.[p.type[e]!];
     return {
-      name: n => this.name(n),
+      name: n => this.name(n), path: n => this.path(n), up: p.up,
       title: n => this.noteTitle?.(this.path(n)) ?? '',
       relationship: n => {
         const owner = p.carrierNodes[n]; if (!owner) return;
@@ -1467,7 +1470,7 @@ export class DetailRenderer {
         }
         if (source.size && target.size) return { name: [...source].join(', ') + ' → ' + [...target].join(', '), type: [...types].join(', ') };
       },
-      group: n => { const key = this.view.groupCodes?.[n] ?? -1; return { key, label: this.view.groupLabels?.[key] ?? 'Ungrouped' }; },
+      group: n => { const key = this.view.groupCodes?.[n] ?? -1; return { key, label: this.groupName(key) }; },
       color: n => { const c = this.colorBytes, k = n * 4; return `rgb(${c[k]},${c[k + 1]},${c[k + 2]})`; },
       groups: n => { const names = new Map<number, string>(), name = (m: number) => names.get(m) ?? names.set(m, this.name(m)).get(m)!; return connectionGroups(n, this.edges, p, on, this.baseVisible, byInterest(this.interestOf(n), (a, b) => name(a).localeCompare(name(b)))); },
       isolated: () => !!this.isolation,
@@ -1845,7 +1848,7 @@ export class DetailRenderer {
     if (this.moreButton) {
       // "+N more" counts the direct connections without a label actually shown this frame.
       const b = this.moreButton, rest = this.moreTotal - shown, text = `+${rest} more`;
-      if (b.textContent !== text) { b.textContent = text; b.setAttribute('aria-label', `Show ${rest} more direct connections of ${ego >= 0 ? this.name(ego) : ''}`); }
+      if (b.textContent !== text || this.moreFor !== ego) { this.moreFor = ego; b.textContent = text; b.setAttribute('aria-label', `Show ${plural(rest, 'more direct connection')} for ${ego >= 0 ? this.name(ego) : ''}`); }
       const at = this.moreAt, p = ego >= 0 ? this.screenPoint(ego) : { x: 0, y: 0 }, [mw, mh] = this.moreSize, [mx, my] = insetLabel(p.x + (at?.dx ?? 0), p.y + (at?.dy ?? 0) - mh! / 2, mw!, mh!, this.width - this.toolsInset, this.height), show = rest > 0 && !!at && ego >= 0 && focus > 0 && !under(mx!, my!, mw, mh); b.hidden = !show;
       if (show) { taken.push([mx!, my!, mw!, mh!]); b.style.opacity = String(focus); b.style.transform = `translate(${Math.round(mx!)}px, ${Math.round(my! + mh! / 2)}px) translateY(-50%)`; }
     }
@@ -2236,7 +2239,7 @@ export class DetailRenderer {
         this.container.removeAttribute('title');
         if (cursor) this.canvas.style.cursor = node >= 0 || hub >= 0 || edge >= 0 ? 'pointer' : 'grab';
       },
-      groupLabel: n => this.view.groupLabels?.[this.view.groupCodes?.[n] ?? -1] ?? 'Ungrouped',
+      groupLabel: n => this.groupName(this.view.groupCodes?.[n] ?? -1),
       openable: n => !this.layoutActive && !!this.filterVisible[n],
       open: n => { if (!this.layoutActive) this.onNode(n); },
       openHub: g => { if (!this.layoutActive) this.onHub?.(g); },
