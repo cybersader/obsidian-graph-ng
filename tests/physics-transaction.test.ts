@@ -7,6 +7,8 @@ import { defaults, upgradeSettings, validateSettings } from '../src/settings';
 import { encodeStrings } from '../src/core/columns';
 import { ControlElement, control } from './support/controls-dom';
 import { topLeftHub } from './support/top-left-hub';
+import { viewportEdgeCamera, viewportEdgeFixture } from './support/viewport-edge-fixture';
+import { CanvasEdgeIndex } from '../src/canvas-edge-index';
 import { focusTiers, incidentEdges, shownTier } from '../src/render-data';
 import { miniFit, miniBounds, toCamera } from '../src/minimap';
 import { shaderNames } from '../scripts/glsl.mjs';
@@ -659,6 +661,125 @@ for (const count of [20000, 80]) test(`default software Notes keeps ${count} not
     }
     const narrow = new Uint8Array(count); narrow[0] = narrow[1] = 1; r.setView(narrow, {}); expect(r.canvasHint.hidden).toBe(true);
   } finally { ctx.fill = fill; ctx.moveTo = move; }
+});
+test('settled Canvas closeup admits actual crossing segments instead of spending slots offscreen', async () => {
+  const f = viewportEdgeFixture(), settings = defaults('links'), {projection:p, positions, visible, crossing, miss} = f;
+  settings.visuals.zoomAdapt = false;
+  const r = await Renderer.create(new Element(), p, positions, visible, settings, () => {}, () => {}, new Uint32Array(p.nodeCount), () => true, true);
+  renderers.push(r);
+  const waitForIndex = async () => {
+    for (let i = 0; i < 40 && !r.canvasEdgeIndex; i++) await Bun.sleep(5);
+    expect(r.canvasEdgeIndex).toBeDefined();
+  };
+  const draw = () => { viewportEdgeCamera(r, compiled, 0, 0, .02); r[compiled('drawCanvas')](); };
+  draw();
+  const a = r.screenPoint(p.source[crossing]), b = r.screenPoint(p.target[crossing]);
+  expect(a.x).toBeLessThan(0); expect(b.x).toBeGreaterThan(800);
+  expect(a.y).toBe(b.y); expect(a.y).toBeGreaterThan(0); expect(a.y).toBeLessThan(600);
+  expect(r[compiled('canvasEdges')].includes(crossing)).toBe(false); // legacy global control
+  if (process.env.VIEWPORT_EDGE_BASELINE) {
+    expect(r.paintedLines.has(crossing)).toBe(false);
+    expect(r.paintedLines.has(miss)).toBe(true); // bounding-box false positive
+    expect(r[compiled('pickEdge')](400,a.y)).toBe(-1);
+    return;
+  }
+  r[compiled('pointerMove')]({pointerId: 9, clientX: 400, clientY: a.y, pointerType: 'mouse'});
+  expect(r[compiled('hoveredEdge')]).toBe(-1);
+  await waitForIndex(); r[compiled('drawCanvas')](); // no second pointer or camera event
+  expect(r[compiled('hoveredEdge')]).toBe(crossing);
+  r[compiled('pointerLeave')]();
+  expect([...r.paintedLines]).toEqual([crossing]);
+  expect(r[compiled('pickEdge')](400,a.y)).toBe(crossing);
+  r[compiled('findPath')](p.source[crossing],p.target[crossing]); r[compiled('emphasize')](true); draw();
+  expect(r[compiled('pathView')].edges).toEqual([crossing]);
+  expect(r[compiled('canvasEdges')].includes(crossing)).toBe(true);
+  expect(r.paintedLines.has(crossing)).toBe(true);
+  r[compiled('focusNote')](-1); r[compiled('emphasize')](true);
+  p.type[crossing] = 1; r.setView(visible,{[compiled('typeHidden')]: Uint8Array.of(0,1)});
+  draw(); expect(r.paintedLines.has(crossing)).toBe(false); expect(r.paintedLines.has(miss)).toBe(false);
+  const masked = visible.slice(); masked[p.target[crossing]!] = 0; r.setView(masked,{});
+  draw(); expect(r.paintedLines.has(crossing)).toBe(false);
+  r.setView(visible,{}); settings.visuals.edgeOpacity = 0;
+  draw(); expect(r.paintedLines.size).toBe(0); expect(r[compiled('pickEdge')](400,a.y)).toBe(-1);
+  settings.visuals.edgeOpacity = .4;
+  const finish = r[compiled('beginLayout')](), displaced = positions.slice(); displaced[2*p.source[crossing]!] = 1400;
+  r[compiled('streamPositions')](displaced,'drawing'); draw();
+  expect(r.canvasEdgeIndex).toBeUndefined(); expect(r.paintedLines.has(crossing)).toBe(false);
+  finish(false); await waitForIndex(); draw();
+  expect(r.canvasEdgeIndex.positions).toBe(positions); expect(r.paintedLines.has(crossing)).toBe(true);
+});
+test('a parked pointer follows both wheel transitions between global and local edge pools', async () => {
+  const { projection:p, positions, visible, crossing } = viewportEdgeFixture(), settings = defaults('links');
+  for(let i=0;i<p.nodeCount-4;i++) positions[2*i]! += 50000; // Keep the center sparse even at the switch.
+  settings.visuals.zoomAdapt = false;
+  const r = await Renderer.create(new Element(),p,positions,visible,settings,()=>{},()=>{},new Uint32Array(p.nodeCount),()=>true,true);
+  renderers.push(r); for(let i=0;i<40&&!r.canvasEdgeIndex;i++) await Bun.sleep(5);
+  const home = r[mangle.homeRatio || 'homeRatio'], draw=()=>r[compiled('drawCanvas')]();
+  viewportEdgeCamera(r,compiled,0,15,home*.51); draw(); expect(r.paintedLines.has(crossing)).toBe(false);
+  r.canvas.listeners.get('pointermove')({pointerId:9,clientX:400,clientY:300,pointerType:'mouse'});
+  const wheel=(deltaY:number)=>{r.canvas.listeners.get('wheel')({clientX:400,clientY:300,deltaY,preventDefault(){}});draw();};
+  wheel(-100); expect(r.paintedLines.has(crossing)).toBe(true); expect(r[compiled('hoveredEdge')]).toBe(crossing); expect(r.canvas.style.cursor).toBe('pointer');
+  wheel(100); expect(r.paintedLines.has(crossing)).toBe(false); expect(r[compiled('hoveredEdge')]).toBe(-1); expect(r.canvas.style.cursor).toBe('grab');
+
+  // Escape deliberately forgets the parked position. Wheel input supplies a *new* position without pointermove.
+  r[compiled('focusNote')](p.source[crossing]);
+  r.canvas.listeners.get('pointermove')({pointerId:9,clientX:400,clientY:200,pointerType:'mouse'});
+  r[compiled('keyDown')]({key:'Escape',target:r.canvas,preventDefault(){}});
+  expect(r.selected).toBe(-1); viewportEdgeCamera(r,compiled,0,15,home*.51); draw();
+  expect(r[compiled('hoveredEdge')]).toBe(-1); wheel(-100);
+  expect(r[compiled('pickEdge')](400,200)).toBe(-1); // The pre-Escape position would miss.
+  expect(r[compiled('pickEdge')](400,300)).toBe(crossing);
+  expect(r[compiled('hoveredEdge')]).toBe(crossing);
+
+  // The fallback frame finishes during capture. Releasing a completed drag must not click or leave a stale pointer.
+  const pointer=(type:string,x:number,device:string)=>r.canvas.listeners.get(type)({button:0,pointerId:9,clientX:x,clientY:300,pointerType:device});
+  for (const device of ['mouse','pen']) {
+    pointer('pointerdown',400,device); pointer('pointermove',407,device); wheel(100);
+    expect(r.paintedLines.has(crossing)).toBe(false); expect(r[compiled('hoveredEdge')]).toBe(crossing);
+    pointer('pointerup',407,device);
+    expect(r[compiled('hoveredEdge')]).toBe(-1); expect(r.canvas.style.cursor).toBe('grab'); expect(r.selected).toBe(-1);
+    wheel(-100); expect(r[compiled('hoveredEdge')]).toBe(crossing);
+  }
+});
+test('fractional DPR maps the bottom CSS border to the real bitmap clip for drawing and picks', async () => {
+  const {projection:p,positions,visible,crossing,miss}=viewportEdgeFixture(), settings=defaults('links'), host=new Element();
+  settings.visuals.zoomAdapt=false;settings.edgeSize=1;host.clientHeight=601;rendererWindow.devicePixelRatio=1.25;
+  const original=ctx.setTransform;let sy=0;ctx.setTransform=(a:number,b:number,c:number,d:number)=>{sy=d;};
+  try {
+    const r=await Renderer.create(host,p,positions,visible,settings,()=>{},()=>{},new Uint32Array(p.nodeCount),()=>true,true);
+    renderers.push(r);viewportEdgeCamera(r,compiled,0,0,.02);
+    const at=(node:number,x:number,y:number)=>{const w=r[compiled('worldPoint')](x,y);positions.set([w.x,w.y],2*node);};
+    at(p.source[crossing]!,-50,601.9);at(p.target[crossing]!,850,601.9);
+    at(p.source[miss]!,-50,602.1);at(p.target[miss]!,850,602.1);
+    for(let i=0;i<40&&!r.canvasEdgeIndex;i++) await Bun.sleep(5);
+    r[compiled('drawCanvas')]();expect(r.canvas.height).toBe(751);expect(sy).toBe(751/601);
+    expect((r.screenPoint(p.source[crossing]).y-1)*sy).toBeLessThan(751);
+    expect((r.screenPoint(p.source[miss]).y-1)*sy).toBeGreaterThan(751);
+    expect(r.paintedLines.has(crossing)).toBe(true);expect(r.paintedLines.has(miss)).toBe(false);expect(r[compiled('pickEdge')](400,600.8)).toBe(crossing);
+  } finally {ctx.setTransform=original;rendererWindow.devicePixelRatio=1;}
+});
+test('empty butt-capped strokes do not consume the final viewport slot', () => {
+  // A point, an end cap stopping before the left edge, a tangent, and a true partial stroke.
+  const poses = Float32Array.of(100,100,100,100, -50,200,-0.1,200, -5,-1,805,-1, -5,-0.75,805,-0.75);
+  const index = new CanvasEdgeIndex(poses, Uint32Array.of(0,2,4,6), Uint32Array.of(1,3,5,7), {minX:-50,minY:-1,width:855,height:201});
+  expect(Array.from(index.query(400,300,400,300,1,1,()=>true)!)).toEqual([3]);
+});
+test('a sparse Canvas pick at the border ignores invisible ink and admits a partially visible stroke', async () => {
+  const {projection:p, positions, visible, crossing, miss} = viewportEdgeFixture(), settings = defaults('links');
+  settings.visuals.zoomAdapt = false; settings.edgeSize = 1;
+  const r = await Renderer.create(new Element(), p, positions, visible, settings, () => {}, () => {}, new Uint32Array(p.nodeCount), () => true, true);
+  renderers.push(r); viewportEdgeCamera(r, compiled, 0, 0, .02);
+  // Set up fixed parallel strokes in the synthetic pose before the deferred index is built.
+  const at = (node: number,x: number,y: number) => { const w=r[compiled('worldPoint')](x,y); positions.set([w.x,w.y],node*2); };
+  at(p.source[crossing]!, -50,-1.5); at(p.target[crossing]!, 850,-1.5);
+  at(p.source[miss]!, -50,4); at(p.target[miss]!, 850,4);
+  for (let i=0;i<40&&!r.canvasEdgeIndex;i++) await Bun.sleep(5);
+  expect(r.canvasEdgeIndex).toBeDefined(); r[compiled('drawCanvas')]();
+  expect(r.paintedLines.has(crossing)).toBe(false); expect(r.paintedLines.has(miss)).toBe(true);
+  expect(r[compiled('pickEdge')](400,1)).toBe(miss);
+  const center = r[compiled('worldPoint')](400, 298.9); viewportEdgeCamera(r, compiled, center.x, center.y, .02); r[compiled('drawCanvas')]();
+  expect(r.screenPoint(p.source[crossing]).y).toBeLessThan(0);
+  expect(r.paintedLines.has(crossing)).toBe(true); expect(r[compiled('pickEdge')](400,0)).toBe(crossing);
 });
 test('offscreen connection rings leave room for an unrelated visible pick', async () => {
   const n = 400, xy = Float32Array.from({length: 2*n}, (_,i) => i%2 ? Math.floor((i>>1)/20) : (i>>1)%20);
