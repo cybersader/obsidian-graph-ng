@@ -153,41 +153,38 @@ export default class GraphPlugin extends Plugin {
   propertySource?: PropertySource;
   propertyRevision = 0;
   hydrationStatus = '';
-  loadProperties?: () => Promise<void>;
+  loadProperties?: (retry?: boolean) => Promise<void>;
+  // No failure: undefined. A retry for the displayed provider is pending: null.
+  retryProperties?: (() => void) | null;
   /** Public optional host capability; listener ownership never transfers the provider. */
   watchProperties(host = globalThis, waitMs = 15000) {
     let active = true, verifying = false, pending = false, timer: ReturnType<typeof setTimeout> | undefined;
     // Coalesce view opens and source replacements in this window. Only the host
     // schedules individual rooms and serializes physical loads across windows.
-    const key = Symbol.for('graph-ng.property-loads'), queue = (host as unknown as Record<symbol, WorkQueue>)[key] ??= { work: Promise.resolve() };
-    let waiting: Promise<void> | undefined, finish: (() => void) | undefined, latest = 0;
-    let queued: WorkQueue['next'], flight: AbortController | undefined;
+    const key = Symbol.for('graph-ng.property-loads'), queue = (host as unknown as Record<symbol, WorkQueue & { failures?: WeakMap<PropertySource, string> }>)[key] ??= { work: Promise.resolve() };
+    const failures = queue.failures ??= new WeakMap(), provider = () => (host as typeof globalThis & { openclast?: { propertyFacts?: PropertySource } }).openclast?.propertyFacts;
+    let waiting: Promise<void> | undefined, finish: (() => void) | undefined;
+    let queued: WorkQueue['next'], flight: AbortController | undefined, retrying: PropertySource | undefined;
     const unlink = () => { if (queue.next === queued) queue.next = undefined; queued = undefined; };
-    const physical = async (source: PropertySource) => {
-      if (!source.rooms && (source.roomFor || 'room' in source)) return ''; // Legacy room provider: live reads only.
-      const controller = flight = new AbortController();
-      try {
-        const results = await source.load?.({ signal: controller.signal });
-        if (!controller.signal.aborted) return source.rooms && Array.isArray(results) && results.some(r => r?.status === 'timeout') ? 'Room property load timed out' : '';
-      } catch { if (!controller.signal.aborted) return source.rooms ? 'Some room properties could not load' : 'Property loading unavailable'; }
-      finally { flight = undefined; }
-    };
     const views = (visit: (view: GraphView) => void) => {
       for (const leaf of this.app.workspace.getLeavesOfType(VIEW)) if (!leaf.isDeferred && leaf.view instanceof GraphView) visit(leaf.view);
     };
     const promote = () => views(view => view.promoteProperties());
     let loadStatus = '', overdue = false;
+    const again = () => this.loadProperties?.(true);
     const status = (result = loadStatus) => {
       loadStatus = result;
       const message = this.adapter.inventoryError ? 'Room inventory unavailable' : result || (overdue ? 'Property loading delayed' : '');
-      if (!active || message === (this.hydrationStatus || '')) return;
-      this.hydrationStatus = message;
+      const action = result && result === message && this.propertySource?.rooms ? retrying === this.propertySource ? null : again : undefined;
+      if (!active || (message === (this.hydrationStatus || '') && action === this.retryProperties)) return;
+      this.hydrationStatus = message; this.retryProperties = action;
       views(view => view.updateHydrationStatus());
     };
     this.adapter.onInventoryChange = status;
-    this.loadProperties = () => {
-      const source = this.propertySource, request = ++latest;
-      if (!active || !source) return Promise.resolve();
+    this.loadProperties = retry => {
+      const source = this.propertySource;
+      if (!active || !source || (failures.has(source) ? !retry || retrying === source : retry)) return Promise.resolve();
+      if (retry) { retrying = source; status(); }
       // Caller completion and host completion have different owners. Never attach
       // timeout races to a permanently unresolved physical promise on each open.
       const caller = waiting ??= new Promise<void>(resolve => {
@@ -197,12 +194,25 @@ export default class GraphPlugin extends Plugin {
       void latestWork(queue, queued = async () => {
         queued = undefined;
         const current = () => active && source === this.propertySource;
-        if (!current() || request !== latest) return;
-        const message = await physical(source);
-        if (current() && message !== undefined) {
-          if (request === latest) { overdue = false; finish?.(); }
-          status(message); // A queued retry is not yet a new outcome.
+        if (!current()) return;
+        let message = (!retry && failures.get(source)) || '';
+        // Legacy room providers without enumeration are live-read-only.
+        if (!message && (source.rooms || !(source.roomFor || 'room' in source))) {
+          const controller = flight = new AbortController();
+          try {
+            const results = await source.load?.({ signal: controller.signal });
+            if (source.rooms && Array.isArray(results) && results.some(r => r?.status === 'timeout')) message = 'Room property load timed out';
+          } catch { message = source.rooms ? 'Some room properties could not load' : 'Property loading unavailable'; }
+          finally { flight = undefined; }
+          if (controller.signal.aborted) return;
+          // Record the page outcome in this host promise reaction, before any watcher teardown can intervene.
+          if (source.rooms && message) failures.set(source, message); else failures.delete(source);
         }
+        if (!current()) return;
+        retrying = undefined;
+        if (message && source.rooms) unlink();
+        if (!queued) { overdue = false; finish?.(); }
+        status(message);
       });
       return caller;
     };
@@ -216,7 +226,7 @@ export default class GraphPlugin extends Plugin {
     };
     let observed = this.adapter.roomRevision;
     const changed = (event?: Event) => {
-      const candidate = (host as typeof globalThis & { openclast?: { propertyFacts?: PropertySource } }).openclast?.propertyFacts;
+      const candidate = provider();
       const source = typeof candidate?.get === 'function' ? candidate : undefined, previous = this.propertySource;
       if (source === previous) this.adapter.syncRooms?.();
       if (observed === this.adapter.roomRevision && source === previous && (event as CustomEvent | undefined)?.detail?.invalidated === false) { status(); pending = true; verify(); return; }
@@ -225,16 +235,15 @@ export default class GraphPlugin extends Plugin {
       const moved = observed !== this.adapter.roomRevision;
       this.adapter.setPropertySource(source, !event, moved); observed = this.adapter.roomRevision; this.ingestedHash = '';
       if (source !== previous) {
-        overdue = false;
-        if (source) void this.loadProperties?.(); else { ++latest; unlink(); finish?.(); }
-        flight?.abort();
+        overdue = false; retrying = undefined; flight?.abort(); unlink();
+        if (source && !failures.has(source)) void this.loadProperties?.(); else finish?.();
       }
-      status(source !== previous ? '' : undefined);
+      status(source !== previous ? failures.get(source!) ?? '' : undefined);
       views(view => view.invalidateSource());
       this.notify();
     };
     const settled = (event: Event) => {
-      const source = (host as typeof globalThis & { openclast?: { propertyFacts?: PropertySource } }).openclast?.propertyFacts;
+      const source = provider();
       if (source === this.propertySource) this.adapter.syncRooms();
       if (source !== this.propertySource || observed !== this.adapter.roomRevision) changed(event);
       else status();
@@ -463,6 +472,22 @@ export class GraphView extends ItemView {
   private progressAt = 0;
   private progressText(text: string) { const now = performance.now(); if (now - (this.progressAt ?? 0) >= 100) { this.progressAt = now; this.statusText = text; } }
   updateHydrationStatus() { if (this.status && this.statusSummary) this.statusText = this.statusText; }
+  private retryButton?: HTMLButtonElement;
+  private placeRetry() {
+    const action = this.plugin.retryProperties;
+    if (action === undefined) { this.retryButton?.remove(); this.retryButton = undefined; return; }
+    // The canvas summary is hidden in narrow views with a panel open. Move the same button with its diagnostic.
+    const host = (!this.status.hidden && this.status.querySelector<HTMLElement>('.graph-ng-status-message')) || this.statusSummary;
+    const button = this.retryButton ??= panelButton(host, 'Try again', () => {
+      if (document.activeElement === this.retryButton) {
+        const target = this.status.hidden ? this.statusSummary.querySelector<HTMLElement>('.graph-ng-summary-info') : this.explorePanel?.closeButton;
+        target?.focus({ preventScroll: true });
+      }
+      this.plugin.retryProperties?.();
+    }, false, 'graph-ng-retry');
+    if (button.parentElement !== host) host.appendChild(button);
+    button.disabled = !action; button.textContent = action ? 'Try again' : 'Retrying…';
+  }
   private get statusText() { return this.statusMessage; }
   /** Graph information: a short message over structured tiles/issues; the canvas summary shows separate chips. */
   private set statusText(text: string) {
@@ -494,6 +519,7 @@ export class GraphView extends ItemView {
       if (readout) renderReadout(info, accounting(readout, this.explored));
       for (const chip of chips) info.createSpan({ cls: 'graph-ng-summary-chip', text: chip });
     }
+    this.placeRetry();
     const refine = this.statusSummary.querySelector('.graph-ng-refine');
     const canRefine = this.positions && !this.layoutSettled && !loading && !this.explorePanel?.physicsBusy && state === 'ready' && this.contentEl.dataset.mode === 'nodes';
     if (canRefine) {
@@ -617,7 +643,7 @@ export class GraphView extends ItemView {
       policy: () => this.detailRenderer?.policy.reasons ?? [], carriers: () => this.detailRenderer?.carrierCount ?? 0, relationshipNotes: () => this.relationshipNotes(), setRelationshipDisplay: nodes => setRelationshipDisplay(this.plugin, nodes), setView: (view, after) => this.setView(view, after), setColors: colors => this.setColors(colors), preview: (expr, context) => this.previewExpression(expr, context),
       namedViewState: () => this.contentEl.dataset.mode === 'groups' ? 'Groups' : this.detailRenderer?.namedViewState ?? 'Notes',
       lens: () => { const r = this.contentEl.dataset.mode === 'nodes' ? this.detailRenderer : undefined; return { active: !!r && r.lensNode >= 0, available: !!r && (r.lensNode >= 0 || r.selected >= 0 || r.hovered >= 0) }; },
-      toggleLens: () => this.detailRenderer?.toggleLens(), toolsChanged: () => this.renderer?.syncTools?.(),
+      toggleLens: () => this.detailRenderer?.toggleLens(), toolsChanged: () => { this.renderer?.syncTools?.(); this.placeRetry(); },
       visualsChanged: labels => { this.plugin.saveSoon(); this.detailRenderer?.refreshVisuals(labels); if (this.contentEl.dataset.mode === 'groups') this.renderer?.refreshTheme?.(); },
       groupColor: code => this.groupColor(code), focusGroup: code => this.focusGroup(code), fit: () => this.detailRenderer?.fitAll(),
       camera: () => this.detailRenderer ? { ...this.detailRenderer.camera } : null, restoreCamera: camera => this.restoreCamera(camera), persist: () => this.plugin.saveSoon(), persistDevice: () => this.plugin.saveDevice(),

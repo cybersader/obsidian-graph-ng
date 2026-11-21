@@ -44,5 +44,7 @@ export const MANGLED_PROPS = ['canvasEdgeTimer', 'prepareCanvasEdgeIndex', 'canv
   'roomBudget', 'savedOwners', 'loadProperties', 'auditPath', 'storageError', 'loadRoom', 'saveRoom',
   'attachFactCache', 'cacheScope', 'cacheTurn', 'factVersion', 'savedVersion',
   'restoreFacts', 'saveFacts', 'clearFacts', 'savedFacts', 'retireSaved', 'savedCopy',
-  'rejectSaved', 'purgeFacts', 'cacheStatus', 'factError', 'factDirectory', 'factStore', 'deadlineMs', 'cacheKey'];
+  'rejectSaved', 'purgeFacts', 'cacheStatus', 'factError', 'factDirectory', 'factStore', 'deadlineMs', 'cacheKey',
+  'hydrationStatus', 'retryProperties', 'updateHydrationStatus', 'inventoryError', 'onInventoryChange',
+  'retryButton', 'placeRetry', 'partitions', 'pruneDeferred', 'namespaceWrite', 'layoutEngineDraft'];
 export const mangleProps = new RegExp(`^(?:${MANGLED_PROPS.join('|')})$`);

@@ -747,6 +747,73 @@ test('native parity: metadata notice during manifest publication preserves both 
 
 const hydrationQueue = (f: Awaited<ReturnType<typeof contractFixture>>) => (f.host as any)[Symbol.for('graph-ng.property-loads')];
 
+test('hydration: a timed-out discovery drops a queued graph open and later automatic opens', async () => {
+  const first = signal(); let loads = 0, roomLoads = 0;
+  const f = await contractFixture(await savedContract(), undefined, undefined, source => {
+    for (const h of source.rooms!()) Object.assign(h, { load() { roomLoads++; } });
+    source.load = async () => { loads++; await first.done; return [{ status: 'timeout' }, { status: 'loaded' }]; };
+  });
+  try {
+    const opening = f.plugin.loadProperties(); first.yes(); await opening; await hydrationQueue(f).work;
+    expect(loads).toBe(1); expect(f.plugin.hydrationStatus).toBe('Room property load timed out');
+    f.send('oc:property-facts-dropped'); f.send('oc:property-facts-changed', { invalidated: true });
+    f.send('oc:property-facts-changed', { invalidated: false }); await f.settle(); f.emit('resolved');
+    await f.plugin.loadProperties(); await hydrationQueue(f).work;
+    expect(loads).toBe(1); expect(roomLoads).toBe(0); expect((await f.rows())[1]!.properties.category).toBe('Saved b.md');
+  } finally { first.yes(); f.close(); }
+});
+
+test('hydration: a failed provider stays paused across remount and watcher reload, not across provider replacement', async () => {
+  let loads = 0, fresh = 0;
+  const f = await contractFixture(undefined, undefined, undefined, source => { source.load = async () => { loads++; throw Error('synthetic failure'); }; });
+  try {
+    const mount = (source: PropertySource) => { f.host.openclast.propertyFacts = source; f.send('oc:property-facts-changed'); return hydrationQueue(f).work; };
+    await hydrationQueue(f).work; await f.plugin.retryProperties(); await f.plugin.loadProperties(); expect(loads).toBe(2);
+    await mount({ ...f.source, rooms: () => [f.b], load: async () => { fresh++; } });
+    expect(fresh).toBe(1); expect(f.plugin.hydrationStatus).toBe('');
+    await mount(f.source); expect(loads).toBe(2); expect(f.plugin.hydrationStatus).toBe('Some room properties could not load');
+    f.close(); const next = Object.assign(Object.create(Object.getPrototypeOf(f.plugin)), { app: f.plugin.app, register: f.plugin.register, adapter: { setPropertySource() {} }, notify() {} });
+    next.watchProperties(f.host); await next.loadProperties(); expect(loads).toBe(2); expect(next.hydrationStatus).toBe('Some room properties could not load');
+  } finally { f.close(); }
+});
+
+for (const outcome of ['timeout', 'loaded']) test(`hydration teardown gap: ${outcome} reaches the page latch before remount`, async () => {
+  const entered = signal(); let complete!: (result: unknown) => void, calls = 0;
+  const result = new Promise(resolve => { complete = resolve; });
+  const f = await contractFixture(undefined, undefined, undefined, source => { source.load = () => {
+    if (++calls === 1 && outcome === 'loaded') return Promise.reject(Error('synthetic failure before retry'));
+    if (calls === (outcome === 'loaded' ? 2 : 1)) { entered.yes(); return result; }
+    return Promise.resolve([]);
+  }; });
+  try {
+    if (outcome === 'loaded') { await hydrationQueue(f).work; void f.plugin.retryProperties(); }
+    await entered.done;
+    const reloaded = result.then(() => {
+      f.close(); const next = Object.assign(Object.create(Object.getPrototypeOf(f.plugin)), { app: f.plugin.app, register: f.plugin.register, adapter: { setPropertySource() {} }, notify() {} });
+      next.watchProperties(f.host); return next;
+    });
+    complete([{ status: outcome }]); const next = await reloaded; await hydrationQueue(f).work;
+    expect(calls).toBe(outcome === 'loaded' ? 3 : 1); expect(next.hydrationStatus || '').toBe(outcome === 'loaded' ? '' : 'Room property load timed out');
+  } finally { f.close(); }
+});
+
+test('hydration: a retry behind a retiring provider runs once for the displayed provider', async () => {
+  let calls = 0, roomLoads = 0, signalB: AbortSignal | undefined; const holdingB = signal(), holdingA = signal(), enteredA = signal();
+  const f = await contractFixture(undefined, undefined, undefined, source => {
+    for (const h of source.rooms!()) Object.assign(h, { load() { roomLoads++; } });
+    source.load = async () => { if (++calls === 1) return [{ status: 'timeout' }]; enteredA.yes(); await holdingA.done; };
+  });
+  try {
+    await hydrationQueue(f).work; const swap = (source: PropertySource) => { f.host.openclast.propertyFacts = source; f.send('oc:property-facts-changed'); };
+    swap({ ...f.source, load(opts) { signalB = opts!.signal; return holdingB.done; } }); await Promise.resolve();
+    swap(f.source); expect(signalB?.aborted).toBe(true); expect(f.plugin.hydrationStatus).toBe('Room property load timed out');
+    const clicked = f.plugin.retryProperties; void clicked(); void clicked(); expect(calls).toBe(1);
+    expect(typeof hydrationQueue(f).next).toBe('function'); expect(f.plugin.retryProperties).toBeNull(); holdingB.yes(); await enteredA.done; void clicked();
+    expect(f.plugin.retryProperties).toBeNull(); expect(f.plugin.hydrationStatus).toBe('Room property load timed out'); holdingA.yes(); await hydrationQueue(f).work;
+    expect([calls, roomLoads]).toEqual([2, 0]); expect(f.plugin.hydrationStatus).toBe('');
+  } finally { holdingA.yes(); holdingB.yes(); f.close(); }
+});
+
 test('hydration: a burst behind discovery gets one aggregate call, no handle loads and no plugin or host lock requests', async () => {
   const hold = signal(), requests: string[] = [], signals: AbortSignal[] = []; let handles = 0;
   const locks = { request(name: string) { requests.push(name); throw Error('unexpected lock'); } } as unknown as LockManager;
@@ -772,22 +839,25 @@ test('hydration: aggregate rejection reports failure, does not verify facts and 
   }; });
   try {
     await hydrationQueue(f).work; expect(f.plugin.hydrationStatus).toBe('Some room properties could not load');
-    await f.plugin.loadProperties(); expect(calls).toBe(2); expect(f.plugin.hydrationStatus).toBe('');
+    await f.plugin.loadProperties(); expect(calls).toBe(1);
+    await f.plugin.retryProperties(); expect(calls).toBe(2); expect(f.plugin.hydrationStatus).toBe('');
     expect(f.adapter.factsComplete()).toBe(false); expect(f.disk.writes).toBe(0);
   } finally { f.close(); }
 });
 
-test('hydration: a queued retry keeps the physical failure visible through its caller deadline', async () => {
+test('hydration: an explicit retry keeps failure visible through its caller deadline without doubling requests', async () => {
   const first = signal(), retry = signal(), entered = signal(); let calls = 0;
   const f = await contractFixture(undefined, undefined, undefined, s => { s.load = async () => {
     if (++calls === 1) return first.done;
     entered.yes(); await retry.done;
   }; }, 30);
   try {
-    const caller = f.plugin.loadProperties(); first.no(Error('synthetic room failure')); await entered.done;
+    first.no(Error('synthetic room failure')); await hydrationQueue(f).work;
+    const click = f.plugin.retryProperties, caller = click(); void click(); await entered.done;
+    void click(); void f.plugin.loadProperties();
     expect(f.plugin.hydrationStatus).toBe('Some room properties could not load');
     await caller; expect(f.plugin.hydrationStatus).toBe('Some room properties could not load');
-    retry.yes(); await hydrationQueue(f).work; expect(f.plugin.hydrationStatus).toBe('');
+    retry.yes(); await hydrationQueue(f).work; expect(f.plugin.hydrationStatus).toBe(''); expect(calls).toBe(2);
   } finally { retry.yes(); f.close(); }
 });
 
@@ -808,7 +878,7 @@ test('hydration: a room timeout in a resolved aggregate is not success or a call
   ]; });
   try {
     await hydrationQueue(f).work; expect(f.plugin.hydrationStatus).toBe('Room property load timed out');
-    f.source.load = async () => [{ status: 'loaded' }]; await f.plugin.loadProperties(); expect(f.plugin.hydrationStatus).toBe('');
+    f.source.load = async () => [{ status: 'loaded' }]; await f.plugin.retryProperties(); expect(f.plugin.hydrationStatus).toBe('');
     expect(f.disk.writes).toBe(0);
   } finally { f.close(); }
 });

@@ -1,8 +1,9 @@
 import { test, expect, beforeEach, afterEach } from 'bun:test';
-import './support/obsidian-fixture';
+import { FixtureFile } from './support/obsidian-fixture';
 import { ControlElement, control as findControl } from './support/controls-dom';
 import GraphPlugin, { GraphView } from '../src/main';
 import { folderPredicate, folderView } from '../src/saved-views';
+import { renderProjection } from '../src/render-projection';
 import { emptyView, explore, validateSaved, type SavedView } from '../src/core/explore';
 import { buildProjection, colorGroups } from '../src/core/projection';
 import { defaults, loadSettings, settingsForSave } from '../src/settings';
@@ -38,6 +39,73 @@ async function fixture() {
   view.contentEl.dataset.mode = 'nodes'; await view.onOpen(); view.explorePanel.show('views');
   return { ...f, view, panel: view.explorePanel as any, renderer, camera, projection, result };
 }
+test('terminal room status: toolbar search, modes, members, note tab and graph reopen do not load; Try again does', async () => {
+  const { plugin, view, panel, renderer } = await fixture(), cleanups: Function[] = [], opened: string[][] = [];
+  let loads = 0, roomLoads = 0;
+  const retry = deferred(), room = { load() { roomLoads++; } }, source = Object.freeze({ get() {}, room: () => room, rooms: () => [room], roomFor: () => room,
+    async load() { if (++loads === 1) return [{ status: 'timeout' }]; await retry.promise; return [{ status: 'loaded' }]; } });
+  const host = Object.assign(new EventTarget(), { openclast: { propertyFacts: source } });
+  Object.assign(plugin, { app: view.app, adapter: { setPropertySource() {} }, notify() {}, register(fn: Function) { cleanups.push(fn); } });
+  Object.assign(view.app.workspace, { getLeavesOfType: () => [], requestSaveLayout() {}, openLinkText(...args: string[]) { opened.push(args); } });
+  view.app.vault.getAbstractFileByPath = (path: string) => new FixtureFile(path);
+  const drained = () => (host as any)[Symbol.for('graph-ng.property-loads')].work;
+  try {
+    plugin.watchProperties(host); view.app.workspace.getLeavesOfType = () => [{ view }]; await drained();
+    expect(view.statusSummary.textContent).toContain('Room property load timed out');
+    for (const query of ['Notes', '']) {
+      panel.search.value = query; panel.search.oninput(); panel.search.dispatchEvent(Object.assign(new Event('keydown'), { key: 'Enter' }));
+      await new Promise(r => setTimeout(r, 180)); expect(panel.view.query).toBe(query);
+    }
+    Object.assign(renderer, { returnPoint() {} });
+    // Stub canvas painting only; use the toolbar's real presentation and member handlers.
+    view.showGroups = () => { view.contentEl.dataset.mode = 'groups'; }; view.showDetails = () => { view.contentEl.dataset.mode = 'nodes'; };
+    control(view.toolbar, 'Groups').click(); expect(view.contentEl.dataset.mode).toBe('groups');
+    control(view.toolbar, 'Notes').click(); expect(view.contentEl.dataset.mode).toBe('nodes');
+    control(view.toolbar, 'Members').click(); view.groupGraph = { groups: [{ id: '0', label: 'Example', count: 1 }] };
+    const member = view.projection.paths.indexOf('Notes/a.md'); expect(member).toBeGreaterThanOrEqual(0);
+    view.projection = renderProjection(view.projection); plugin.pipeline.request = async () => new Uint32Array([member]); await view.drill('0', true);
+    control(view.panel, 'Open Notes/a.md').click(); expect(opened).toEqual([['Notes/a.md', '', 'tab']]);
+    // Returning to an existing leaf has no activation listener. Also exercise a full remount.
+    panel.dispose(); await view.onOpen(); view.statusText = ''; await drained();
+    expect([loads, roomLoads]).toEqual([1, 0]); control(view.statusSummary, 'Try again').click();
+    const busy = control(view.statusSummary, 'Retrying…'); expect(busy.disabled).toBe(true); expect(view.statusSummary.textContent).toContain('Room property load timed out');
+    busy.click(); retry.resolve(); await drained(); expect([loads, roomLoads]).toEqual([2, 0]); expect(view.statusSummary.querySelector('.graph-ng-retry')).toBeUndefined();
+  } finally { retry.resolve(); cleanups.forEach(fn => fn()); view.explorePanel.dispose(); }
+});
+test('terminal room control follows the visible diagnostic into Graph information and back', async () => {
+  const { plugin, view, panel } = await fixture(); let clicks = 0;
+  try {
+    plugin.hydrationStatus = 'Room property load timed out'; plugin.retryProperties = () => clicks++; view.statusText = '';
+    const button = control(view.statusSummary, 'Try again'); panel.show('information');
+    // The narrow container hides the idle canvas summary. The action must be inside the open panel, not that summary.
+    const message = view.status.querySelector('.graph-ng-status-message'); expect(view.status.hidden).toBe(false);
+    expect(message.contains(button)).toBe(true); expect(view.contentEl.querySelectorAll('.graph-ng-retry')).toHaveLength(1);
+    view.updateHydrationStatus(); button.focus(); button.click(); expect(clicks).toBe(1);
+    panel.close(); expect(control(view.statusSummary, 'Try again')).toBe(button); expect(view.contentEl.querySelectorAll('.graph-ng-retry')).toHaveLength(1);
+  } finally { panel.dispose(); }
+});
+test('keyboard retry keeps focus on the information panel close button through rejection', async () => {
+  const { plugin, view, panel } = await fixture(), hold = deferred(), cleanups: Function[] = []; let loads = 0;
+  const host = Object.assign(new EventTarget(), { openclast: { propertyFacts: { get() {}, rooms: () => [], async load() {
+    if (++loads === 1) return [{ status: 'timeout' }]; await hold.promise;
+  } } } });
+  Object.assign(plugin, { app: view.app, adapter: { setPropertySource() {} }, notify() {}, register(fn: Function) { cleanups.push(fn); } });
+  const drained = () => (host as any)[Symbol.for('graph-ng.property-loads')].work;
+  try {
+    view.app.workspace.getLeavesOfType = () => []; plugin.watchProperties(host); view.app.workspace.getLeavesOfType = () => [{ view }]; await drained();
+    panel.show('information'); const retry = control(view.status, 'Try again'), close = control(panel.root, 'Close graph tools');
+    // Native Enter on a button dispatches click with detail 0. The DOM seam does not synthesize browser defaults.
+    retry.focus(); retry.dispatchEvent(Object.assign(new Event('click'), { detail: 0 }));
+    expect(control(view.status, 'Retrying…').disabled).toBe(true); expect(ControlElement.active === close).toBe(true);
+    await tick(); hold.reject(Error('synthetic room failure')); await drained();
+    expect(control(view.status, 'Try again').disabled).toBe(false); expect(ControlElement.active === close).toBe(true);
+    expect(panel.root.contains(ControlElement.active)).toBe(true); panel.root.onkeydown({ key: 'Escape', preventDefault() {}, stopPropagation() {} }); expect(panel.root.hidden).toBe(true);
+    // An activation from elsewhere must not steal focus. Keyboard activation on the canvas stays on the canvas.
+    const canvas = control(view.statusSummary, 'Try again'), info = control(view.statusSummary, 'Graph information');
+    panel.search.focus(); canvas.click(); expect(ControlElement.active).toBe(panel.search); await drained();
+    canvas.focus(); canvas.click(); expect(ControlElement.active === info).toBe(true); await drained();
+  } finally { hold.resolve(); cleanups.forEach(fn => fn()); panel.dispose(); }
+});
 test('group visual changes repaint without replacing active panel controls or paging', async () => {
   const f = await fixture(); let paints = 0;
   f.view.contentEl.dataset.mode = 'groups'; f.view.detailRenderer = undefined;

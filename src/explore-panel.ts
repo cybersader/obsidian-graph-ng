@@ -159,7 +159,7 @@ export class ExplorePanel {
   private tool: Tool = 'views';
   private opener?: HTMLElement;
   private title: HTMLElement;
-  private closeButton: HTMLButtonElement;
+  readonly closeButton: HTMLButtonElement;
   private toolbar: HTMLElement;
   private buttons = new Map<Tool, HTMLButtonElement>();
   private representations = new Map<string, HTMLButtonElement>();

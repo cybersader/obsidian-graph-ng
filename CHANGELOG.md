@@ -22,7 +22,7 @@ The owner-approved bounded download ceilings for this UI pass are **488,000 raw 
 
 ## Unreleased: room startup and layout cache
 
-- Room load failures and overdue warnings stay visible through queued retries. Inventory recovery updates the status immediately, and a room timeout has its own message.
+- A failed or timed-out room property request no longer repeats when Graph NG opens or reopens. The graph keeps its available facts and shows **Try again** beside the failure. A replacement host property source can load normally. Inventory recovery restores the underlying status immediately.
 - Groups can paint before checking the chunks of an older Auto layout. A settled recompute replaces an incompatible cache even if the key is unchanged. Stopping Graphics before its first readback reports Graphics for both warm and cold starts; a warm start keeps its coordinates without setting up a Processor solver.
 
 ## Unreleased: layout timing
