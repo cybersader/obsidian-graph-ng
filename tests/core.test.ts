@@ -5,7 +5,7 @@ import { runLayout, DEFAULT_LAYOUT } from '../src/core/layout';
 import { incrementalLayout, warmLayout, edgeKeys } from '../src/core/incremental';
 import { generationKey } from '../src/core/generation';
 import { groupPages, page } from '../src/core/group-page';
-import { contractGroups, validateGroupProjection, resolveCarrier } from '../src/core/group-projection';
+import { contractGroups, validateGroupProjection, resolveCarrier, pairKey } from '../src/core/group-projection';
 import { SpatialGrid } from '../src/core/grid';
 import { defaults, validateSettings } from '../src/settings';
 import { exampleDeclaration, fixture } from '../scripts/fixture';
@@ -89,6 +89,62 @@ describe('columnar projection', () => {
     const facts = fixture(), p = buildProjection(facts, d);
     expect(facts.length).toBe(60600); expect(p.paths.length).toBe(16000); expect(p.source.length).toBe(44600); expect(p.unresolved).toBe(0);
     const literal = buildProjection(facts, { ...d, display: { reifiedAsNodes: true } }); expect(literal.paths.length).toBe(60600); expect(literal.source.length).toBe(89200);
+  });
+});
+describe('unfiltered saved-layout group summaries', () => {
+  function compareSummary(p: ReturnType<typeof buildProjection>, level: number) {
+    const full = contractGroups(p, filterNodes(p), level);
+    const historical = { ...full.projection, groupEdges: full.projection.groupEdges.map(e => ({ ...e, carriers: { kind: e.carriers.kind, ids: [] } })) };
+    const summary = contractGroups(p, undefined, level).projection;
+    expect(JSON.stringify(summary)).toBe(JSON.stringify(historical)); // Includes array, pair, and own-key order.
+    validateGroupProjection(summary);
+    return { summary, full };
+  }
+  test('preserves typed labels, lexical pair orientation, self-pairs, and details on the full path', () => {
+    const notes: FactRow[] = Array.from({ length: 12 }, (_, i) => ({
+      path: `"folder"/note-${i}.md`, properties: { id: `n${i}`, family: `Group ${String(i).padStart(2, '0')}` },
+    }));
+    notes[2]!.links = { 'links@1': [notes[10]!.path] };
+    const carriers: FactRow[] = [
+      { path: '!/first.md', properties: { subject_id: 'n2', object_id: 'n10', predicate: '__proto__' } },
+      { path: '!/reverse.md', properties: { subject_id: 'n10', object_id: 'n2', predicate: 'constructor' } },
+      { path: '!/self.md', properties: { subject_id: 'n2', object_id: 'n2', predicate: 'constructor' } },
+      { path: '!/second.md', properties: { subject_id: 'n2', object_id: 'n10', predicate: '__proto__' } },
+    ];
+    const decl = { ...d, edges: [...d.edges, { kind: 'producer' as const, name: 'links', producer: 'links@1', type: '2' }] };
+    const p = buildProjection([...notes, ...carriers], decl);
+    const { summary, full } = compareSummary(p, 0);
+    const expectedPair = { a: '10', b: '2', total: 4, typeCounts: JSON.parse('{"2":1,"__proto__":2,"constructor":1}'),
+      directional: { aToB: { constructor: 1 }, bToA: JSON.parse('{"2":1,"__proto__":2}') }, carriers: { kind: 'note-path', ids: [] } };
+    expect(JSON.stringify(summary.groupEdges[0])).toBe(JSON.stringify(expectedPair));
+    expect(summary.groupEdges[1]).toMatchObject({ a: '2', b: '2', total: 1, directional: { aToB: { constructor: 1 }, bToA: {} } });
+    expect(summary.groups[2]).toEqual({ id: '2', key: '"Group 02"', label: 'Group 02', count: 1 });
+    expect(full.projection.groupEdges[0]!.carriers.ids).toEqual(['!/first.md', '!/reverse.md', '!/second.md']);
+    expect(full.contributions.get(pairKey('10', '2'))).toEqual([
+      { source: notes[2]!.path, target: notes[10]!.path, type: '__proto__', carrier: '!/first.md' },
+      { source: notes[10]!.path, target: notes[2]!.path, type: 'constructor', carrier: '!/reverse.md' },
+      { source: notes[2]!.path, target: notes[10]!.path, type: '__proto__', carrier: '!/second.md' },
+      { source: notes[2]!.path, target: notes[10]!.path, type: '2', carrier: undefined },
+    ]);
+    expect(full.members.get('2')).toEqual([p.paths.indexOf(notes[2]!.path)]);
+    const visible = filterNodes(p); visible[p.paths.indexOf(notes[10]!.path)] = 0;
+    const filtered = contractGroups(p, visible);
+    expect(filtered.projection.groupEdges.map(e => [e.a, e.b])).toEqual([['2', '2']]);
+    expect(filtered.members.has('10')).toBe(false);
+    expect(compareSummary(p, 1).summary.groups[0]!.label).toBe('"folder"');
+    expect(compareSummary(p, 99).summary.groups).toEqual([{ id: '0', key: 'All notes', label: 'All notes', count: 12 }]);
+  });
+  test('matches empty, isolated, and seeded graph contractions across levels and representations', () => {
+    for (const reifiedAsNodes of [false, true]) {
+      const decl = { ...d, display: { reifiedAsNodes } };
+      const typed = [undefined, null, false, 7, '7', ['a', 'b'], { key: 'value' }, '"quoted"'];
+      const graphs = [[], [{ path: 'isolated.md', properties: {} }], ...[1, 17, 83, 0xabcdef].map(seed =>
+        fixture(41, 307, seed).map((row, i) => ({ ...row, properties: { ...row.properties, family: typed[(seed + i) % typed.length] } })))];
+      for (const facts of graphs) {
+        const p = buildProjection(facts, decl);
+        for (const level of [0, 1, 9]) compareSummary(p, level);
+      }
+    }
   });
 });
 describe('layout, grid and incremental generations', () => {

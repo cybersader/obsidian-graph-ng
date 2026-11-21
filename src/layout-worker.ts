@@ -83,7 +83,7 @@ const matches = (g: GenerationMeta) => compatible(g) && g.declarationHash === de
 /** Cached paints are the unfiltered declared grouping; a persisted view is reapplied live. */
 const exactCoordinates = (g: BinaryLayout) => g.meta.key === meta.key && g.identities.length === projection.identities.length && g.identities.every((id, i) => id === projection.identities[i]);
 function exactSaved() { return !!(complete && !interim && saved && matches(saved.meta) && exactCoordinates(saved)); }
-function cacheSummary() { return groupSummary(contractGroups(projection, new Uint8Array(projection.paths.length).fill(1), config.groupLevel).projection); }
+function cacheSummary() { return contractGroups(projection, undefined, config.groupLevel).projection; }
 function groupSummary(p: GroupProjection): GroupProjection {
   // Carrier/contribution objects remain worker-owned and are read a page at a time.
   return { ...p, groupEdges: p.groupEdges.map(e => ({ ...e, carriers: { kind: e.carriers.kind, ids: [] } })) };
@@ -151,6 +151,8 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       projectionRevision = revision;
       complete = r.complete !== false;
       positions = undefined;
+      // An unfiltered rebuild never consults the carrier cache. Drop the old pair before allocating its successor.
+      carrierCache = undefined;
       const input = [...rows.values()];
       projection = buildProjection(input, config.declaration);
       colors = colorGroups(projection, config.declaration);

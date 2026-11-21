@@ -2,6 +2,24 @@
 
 Results belong to an exact invocation, fixture, source revision and hardware class. They do not establish all-scale acceptance. Original slice-1 source is `041e1382` (2026-11-10); release-readiness baseline is `9b8cc07`. Historical tables below remain dated evidence. The slice-2 section records the new worker/browser/native invocations and unmet targets separately. Raw receipts remain ignored and local; publish only scrubbed summaries without hostnames, usernames, real-vault paths or private projections.
 
+## Saved-layout group summary candidate
+
+A focused synthetic Bun comparison isolates the saved-layout summary call from projection construction, layout solving, encoding and persistence. The baseline is the production full contraction plus carrier stripping from `c1dfba4`; the candidate uses the same aggregation without detail collection. Use the fixed seed-17 fixture (16,000 notes and 44,600 relationships) in Lines and Nodes representations, plus Lines grouped by distinct declared identity to stress the number of pairs. Warm each path with 12 calls per fixture, rotate call order across 31 timed samples per path, and compare medians. A full-contraction-plus-stripping control on the candidate source separates the shared pair-key simplification from omitting detail. Compare the exact JSON before timing, including full interactive details against the frozen baseline. Count eliminated lists, entries and records separately from elapsed time, not as heap or physical memory. Worker integration tests compare the encoded bytes under a different active grouping and filter, including an exact reuse of positions from a generation without group-summary bytes. This does not measure browser, full-generation, disk or native latency.
+
+| Synthetic representation | Baseline median | Candidate median |
+| --- | ---: | ---: |
+| Lines (16,000 nodes, 44,600 edges) | 20.35 ms | 12.69 ms |
+| Nodes (60,600 nodes, 89,200 edges) | 41.12 ms | 25.13 ms |
+| Lines with 44,596 distinct group pairs | 42.60 ms | 27.63 ms |
+
+On the Nodes fixture the summary omitted 89,200 contribution objects, 60,600 member-list entries and 89,200 carrier-ID entries. These counts do not estimate reclaimed bytes. A separate disposable four-note browser-native check on harness `1277bfbd` with explicit settlement settings verified that the combined build committed the expected group counts and directed links to its binary store. It did not test a cold reload or a connected room.
+
+## Filter cache lifetime on a 49k-note refresh
+
+Five counterbalanced fresh triads compared host only, `c1dfba4`, and the isolated cache-retirement change (not the combined summary optimization). The synthetic Notes fixture used software Canvas and Processor layout. All plugin runs hydrated 49,000 notes, quarantined two duplicate identities and projected 66,000 edges. A separate instrumented baseline retained 3,487,968 bytes of cache-exclusive typed-array backing after filter, clear and refresh; the instrumented variant retained none through that reference and rebuilt the current counts correctly on reapply. This proves cache ownership, not physical release.
+
+There was **no reproducible peak-RAM reduction**. Target-refresh browser-tree sampled PSS was lower for the variant in two of five pairs; median paired change was +2.8 MiB (variant minus baseline), against a 109.7 MiB range across host-only window peaks. Median refresh and first Canvas fill changed by +0.32% and +0.11%, respectively. Every plugin run's largest sample was outside the target refresh, during the second refresh/Stop or after view close. The cache lifetime fix is not a demonstrated peak-memory optimization.
+
 ## Layout timing prompts
 
 Quick start is a device preference, not a solver or cache-key change. Its two seconds start at solve entry, not vault open. The next completed Processor step or validated Graphics batch can become a draft; normal completion wins at the same checkpoint. An unchanged refresh reuses the in-memory draft without solving or encoding it. Explicit physics changes retain their full-pass budget through a failed dispatch or worker result. The synthetic clock checks adoption, refusal to encode a draft, and on-demand refinement; it does not measure native time to interaction.

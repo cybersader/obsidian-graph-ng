@@ -5,7 +5,8 @@ import { generationKey } from '../src/core/generation';
 import { layoutIdentity } from '../src/core/layout-options';
 import { DEFAULT_LAYOUT, initialPositions } from '../src/core/layout';
 import { packRows, unpackRows, transferables, encodeStrings, decodeStrings } from '../src/core/columns';
-import { buildProjection, type FactRow } from '../src/core/projection';
+import { buildProjection, filterNodes, type FactRow } from '../src/core/projection';
+import { contractGroups, type GroupProjection } from '../src/core/group-projection';
 import { sliced } from '../src/core/scheduler';
 import { CACHE_FORMAT, BinaryLayoutStore, encodeLayout, decodeLayout, type BinaryAdapter, type BinaryGeneration, type GenerationMeta } from '../src/core/binary-layout';
 const declaration = defaultDeclaration('fixture@1');
@@ -164,6 +165,34 @@ test('worker builds/groups first, transfers detail buffers, reuses exact cache a
     expect((await p.request<LayoutResult>(9, { kind: 'layout' })).cached).toBe(false);
   } finally { p.dispose(); }
 });
+test('saved-layout summary bytes use the declared level and ignore the live view, including on an exact hit without summary bytes', async () => {
+  const p = pipeline();
+  const d = { ...declaration, groups: [...declaration.groups, { from: 'key' as const, key: 'class' }] };
+  const rows: FactRow[] = [
+    { path: 'A/First.md', properties: { class: 'One' }, links: { 'fixture@1': ['B/Second.md'] } },
+    { path: 'B/Second.md', properties: { class: 'Two' } },
+  ];
+  const graph = buildProjection(rows, d), full = contractGroups(graph, filterNodes(graph), 1).projection;
+  const historical = JSON.stringify({ ...full, groupEdges: full.groupEdges.map(e => ({ ...e, carriers: { kind: e.carriers.kind, ids: [] } })) });
+  const view = { query: 'First', filters: [], group: { from: 'folder' as const, depth: 1 }, hiddenGroups: [], collapsedGroups: [], hiddenColors: [], hiddenTypes: [] };
+  try {
+    await p.request(1, { kind: 'configure', config: { ...config, declaration: d, groupLevel: 1, view } });
+    await p.request(1, { kind: 'rows', reset: true, columns: packRows(rows, d) });
+    await p.request(1, { kind: 'project' });
+    const live = await p.request<{ groups: GroupProjection }>(1, { kind: 'explore', view, facetValues: 10 });
+    expect(live.groups.groups.map(g => g.label)).toEqual(['A']);
+    expect(live.groups.groupEdges).toEqual([]);
+    expect((await p.request<LayoutResult>(1, { kind: 'layout' })).settled).toBe(true);
+    const saved = await p.request<BinaryGeneration>(1, { kind: 'encode' });
+    expect(new TextDecoder().decode(saved.files.groups)).toBe(historical);
+    delete saved.files.groups;
+    await p.request(2, { kind: 'load', generation: saved });
+    await p.request(2, { kind: 'project' });
+    expect((await p.request<LayoutResult>(2, { kind: 'layout' })).cached).toBe(true);
+    const rebuilt = await p.request<BinaryGeneration>(2, { kind: 'encode' });
+    expect(new TextDecoder().decode(rebuilt.files.groups)).toBe(historical);
+  } finally { p.dispose(); }
+});
 test('view namespace discard removes all old view artifacts', async () => {
   const adapter = new MemoryAdapter(), store = new BinaryLayoutStore(adapter, options); await store.write(await generation()); await store.discard();
   expect([...adapter.files.keys()].some(p => p.startsWith(options.directory + '/'))).toBe(false);
@@ -298,6 +327,28 @@ test('worker timeout/error restarts are bounded, reject old queue, and permit fr
     const final = p.request(4, { kind: 'project' }); const failed = final.catch(e => String(e)); fresh.transport.onerror?.({ message: 'second crash' } as ErrorEvent);
     expect(await failed).toContain('second crash'); expect(restarted).toBe(1); await expect(p.request(5, { kind: 'project' })).rejects.toThrow('closed'); p.dispose();
   }
+});
+test('cleared relationship filters rebuild counts from the refreshed rows when reapplied', async () => {
+  const p = pipeline(), { emptyView } = await import('../src/core/explore');
+  const d = { ...declaration, identity: [{ key: 'id' }], display: { reifiedAsNodes: false }, columns: ['keep'],
+    edges: [{ kind: 'reified' as const, name: 'relationship', sourceProperty: 'from', targetProperty: 'to' }] };
+  const apply = (revision: number, enabled: boolean) => p.request<Pick<DetailResult, 'explore'>>(revision, { kind: 'explore',
+    view: { ...emptyView(), filters: enabled ? [{ kind: 'exists', key: 'keep' }] : [] }, facetValues: 10 });
+  try {
+    const edge = { path: 'first.md', properties: { id: 'one', from: 'a', to: 'b' } };
+    await p.request(1, { kind: 'configure', config: { ...config, declaration: d } });
+    await p.request(1, { kind: 'rows', reset: true, columns: packRows([
+      { path: 'a.md', properties: { id: 'a', keep: true } }, { path: 'b.md', properties: { id: 'b', keep: true } }, edge,
+    ], d) });
+    await p.request(1, { kind: 'project' });
+    expect((await apply(1, true)).explore.carrierHidden).toEqual([1]);
+    expect((await apply(1, false)).explore.carrierHidden).toBeUndefined();
+    await p.request(2, { kind: 'rows', columns: packRows([{ path: 'second.md', properties: { ...edge.properties, id: 'two' } }], d) });
+    const update = await p.request<ProjectResult>(2, { kind: 'project' });
+    expect([update.nodes, update.edges]).toEqual([2, 2]);
+    expect((await p.request<DetailResult>(2, { kind: 'detail' })).explore.carrierHidden).toBeUndefined();
+    expect((await apply(2, true)).explore.carrierHidden).toEqual([2]);
+  } finally { p.dispose(); }
 });
 test('member/contribution reads are queued and bound to their projection revision', async () => {
   const p = pipeline();

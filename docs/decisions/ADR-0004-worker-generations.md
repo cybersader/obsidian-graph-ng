@@ -22,6 +22,8 @@ Slice-1 active-layout data is accepted once as a bounded migration input, encode
 
 The last compatible group summary can paint before metadata is ready, explicitly labelled `cached · verifying N of M`. Member lists and filters are provisional until each Markdown file has a non-null public cache entry. Repeated `resolved` events alone are not readiness. Partial graphs do not overwrite complete persisted generations. After live verification an equal generation key restores positions; a changed key rebuilds or uses compatible in-view warm hints. No persisted frontmatter bypass is introduced.
 
+The saved-layout path uses the same contraction as live Groups over all projected notes and the configured declared group level, without populating member or contribution lists or carrier IDs. Ordered group-summary JSON, including the empty carrier list and carrier kind on every pair, is unchanged. Live views still retain full details in the worker; neither the binary format nor cache identity changes.
+
 External aggregate files have finite default byte/group/pair/carrier limits and remain labelled **unverified external aggregate**; they never merge into local rows. The headless export labels its caller-supplied one-view input and writes only to the explicit command-line destination. There is no in-app export or automatic vault export.
 
 ### Metadata churn and provisional continuation (unreleased)

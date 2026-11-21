@@ -49,23 +49,34 @@ export function validateGroupProjection(v: unknown, limits: ProjectionLimits = {
 }
 export interface GroupContribution { source: string; target: string; type: string; carrier?: string }
 export const pairKey = (a: string, b: string) => JSON.stringify([a, b].sort());
-export function contractGroups(p: Projection, visible: Uint8Array, level = 0): { projection: GroupProjection; contributions: Map<string, GroupContribution[]>; members: Map<string, number[]> } {
-  const source = p.groups[level] ?? { values: ['All notes'], codes: new Uint32Array(p.paths.length) };
-  const groups = source.values.map((label, id) => { let display = label; if ('encoded' in source && source.encoded) { try { const parsed: unknown = JSON.parse(label); if (typeof parsed === 'string') display = parsed; } catch { /* Missing-property sentinel is not JSON. */ } } return { id: String(id), key: label, label: display, count: 0 }; });
-  const members = new Map<string, number[]>(), contributions = new Map<string, GroupContribution[]>();
-  for (let i = 0; i < p.paths.length; i++) if (visible[i]) { const g = groups[source.codes[i]!]!; g.count++; const m = members.get(g.id); if (m) m.push(i); else members.set(g.id, [i]); }
+/** No visibility mask requests only the unfiltered summary for a saved layout. */
+export function contractGroups(p: Projection, visible: undefined, level?: number): { projection: GroupProjection; contributions: undefined; members: undefined };
+export function contractGroups(p: Projection, visible: Uint8Array, level?: number): { projection: GroupProjection; contributions: Map<string, GroupContribution[]>; members: Map<string, number[]> };
+export function contractGroups(p: Projection, visible: Uint8Array | undefined, level = 0): {
+  projection: GroupProjection; contributions: Map<string, GroupContribution[]> | undefined; members: Map<string, number[]> | undefined;
+} {
+  const { codes, values, encoded } = p.groups[level] ?? { values: ['All notes'], codes: new Uint32Array(p.paths.length), encoded: false };
+  const groups = values.map((label, id) => { let display = label; if (encoded) { try { const parsed: unknown = JSON.parse(label); if (typeof parsed === 'string') display = parsed; } catch { /* Missing-property sentinel is not JSON. */ } } return { id: String(id), key: label, label: display, count: 0 }; });
+  const members = visible && new Map<string, number[]>(), contributions = visible && new Map<string, GroupContribution[]>();
+  for (let i = 0; i < p.paths.length; i++) if (!visible || visible[i]) {
+    const g = groups[codes[i]!]!; g.count++;
+    if (members) { const m = members.get(g.id); if (m) m.push(i); else members.set(g.id, [i]); }
+  }
   const pairs = new Map<string, GroupProjection['groupEdges'][number]>();
   for (let i = 0; i < p.source.length; i++) {
     const s = p.source[i]!, t = p.target[i]!;
-    if (!visible[s] || !visible[t]) continue;
-    const from = String(source.codes[s]), to = String(source.codes[t]), [a, b] = [from, to].sort() as [string, string], key = pairKey(a, b);
+    if (visible && (!visible[s] || !visible[t])) continue;
+    const from = String(codes[s]), pair = [from, String(codes[t])].sort() as [string, string], [a, b] = pair, key = JSON.stringify(pair);
     let edge = pairs.get(key);
-    if (!edge) { edge = { a, b, total: 0, typeCounts: Object.create(null), directional: { aToB: Object.create(null), bToA: Object.create(null) }, carriers: { kind: 'note-path', ids: [] } }; pairs.set(key, edge); contributions.set(key, []); }
-    const type = p.types[p.type[i]!]!, carrier = p.carrierPaths[p.carrier[i]!];
+    if (!edge) { edge = { a, b, total: 0, typeCounts: Object.create(null), directional: { aToB: Object.create(null), bToA: Object.create(null) }, carriers: { kind: 'note-path', ids: [] } }; pairs.set(key, edge); contributions?.set(key, []); }
+    const type = p.types[p.type[i]!]!;
     edge.total++; edge.typeCounts[type] = (edge.typeCounts[type] ?? 0) + 1;
     const dir = from === a ? edge.directional!.aToB : edge.directional!.bToA; dir[type] = (dir[type] ?? 0) + 1;
-    if (carrier !== undefined) edge.carriers.ids.push(carrier);
-    contributions.get(key)!.push({ source: p.paths[s]!, target: p.paths[t]!, type, carrier });
+    if (contributions) {
+      const carrier = p.carrierPaths[p.carrier[i]!];
+      if (carrier !== undefined) edge.carriers.ids.push(carrier);
+      contributions.get(key)!.push({ source: p.paths[s]!, target: p.paths[t]!, type, carrier });
+    }
   }
   return { projection: { groups: groups.filter(g => g.count), groupEdges: [...pairs.values()] }, contributions, members };
 }
