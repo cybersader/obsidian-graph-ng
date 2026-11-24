@@ -46,5 +46,17 @@ export const MANGLED_PROPS = ['canvasEdgeTimer', 'prepareCanvasEdgeIndex', 'canv
   'restoreFacts', 'saveFacts', 'clearFacts', 'savedFacts', 'retireSaved', 'savedCopy',
   'rejectSaved', 'purgeFacts', 'cacheStatus', 'factError', 'factDirectory', 'factStore', 'deadlineMs', 'cacheKey',
   'hydrationStatus', 'retryProperties', 'updateHydrationStatus', 'inventoryError', 'onInventoryChange',
-  'retryButton', 'placeRetry', 'partitions', 'pruneDeferred', 'namespaceWrite', 'layoutEngineDraft'];
+  'retryButton', 'placeRetry', 'partitions', 'pruneDeferred', 'namespaceWrite', 'layoutEngineDraft',
+  // Main-realm search binding, panel state and renderer scratch, never settings or messages.
+  'fullColdPass', 'layoutRecords', 'handoffRatio', 'groupText', 'updateLayoutApply', 'carrierPins', 'carrierPinned',
+  'passSteps', 'carrierLineShown', 'releasePaint', 'replayViewHover', 'pinCarriers', 'layoutLabel', 'canApplyLayout',
+  'createNotesRenderer', 'settleMembers', 'scopeGroup', 'canvasSelectionKey', 'plainPreview', 'ensureNotesLayout',
+  'queryAside', 'displayView', 'restoreQuery', 'updateGraphicsHint', 'performanceModalOpen', 'onPreviewMotion',
+  'recordLayoutEngine', 'layoutChoices', 'ensureDeviceNamespace', 'commitPerformance', 'recordPerformance',
+  'sourceIdentity', 'performanceReason', 'moreFor', 'recovering', 'setupCurrent', 'persistDevice', 'makeBounds', 'protectedNodes', 'protectedRows', 'layoutPaint', 'queueRanking', 'refreshSearchMask', 'canvasBatches', 'workspaceNotes', 'renderScale', 'inkRank', 'atlasWidth', 'watchPreview',
+  'filterReady', 'syncJumpReady', 'matchCount', 'applyFilter', 'clearQuery',
+  'deviceStore', 'applyButton', 'localGroups', 'finishPaint', 'setPresentation', 'rememberPointer', 'labelNeighbours',
+  'clearMemberRows', 'canvasSelection', 'acceptPositions', 'carrierPinKey', 'syncNotesView', 'groupName',
+  'restoreInput', 'bindToolbar', 'searchControls', 'jumpMode', 'reducedCanvas', 'selectionNames', 'replayAfterPaint', 'beforeLayoutPaint',
+  'graphicsTrial', 'finishDraft', 'deferredLayout', 'stageAnnouncement', 'idleLayoutText', 'layoutStopped', 'membersReady'];
 export const mangleProps = new RegExp(`^(?:${MANGLED_PROPS.join('|')})$`);

@@ -44,7 +44,7 @@ function button(modal,label){return settings.filter(s=>s.host===modal.contentEl)
 function control(host,label){return host.all().find(e=>e.options.attr?.['aria-label']===label);}
 (async()=>{
   const all=await plugin();all.settings.performance='quality';all.settings.visuals.labelStyle='ranked';all.settings.visuals.curvedEdges=true;all.settings.declaration.display.reifiedAsNodes=true;
-  all.recordPerformance({notes:20000});const offer=modals.at(-1);
+  all[mangle.recordPerformance]({notes:20000});const offer=modals.at(-1);
   assert.equal(offer.title,'This graph is large');assert.ok(offer.contentEl.all().some(e=>e.textContent==='20,000 notes in this graph'));
   assert.equal(button(offer,'Speed up').buttonEl.focused,true);
   const choices=offer.contentEl.querySelector('details');assert.ok(choices);assert.ok(!choices.open);assert.ok(choices.all().some(e=>e.textContent==='Choose changes'));
@@ -66,17 +66,17 @@ function control(host,label){return host.all().find(e=>e.options.attr?.['aria-la
   // Another validated settings apply can replace the object without rebuilding these controls.
   p.settings=structuredClone(p.settings);
   const log=control(host,'Local performance log');log.checked=false;log.onchange();await p.save();
-  p.recordPerformance({notes:1});await p.save();assert.equal(p.settings.performanceDiagnostics,false);assert.equal(p.disk.performanceLog,undefined);
+  p[mangle.recordPerformance]({notes:1});await p.save();assert.equal(p.settings.performanceDiagnostics,false);assert.equal(p.disk.performanceLog,undefined);
   const mode=control(host,'Performance');mode.value='quality';mode.onchange();await p.save();assert.equal(p.settings.performance,'quality');
   console.log('PASS event-time controls, diagnostics OFF, and modal redraw');
-  const q=await plugin();q.notify=async()=>q.recordPerformance({notes:20000});mod.exports.__modal(q);const manual=modals.at(-1);
+  const q=await plugin();q.notify=async()=>q[mangle.recordPerformance]({notes:20000});mod.exports.__modal(q);const manual=modals.at(-1);
   const motion=control(manual.contentEl,'Turn off motion');motion.checked=false;motion.onchange();const before=modals.length;
   await button(manual,'Speed up').click();assert.equal(modals.length,before);assert.equal(q.settings.visuals.motion,'full');
   console.log('PASS manual Apply prevents automatic modal re-entry');
   for(const dismiss of ['Not now','X']){
-    const r=await plugin();r.recordPerformance({notes:20000});const first=modals.at(-1);
+    const r=await plugin();r[mangle.recordPerformance]({notes:20000});const first=modals.at(-1);
     if(dismiss==='X')first.close();else await button(first,'Not now').click();await r.save();
-    const reloaded=await plugin(r.disk,r.localStorage);const count=modals.length;reloaded.recordPerformance({notes:20000});assert.equal(modals.length,count);
+    const reloaded=await plugin(r.disk,r.localStorage);const count=modals.length;reloaded[mangle.recordPerformance]({notes:20000});assert.equal(modals.length,count);
     mod.exports.__modal(reloaded);assert.equal(modals.length,count+1);modals.at(-1).close();await reloaded.save();
   }
   console.log('PASS dismissal persists across reload; manual reopening remains available');
@@ -100,7 +100,7 @@ function control(host,label){return host.all().find(e=>e.options.attr?.['aria-la
   assert.equal(control(tab.containerEl,'Graph declaration JSON'),draft);assert.equal(draft.value,'{"syntheticDraft":true}');assert.equal(control(tab.containerEl,'Tuning settings JSON'),knobs);assert.equal(knobs.value,'{"syntheticTuningDraft":true}');
   console.log('PASS performance-only redraw preserves both JSON drafts');
   const quiet=await plugin();let rebuilds=0;quiet.notify=async()=>{rebuilds++;};quiet.adapter.configure=()=>{rebuilds++;};
-  await quiet.commitPerformance(new Set(),true,()=>true);assert.equal(rebuilds,0);assert.equal(local(quiet).settings.performanceSuggestions,false);
+  await quiet[mangle.commitPerformance](new Set(),true,()=>true);assert.equal(rebuilds,0);assert.equal(local(quiet).settings.performanceSuggestions,false);
   console.log('PASS suppression-only save does not rebuild the graph');
   mod.exports.__modal(quiet);const quietModal=modals.at(-1);
   for(const input of quietModal.contentEl.querySelector('details').all().filter(e=>e.tagName==='INPUT')){input.checked=false;input.onchange();}
@@ -116,8 +116,8 @@ function control(host,label){return host.all().find(e=>e.options.attr?.['aria-la
   migrated.settings.performance='fast';await migrated.save();const again=await plugin(legacy,migrated.localStorage);assert.equal(again.settings.performance,'fast');
   console.log('PASS one-time migration preserves settings, clears foreign samples, and removes shared device fields');
   const memberA=await plugin(migrated.disk),memberB=await plugin(migrated.disk);
-  memberA.settings.performance='fast';memberA.settings.performanceSuggestions=false;memberA.settings.performancePrompted=true;memberA.settings.performanceDiagnostics=true;memberA.recordPerformance({notes:12});await memberA.save();
-  memberB.settings.performance='quality';memberB.settings.performanceSuggestions=true;memberB.settings.performancePrompted=false;memberB.settings.performanceDiagnostics=true;memberB.recordPerformance({notes:23});await memberB.save();
+  memberA.settings.performance='fast';memberA.settings.performanceSuggestions=false;memberA.settings.performancePrompted=true;memberA.settings.performanceDiagnostics=true;memberA[mangle.recordPerformance]({notes:12});await memberA.save();
+  memberB.settings.performance='quality';memberB.settings.performanceSuggestions=true;memberB.settings.performancePrompted=false;memberB.settings.performanceDiagnostics=true;memberB[mangle.recordPerformance]({notes:23});await memberB.save();
   const reloadA=await plugin(memberB.disk,memberA.localStorage),reloadB=await plugin(memberA.disk,memberB.localStorage);
   assert.equal(reloadA.settings.performance,'fast');assert.equal(reloadB.settings.performance,'quality');assert.equal(reloadA.settings.performanceSuggestions,false);assert.equal(reloadB.settings.performanceSuggestions,true);assert.equal(reloadA.settings.performancePrompted,true);assert.equal(reloadB.settings.performancePrompted,false);assert.equal(reloadA.performanceLog[0].notes,12);assert.equal(reloadB.performanceLog[0].notes,23);sharedOnly(memberA);sharedOnly(memberB);
   console.log('PASS two members share one data.json but keep independent modes, flags and logs');
@@ -132,31 +132,31 @@ function control(host,label){return host.all().find(e=>e.options.attr?.['aria-la
   const choice=await plugin();choice.manifest.version='0.5.2';
   // Include the legacy fields so the previous bundle cannot pass by rejecting this sample.
   const timing={bucket:3,mode:0,every:5,batch:5,iterations:8,cpuSetup:2,gpuSetup:100,cpuStep:25,gpuStep:1,measuredAt:Date.now(),engine:'graphics',processorMs:200,graphicsMs:108,setupMs:100};
-  choice.recordLayoutEngine({engine:'graphics',reason:'timing',timing},true);
-  assert.equal(choice.layoutChoices().length,0);
-  choice.recordLayoutEngine({engine:'graphics',reason:'timing',timing});
-  assert.equal(choice.layoutChoices()[0].gpuStep,1);
+  choice[mangle.recordLayoutEngine]({engine:'graphics',reason:'timing',timing},true);
+  assert.equal(choice[mangle.layoutChoices]().length,0);
+  choice[mangle.recordLayoutEngine]({engine:'graphics',reason:'timing',timing});
+  assert.equal(choice[mangle.layoutChoices]()[0].gpuStep,1);
   const shared={deviceNamespace:choice.deviceNamespace};
-  const populated=await plugin(shared,choice.localStorage);populated.manifest.version='0.5.2';assert.equal(populated.layoutChoices()[0].gpuStep,1);
-  choice.recordLayoutEngine({engine:'processor',reason:'failed',evictBucket:3},true);
-  const restarted=await plugin(shared,choice.localStorage);restarted.manifest.version='0.5.2';assert.equal(restarted.layoutChoices().length,0);
+  const populated=await plugin(shared,choice.localStorage);populated.manifest.version='0.5.2';assert.equal(populated[mangle.layoutChoices]()[0].gpuStep,1);
+  choice[mangle.recordLayoutEngine]({engine:'processor',reason:'failed',evictBucket:3},true);
+  const restarted=await plugin(shared,choice.localStorage);restarted.manifest.version='0.5.2';assert.equal(restarted[mangle.layoutChoices]().length,0);
   console.log('PASS engine progress cannot publish a winner; graphics failure evicts the durable bucket');
-  const absent=await plugin(migrated.disk,undefined);context.localStorage=undefined;await absent.loadDevicePerformance(absent.deviceNamespace);absent.settings.performance='quality';await absent.commitPerformance(new Set(['fast']),true,()=>true);assert.equal(absent.settings.performance,'fast');sharedOnly(absent);
-  const throwing=await plugin(migrated.disk,{getItem(){throw Error('disabled');},setItem(){throw Error('quota');}});throwing.settings.performanceDiagnostics=true;throwing.recordPerformance({notes:3});await throwing.save();assert.equal(throwing.performanceLog[0].notes,3);sharedOnly(throwing);
+  const absent=await plugin(migrated.disk,undefined);context.localStorage=undefined;await absent.loadDevicePerformance(absent.deviceNamespace);absent.settings.performance='quality';await absent[mangle.commitPerformance](new Set(['fast']),true,()=>true);assert.equal(absent.settings.performance,'fast');sharedOnly(absent);
+  const throwing=await plugin(migrated.disk,{getItem(){throw Error('disabled');},setItem(){throw Error('quota');}});throwing.settings.performanceDiagnostics=true;throwing[mangle.recordPerformance]({notes:3});await throwing.save();assert.equal(throwing.performanceLog[0].notes,3);sharedOnly(throwing);
   console.log('PASS unavailable storage stays in memory without rejecting mode or log operations');
   const fresh=await plugin({settings:legacy.settings});assert.match(fresh.deviceNamespace,/^[0-9a-f]{32}$/);assert.equal(fresh.disk.deviceNamespace,fresh.deviceNamespace);sharedOnly(fresh);
-  const unsaved=await plugin();unsaved.deviceNamespace=undefined;unsaved.saveData=async()=>{throw Error('namespace write rejected');};assert.equal(await unsaved.ensureDeviceNamespace(),undefined);assert.equal(unsaved.deviceNamespace,undefined);
+  const unsaved=await plugin();unsaved.deviceNamespace=undefined;unsaved.saveData=async()=>{throw Error('namespace write rejected');};assert.equal(await unsaved[mangle.ensureDeviceNamespace](),undefined);assert.equal(unsaved.deviceNamespace,undefined);
   console.log('PASS namespace is acknowledged before durable local use; failed creation stays memory-only');
   const concurrent=await plugin();concurrent.deviceNamespace=undefined;
   let acknowledge;const namespaceGate=new Promise(resolve=>acknowledge=resolve),realSave=concurrent.saveData.bind(concurrent);
   concurrent.saveData=async data=>{await namespaceGate;await realSave(data);};
-  let resolved=0;const firstNamespace=concurrent.ensureDeviceNamespace().then(id=>{resolved++;return id;}),secondNamespace=concurrent.ensureDeviceNamespace().then(id=>{resolved++;return id;});
+  let resolved=0;const firstNamespace=concurrent[mangle.ensureDeviceNamespace]().then(id=>{resolved++;return id;}),secondNamespace=concurrent[mangle.ensureDeviceNamespace]().then(id=>{resolved++;return id;});
   await Promise.resolve();assert.equal(resolved,0);acknowledge();assert.equal(await firstNamespace,await secondNamespace);assert.equal(resolved,2);
   const noCrypto=await plugin(),crypto=context.crypto;context.crypto=undefined;context.localStorage=storage();await noCrypto.loadDevicePerformance(undefined);assert.equal(noCrypto.deviceNamespace,undefined);assert.equal(context.localStorage.rows.size,0);context.crypto=crypto;
-  const invalid=await plugin();invalid.deviceNamespace=undefined;invalid.settings.nodeSize=-1;assert.equal(await invalid.ensureDeviceNamespace(),undefined);assert.equal(invalid.deviceNamespace,undefined);
+  const invalid=await plugin();invalid.deviceNamespace=undefined;invalid.settings.nodeSize=-1;assert.equal(await invalid[mangle.ensureDeviceNamespace](),undefined);assert.equal(invalid.deviceNamespace,undefined);
   console.log('PASS concurrent namespace callers await acknowledgement; unavailable randomness and invalid settings never use durable storage');
   const stale=await plugin();stale.settings.performance='quality';await stale.save();const oldLocal=local(stale);let checks=0;
-  await assert.rejects(stale.commitPerformance(new Set(['fast']),true,()=>++checks===1));assert.equal(stale.settings.performance,'quality');assert.deepEqual(local(stale),oldLocal);sharedOnly(stale);
+  await assert.rejects(stale[mangle.commitPerformance](new Set(['fast']),true,()=>++checks===1));assert.equal(stale.settings.performance,'quality');assert.deepEqual(local(stale),oldLocal);sharedOnly(stale);
   console.log('PASS stale candidate restores both shared and device-local state');
 
 })().catch(e=>{console.error(e);process.exitCode=1;});

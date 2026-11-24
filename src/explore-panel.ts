@@ -35,6 +35,8 @@ export interface PanelHost {
   preview(expr: string, context: 'filter' | 'group'): Promise<{ matched: number; total: number; groups?: number }>;
   result(): ExploreResult | undefined;
   viewCurrent?(): boolean;
+  restoreQuery?(): void;
+  bindToolbar?(input?: HTMLInputElement): void;
   mode(): string;
   policy(): string[];
   /** Edge notes (reified edges included as nodes) in the detail view; 0 otherwise. */
@@ -60,7 +62,7 @@ export interface PanelHost {
   camera(): ViewCamera | null;
   restoreCamera(camera: ViewCamera): void;
   persist(): void;
-  persistDevice(): void;
+  persistDevice(sync?: boolean): void;
   canApplyLayout?(trial: boolean): boolean;
   layoutActivity?(): void;
   applyLayout(values: PhysicsValues, trial?: boolean, dispatched?: () => void): Promise<void>;
@@ -171,6 +173,7 @@ export class ExplorePanel {
   private suggestMessage = '';
   private guards: (() => void)[] = [];
   private groupLimit: number;
+  private jumpMode = false;
   private searchTimer: ReturnType<typeof setTimeout> | undefined;
   private get settings() { return this.host.settings(); }
   constructor(parent: HTMLElement, private host: PanelHost, private view: ExploreView, toolbar?: HTMLElement) {
@@ -196,9 +199,9 @@ export class ExplorePanel {
     }
     this.workspaceButton = toolButton(representations, 'Workspace scope', 'expand');
     this.workspaceButton.onclick = () => this.host.presentation?.('workspace');
-    this.search = this.toolbar.createEl('input', { cls: 'graph-ng-explore-search', attr: { type: 'search', placeholder: 'Search notes…', 'aria-label': 'Search note names and IDs', spellcheck: 'false' } });
+    this.search = this.toolbar.createDiv({ cls: 'graph-ng-search-slot' }).createEl('input', { cls: 'graph-ng-explore-search', attr: { type: 'search', placeholder: 'Search notes…', 'aria-label': 'Search note names and IDs', spellcheck: 'false' } });
     this.search.maxLength = VIEW_LIMITS.query; this.search.value = view.query;
-    this.search.oninput = () => { clearTimeout(this.searchTimer); if (this.settings.projectionFile) return; this.searchTimer = setTimeout(() => { if (!this.disposed && !this.settings.projectionFile) this.update({ query: this.search.value }); }, 160); };
+    this.search.oninput = () => { clearTimeout(this.searchTimer); if (this.settings.projectionFile || this.jumpMode) return; this.searchTimer = setTimeout(() => { if (!this.disposed && !this.settings.projectionFile) this.update({ query: this.search.value }); }, 160); };
     const tools = this.toolbar.createDiv({ cls: 'graph-ng-tools', attr: { role: 'group', 'aria-label': 'Graph panels' } });
     for (const [tool, text, icon] of TOOLS) {
       const button = toolButton(tools, text, icon); button.setAttribute('aria-controls', this.root.id);
@@ -227,7 +230,13 @@ export class ExplorePanel {
     if (this.suggestPreview && !this.suggestBusy) { this.host.previewSuggestions?.(null); this.suggestPreview = false; this.suggestMessage = ''; }
   }
   dispose() { this.host.previewSizing?.(null); this.disposed = true; this.expressionTimers.forEach(clearTimeout); clearTimeout(this.searchTimer); this.root.remove(); }
-  setState(view: ExploreView) { this.view = view; if (document.activeElement !== this.search) this.search.value = view.query; this.render(); }
+  setState(view: ExploreView, opened = false) {
+    if (this.jumpMode ? opened || view.query !== this.view.query : document.activeElement !== this.search) {
+      if (this.jumpMode) this.host.bindToolbar?.();
+      this.search.value = view.query;
+    }
+    this.view = view; this.render();
+  }
   operation(message: string, retry?: () => void) {
     this.feedback.textContent = message;
     if (!retry) return;
@@ -294,7 +303,10 @@ export class ExplorePanel {
   }
   render() {
     const external = Boolean(this.settings.projectionFile), r = external ? undefined : this.host.result();
-    this.search.disabled = external;
+    const mode = this.host.mode(), building = mode === 'nodes-building', jump = !external && !this.settings.typeFilters && (building || mode === 'nodes');
+    if (this.jumpMode !== jump) { clearTimeout(this.searchTimer); this.search.value = this.view.query; this.jumpMode = jump; if (!jump) this.host.restoreQuery?.(); }
+    this.host.bindToolbar?.(jump && !building ? this.search : undefined);
+    this.search.disabled = external || jump && building;
     this.search.title = external ? 'Note search is unavailable in aggregate graphs.' : 'Search note names and IDs';
     this.search.setAttribute('aria-label', this.search.title);
     if (external) { clearTimeout(this.searchTimer); this.search.value = this.view.query; }
@@ -821,6 +833,7 @@ export class ExplorePanel {
       for (const target of targets) setIcon(panelButton(links, target, () => this.focusAppearance(target)).createSpan(), 'arrow-up-right');
     }
     choice(navigation, 'cardPlacement', 'Card placement', 'Side uses a sheet when space is tight. Auto switches earlier.', [['auto', 'Auto (default)'], ['side', 'Side'], ['sheet', 'Bottom sheet']]);
+    settingSelect(navigation, 'Search box', 'Notes view on this device.', [['jump', 'Jump to a note'], ['filter', 'Filter as you type']], this.settings.typeFilters ? 'filter' : 'jump', value => { this.settings.typeFilters = value === 'filter'; this.host.persistDevice(true); });
     settingSelect(selected, 'Click a note', 'Highlight connections is the default. Highlight shows direct connections, neighbours of neighbours and dimmed context. Relationship notes count with their endpoints. Ctrl/Cmd-click opens a note; touch shows its card.', [['highlight', 'Highlight connections'], ['card', 'Open the card only'], ['open', 'Open the note']], v.clickOpens ? 'open' : v.hoverHighlight ? 'highlight' : 'card', value => { v.clickOpens = value === 'open'; if (value !== 'open') v.hoverHighlight = value === 'highlight'; this.host.visualsChanged(false); });
     choice(selected, 'clickFraming', 'Click framing', 'Experimental. Move only when needed. Off only uncovers the selected note. Respects Motion.', [['off', 'Off (default)'], ['center', 'Center when hidden'], ['fit-neighbours', 'Fit connections']]);
     choice(find, 'emphasis', 'Highlight emphasis', 'Adaptive (default) limits growth in large neighbourhoods. Scale keeps the original magnification.', [['adaptive', 'Adaptive'], ['scale', 'Scale']]);
@@ -978,7 +991,7 @@ export class ExplorePanel {
     start.createSpan({ cls: 'graph-ng-saved-name', text: 'Show everything' });
     const actions = start.createDiv({ cls: 'graph-ng-row' });
     this.viewOpen(actions, everythingView(this.view));
-    const help = panelHelp(actions, '', 'Clears search, filters, hidden items and collapsed groups. Keeps grouping and camera. Views save filters, grouping and camera in plugin settings, not files. Appearance, layout and selected-group scope stay unchanged. Active compares filters and grouping; the camera restores on Open. Declared exclusions still apply.');
+    const help = panelHelp(actions, '', 'Clears search, filters, hidden items and folds. Keeps grouping and camera. Views save filters, grouping and camera in settings, not files. Active compares filters and grouping; Open restores the camera. Appearance, layout, scope and exclusions stay unchanged.');
     const info = help.parentElement!.querySelector('button')!; info.setAttribute('aria-label', 'About saved views and Show everything'); setIcon(info, 'info');
     if (!s.explore.savedViews.length) this.note(host, 'No saved views yet.');
     for (const saved of s.explore.savedViews) {
@@ -986,7 +999,7 @@ export class ExplorePanel {
       const name = item.createDiv({ cls: 'graph-ng-saved-name', text: saved.name });
       const matches = canonical(saved.view) === canonical(this.view), active = matches && this.host.viewCurrent?.() !== false && !this.host.scoped?.() && !this.host.loading?.();
       if (active) this.viewOrigin ??= saved.name;
-      if (active || !matches && this.viewOrigin === saved.name) {
+      if (matches || this.viewOrigin === saved.name) {
         const state = name.createSpan({ cls: 'graph-ng-view-state' });
         if (active) { setIcon(state.createSpan(), 'check'); item.dataset.active = 'true'; }
         state.createSpan({ text: active ? 'Active' : 'Modified' });

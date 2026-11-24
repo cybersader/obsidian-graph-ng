@@ -19,7 +19,7 @@ import { interestScorer, byInterest, type Scorer } from './interest';
 import { lensConnections, lensLayout, lensAmount, lensCoordinate, pickLens, type LensConnection, type LensPoint } from './lens-layout';
 import { Interaction, type RendererControls } from './interaction';
 import type { MenuPresenter } from './context-menu';
-import { invalidateSearch, disposeSearch } from './search';
+import { invalidateSearch, disposeSearch, syncJumpReady } from './search';
 import { highlightOverlay, paintLegend } from './overlays';
 import { discloseTiers, overlapsBox } from './hub-disclosure';
 import { findPath, alternatePath, hopRows, pathNotes, OUTCOME, MAX_ALTERNATES, MAX_HOPS, type Hop } from './path-finder';
@@ -645,7 +645,7 @@ export class DetailRenderer {
   clearTrail() { const n = this.card.node; this.card.history.clear(); if (n >= 0) { this.card.history.visit(n); this.card.render(); } this.refresh(); }
   private applyView(filterVisible: Uint8Array, view: RenderView, upload = true) {
     const started = performance.now(), n = filterVisible.length, p = this.projection;
-    invalidateSearch(this.canvas); this.input?.gestures.cancel();
+    invalidateSearch(this.canvas, true); this.input?.gestures.cancel();
     const visibleChanged = filterVisible !== this.filterVisible || view.collapsed !== this.view.collapsed || view.groupCodes !== this.view.groupCodes;
     this.selectionNames = undefined; this.filterVisible = filterVisible; this.view = view; this.groupCount = view.groupLabels?.length ?? 0; if (view.colors && view.colors.length === filterVisible.length) this.colors = view.colors;
     Object.assign(this, this.coordinateState(this.positions, filterVisible, view, false));
@@ -730,7 +730,7 @@ export class DetailRenderer {
   beginLayout() {
     const { positions, display, grid, picker, visible, hubs, halos, discData, canvasIndex } = this;
     const previous = { positions, display, grid, picker, visible, hubs, halos, discData, canvasIndex }, view = this.view, filter = this.filterVisible;
-    this.layoutActive = true; this.prepareCanvasEdgeIndex(); this.labelsRevision++; this.overlay.hidden = true; this.refresh();
+    this.layoutActive = true; syncJumpReady(this.canvas); this.prepareCanvasEdgeIndex(); this.labelsRevision++; this.overlay.hidden = true; this.refresh();
     return (committed: boolean) => {
       this.layoutActive = false;
       if (this.disposed) return;
@@ -744,7 +744,7 @@ export class DetailRenderer {
       finally {
         if (committed) { this.labelsPending = false; if (this.followLayout) this.fitAll(); }
         else if (this.labelsPending) void this.prepareLabels(() => !this.disposed).catch(() => {});
-        this.prepareCanvasEdgeIndex(); this.anchorKey = []; this.rankedKey = []; this.overlay.hidden = !!this.view.loading; this.refresh();
+        this.prepareCanvasEdgeIndex(); this.anchorKey = []; this.rankedKey = []; this.overlay.hidden = !!this.view.loading; syncJumpReady(this.canvas); this.refresh();
       }
     };
   }
@@ -2209,6 +2209,7 @@ export class DetailRenderer {
     if (replay) this.input.replayHover();
   }
   /** The explicit renderer surface src/interaction.ts drives (and future input streams extend). */
+  get searchControls() { return this.input?.host; }
   private controls(): RendererControls {
     const r = this, p = this.projection;
     return {
@@ -2218,6 +2219,7 @@ export class DetailRenderer {
       get width() { return r.width; },
       get height() { return r.height; },
       get visible() { return r.visible; },
+      get filterVisible() { return r.filterVisible; },
       get selected() { return r.selected; },
       get hovered() { return r.hovered; },
       get hoveredEdge() { return r.hoveredEdge; },

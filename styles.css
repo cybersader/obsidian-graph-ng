@@ -262,7 +262,8 @@ button.graph-ng-stat > .graph-ng-stat-label { text-align:start; }
 .graph-ng-tools .graph-ng-tool { min-width:var(--gng-row-h, 32px); padding:var(--gng-space-1, 4px); }
 .graph-ng-tools .graph-ng-tool-label { display:none; }
 .graph-ng-tools .graph-ng-tool::after { content:attr(data-count); font-size:var(--gng-text-xs); font-variant-numeric:tabular-nums; }
-.graph-ng-toolbar > input { flex:1; width:0; min-width:80px; min-height:var(--gng-row-h, 32px); }
+.graph-ng-search-slot { position:relative; flex:1; min-width:0; }
+.graph-ng-explore-search { min-height:var(--gng-row-h, 32px); }
 .graph-ng-explore { position:absolute; inset:8px 8px 8px auto; width:min(360px, calc(100% - 16px)); z-index:3; box-sizing:border-box; display:flex; flex-direction:column; gap:var(--gng-space-3); padding:var(--gng-space-4); background:var(--background-primary); color:var(--text-normal); border:1px solid var(--background-modifier-border); border-radius:var(--radius-m); box-shadow:var(--shadow-s); font-size:var(--gng-text-sm); letter-spacing:normal; line-height:var(--gng-leading-tight); }
 .graph-ng-explore[hidden], .graph-ng-summary[hidden], .graph-ng-summary-info[hidden] { display:none; }
 .graph-ng-explore-head { flex:none; gap:var(--gng-space-2, 8px); padding-bottom:var(--gng-space-2, 8px); border-bottom:1px solid var(--background-modifier-border); }
@@ -299,10 +300,11 @@ button.graph-ng-stat > .graph-ng-stat-label { text-align:start; }
 @container (max-width: 760px) {
   .graph-ng-toolbar { display:grid; grid-template-columns:auto minmax(0,1fr); gap:var(--gng-space-1, 4px) var(--gng-space-2, 8px); }
   .graph-ng-tools { grid-column:1 / -1; justify-content:flex-end; border-left:0; padding-left:0; }
-  .graph-ng-toolbar > input { width:100%; min-width:0; }
+  .graph-ng-toolbar:has(.graph-ng-search-slot .graph-ng-find:not([hidden])) { align-items:start; }
   .graph-ng-representations .graph-ng-tool { padding:var(--gng-space-1, 4px); }
 }
 @container (max-width: 360px) {
+  .graph-ng-representations { grid-template-columns:repeat(2,44px); }
   .graph-ng-representations .graph-ng-tool-label { display:none; }
   .graph-ng-tools { justify-content:space-between; }
 }
@@ -390,6 +392,10 @@ button.graph-ng-stat > .graph-ng-stat-label { text-align:start; }
 .graph-ng-find-name { font-weight:var(--gng-weight-strong); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .graph-ng-find-group { font-size:var(--gng-text-xs); align-self:center; color:var(--gng-text-muted); text-align:right; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .graph-ng-find-path { grid-column:1 / -1; font-size:var(--gng-text-xs); color:var(--gng-text-muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.graph-ng-search-slot .graph-ng-find { top:100%; left:0; transform:none; width:100%; z-index:12; padding:var(--gng-space-1); }
+.graph-ng-search-slot .graph-ng-find-list:not(:empty) + .graph-ng-find-status:not(:has(.graph-ng-working)) { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
+.graph-ng-search-slot .graph-ng-find-row:last-child { display:block; border-top:1px solid var(--background-modifier-border); font-size:var(--gng-text-xs); color:var(--text-muted); }
+@container (max-width:760px) { .graph-ng-search-slot .graph-ng-find { position:relative; top:auto; } .graph-ng-search-slot .graph-ng-find-list { max-height:min(220px, 35vh); } }
 .graph-ng-find-status:empty { display:none; }
 .graph-ng-find-status, .graph-ng-find-keys { font-size:var(--gng-text-xs); color:var(--gng-text-muted); padding:0 var(--gng-space-2); }
 .graph-ng-find-ring { position:absolute; left:0; top:0; z-index:2; width:32px; height:32px; border:3px solid var(--interactive-accent); border-radius:50%; pointer-events:none; }
@@ -539,7 +545,7 @@ button.graph-ng-help-trigger:hover { color:var(--text-accent); }
 /* Touch targets grow without adding wrapped toolbar labels or changing pip geometry. */
 @media (pointer: coarse) {
   .graph-ng-tools .graph-ng-tool, .graph-ng-representations .graph-ng-tool, .graph-ng-explore-close, .graph-ng-crumbs button, .graph-ng-tier-legend button.graph-ng-tier-row, .graph-ng-summary-info { min-width:44px; min-height:44px; }
-  .graph-ng-toolbar > input { min-height:44px; }
+  .graph-ng-explore-search { min-height:44px; }
   .graph-ng-pip::before, .graph-ng-corner::before { content:''; position:absolute; inset:-6px; }
 }
 /* Filters keep one shared column grid; hidden counts sit below shown counts. */

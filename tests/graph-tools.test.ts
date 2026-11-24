@@ -755,3 +755,20 @@ test('Appearance follows stable states without remounting editors, and shared li
   expect(f.panel.appearanceSections.get('Everywhere').open).toBe(true); expect(f.panel.appearanceSections.get('Edges').open).toBe(true);
   expect(ControlElement.active).toBe(f.panel.appearanceSections.get('Edges').querySelector('summary')); f.panel.dispose();
 });
+
+
+test('Search box device choice binds Notes jump mode only; Filter as you type uses the ordinary view query', async () => {
+  const f = fixture(), binds: unknown[] = []; let writes = 0;
+  f.host.bindToolbar = (input?: unknown) => binds.push(input); f.host.persistDevice = () => { writes++; f.panel.render(); };
+  f.panel.show('appearance'); expect(binds.at(-1)).toBe(f.panel.search);
+  const choice = f.panel.root.querySelectorAll('select').find((el: any) => el.getAttribute('aria-label') === 'Search box');
+  expect(choice.value).toBe('jump'); choice.value = 'filter'; choice.onchange(); expect(f.settings.typeFilters).toBe(true); expect(writes).toBe(1); expect(binds.at(-1)).toBeUndefined();
+  f.panel.search.value = 'example'; f.panel.search.oninput(); await Bun.sleep(210); expect(f.state.view.query).toBe('example');
+  f.settings.typeFilters = false; f.host.mode = () => 'groups'; f.panel.render(); expect(binds.at(-1)).toBeUndefined(); f.panel.dispose();
+});
+
+test('a Notes jump draft survives a disabled building phase and worker state acknowledgement', () => {
+  const f = fixture(); f.panel.render(); f.panel.search.value = 'unsubmitted';
+  f.host.mode = () => 'nodes-building'; f.panel.render(); f.panel.setState(f.state.view); expect(f.panel.search.disabled).toBe(true);
+  f.host.mode = () => 'nodes'; f.panel.render(); expect(f.panel.search.value).toBe('unsubmitted'); expect(f.panel.search.disabled).toBe(false); f.panel.dispose();
+});

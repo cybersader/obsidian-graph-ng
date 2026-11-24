@@ -457,9 +457,9 @@ test('find-a-note ranks in the worker over names and identities, returning only 
     await p.request(1, { kind: 'project' });
     const order = (await p.request<DetailResult>(1, { kind: 'detail' })).projection, at = (path: string) => [0, 1, 2, 3].find(i => renderPath(order, i) === path)!;
     const all = new Uint8Array(4).fill(1);
-    expect(await p.request<number[]>(1, { kind: 'search', query: 'Alpha', visible: all.slice() })).toEqual(['N/Alpha.md', 'N/Zalpha.md', 'N/Beta.md'].map(at));
+    expect(await p.request<{ nodes: number[]; total: number }>(1, { kind: 'search', query: 'Alpha', visible: all.slice() })).toEqual({ total: 3, nodes: ['N/Alpha.md', 'N/Zalpha.md', 'N/Beta.md'].map(at) });
     const some = all.slice(); some[at('N/Alpha.md')] = 0;
-    expect(await p.request<number[]>(1, { kind: 'search', query: 'alpha', visible: some })).toEqual(['N/Zalpha.md', 'N/Beta.md'].map(at));
+    expect(await p.request<{ nodes: number[]; total: number }>(1, { kind: 'search', query: 'alpha', visible: some })).toEqual({ total: 2, nodes: ['N/Zalpha.md', 'N/Beta.md'].map(at) });
     // Settle explicitly: awaiting these through `expect(...).rejects` stalled the worker reply under Bun.
     const failure = (q: Promise<unknown>) => q.then(() => '', e => String(e));
     expect(await failure(p.request(1, { kind: 'search', query: 'a', visible: new Uint8Array(1) }))).toContain('SEARCH_MASK');

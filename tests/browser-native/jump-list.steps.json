@@ -1,0 +1,225 @@
+[
+  {
+    "click": "[aria-label='Graph NG']"
+  },
+  {
+    "waitFor": ".graph-ng-view[data-state='ready']"
+  },
+  {
+    "click": ".graph-ng-representations [aria-label='Notes']"
+  },
+  {
+    "waitFor": ".graph-ng-view[data-mode='nodes'][data-state='ready']"
+  },
+  {
+    "name": "Close graph tools for the workspace view",
+    "assert": "()=>{const b=document.querySelector('[aria-label=\"Close graph tools\"]');if(b?.offsetHeight)b.click();return true}"
+  },
+  {
+    "fill": ".graph-ng-explore-search",
+    "value": "Index"
+  },
+  {
+    "waitFor": ".graph-ng-search-slot [role=listbox] [role=option][aria-selected=true]:has-text(\"East/Index.md\")"
+  },
+  {
+    "name": "Typing retains all nine visible notes and disambiguates both Index notes",
+    "assert": "()=>document.querySelector('.graph-ng-view').dataset.visibleNodes==='9' && [...document.querySelectorAll('.graph-ng-search-slot .graph-ng-find-path')].map(x=>x.textContent).join(',')==='East/Index.md,West/Index.md'"
+  },
+  {
+    "screenshot": "list-open",
+    "selector": ".graph-ng-view"
+  },
+  {
+    "press": "ArrowDown"
+  },
+  {
+    "waitFor": ".graph-ng-search-slot [role=listbox] [role=option][aria-selected=true]:has-text(\"West/Index.md\")"
+  },
+  {
+    "screenshot": "highlighted",
+    "selector": ".graph-ng-view"
+  },
+  {
+    "press": "ArrowDown"
+  },
+  {
+    "waitFor": ".graph-ng-search-slot [role=listbox] [role=option][aria-selected=true]:has-text(\"Show only matching notes\")"
+  },
+  {
+    "screenshot": "filter-option",
+    "selector": ".graph-ng-view"
+  },
+  {
+    "press": "ArrowDown"
+  },
+  {
+    "name": "Size the graph pane to 360 CSS pixels",
+    "assert": "async()=>{document.querySelector('.graph-ng-view').style.width='360px';await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));return true}"
+  },
+  {
+    "name": "The dropdown and toolbar own separate pointer targets at 360 px",
+    "assert": "()=>{const g=document.querySelector('.graph-ng-view').getBoundingClientRect(), list=document.querySelector('.graph-ng-search-slot [role=listbox]').getBoundingClientRect(), tools=document.querySelector('.graph-ng-tools').getBoundingClientRect(), input=document.querySelector('.graph-ng-explore-search').getBoundingClientRect();return Math.round(g.width)===360 && list.top>=input.bottom && list.right<=g.right && list.bottom<=tools.top && !!document.elementFromPoint(list.left+6,list.top+8)?.closest('[role=option]')}"
+  },
+  {
+    "screenshot": "narrow-360",
+    "selector": ".graph-ng-view"
+  },
+  {
+    "name": "Restore the workspace width",
+    "assert": "async()=>{document.querySelector('.graph-ng-view').style.width='';await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));return true}"
+  },
+  {
+    "press": "Enter"
+  },
+  {
+    "waitFor": ".graph-ng-card[aria-label='Connections of Index'] .graph-ng-card-identity[title$='East/Index.md']"
+  },
+  {
+    "name": "All seven fixture neighbours are still listed after jumping",
+    "assert": "()=>{const rows=[...document.querySelectorAll('.graph-ng-connection')].map(r=>r.textContent), count=document.querySelector('.graph-ng-nav-status').textContent;return document.querySelector('.graph-ng-view').dataset.visibleNodes==='9' && count==='7 direct connections in 1 group' && rows.length===7 && ['Alder','Birch','Cedar','Elm','Hazel','Larch','Maple'].every(name=>rows.some(r=>r.includes(name))) && document.activeElement.matches('.graph-ng-explore-search')}"
+  },
+  {
+    "screenshot": "jump-connections",
+    "selector": ".graph-ng-view"
+  },
+  {
+    "fill": ".graph-ng-explore-search",
+    "value": "Ind"
+  },
+  {
+    "waitFor": ".graph-ng-search-slot [role=listbox] [role=option]:has-text(\"Show only matching notes\")"
+  },
+  {
+    "click": ".graph-ng-search-slot [role=option]:has(.graph-ng-find-path:text-is('West/Index.md'))"
+  },
+  {
+    "waitFor": ".graph-ng-card .graph-ng-card-identity[title$='West/Index.md']"
+  },
+  {
+    "name": "A mouse pick jumps to the other note without filtering",
+    "assert": "()=>document.activeElement.matches('.graph-ng-explore-search') && document.querySelector('.graph-ng-view').dataset.visibleNodes==='9' && document.querySelector('.graph-ng-card-empty').textContent.startsWith('No connections')"
+  },
+  {
+    "fill": ".graph-ng-explore-search",
+    "value": "Index"
+  },
+  {
+    "waitFor": ".graph-ng-search-slot [role=option]:has-text(\"Show only matching notes\")"
+  },
+  {
+    "click": ".graph-ng-search-slot [role=listbox] [role=option]:has-text(\"Show only matching notes\")"
+  },
+  {
+    "waitFor": ".graph-ng-view[data-visible-nodes='2']"
+  },
+  {
+    "fill": ".graph-ng-explore-search",
+    "value": ""
+  },
+  {
+    "waitFor": ".graph-ng-view[data-visible-nodes='9']"
+  },
+  {
+    "name": "Clearing the field shows all nine notes without committing an empty filter",
+    "assert": "()=>document.querySelector('.graph-ng-explore-search').getAttribute('aria-expanded')==='false'"
+  },
+  {
+    "name": "Clearing the field leaves the shared Index filter intact",
+    "assert": "async(app,plugin)=>{await new Promise(r=>setTimeout(r,550));return (await plugin.loadData())?.settings?.explore?.view?.query==='Index'}"
+  },
+  {
+    "click": ".graph-ng-representations [aria-label='Groups']"
+  },
+  {
+    "waitFor": ".graph-ng-view[data-mode='groups']"
+  },
+  {
+    "name": "Leaving jump mode restores the committed query in the Groups field",
+    "assert": "()=>document.querySelector('.graph-ng-explore-search').value==='Index'"
+  },
+  {
+    "waitFor": ".graph-ng-view[data-visible-nodes='2']"
+  },
+  {
+    "click": ".graph-ng-representations [aria-label='Notes']"
+  },
+  {
+    "waitFor": ".graph-ng-view[data-mode='nodes']"
+  },
+  {
+    "name": "The text filter from Groups is visible in the Notes field",
+    "assert": "()=>document.querySelector('.graph-ng-explore-search').value==='Index'"
+  },
+  {
+    "fill": ".graph-ng-explore-search",
+    "value": "Alder"
+  },
+  {
+    "waitFor": ".graph-ng-view[data-visible-nodes='9']"
+  },
+  {
+    "waitFor": ".graph-ng-search-slot [role=option]:has-text(\"Shelf/Alder.md\")"
+  },
+  {
+    "waitFor": ".graph-ng-search-slot [role=option]:has-text(\"Show only matching notes (1 in this view)\")"
+  },
+  {
+    "screenshot": "replaced-groups-filter",
+    "selector": ".graph-ng-view"
+  },
+  {
+    "name": "Typing Alder leaves the shared Index filter intact",
+    "assert": "async(app,plugin)=>{await new Promise(r=>setTimeout(r,550));return (await plugin.loadData())?.settings?.explore?.view?.query==='Index'}"
+  },
+  {
+    "click": ".graph-ng-search-slot [role=option]:has-text(\"Show only matching notes\")"
+  },
+  {
+    "waitFor": ".graph-ng-view[data-visible-nodes='1']"
+  },
+  {
+    "name": "Show only writes Alder to shared settings",
+    "assert": "async(app,plugin)=>{await new Promise(r=>setTimeout(r,550));return (await plugin.loadData())?.settings?.explore?.view?.query==='Alder'}"
+  },
+  {
+    "fill": ".graph-ng-explore-search",
+    "value": "Index"
+  },
+  {
+    "waitFor": ".graph-ng-view[data-visible-nodes='9']"
+  },
+  {
+    "waitFor": ".graph-ng-search-slot [role=option]:has-text(\"East/Index.md\")"
+  },
+  {
+    "name": "Dragging a pressed suggestion outside then blurring dismisses the list",
+    "assert": "()=>{const f=document.querySelector('.graph-ng-explore-search'),row=document.querySelector('.graph-ng-search-slot [role=option]'),r=row.getBoundingClientRect();row.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,clientX:r.x+8,clientY:r.y+8}));document.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,clientX:1,clientY:1}));f.blur();return f.getAttribute('aria-expanded')==='false'}"
+  },
+  {
+    "fill": ".graph-ng-explore-search",
+    "value": "Ind"
+  },
+  {
+    "waitFor": ".graph-ng-search-slot [role=option]:has-text(\"East/Index.md\")"
+  },
+  {
+    "name": "Touch-like pointerdown and blur retain the selected row until click",
+    "assert": "()=>{const input=document.querySelector('.graph-ng-explore-search'),row=document.querySelector('.graph-ng-search-slot [role=option]');const rect=row.getBoundingClientRect(),clientX=rect.x+8,clientY=rect.y+8;const pointer=type=>row.dispatchEvent(new PointerEvent(type,{bubbles:true,cancelable:true,pointerType:'touch',clientX,clientY,pointerId:8,isPrimary:true}));pointer('pointerdown');input.blur();if(input.getAttribute('aria-expanded')!=='true'||!row.isConnected)return false;pointer('pointerup');row.click();return true}"
+  },
+  {
+    "waitFor": ".graph-ng-card .graph-ng-card-identity[title$='East/Index.md']"
+  },
+  {
+    "name": "Touch-like selection keeps the graph unfiltered and the field focused",
+    "assert": "()=>document.activeElement.matches('.graph-ng-explore-search') && document.querySelector('.graph-ng-view').dataset.visibleNodes==='9'"
+  },
+  {
+    "name": "The shared Alder filter stays saved but its view is marked Modified",
+    "assert": "async(app,plugin)=>{await new Promise(r=>setTimeout(r,550));if((await plugin.loadData())?.settings?.explore?.view?.query!=='Alder')return false;document.querySelector('.graph-ng-tools [aria-label=\"Saved views\"]').click();const row=[...document.querySelectorAll('.graph-ng-saved-record')].find(e=>e.textContent.includes('Alder only'));return row?.querySelector('.graph-ng-view-state')?.textContent==='Modified' && row.dataset.active!=='true'}"
+  },
+  {
+    "screenshot": "saved-query-set-aside",
+    "selector": ".graph-ng-view"
+  }
+]

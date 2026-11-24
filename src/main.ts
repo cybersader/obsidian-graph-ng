@@ -31,7 +31,7 @@ import { groupPages, page } from './core/group-page';
 import { ContributionPage, type ContributionContext } from './contribution-page';
 import { accounting, pendingText, layoutProgress, num, plural, renderInformation, renderReadout, sum, type InformationReport } from './graph-information';
 import { canonicalExplore, loadSettings, settingsForSave, validateSettings, type Settings } from './settings';
-import { searchable } from './search';
+import { searchable, bindToolbar } from './search';
 import { DetailRenderer, GroupRenderer, gpuStatus, type Renderer, type RenderView } from './renderer';
 declare const __LAYOUT_WORKER_SOURCE__: string;
 /** One message/check serves each boundary without dropping phase information. */
@@ -72,7 +72,7 @@ export default class GraphPlugin extends Plugin {
     await super.saveData({ ...sharedPerformanceData(data), ...(this.deviceNamespace ? { deviceNamespace: this.deviceNamespace } : {}) });
     this.saveDevice(data.settings);
   }
-  saveDevice(settings: object = this.settings) { this.deviceStore.save({ ...settings, quickStart: this.settings.quickStart }, this.performanceLog); }
+  saveDevice(settings: object = this.settings) { this.deviceStore.save({ ...settings, quickStart: this.settings.quickStart, typeFilters: this.settings.typeFilters }, this.performanceLog); }
   layoutChoices() { return this.deviceStore?.layoutChoices(this.manifest?.version ?? '') ?? []; }
   recordLayoutEngine(status?: EngineStatus, progress = false) {
     const timing = progress ? undefined : status?.timing;
@@ -545,6 +545,9 @@ export class GraphView extends ItemView {
   private viewGeneration = -1;
   private viewSource = '';
   private appliedView?: ExploreView;
+  private queryAside = false;
+  /** Local display override only. this.view and settings.explore.view always retain the committed query. */
+  private displayView() { return this.queryAside ? { ...this.view, query: '' } : this.view; }
   private contributionScope = '';
   private contributionPage: ContributionPage;
   private queuedRefresh?: Promise<void>;
@@ -603,10 +606,27 @@ export class GraphView extends ItemView {
     this.toolbar = this.contentEl.createDiv({ cls: 'graph-ng-toolbar' });
     this.body = this.contentEl.createDiv({ cls: 'graph-ng-body' });
     this.stage = this.body.createDiv({ cls: 'graph-ng-stage' });
+    let pending: Promise<boolean | undefined> | undefined;
+    const previewQuery = (aside: boolean) => {
+      if (!this.view.query || !!this.queryAside === aside && (pending || this.appliedView?.query === this.displayView().query)) return pending;
+      this.queryAside = aside;
+      // A rebuild can adopt the query it captured before this edit. Retry once against the new
+      // detail generation, but never replay a query after a newer request or a closed view.
+      const evaluate = async (retry: boolean): Promise<boolean | undefined> => {
+        const reply = new Promise<unknown>(done => this.setView(this.view, undefined, undefined, done, undefined, true)), id = this.exploreRequest;
+        if (!await reply) return true;
+        if (retry && this.refreshing && id === this.exploreRequest) await this.refreshWork?.catch(() => {});
+        if (this.closed || id !== this.exploreRequest) return;
+        if (retry) return evaluate(false);
+        this.viewFeedback('Search unavailable. Try again.'); return false;
+      };
+      const work = pending = evaluate(true); void work.finally(() => { if (pending === work) pending = undefined; }); return work;
+    };
     searchable(this.stage, {
       projection: () => this.contentEl.dataset.mode === 'nodes' ? this.projection : undefined,
-      rank: (query, visible) => this.detailGeneration === this.activeRevision ? this.plugin.pipeline.request<number[]>(this.activeRevision, { kind: 'search', query, visible }) : Promise.resolve([]),
-      filter: query => this.setView({ ...this.view, query }),
+      rank: (query, visible) => this.detailGeneration === this.activeRevision ? this.plugin.pipeline.request<{ nodes: number[]; total: number }>(this.activeRevision, { kind: 'search', query, visible }) : Promise.resolve({ nodes: [], total: 0 }),
+      clearQuery: () => previewQuery(true),
+      filter: query => { this.queryAside = false; this.setView({ ...this.view, query }); },
     });
     this.stageAnnouncement = this.body.createSpan({ cls: 'graph-ng-sr-only', attr: { 'aria-live': 'polite' } });
     this.statusSummary = this.body.createDiv({ cls: 'graph-ng-summary' });
@@ -614,7 +634,7 @@ export class GraphView extends ItemView {
     this.status = this.body.createDiv({ cls: 'graph-ng-status' });
     this.panel = this.body.createDiv({ cls: 'graph-ng-panel' });
     this.explorePanel = new ExplorePanel(this.body, {
-      information: this.status, members: this.panel,
+      information: this.status, members: this.panel, restoreQuery: () => previewQuery(false), bindToolbar: input => bindToolbar(this.detailRenderer?.searchControls, input),
       performanceControls: host => performanceControls(host, this.plugin),
       memberGroups: () => this.groupGraph?.groups, memberGroupText: label => this.groupText(label), openGroup: id => { void this.drill(id, true); },
       scope: () => this.detailScope ? this.scopeName : 'Workspace', scoped: () => Boolean(this.detailScope),
@@ -637,7 +657,7 @@ export class GraphView extends ItemView {
         finally { renderer?.previewSettings(null); if (this.contentEl.dataset.mode === 'groups') this.showGroups(true); }
       },
       commitSavedView: (saved, expected) => this.plugin.commitSavedView(saved, expected),
-      viewCurrent: () => !!this.explored && canonical(this.appliedView) === canonical(this.view),
+      viewCurrent: () => !this.queryAside && !!this.explored && canonical(this.appliedView) === canonical(this.view),
       savedViewIssue: saved => this.savedViewIssue(saved), openSavedView: saved => this.openSavedView(saved),
       layoutActivity: () => this.updateHydrationStatus(), layoutSettled: () => this.layoutSettled, layoutOutcome: () => this.idleLayoutText, tryGraphics: () => !!this.report?.engineStatus?.tryGraphics, canApplyLayout: trial => this.canApplyLayout(trial),
       applyLayout: (values, trial, dispatched) => this.applyLayout(values, trial, dispatched), settings: () => this.plugin.settings, result: () => this.explored, loading: () => this.loading(), mode: () => this.contentEl.dataset.mode ?? 'groups',
@@ -647,7 +667,7 @@ export class GraphView extends ItemView {
       toggleLens: () => this.detailRenderer?.toggleLens(), toolsChanged: () => { this.renderer?.syncTools?.(); this.placeRetry(); },
       visualsChanged: labels => { this.plugin.saveSoon(); this.detailRenderer?.refreshVisuals(labels); if (this.contentEl.dataset.mode === 'groups') this.renderer?.refreshTheme?.(); },
       groupColor: code => this.groupColor(code), focusGroup: code => this.focusGroup(code), fit: () => this.detailRenderer?.fitAll(),
-      camera: () => this.detailRenderer ? { ...this.detailRenderer.camera } : null, restoreCamera: camera => this.restoreCamera(camera), persist: () => this.plugin.saveSoon(), persistDevice: () => this.plugin.saveDevice(),
+      camera: () => this.detailRenderer ? { ...this.detailRenderer.camera } : null, restoreCamera: camera => this.restoreCamera(camera), persist: () => this.plugin.saveSoon(), persistDevice: sync => { this.plugin.saveDevice(); if (sync) for (const leaf of this.app.workspace.getLeavesOfType(VIEW)) (leaf.view as GraphView).explorePanel?.render(); },
     }, this.view, this.toolbar);
     // Creating even a probe GL context can block; the initial group view needs no GPU.
     this.registerEvent(this.app.workspace.on('css-change', () => this.renderer?.refreshTheme?.()));
@@ -717,7 +737,7 @@ export class GraphView extends ItemView {
         this.contentEl.dataset.state = 'ready'; this.statusText = `External aggregate: ${num(p.groups.length)} groups and ${num(p.groupEdges.length)} counted group pairs. Not verified and not merged with live notes.`;
         this.showGroups(); return;
       }
-      const configuredSource = this.sourceKey(this.view), config = { declaration: settings.declaration, layout: settings.layout, layoutEngine: settings.layoutEngine, engineChoices: this.plugin.layoutChoices?.(), source: `${this.plugin.linkProducer}/${this.plugin.sourceIdentity}`, groupLevel: settings.groupLevel, predicate: this.predicate, view: this.view, facetValues: settings.explore?.facetValues, streamEveryIterations: settings.streamEveryIterations };
+      const configuredSource = this.sourceKey(this.view), config = { declaration: settings.declaration, layout: settings.layout, layoutEngine: settings.layoutEngine, engineChoices: this.plugin.layoutChoices?.(), source: `${this.plugin.linkProducer}/${this.plugin.sourceIdentity}`, groupLevel: settings.groupLevel, predicate: this.predicate, view: this.displayView(), facetValues: settings.explore?.facetValues, streamEveryIterations: settings.streamEveryIterations };
       // A rebuild from the still-requested view retires an earlier "not applied" message.
       const settled = () => { if (this.viewFeedbackText && config.view === this.view) this.viewFeedback(); };
       const hashes = await this.plugin.pipeline.request<{ declarationHash: string; layoutHash: string; ingestHash: string; held?: boolean }>(revision, { kind: 'configure', config });
@@ -1223,8 +1243,9 @@ export class GraphView extends ItemView {
     }, undefined, error => error ? reject(error) : resolve(), current));
   }
   /** Latest-wins worker view recompute; no re-projection, relayout or renderer rebuild. */
-  setView(view: ExploreView, after?: () => void, colors?: GraphDeclaration['colors'], completion?: (error?: unknown) => void, current?: () => boolean) {
+  setView(view: ExploreView, after?: () => void, colors?: GraphDeclaration['colors'], completion?: (error?: unknown) => void, current?: () => boolean, transient = false) {
     if (this.plugin.settings.projectionFile) { completion?.(new Error('Note views are unavailable in aggregate graphs.')); return; }
+    if (current || view.query !== this.view?.query) this.queryAside = false;
     this.exploreCompletion?.(new Error('View request superseded')); this.exploreCompletion = completion;
     const request = this.exploreRequest = (this.exploreRequest ?? 0) + 1;
     const owns = () => !this.closed && request === this.exploreRequest;
@@ -1247,17 +1268,18 @@ export class GraphView extends ItemView {
       })();
       return;
     }
-    this.view = view; this.plugin.settings.explore.view = canonicalView(view); this.plugin.saveSoon();
+    if (!transient) { this.view = view; this.plugin.settings.explore.view = canonicalView(view); this.plugin.saveSoon(); }
+    const sent = this.displayView();
     const run = async () => {
       this.exploring = true;
       const revision = this.activeRevision, started = performance.now();
       try {
         if (current && !current()) throw new Error('Graph configuration changed. Review this view again.');
         if (!this.projection || !currentDetailGeneration(revision, this.activeRevision, this.detailGeneration)) throw new Error('Projection generation changed');
-        const sent = view, result = await this.plugin.pipeline.request<ViewResult>(revision, { kind: 'explore', view: sent, colors, facetValues: this.plugin.settings.explore.facetValues });
+        const result = await this.plugin.pipeline.request<ViewResult>(revision, { kind: 'explore', view: sent, colors, facetValues: this.plugin.settings.explore.facetValues });
         if (this.closed || revision !== this.activeRevision || request !== this.exploreRequest || (current && !current())) throw new Error('View request superseded or generation changed');
-        if (completion) {
-          // Group keys belong to the requested grouping, not the displayed one.
+        if (current) {
+          // Saved-view group keys belong to the requested grouping, not the displayed one.
           // Validate the existing worker result before adopting it; no extra evaluation.
           const absent = [...sent.hiddenGroups, ...sent.collapsedGroups].filter(k => !result.explore.groupKeys.includes(k));
           if (absent.length) throw new Error(`Not present in the saved grouping: ${absent.map(k => groupDisplay(k, result.explore.outsideFolder || k === outsideKey && prefixedFolder(this.grouping(sent)))).join(', ')}. Review the saved definition before opening.`);
@@ -1269,7 +1291,7 @@ export class GraphView extends ItemView {
         this.contributionPage.update(this.contributionContext()); this.statusText = this.statusText;
         if (this.contentEl.dataset.mode === 'groups') { this.showGroups(true); if (this.presentation === 'nodes') await this.showDetails(); }
         else this.syncNotesView();
-        this.explorePanel?.setState(this.view); after?.(); if (owns()) this.viewFeedback(); finish();
+        this.explorePanel?.setState(this.view, !!current); after?.(); if (owns()) this.viewFeedback(); finish();
       } catch (error) {
         finish(error);
         // A saved-view Open reports through its caller; its retry is Open, which re-runs every check.

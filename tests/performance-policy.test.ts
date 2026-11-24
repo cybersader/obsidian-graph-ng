@@ -107,11 +107,11 @@ test('shared serialization strips device fields without changing graph or appear
 test('device store migrates preferences once and never imports shared samples', () => {
   const storage = memoryStorage(), namespace = 'a'.repeat(32), s = { ...deviceDefaults(), performance: 'fast' as const, performanceDiagnostics: true, performancePrompted: true };
   const store = new DevicePerformanceStore(namespace, 'graph-ng', () => storage);
-  const migrated = store.load({ ...s, performanceLog: [{ tier: 'low', mode: 'fast', notes: 99 }] });
+  const migrated = store.load({ ...s, typeFilters: true, performanceLog: [{ tier: 'low', mode: 'fast', notes: 99 }] });
   expect(migrated.settings).toEqual(s); expect(migrated.performanceLog).toEqual([]);
-  store.save({ ...s, performance: 'quality' }, [{ tier: 'standard', mode: 'quality', notes: 7, path: 'Synthetic/ignored.md' }]);
+  store.save({ ...s, typeFilters: true, performance: 'quality' }, [{ tier: 'standard', mode: 'quality', notes: 7, path: 'Synthetic/ignored.md' }]);
   const reloaded = new DevicePerformanceStore(namespace, 'graph-ng', () => storage).load(s);
-  expect(reloaded.settings.performance).toBe('quality'); expect(reloaded.performanceLog).toEqual([{ tier: 'standard', mode: 'quality', notes: 7 }]);
+  expect(reloaded.settings.typeFilters).toBe(true); expect(reloaded.settings.performance).toBe('quality'); expect(reloaded.performanceLog).toEqual([{ tier: 'standard', mode: 'quality', notes: 7 }]);
   expect(new DevicePerformanceStore('b'.repeat(32), 'graph-ng', () => storage).load(deviceDefaults()).settings.performance).toBe('auto');
   expect(new DevicePerformanceStore(namespace, 'other-plugin', () => storage).load(deviceDefaults()).settings.performance).toBe('auto');
   store.save({ ...s, performanceDiagnostics: false }, reloaded.performanceLog);

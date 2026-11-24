@@ -80,7 +80,7 @@ test('cold Groups answers members and search before any layout; two Notes clicks
     const members: Uint32Array = await rpc.request(rev, { kind: 'members', group: group.id, view: view.viewGeneration });
     expect(Array.from(members, i => renderPath(view.projection, i)).sort()).toEqual(Array.from({ length: N / 2 }, (_, i) => name(2 * i + 1)).sort());
     const hits = await rpc.request(rev, { kind: 'search', query: 'n37', visible: view.visible.slice() });
-    expect(renderPath(view.projection, hits[0])).toBe(name(37)); expect(calls).not.toContain('layout'); expect(manifests(disk)).toHaveLength(0);
+    expect(renderPath(view.projection, hits.nodes[0])).toBe(name(37)); expect(calls).not.toContain('layout'); expect(manifests(disk)).toHaveLength(0);
     const first = view.showDetails(); expect(view.statusText).toBe('Arranging notes'); await view.showDetails();
     // Leave the actual worker running; only stub the renderer for the final adoption.
     view.showDetails = () => {}; await first;

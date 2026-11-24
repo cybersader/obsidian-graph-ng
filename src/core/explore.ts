@@ -152,10 +152,11 @@ export function matchRank(text: string, query: string) {
 export interface SearchHit { node: number; rank: number; length: number }
 /** Merge notes [from, to) into `best`, a sorted list of at most `limit` hits: match class, then
  * shorter name, then note order. Callers chunk the range to bound each step. */
-export function rankMatches(text: (i: number) => string, query: string, from: number, to: number, best: SearchHit[], limit = 20, keep: (i: number) => boolean = () => true) {
+export function rankMatches(text: (i: number) => string, query: string, from: number, to: number, best: SearchHit[], limit = 20, keep: (i: number) => boolean = () => true, count?: { total: number }) {
   for (let i = from; i < to; i++) {
     if (!keep(i)) continue;
     const t = text(i), rank = matchRank(t, query); if (rank < 0) continue;
+    if (count) count.total++;
     const length = t.indexOf('\u0000'), worse = (h: SearchHit) => h.rank > rank || h.rank === rank && h.length > length;
     let at = best.length; while (at > 0 && worse(best[at - 1]!)) at--;
     if (at < limit) { best.splice(at, 0, { node: i, rank, length }); if (best.length > limit) best.pop(); }
@@ -164,7 +165,7 @@ export function rankMatches(text: (i: number) => string, query: string, from: nu
 }
 /** Find-a-note: up to `limit` notes kept by `keep`, in rank order, over the cached search text. Yields
  * between chunks of `chunk` notes so `cooperative` can bound, cancel and interleave the work. */
-export function* searchSteps(p: Projection, query: string, keep: Uint8Array, limit = 20, chunk = 4096): Generator<void, SearchHit[]> {
+export function* searchSteps(p: Projection, query: string, keep: Uint8Array, limit = 20, chunk = 4096, count?: { total: number }): Generator<void, SearchHit[]> {
   const q = query.trim().toLowerCase().replace(/\0/g, '').slice(0, VIEW_LIMITS.query), best: SearchHit[] = [];
   if (keep.length !== p.paths.length) throw new Error('SEARCH_MASK');
   if (!q) return best;
@@ -174,7 +175,7 @@ export function* searchSteps(p: Projection, query: string, keep: Uint8Array, lim
     if (i) yield;
     const end = Math.min(text.length, i + chunk);
     if (!cached) for (let j = i; j < end; j++) text[j] = searchKey(p.paths[j]!, p.identities[j]!);
-    rankMatches(j => text[j]!, q, i, end, best, Math.min(limit, 50), j => !!keep[j]);
+    rankMatches(j => text[j]!, q, i, end, best, Math.min(limit, 50), j => !!keep[j], count);
   }
   // Cancellation must never publish a partially initialised cache.
   if (!cached) lowered.set(p, text);

@@ -4,6 +4,7 @@ import { ControlElement, control as findControl } from './support/controls-dom';
 import GraphPlugin, { GraphView } from '../src/main';
 import { folderPredicate, folderView } from '../src/saved-views';
 import { ContributionPage } from '../src/contribution-page';
+import { bindToolbar } from '../src/search';
 import { renderProjection } from '../src/render-projection';
 import { emptyView, explore, validateSaved, type SavedView } from '../src/core/explore';
 import { buildProjection, colorGroups } from '../src/core/projection';
@@ -40,6 +41,80 @@ async function fixture() {
   view.contentEl.dataset.mode = 'nodes'; await view.onOpen(); view.explorePanel.show('views');
   return { ...f, view, panel: view.explorePanel as any, renderer, camera, projection, result };
 }
+function jumpFixture({ plugin, view, panel, renderer, projection }: Awaited<ReturnType<typeof fixture>>) {
+  const field = panel.search, flights: number[] = [], canvas = view.stage.createEl('canvas');
+  const controls = { canvas, live: true, get visible() { return view.visible; }, get filterVisible() { return view.visible; }, openable: (n: number) => !!view.visible[n], screenPoint: () => ({ x: 1, y: 1 }), flyToNote: (n: number) => flights.push(n) };
+  const box = () => bindToolbar(controls as any, field)!;
+  Object.assign(document, { createElement: () => Object.assign(new ControlElement(), { addEventListener() {}, removeEventListener() {} }) });
+  field.ownerDocument = new EventTarget(); field.removeAttribute = (k: string) => delete field.attributes[k];
+  const request = plugin.pipeline.request, index = projection.paths.indexOf('Other/d.md');
+  plugin.pipeline.request = (rev: number, msg: any) => msg.kind === 'search' ? Promise.resolve({ nodes: msg.visible[index] ? [index] : [], total: +!!msg.visible[index] }) : request(rev, msg);
+  view.projection = renderProjection(projection); Object.assign(renderer, { searchControls: controls });
+  return { box, controls, field, flights, index };
+}
+test('jump edits, clears and row picks leave the shared query untouched; leaving restores it and Show only commits', async () => {
+  const f = await fixture(), { plugin, data, calls, view, panel } = f, { box, controls, field, flights, index } = jumpFixture(f);
+  const diskQuery = () => JSON.parse(data.disk).settings.explore.view.query;
+  const edited = async (text: string) => { field.value = text; field.oninput(); await tick(); if (text) await box().findSearch(); };
+  try {
+    view.setView({ ...emptyView(), query: 'Notes' }); await tick(); await plugin.save();
+    expect(field.value).toBe('Notes'); expect(view.visible[index]).toBe(0); expect(diskQuery()).toBe('Notes'); calls.length = 0;
+    await edited('Other'); expect(view.visible[index]).toBe(1); (box().findList.children[0] as unknown as ControlElement).click(); expect(flights).toEqual([index]);
+    await edited(''); field.onblur(); expect(view.visible[index]).toBe(1); expect(view.view.query).toBe('Notes');
+    expect(plugin.settings.explore.view.query).toBe('Notes'); expect(calls.filter(k => k === 'write' || k === 'coalesced preference')).toEqual([]);
+    plugin.settings.nodeSize = 3; await plugin.save(); expect(diskQuery()).toBe('Notes');
+    const loaded = await loadSettings({ stat: async () => ({ size: data.disk.length }), read: async () => data.disk } as any, 'data.json', 'links', () => { throw Error('Unexpected quarantine'); });
+    expect(loaded.settings.explore.view.query).toBe('Notes');
+    plugin.settings.typeFilters = true; panel.render(); await tick(); expect(field.value).toBe('Notes'); expect(view.visible[index]).toBe(0);
+    expect(calls.filter(k => k === 'coalesced preference')).toEqual([]);
+    plugin.settings.typeFilters = false; panel.render(); await edited('Other');
+    (box().findList.lastElementChild as unknown as ControlElement).click(); await tick(); expect(calls.filter(k => k === 'coalesced preference')).toHaveLength(1);
+    expect(view.view.query).toBe('Other'); await plugin.save(); expect(diskQuery()).toBe('Other');
+    // External clear while a draft is open must retire the old popup and the draft.
+    await edited('draft'); const previous = box(); view.setView(emptyView()); await tick();
+    expect(field.value).toBe(''); expect(field.parentElement.contains(previous.findBox)).toBe(false); expect(box().findOpen).toBe(false);
+    await edited('draft'); const unchanged = box(); view.setView(emptyView(), undefined, undefined, undefined, () => true); await tick();
+    expect(field.value).toBe(''); expect(field.parentElement.contains(unchanged.findBox)).toBe(false); expect(box().findOpen).toBe(false);
+  } finally { bindToolbar(controls as any); panel.dispose(); }
+});
+for (const aside of [true, false]) test(`refresh configured with the old text mask reconciles a later ${aside ? 'jump edit' : 'filter restoration'}`, async () => {
+  const f = await fixture(), { plugin, view, panel, calls } = f, { box, controls, field, index } = jumpFixture(f);
+  const configured = deferred(), release = deferred(), messages: string[] = [], sent: string[] = [], feedback = view.viewFeedback.bind(view);
+  view.viewFeedback = (text?: string) => { if (text) messages.push(text); feedback(text); };
+  try {
+    view.setView({ ...emptyView(), query: 'Notes' }); await tick();
+    if (!aside) { field.value = 'Other'; field.oninput(); await box().findSearch(); }
+    const request = plugin.pipeline.request, projection = view.projection; let snapshot: any;
+    plugin.pipeline.request = async (rev: number, msg: any) => {
+      if (msg.kind === 'configure') { snapshot = msg.config.view; configured.resolve(); await release.promise; return { declarationHash: 'd', layoutHash: 'l', ingestHash: 'i' }; }
+      if (msg.kind === 'project') return { nodes: 4, edges: 0, unresolved: 0, quarantined: [], meta: { key: 'k' } };
+      if (msg.kind === 'detail') { const explore = f.result(snapshot); return { projection, visible: explore.visible, colors: view.colors, explore, view: 3 }; }
+      if (msg.kind === 'explore') sent.push(msg.view.query);
+      return request(rev, msg);
+    };
+    Object.assign(plugin, { serialize: (fn: Function) => fn(), nextRevision: 1, adapter: { async *columns() {}, coverage: () => ({ indexed: 4, listed: 4 }), factsComplete: () => true, pendingProperties: () => 0, linksPending: () => false, invalidate() {} } });
+    plugin.settings.persistLayout = false; Object.assign(view, { refresh: GraphView.prototype.refresh, revision: 0, startupTrace: [], cacheTrace: [], contributionPage: { update() {}, clear() {}, suspend() {}, fail() {} } });
+    calls.length = 0; const refresh = view.refresh(); await configured.promise;
+    expect(snapshot.query).toBe(aside ? 'Notes' : '');
+    if (aside) { field.value = 'Other'; field.oninput(); } else { plugin.settings.typeFilters = true; panel.render(); }
+    await tick(); expect(view.detailGeneration).not.toBe(view.activeRevision); expect(messages).toEqual([]);
+    release.resolve(); await refresh; await tick();
+    expect(sent).toEqual([aside ? '' : 'Notes']); expect(view.appliedView.query).toBe(aside ? '' : 'Notes');
+    expect(view.visible[index]).toBe(+aside); expect(field.value).toBe(aside ? 'Other' : 'Notes');
+    expect(plugin.settings.explore.view.query).toBe('Notes'); expect(calls).not.toContain('coalesced preference'); expect(messages).toEqual([]);
+  } finally { release.resolve(); bindToolbar(controls as any); panel.dispose(); }
+});
+test('a saved text filter reads Modified while set aside, then Active again after restoration', async () => {
+  const f = await fixture(), { box, field, controls } = jumpFixture(f), { view, panel, plugin } = f;
+  const saved = { name: 'Notes only', view: { ...emptyView(), query: 'Notes' }, camera: null };
+  const badges = () => panel.body.querySelectorAll('.graph-ng-view-state').map((x: ControlElement) => x.textContent);
+  try {
+    plugin.settings.explore.savedViews = [saved]; view.setView(saved.view); await tick(); expect(badges()).toEqual(['Active']);
+    field.value = 'Other'; field.oninput(); await box().findSearch(); panel.render(); expect(badges()).toEqual(['Modified']);
+    expect(panel.body.querySelectorAll('.graph-ng-saved-record').some((x: ControlElement) => x.dataset.active === 'true')).toBe(false);
+    plugin.settings.typeFilters = true; panel.render(); await tick(); expect(badges()).toEqual(['Active']);
+  } finally { bindToolbar(controls as any); panel.dispose(); }
+});
 test('terminal room status: toolbar search, modes, members, note tab and graph reopen do not load; Try again does', async () => {
   const { plugin, view, panel, renderer } = await fixture(), cleanups: Function[] = [], opened: string[][] = [];
   let loads = 0, roomLoads = 0;
@@ -53,6 +128,18 @@ test('terminal room status: toolbar search, modes, members, note tab and graph r
   try {
     plugin.watchProperties(host); view.app.workspace.getLeavesOfType = () => [{ view }]; await drained();
     expect(view.statusSummary.textContent).toContain('Room property load timed out');
+    // Use the registered view source and the real toolbar binding with a synthetic renderer. Only the worker reply is stubbed.
+    expect(plugin.settings.typeFilters).toBe(false);
+    const original = view.projection, request = plugin.pipeline.request, searches: string[] = [];
+    view.projection = renderProjection(original); const canvas = view.stage.createEl('canvas');
+    const controls = { canvas, live: true, visible: view.visible, filterVisible: view.visible, openable: () => true, screenPoint: () => ({ x: 1, y: 1 }) };
+    Object.assign(document, { createElement: () => Object.assign(new ControlElement(), { addEventListener() {}, removeEventListener() {} }) });
+    panel.search.ownerDocument = new EventTarget(); panel.search.removeAttribute = (k: string) => delete panel.search.attributes[k];
+    Object.assign(renderer, { searchControls: controls }); panel.render();
+    plugin.pipeline.request = async (rev: number, msg: any) => msg.kind === 'search' ? (searches.push(msg.query), { nodes: [0], total: 1 }) : request(rev, msg);
+    panel.search.value = 'Notes'; panel.search.oninput(); await bindToolbar(controls as any, panel.search)!.findSearch();
+    expect(searches).toEqual(['notes']); expect(view.view.query).toBe(''); await drained(); expect([loads, roomLoads]).toEqual([1, 0]);
+    plugin.settings.typeFilters = true; panel.render(); Object.assign(renderer, { searchControls: undefined }); view.projection = original; plugin.pipeline.request = request;
     for (const query of ['Notes', '']) {
       panel.search.value = query; panel.search.oninput(); panel.search.dispatchEvent(Object.assign(new Event('keydown'), { key: 'Enter' }));
       await new Promise(r => setTimeout(r, 180)); expect(panel.view.query).toBe(query);

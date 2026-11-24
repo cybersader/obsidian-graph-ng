@@ -263,9 +263,10 @@ async function handle(r: PipelineRequest, revision: number, control: EvaluationC
       return structuredClone({ explore: result, colors, groups: groupSummary(contracted.projection), view: viewGeneration });
     }
     case 'search': {
-      // Ranked find-a-note over the cached search text; only note indices leave the worker.
+      // Ranked find-a-note over the cached search text; only the count and bounded note indices leave the worker.
       if (revision !== projectionRevision) throw new Error('Projection generation changed');
-      return (await cooperative(searchSteps(projection, String(r.query), r.visible), control)).map(h => h.node);
+      const count = { total: 0 }, hits = await cooperative(searchSteps(projection, String(r.query), r.visible, 20, 4096, count), control);
+      return { nodes: hits.map(h => h.node), total: count.total };
     }
     case 'expression-count': {
       if (revision !== projectionRevision) throw new Error('Projection generation changed');

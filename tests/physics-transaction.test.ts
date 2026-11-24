@@ -157,9 +157,9 @@ test('Stop layout remains beside status, sends one active revision and hides wit
   expect(summary.classes.has('graph-ng-layout-active')).toBe(true);
   expect(button.disabled).toBe(false);
   button.click(); expect(stopped).toBe(7); expect(button.disabled).toBe(true);
-  expect(f.view.layoutStopped).toBe(true); expect(f.view.statusText).toBe('Stopping layout…');
+  expect(f.view[compiled('layoutStopped')]).toBe(true); expect(f.view.statusText).toBe('Stopping layout…');
   f.view[compiled('layoutControl')](false); expect(button.disabled).toBe(true); expect(summary.children[0]).toBe(label); expect(summary.classes.has('graph-ng-layout-active')).toBe(false);
-  f.view[compiled('layoutControl')](true); expect(control(summary, 'Stop layout')).toBe(button); expect(button.disabled).toBe(false); expect(f.view.layoutStopped).toBe(false);
+  f.view[compiled('layoutControl')](true); expect(control(summary, 'Stop layout')).toBe(button); expect(button.disabled).toBe(false); expect(f.view[compiled('layoutStopped')]).toBe(false);
 });
 
 
@@ -252,7 +252,7 @@ test('provisional Apply restores the unverified properties summary without shimm
 });
 test('failed refinement announces an error rather than graph ready', async () => {
   const f = await fixture(); delete f.view.statusText; f.view.status = new ControlElement(); f.view.contentEl.dataset.state = 'ready';
-  const live = f.view.stageAnnouncement = new ControlElement(); f.plugin.pipeline.request = async () => { throw Error('Synthetic failure'); };
+  const live = f.view[compiled('stageAnnouncement')] = new ControlElement(); f.plugin.pipeline.request = async () => { throw Error('Synthetic failure'); };
   expect(await outcome(f.view[compiled('applyLayout')]({}))).toContain('Synthetic failure'); expect(live.textContent).toBe('Layout update failed');
 });
 test('worker reply retires stopped steps before coordinate preparation', async () => {
@@ -1266,7 +1266,7 @@ test('neighbourhood expansion keeps its anchor and adds the full mask above the 
   const f = await graduated([[0, 1], [1, 2], [2, 3]]), { r, k } = f;
   r.isolate(0, 1, false); f.settings.canvasMaxDetailNodes = 2;
   r[k('expandNeighbourhood')](1);
-  expect(r[k('filterVisible')][2]).toBe(1); expect(r[k('isolation')].node).toBe(0); expect(r.reducedCanvas).toBe(true);
+  expect(r[k('filterVisible')][2]).toBe(1); expect(r[k('isolation')].node).toBe(0); expect(r[k('reducedCanvas')]).toBe(true);
 });
 test('Only connections refusal is detected by type: an unrelated error that merely mentions CANVAS_DETAIL_ still propagates', async () => {
   const f = await graduated([[0, 1], [1, 2], [2, 3]]), { r, k } = f;
@@ -3059,13 +3059,13 @@ test('settlement winning a stop race does not leave stopped feedback', async () 
   f.plugin.pipeline.request = async (_revision: number, request: any) => {
     if (request.kind === 'recompute') {
       control(f.view[compiled('statusSummary')], 'Stop layout').click();
-      expect(f.view.layoutStopped).toBe(true);
+      expect(f.view[compiled('layoutStopped')]).toBe(true);
       return { positions: f.next, settled: true };
     }
     return {};
   };
   await f.view[compiled('applyLayout')](values);
-  expect(f.view.layoutStopped).toBe(false);
+  expect(f.view[compiled('layoutStopped')]).toBe(false);
 });
 
 test('bundled performance UI regressions', () => { execFileSync('node', ['tests/performance-ui-regressions.cjs']); });

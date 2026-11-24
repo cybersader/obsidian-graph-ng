@@ -14,6 +14,8 @@ export interface RendererControls {
   readonly height: number;
   /** Render-visible nodes. */
   readonly visible: Uint8Array;
+  /** Notes eligible for toolbar ranking, including folded notes and notes still arranging. */
+  readonly filterVisible: Uint8Array;
   readonly camera: Readonly<{ x: number; y: number; ratio: number }>;
   readonly selected: number;
   readonly hovered: number;
@@ -170,7 +172,7 @@ export class Interaction {
   private hoverHub = -1;
   /** Context menu and touch long-press (src/context-menu.ts). */
   readonly gestures: Gestures;
-  constructor(private host: RendererControls, private registry = actions) { this.gestures = new Gestures(host, registry); }
+  constructor(readonly host: RendererControls, private registry = actions) { this.gestures = new Gestures(host, registry); }
   attach(container: HTMLElement) {
     const c = this.host.canvas; container.addEventListener('pointerleave', this.pointerLeave);
     c.addEventListener('pointerdown', this.pointerDown); c.addEventListener('pointermove', this.pointerMove); c.addEventListener('pointerup', this.pointerUp); c.addEventListener('pointercancel', this.pointerCancel); c.addEventListener('pointerleave', this.pointerLeave); c.addEventListener('keydown', this.keyDown); c.addEventListener('wheel', this.wheel, { passive: false }); c.addEventListener('contextmenu', this.contextMenu);

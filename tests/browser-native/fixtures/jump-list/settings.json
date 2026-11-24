@@ -1,0 +1,59 @@
+{
+  "settings": {
+    "settingsVersion": 2,
+    "persistLayout": false,
+    "declaration": {
+      "version": 2,
+      "identity": [
+        {
+          "key": "item"
+        }
+      ],
+      "edges": [
+        {
+          "name": "References",
+          "kind": "inline",
+          "key": "refs",
+          "type": "reference"
+        }
+      ],
+      "groups": [
+        {
+          "from": "folder",
+          "depth": 1
+        }
+      ],
+      "columns": [],
+      "colors": [],
+      "display": {
+        "reifiedAsNodes": false
+      }
+    },
+    "visuals": {
+      "motion": "off",
+      "minimap": false,
+      "cardPlacement": "side"
+    },
+    "layout": {
+      "iterations": 4,
+      "batchIterations": 1
+    },
+    "explore": {
+      "savedViews": [
+        {
+          "name": "Alder only",
+          "view": {
+            "query": "Alder",
+            "group": null,
+            "filters": [],
+            "collapsedGroups": [],
+            "hiddenGroups": [],
+            "hiddenColors": [],
+            "hiddenTypes": []
+          },
+          "camera": null
+        }
+      ]
+    }
+  }
+}

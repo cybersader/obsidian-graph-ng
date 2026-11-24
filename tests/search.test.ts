@@ -3,7 +3,7 @@ import { matchRank, rankMatches, searchKey, searchSteps, type SearchHit } from '
 import { encodeStrings } from '../src/core/columns';
 import type { Projection } from '../src/core/projection';
 import { actions, type RendererControls } from '../src/interaction';
-import { omnibox, searchable, invalidateSearch, disposeSearch, SEARCH_DEBOUNCE_MS, type SearchSource } from '../src/search';
+import { bindToolbar, omnibox, searchable, syncJumpReady, invalidateSearch, disposeSearch, SEARCH_DEBOUNCE_MS, type SearchSource } from '../src/search';
 import type { RenderProjection } from '../src/render-projection';
 import { workingText } from '../src/working';
 
@@ -17,6 +17,7 @@ class El {
   querySelector(selector: string): El | null { return this.children.find(c => c.className.split(' ').includes(selector.slice(1))) ?? null; }
   before(node: El) { node.remove(); const p = this.parentElement!; node.parentElement = p; p.children.splice(p.children.indexOf(this), 0, node); }
   toggleClass(cls: string, on: boolean) { if (on) this.addClass(cls); else this.className = this.className.split(' ').filter(c => c !== cls).join(' '); }
+  ownerDocument = new EventTarget();
   get lastElementChild(): El | null { return this.children.at(-1) ?? null; }
   addClass(cls: string) { if (!this.className.split(' ').includes(cls)) this.className = [this.className, cls].filter(Boolean).join(' '); }
   get textContent(): string { return this.text + this.children.map(c => c.textContent).join(''); }
@@ -51,12 +52,12 @@ function render(names = NAMES, pairs: [number, number][] = [[1, 0], [1, 2], [1, 
   return { nodeCount: names.length, paths: encodeStrings(paths(names)), offsets, source: Uint32Array.from(pairs, p => p[0]), target: Uint32Array.from(pairs, p => p[1]), type: new Uint32Array(pairs.length), types: [], carrier: new Uint32Array(pairs.length), carrierNodes: new Uint32Array(names.length), quarantined: [], groups: [] };
 }
 function drain<T>(steps: Generator<void, T>) { let s = steps.next(), yields = 0; while (!s.done) { yields++; s = steps.next(); } return { value: s.value, yields }; }
-function rig(p = render(), w = worker(), visible = Uint8Array.from({ length: p.nodeCount }, (_, i) => +(i !== 5)), rank?: SearchSource['rank']) {
+function rig(p = render(), w = worker(), visible = Uint8Array.from({ length: p.nodeCount }, (_, i) => +(i !== 5)), rank?: (q: string, keep: Uint8Array) => Promise<number[]>) {
   const stage = new El('div'), canvas = new El('canvas'); stage.appendChild(canvas);
   const calls: string[] = [], filters: string[] = [], masks: Uint8Array[] = [];
   let cardNode = -1;
   const host = {
-    canvas, live: true, width: 200, height: 300, visible, selected: -1, hovered: -1, focusNode: -1, lensNode: -1, edgeCard: false, isolated: false,
+    canvas, live: true, width: 200, height: 300, visible, filterVisible: visible, selected: -1, hovered: -1, focusNode: -1, lensNode: -1, edgeCard: false, isolated: false,
     get cardNode() { return cardNode; },
     groupLabel: () => '<Declared group>',
     openable: (n: number) => !!visible[n],
@@ -68,7 +69,10 @@ function rig(p = render(), w = worker(), visible = Uint8Array.from({ length: p.n
   } as unknown as RendererControls;
   const source: SearchSource = {
     projection: () => p,
-    rank: rank ?? (async (q, keep) => { masks.push(keep); return drain(searchSteps(w, q, keep)).value.map(h => h.node); }),
+    rank: async (q, keep) => { masks.push(keep); const count = { total: 0 };
+      const nodes = rank ? await rank(q, keep) : drain(searchSteps(w, q, keep, 20, 4096, count)).value.map(h => h.node);
+      return { nodes, total: rank ? nodes.length : count.total };
+    },
     filter: q => filters.push(q),
   };
   searchable(stage as unknown as HTMLElement, source);
@@ -78,7 +82,7 @@ function rig(p = render(), w = worker(), visible = Uint8Array.from({ length: p.n
     return actions.dispatch({ host, node: -1, event: e }, true) || prevented;
   };
   const type = (k: string, mods: Partial<KeyboardEvent> = {}) => omnibox(host)!.findKey({ key: k, shiftKey: false, isComposing: false, preventDefault() {}, stopPropagation() {}, ...mods } as unknown as KeyboardEvent);
-  return { host, calls, filters, masks, key, type, box: () => omnibox(host)! };
+  return { host, source, calls, filters, masks, key, type, box: () => omnibox(host)! };
 }
 const names = (hits: SearchHit[]) => hits.map(h => NAMES[h.node]);
 
@@ -323,4 +327,108 @@ test('search help is on demand and keeps focus inside the box until Tab leaves i
   expect(help.textContent).toBe('Keys'); expect(tip.hidden).toBe(true); expect(tip.textContent).toContain('Alt+Enter');
   root.onfocusout!({ relatedTarget: help }); expect(box.findOpen).toBe(true);
   root.onfocusout!({ relatedTarget: new El('button') }); expect(box.findOpen).toBe(false);
+});
+
+
+test('toolbar jumps without filtering, keeps input focus and closes on Escape, blur and outside press', async () => {
+  const r = rig(), field = new El('div').createEl('input'), input = field as unknown as HTMLInputElement;
+  const box = bindToolbar(r.host, input)!, open = async () => { field.focus(); field.value = 'alpha'; field.oninput!(); await box.findSearch(); };
+  const key = (key: string, shiftKey = false) => box.findKey({ key, shiftKey, preventDefault() {}, stopPropagation() {} } as KeyboardEvent);
+  expect(field.getAttribute('role')).toBe('combobox'); expect(field.getAttribute('aria-expanded')).toBe('false');
+  await open(); expect(field.getAttribute('aria-controls')).toBe(box.findList.id); expect(box.findList.getAttribute('role')).toBe('listbox');
+  expect(box.findStatus.getAttribute('aria-live')).toBe('polite'); expect(box.findStatus.textContent).toBe('4 matching notes');
+  expect(field.getAttribute('aria-expanded')).toBe('true'); key('ArrowDown'); key('ArrowUp'); expect(box.findActive).toBe(0);
+  expect(field.getAttribute('aria-activedescendant')).toBe(box.findList.children[0]!.id); key('Enter'); expect(r.calls).toEqual(['fly 1']);
+  expect(El.active).toBe(field); expect(field.getAttribute('aria-expanded')).toBe('false'); expect(field.getAttribute('aria-activedescendant')).toBeNull();
+  await open(); (box.findList.children[1] as unknown as El).onclick!({}); expect(r.calls).toEqual(['fly 1', 'fly 2']); expect(r.filters).toEqual([]);
+  await open(); key('Escape'); expect(box.findOpen).toBe(false); expect(field.value).toBe('alpha'); expect(El.active).toBe(field);
+  await open(); field.onblur!(); expect(box.findOpen).toBe(false);
+  await open(); field.ownerDocument.dispatchEvent(new Event('pointerdown')); expect(box.findOpen).toBe(false);
+  await open(); key('ArrowUp'); expect(box.findActive).toBe(4); key('Enter');
+  await open(); (box.findList.lastElementChild as unknown as El).onclick!({});
+  await open(); key('Enter', true); expect(r.filters).toEqual(['alpha', 'alpha', 'alpha']);
+  bindToolbar(r.host); expect(field.getAttribute('role')).toBeNull(); expect(box.findBox.parentElement).toBeNull();
+  expect(r.key('/')).toBe(true); expect(r.box().findOpen).toBe(true); disposeSearch(r.host.canvas);
+});
+
+test('toolbar filter count is not capped by the displayed suggestions', async () => {
+  const notes = Array.from({length: 36}, (_,i) => `Note ${i}`), r = rig(render(notes), worker(notes, notes), new Uint8Array(36).fill(1));
+  const field = new El('div').createEl('input'), box = bindToolbar(r.host, field as unknown as HTMLInputElement)!;
+  field.value = 'note'; field.oninput!(); await box.findSearch();
+  expect(box.findHits).toHaveLength(20); expect(box.findList.children).toHaveLength(21); expect(box.findStatus.textContent).toBe('36 matching notes');
+  expect(box.findList.lastElementChild!.textContent).toContain('36 in this view'); disposeSearch(r.host.canvas);
+});
+
+test('a fast Enter cannot jump to a later query that superseded its pending ranking', async () => {
+  const pending: ((v: number[]) => void)[] = [], r = rig(undefined, undefined, undefined, () => new Promise(resolve => pending.push(resolve)));
+  const field = new El('div').createEl('input'), box = bindToolbar(r.host, field as unknown as HTMLInputElement)!;
+  field.value = 'alpha'; field.oninput!(); const enter = box.findGo();
+  field.value = 'gamma'; field.oninput!(); const later = box.findSearch(); pending[1]!([4]); await later; pending[0]!([1]); await enter;
+  expect(box.findHits).toEqual([4]); expect(box.findOpen).toBe(true); expect(r.filters).toEqual([]); expect(r.calls).toEqual([]); disposeSearch(r.host.canvas);
+});
+
+test('toolbar waits for the cleared text mask, including across edits and renderer adoption; other filters still constrain counts', async () => {
+  const r = rig(), f = new El('div').createEl('input'), b = bindToolbar(r.host, f as unknown as HTMLInputElement)!;
+  let clears = 0, finish!: (ok: boolean) => void;
+  r.source.clearQuery = () => { clears++; return new Promise(resolve => finish = resolve); };
+  const mask = r.host.filterVisible, otherFilters = mask.slice(); mask.fill(0); mask[4] = 1; // prior text filter: Gamma only
+  f.value = 'a'; f.oninput!(); f.value = 'alpha'; f.oninput!(); const pending = b.findSearch();
+  expect(clears).toBe(1); expect(r.masks).toHaveLength(0);
+  invalidateSearch(r.host.canvas, true); mask.set(otherFilters); finish(true); await pending;
+  expect(b.findOpen).toBe(true); expect(b.findHits).toEqual([1, 2, 0, 3]); expect(b.findList.lastElementChild!.textContent).toContain('4 in this view');
+  invalidateSearch(r.host.canvas, true); mask[2] = 0; await Bun.sleep(SEARCH_DEBOUNCE_MS + 40);
+  expect(b.findOpen).toBe(true); expect(b.findHits).toEqual([1, 0, 3]); expect(b.findList.lastElementChild!.textContent).toContain('3 in this view');
+  // A first edit that empties the input must also remove an applied text filter, without opening a list.
+  f.value = ''; f.oninput!(); expect(clears).toBe(2); expect(b.findOpen).toBe(false); finish(true); disposeSearch(r.host.canvas);
+});
+
+test('arranging blocks flight but not toolbar ranking, selection or filtering', async () => {
+  const r = rig(), f = new El('div').createEl('input'), b = bindToolbar(r.host, f as unknown as HTMLInputElement)!;
+  const canOpen = r.host.openable; r.host.openable = () => false;
+  f.value = 'alpha'; f.oninput!(); await b.findSearch(); expect(b.findHits).toHaveLength(4); expect(b.findActive).toBe(0);
+  expect(b.findRing.hidden).toBe(true); await b.findGo(); expect(r.calls).toEqual([]); expect(b.findOpen).toBe(true); expect(b.findStatus.textContent).toContain('Arranging');
+  b.findPreview(1); expect(b.findActive).toBe(1); r.host.openable = canOpen; syncJumpReady(r.host.canvas); expect(b.findStatus.textContent).toBe('4 matching notes'); expect(b.findActive).toBe(1); await b.findGo(); expect(r.calls).toEqual(['fly 2']); disposeSearch(r.host.canvas);
+});
+
+test('visible toolbar failure stays expanded; a touch blur between pointerdown and click does not discard the row', async () => {
+  let fail = true; const r = rig(undefined, undefined, undefined, async () => { if (fail) throw Error('failed'); return [1]; });
+  const f = new El('div').createEl('input'), b = bindToolbar(r.host, f as unknown as HTMLInputElement)!;
+  f.value = 'alpha'; f.oninput!(); await b.findSearch(); expect(b.findStatus.textContent).toContain('unavailable'); expect(b.findOpen).toBe(true); expect(f.getAttribute('aria-expanded')).toBe('true');
+  fail = false; f.oninput!(); await b.findSearch(); const row = b.findList.children[0] as unknown as El;
+  (b.findBox as unknown as El).onpointerdown!({ pointerType: 'touch', target: row, preventDefault() {} }); f.onblur!(); expect(b.findOpen).toBe(true);
+  row.onclick!({}); expect(r.calls).toEqual(['fly 1']); expect(f.getAttribute('aria-expanded')).toBe('false'); disposeSearch(r.host.canvas);
+});
+
+test('live coordinate frames do not invalidate pending toolbar rankings over the unchanged filter mask', async () => {
+  let reply!: (hits: number[]) => void; const r = rig(undefined, undefined, undefined, () => new Promise(resolve => reply = resolve));
+  const f = new El('div').createEl('input'), b = bindToolbar(r.host, f as unknown as HTMLInputElement)!;
+  r.host.openable = () => false; f.value = 'alpha'; f.oninput!(); const ranking = b.findSearch();
+  (r.host as { visible: Uint8Array }).visible = r.host.visible.slice(); reply([1]); await ranking;
+  expect(b.findHits).toEqual([1]); expect(b.findStatus.textContent).toContain('Arranging'); disposeSearch(r.host.canvas);
+});
+
+test('superseded transient filter evaluation recovers on the winning mask without editing again', async () => {
+  const r = rig(), f = new El('div').createEl('input'), b = bindToolbar(r.host, f as unknown as HTMLInputElement)!;
+  let settle!: () => void; r.source.clearQuery = () => new Promise(resolve => { settle = () => resolve(undefined); });
+  f.value = 'alpha'; f.oninput!(); const waiting = b.findSearch(); settle(); await waiting;
+  expect(b.findStatus.textContent).not.toContain('unavailable'); expect(r.masks).toHaveLength(0);
+  r.host.filterVisible[2] = 0; invalidateSearch(r.host.canvas, true); await Bun.sleep(SEARCH_DEBOUNCE_MS + 40);
+  expect(b.findHits).toEqual([1, 0, 3]); expect(b.findStatus.textContent).toBe('3 matching notes'); disposeSearch(r.host.canvas);
+});
+
+test('a document-level release after dragging off a result lets the next blur dismiss it', async () => {
+  const r = rig(), f = new El('div').createEl('input'), b = bindToolbar(r.host, f as unknown as HTMLInputElement)!;
+  f.focus(); Object.assign(f.ownerDocument, { activeElement: f, elementFromPoint: () => null });
+  f.value = 'alpha'; f.oninput!(); await b.findSearch();
+  (b.findBox as unknown as El).onpointerdown!({ target: b.findList.children[0], preventDefault() {} });
+  f.ownerDocument.dispatchEvent(new Event('pointerup')); f.onblur!();
+  expect(b.findOpen).toBe(false); expect(r.calls).toEqual([]); disposeSearch(r.host.canvas);
+});
+
+test('Enter acts on the preserved draft after the toolbar rebinds without another input event', async () => {
+  const r = rig(), f = new El('div').createEl('input'), input = f as unknown as HTMLInputElement;
+  bindToolbar(r.host, input); f.value = 'alpha'; f.oninput!(); bindToolbar(r.host);
+  const rebound = bindToolbar(r.host, input)!; f.focus(); expect(rebound.findOpen).toBe(false);
+  f.onkeydown!({ key: 'Enter', preventDefault() {}, stopPropagation() {} }); await Bun.sleep(0);
+  expect(r.calls).toEqual(['fly 1']); expect(r.filters).toEqual([]); expect(rebound.findOpen).toBe(false); disposeSearch(r.host.canvas);
 });
