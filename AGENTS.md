@@ -1,6 +1,6 @@
 # Agent contributor contract
 
-Read README.md, CONTRIBUTING.md, SECURITY.md, and the relevant docs/decisions record before editing. A passing deterministic gate is evidence for its exact command, not a judgment that a release is safe or production-ready.
+Start with the [knowledge base](docs/README.md) for design principles, code ownership and test commands. Read README.md, CONTRIBUTING.md, SECURITY.md, and the relevant docs/decisions record before editing. A passing deterministic gate is evidence for its exact command, not a judgment that a release is safe or production-ready.
 
 - Work locally unless the owner explicitly authorizes a remote or publication. Do not create a remote, push, publish, upload evidence, or run hosted CI as a side effect of a task.
 - Use human authorship only. No AI author, contributor, co-author trailer, or package/notice attribution. No CLA/DCO/sign-off requirement. Never bypass hooks.

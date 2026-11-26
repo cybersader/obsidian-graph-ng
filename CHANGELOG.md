@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased: contributor documentation
+
+- Added a [knowledge base](docs/README.md) covering interface decisions, the path from notes to dots, synthetic test recipes and research limits. No plugin behaviour changed.
+
 ## Unreleased: toolbar search
 
 - In Notes, selecting a search result now jumps to that note and opens its connections without hiding its neighbours. Choose the last result or press Shift+Enter to filter instead. You can restore **Filter as you type** in Appearance. Groups search and the `/` shortcut are unchanged.

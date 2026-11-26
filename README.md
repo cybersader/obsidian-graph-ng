@@ -12,6 +12,8 @@ Explore large collections of Obsidian notes locally: start with groups, select a
 
 </div>
 
+New contributors: start with the [Graph NG knowledge base](docs/README.md) for design principles, the code map, test commands and open decisions.
+
 ## Install locally
 
 This alpha uses a local build, not a community-plugin install flow. Use a **synthetic vault** and enable the plugin yourself.
