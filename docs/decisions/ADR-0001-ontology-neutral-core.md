@@ -1,4 +1,4 @@
-# ADR-0001 — Ontology-neutral core
+# ADR-0001: Ontology-neutral core
 
 - Status: accepted for slice 1
 - Date: 2026-11-10

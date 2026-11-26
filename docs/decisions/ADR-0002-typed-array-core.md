@@ -1,4 +1,4 @@
-# ADR-0002 — Typed-array core; interim renderer adapter
+# ADR-0002: Typed-array core; interim renderer adapter
 
 - Status: accepted core; Sigma temporary, replacement planned
 - Date: 2026-11-10

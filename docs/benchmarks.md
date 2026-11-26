@@ -241,7 +241,7 @@ Native commands: `bash .workspace/visual-qa/capture.sh before`, `after`, and `fi
 
 At view widths 1100 / 850 / 420 px, the group canvas stays one pixel before the panel, measuring 706 / 456 / 6 px. The narrow panel deliberately consumes almost all graph space; Members remains usable instead of obscuring an unseen graph. Closing samples monotonically expand 812 / 903 / 979 / 1037 / 1070 / 1074 px from 706; 11 redraws occur during the transition and zero in the following 250 ms idle window. No permanent animation loop was added. Visually inspected paired captures include `runs/before.step-08-hub-card`, `runs/before.step-11-group-panel`, `runs/final.step-06-webgl-hub`, `runs/final.step-11-canvas-hub`, `runs/final.step-17-group-panel`, and `runs/final.step-19-group-midwidth` under `.workspace/visual-qa/`, with `.light.png` and `.dark.png` suffixes. The full reports retain the harness's unknown trust verdict. Independent merged-wave review remains parent-owned.
 
-## Answer-first Graph information — 2026-11-16
+## Answer-first Graph information:  2026-11-16
 
 Source: the commit carrying this section, based on `aa781eb`. Hardware class: Linux x86-64 desktop, 32 GB RAM. Graph information now leads with state and named counts, keeps reconciled note/edge accounting in disclosures, and separates navigation from explicit filter removal and relationship-display changes. Shared help replaces persistent Saved views explanations. Existing graph authorities and security boundaries are unchanged.
 
@@ -259,7 +259,7 @@ All **42 steps pass**, with no page/console errors or unhandled rejections, and 
 
 Scope is synthetic browser-native Obsidian with Canvas fallback, not desktop Electron, hardware WebGL, mobile/touch or release acceptance. The harness verdict remains `unknown` (`harness-empty-list`); these are scoped interaction observations, not a trust verdict. Independent merged-wave review remains parent-owned.
 
-## Compact chrome, wave 9 track C — 2026-11-16
+## Compact chrome, wave 9 track C:  2026-11-16
 
 Source: the commit carrying this section, based on `aa781eb`. Hardware class: Linux x86-64 desktop, 32 GB RAM. Toolbar construction, overlay styling and minimap keyboard state only; no core, renderer algorithm, connection-card, dependency, setting or budget change.
 
@@ -275,7 +275,7 @@ Exact commands, each under `flock -w 3000 -E 75 /tmp/openclast-bun.lock timeout 
 
 Ignored receipts and paired plugin assets: `.workspace/wave9-c/`. Native capture **not run**: the pre-capture `free -g` check reported **7 GB available**, below the required 8 GB. The schema-validated `.workspace/wave9-c/steps-chrome.json` contains 26 bounded harness steps covering 1100 px overview, focus, expanded/folded minimap and active panel, plus 360 px and 320 px panes; the harness captures both themes per screenshot. Use the same recipe and synthetic vault with `plugin-before` and `plugin-after`. Narrow browser panes are not native mobile acceptance; coarse-pointer, visual and screen-reader acceptance remain pending. Independent review and the combined visual pass belong to the merged wave before shipping.
 
-## Merged wave 8 review fixes — 2026-11-16
+## Merged wave 8 review fixes:  2026-11-16
 
 Source: the commit carrying this section, based on `99ec508`. Hardware class: Linux x86-64 desktop, 32 GB RAM. This is local deterministic evidence, not a release or native-rendering acceptance claim.
 
@@ -293,7 +293,7 @@ Ignored receipts: `.workspace/evidence/wave8-fixes/{baseline-gates,regressions-b
 
 **Deferred finding 3:** preview handoff remains unchanged. Preview/final construction shares one stage, failed constructor cleanup can remove stage canvases, and `DetailRenderer.create()` resolves after scheduling rather than completing a frame. Retaining a live preview until the final first frame while cancelling an in-flight preview safely would require coordinated stage ownership, cancellation and readiness changes. The brief explicitly permits deferral rather than a risky lifecycle expansion. The blank flash and initialization wait remain known gaps. Independent post-fix review belongs to the owning session.
 
-## Compact graph tools, wave 8 track P — 2026-11-16
+## Compact graph tools, wave 8 track P:  2026-11-16
 
 Source: the commit carrying this section, based on `5bec048`. Hardware class: Linux x86-64 desktop, disposable browser-native Obsidian harness, Canvas fallback (WebGL unavailable). The synthetic fixture has 1,200 ordinary notes, 300 relationship notes and 48 groups; the captured projection shows 1,200 notes and 1,593 edges. This verifies panel presentation, not canvas label changes, Electron fidelity, physical GPU behavior or mobile/touch acceptance.
 
@@ -314,7 +314,7 @@ Receipts are `.workspace/visual-qa/runs/wave8-p-{before-small,final}.json`; both
 
 Known scope: Anchored/Ranked settings and UI are integrated here, but canvas implementation belongs to the label track. Independent senior review is scheduled over the merged wave before shipping. These receipts do not establish release readiness or broad performance acceptance.
 
-## Anchored canvas names — 2026-11-16
+## Anchored canvas names:  2026-11-16
 
 Source: the commit carrying this section, based on `5bec048`. Linux x86-64 desktop-class host, 32 GB RAM, 11 GB available at launch. The browser-native Obsidian harness used a disposable synthetic vault with 16,000 notes and 52,511 edges, explicitly admitted SwiftShader WebGL2, and a 1210 × 700 renderer. This is not desktop Electron or hardware-GPU acceptance.
 
@@ -331,7 +331,7 @@ All seven screenshot pairs were visually inspected in both themes. Under `.works
 | Overview | `step-19-ranked-overview` | `step-26-anchored-overview` |
 | Mid | `step-21-ranked-mid` | `step-28-anchored-mid` |
 | Close | `step-23-ranked-close` | `step-30-anchored-close` |
-| Focused | — | `step-33-anchored-focus` |
+| Focused | Not listed | `step-33-anchored-focus` |
 
 Node size was 0.16, label size 13, label density 3; camera ratios were 0.4434134 / 0.1773654 / 0.0665120. The Saved views panel remained open and was excluded from label placement. Visible names at overview / mid / close were **Ranked 8 / 18 / 7**, **Anchored 25 / 45 / 27**, with eight names in the anchored focused capture. Ranked counts apply the glyph shader's opacity cutoff and whole-annotation viewport bounds, excluding panel-covered rectangles; they are not total atlas placements (37 / 89 / 249). Anchored uses the same LOD candidates without the rank-opacity cutoff, so more names remain crisp. All observed anchored text opacity was 1, no anchored plate intersections were detected, and the pool reached 45 elements. Canvas `aria-label` was absent, hidden keyboard help remained linked by `aria-describedby`, and the container title was empty. Production-bundle synthetic tests cover the pooled overlay, tier toggles, style-switch cleanup and accessible help; shared dispatch covers Canvas parity, not a separate native Canvas capture.
 
@@ -346,7 +346,7 @@ Anchored added about 0.6 ms median draw CPU cost (0.6 ms overlay). Small, ordere
 
 Known limits: the inherited ranked LOD/grid placements and settings budgets are not viewport-complete naming. The rejected top-256-global implementation is gone; a production regression places a visible candidate after 300 offscreen candidates and verifies LOD cache invalidation. Hover/focus can name another note. Collision checks protect named annotations and UI, not every unlabelled dot or edge; dense layouts remain dense. These screenshots do not establish perfect continuity while panning, ranked pixel equivalence across all states, screen-reader behavior in every host, native Canvas performance or physical-GPU acceptance.
 
-## Loading and requested presentation — 2026-11-16
+## Loading and requested presentation:  2026-11-16
 
 Source: the Track R commit carrying this section, based on `5bec048`. Linux x86-64 desktop class; synthetic fixtures only. No real-vault or physical-GPU acceptance claim.
 
@@ -358,7 +358,7 @@ Native command: `bash .workspace/visual-qa/run.sh`, which checks at least 8 GiB 
 
 Visually inspected `.workspace/visual-qa/loading.step-05-loading.{light,dark}.png` (25% / 41% progress, Lines configured, no note labels) and `loading.step-17-fallback.{light,dark}.png` (explicit software-budget reason and Filters action). The forced 2,000-note software limit retained the requested Notes state; the Filters action opened Filters. The final renderer had already fallen back before that forced software check, so this run does **not** prove final GPU Notes admission. Track P's pending header integration is absent here: provisional header counts remain visible, and the long bottom fallback chip clips under the panel. The first element-screenshot attempt timed out waiting for stability; the successful rerun used the harness's full-page capture. No settings defaults, solver equations or renderer budgets changed.
 
-## Centering — 2026-11-16
+## Centering:  2026-11-16
 
 Question: with the room force values (Spread 23.64, Pull to center 0.5, Strong gravity off, Step slowdown 3.607, Approximation 0.369, 100 steps), why do disconnected parts not gather around the middle? Answer: the settings, not the solver.
 
@@ -381,7 +381,7 @@ Reading: normal gravity has the same strength at any distance while the whole gr
 
 Change: Layout shows **Pull in disconnected notes** when Strong gravity is off, Pull to center is above 0, and at least 20 notes (and 2%) sit outside the largest connected part. It fills the draft with Strong gravity on and the recommended Pull to center for the graph size and keeps every other value; nothing is saved until Apply and recompute. Suggested for this graph names the same fix.
 
-## Cache, haze and performance review corrections — 2026-11-15
+## Cache, haze and performance review corrections:  2026-11-15
 
 Source: the review-fix commit carrying this section, against `001e8ff..201266f`. Hardware class: Linux x86-64, CPU-only deterministic fixtures; no native application, physical GPU, visual or latency claim.
 
@@ -395,7 +395,7 @@ Verification commands, each run separately:
 
 Result: **548 tests pass**, full six-lane gates pass; **351,761 raw / 117,985 gzip bytes**, under the unchanged **355,000 / 118,000** caps. Raw local receipts: `.workspace/visual-qa/runs/review-{build,tests,gates}.log`, original-source failures in `review-original-regressions.log`; bundle receipt in `.workspace/evidence/bundle-size.json`. Native/performance acceptance remains pending. Deleted/renamed identities still cold-start by policy; a hub edit can still exceed the documented 50% movable threshold, and the non-Barnes-Hut pairwise path still calculates unused fixed-node forces. These limitations are not changed by the review.
 
-## Layout cache reuse pass — 2026-11-15
+## Layout cache reuse pass:  2026-11-15
 
 Reopening, reloading and small edits now reuse the saved layout in the cases that previously recomputed it. Against `ff6d44f`, an Obsidian reload while links are still resolving drops from a full cold layout (**1.74 s / 5.99 s** to the stable layout at about 16k / 61k notes) to **0.43 s / 0.58 s**; a grouping change from **1.68 s / 6.57 s** to **0.32 s / 0.50 s**; a one-link edit from **0.75 s / 2.20 s** to **0.46 s / 0.85 s**. Cold layout itself is unchanged.
 
@@ -431,7 +431,7 @@ Worker layout time inside those totals: warm edit **399 → 119 ms** (16k) and *
 
 Bundle: **350,786 raw / 117,596 gzip bytes** versus **350,170 / 117,369** at `ff6d44f` (+616 / +227), leaving **4,214 / 404** bytes under the 355,000 / 118,000 caps.
 
-## Bounded CPU performance pass — 2026-11-15
+## Bounded CPU performance pass:  2026-11-15
 
 The main win is less work on hub selection, not a faster layout algorithm. Against `001e8ff00f50480194166e680c60cd1fa7c053f4`, full-scene compiled-renderer hub selection drops **14.13 → 5.34 ms** at 16k nodes and **12.16 → 7.17 ms** at 61k. These are synthetic JavaScript CPU measurements, not native interaction latency or GPU frame rates. No layout default, traversal budget, visibility rule or Canvas limit changes.
 
@@ -594,13 +594,13 @@ Post-review browser renderer run (one repetition, zero page errors; predates fin
 
 Baseline/current bundle: **628,393 bytes raw**, **102,744 bytes gzip (level 9)**, **73,820 bytes Brotli** for `main.js`; SHA-256 `77ad060cfbca36b62c7b03f09d2dc8a21154abc59c2a15ace8459ffcd05ba725`. Rebuilt during local release-readiness verification without runtime source changes from `041e1382`; compression/hash came from `bun run gates` after `bun run build`. These are reports, not hard thresholds. A steady 60 FPS does not fix main-thread parse/projection/buffer tasks, prove a usable hairball, or establish native/mobile/integrated-GPU/one-million-node acceptance.
 
-## Local release-readiness recheck — 2026-11-10
+## Local release-readiness recheck:  2026-11-10
 
 No runtime source changes from `041e1382`. The existing dependency directory was preserved in ignored storage and a **fresh** install used `flock /tmp/openclast-local-verification.lock build-contained -- bun install --frozen-lockfile --ignore-scripts`: 501 packages installed, no lifecycle execution. On that install, the same prefix plus `bun run build`, `bun run test`, and `bun run gates` passed: **35 tests / 3 explicit files / 151 assertions**, six full gate lanes, six MIT runtime packages and four exact inert dev install-hook exceptions. The subset is core, adapter and gate regressions; no new large-scale/matrix acceptance is implied.
 
 `./scripts/run-native-smoke.sh` then regenerated the synthetic small fixture, checked the frozen scripts-disabled install, built, and ran the existing nine native tests: **9/9 passed**, Obsidian/installer 1.13.7, 24.3-second spec / 26-second invocation. Cold open 352 ms, worker 83 ms, offline cached reopen 28 ms; hardware detail mode was reached. All six newly captured hardware screenshots were opened and visually inspected, including groups, nodes, carrier navigation, duplicate quarantine and paged aggregates. This proves esbuild's optional platform binary and the native test toolchain work without invoking installers on this desktop; it does not establish another OS/GPU/version class.
 
-## Slice 2 worker pipeline — 2026-11-10
+## Slice 2 worker pipeline:  2026-11-10
 
 Source: `feat/slice2-worker-pipeline` from `9b8cc07`; the receipts below distinguish initial measured source from final verification. All commands use `flock --exclusive --wait 2400 /tmp/openclast-local-verification.lock build-contained --`. No remote/native-large acceptance is implied.
 
@@ -971,9 +971,9 @@ All Bun runs use `flock --exclusive --wait 2400 /tmp/openclast-local-verificatio
 | --- | --- | --- | --- |
 | small hardware / software | graph 11/11, explore 6/6 each | 17.7 ms (hw rerun) | none in explore interactions; one 51 ms open task in the first small-hardware run, none on rerun (unattributed) |
 | large literal hardware (4 runs) | 7/7 in 3 runs; 1 run failed on the Groups screen (`graph-ng-edge` button not interactable), passed on rerun | 297.4 / 313.4 / 303.1 / 345.7 ms | one 64 ms detail-open task in run 1 (CPU profile: 39.5 ms inside `getContext('webgl2')`, about 24 ms graph JS in renderer construction); none in runs 2–4 |
-| large literal software | 7/7 | — | none |
-| large literal explore hardware | 6/6 | — | none (detail, hover, fold toggle, filter, collapse, regroup) |
-| clustered literal explore hardware | 6/6 (×2) | — | none |
+| large literal software | 7/7 | Not reported | none |
+| large literal explore hardware | 6/6 | Not reported | none (detail, hover, fold toggle, filter, collapse, regroup) |
+| clustered literal explore hardware | 6/6 (×2) | Not reported | none |
 
 Native large hardware detail sampled **58.2–58.3 fps, p95 17.6–17.9 ms**. Browser bench, three runs: semantic first groups 205.1–233.2 ms, warm open 425.4–623.8 ms, heap 11.07 MiB, backing 2.39 MiB; literal first groups 253.4–257.2 ms, warm open 598.8–612.2 ms, heap 11.09 MiB, backing 6.42 MiB; 60.0 fps / p95 16.7–16.8 ms; no ≥50 ms tasks; second-view checks pass in all six.
 
@@ -993,7 +993,7 @@ An independent review returned SHIP-WITH-FIXES: colour only from the note's own 
 
 Keep raw benchmark receipts by source commit and hardware class in `.workspace/evidence/` until their summary is accepted; do not silently overwrite acceptance evidence with another fixture. Screenshots stay in ignored `test-screenshots/`, synthetic only, with visual review before sharing. Downloads/caches and reproducible synthetic outputs may be age-pruned only within their owned paths after evidence capture; there is no automatic broad cleanup. Keep per-version release checksums indefinitely with the release record. Define any future retention knob explicitly rather than deleting evidence opportunistically.
 
-## Slice 8 expression candidate — 2026-11-11
+## Slice 8 expression candidate:  2026-11-11
 
 These receipts describe the uncommitted `feat/slice8-expressions` candidate based on `87ae0b2`, not a released or independently reviewed build. Hardware scope is a Linux desktop workstation, Bun 1.3.14, Node 22.23.1; native scope is Obsidian/installer 1.13.7 and its Chromium 150. This is not mobile/integrated-GPU acceptance.
 
@@ -1040,7 +1040,7 @@ Three actual minified/factory Blob-worker tests use **5,000 distinct 4,096-unit 
 The existing `workerTimeoutMs` tuning controls the default cooperative evaluation budget at 90% of the watchdog, allowing an explicit error before whole-worker recovery. Individual `expression-count`/`explore` callers may supply positive finite `budgetMs`. Kernels check between batches (64 distinct values or 1,024 simple mask rows) and yield a task after an 8 ms slice. Cancellation does not preempt a single built-in operation, synchronous project/declared-group construction, or the final non-expression summary pass. These limits are not expanded into whole-worker/preemptive cancellation claims. No independent review or release acceptance is implied.
 
 
-### Review-fix verification — 2026-11-11
+### Review-fix verification:  2026-11-11
 
 This follow-up supersedes the earlier size-blocked handback. The owner-approved committed ceilings are **205,000 minified / 66,000 gzip bytes**. The independent review returned SHIP-WITH-FIXES; the fixes below were verified on its follow-up tree. No second independent review, release, room install or deployment is claimed.
 
@@ -1063,7 +1063,7 @@ Identifier tokens are capped at **128 units** with positioned errors; longer in-
 
 Receipts remain in ignored `expression-nesting.json`, `expression-cancellation.json`, `e2e-expressions.json`, `expressions-benchmark.json` and `bundle-size.json`. The initial native attempt exposed duplicate synthetic fixture IDs when renamed paths shared the historical fixture; the corrected dedicated fixture passed. Historical synthetic files were restored after a verified backup. No real vault was used. All uncovered runtime/device/group-color/restart/materialization lanes listed above remain uncovered by this follow-up.
 
-## 0.5.2 physics-controls candidate — 2026-11-12
+## 0.5.2 physics-controls candidate:  2026-11-12
 
 The initial physics-controls implementation measured **208,358 minified / 66,039 gzip bytes** (gzip level 9), versus its 0.5.1 base **204,990 / 65,145**: **+3,368 / +894 bytes**. The bounded download ceilings for this slice are now **212,000 / 67,200**; correctness, independent review, deployment and runtime-performance gates remain. Final preparation commands/tree checksums belong to private receipts, not a released-build claim.
 
@@ -1081,7 +1081,7 @@ The change shares repeated GL texture/buffer/attribute setup and contribution he
 
 On a Linux x86-64 development workstation, `build` and `test --timeout 10000` pass through `flock -w 3000 -E 75 /tmp/openclast-bun.lock timeout --kill-after=5s 1800s ./scripts/run.sh <arguments>`, retaining the inner containment lock. The full suite reports **787 pass / 1 existing skip / 0 fail**, **996,880 assertions**, across 38 files. Private build/test receipts are `.workspace/build-size-cleanup.log` and `.workspace/test-size-cleanup.log`; `scripts/bundle-size.mjs` records the gzip-9 measurement in `.workspace/evidence/bundle-size.json`. Independent source review found no blocking issue. No native screenshots or hardware performance measurements were added; existing runtime acceptance limits remain.
 
-## Bounded bundle size reclamation — 2026-11-15
+## Bounded bundle size reclamation:  2026-11-15
 
 Against baseline `f603cbb`, the retained build-only change reduces `main.js` from **354,038 raw / 117,705 gzip** to **349,822 raw / 117,167 gzip** (gzip level 9): **4,216 / 538 bytes saved**. The unchanged **355,000 / 118,000** caps leave **5,178 raw / 833 gzip bytes** of headroom. The requested 10,000 / 3,000 reduction target is **not met**. This is the measured safe candidate retained, not a claim that further optimization is impossible.
 
@@ -1117,7 +1117,7 @@ Verification ran on a Linux x86-64 development workstation. Every command below 
 
 Independent review found no blocking issue in the allowlist, schema guard or compiled-test seam changes. This pass did not rerun native-host, browser, shader-driver or hardware-performance lanes; their existing acceptance gaps remain. No publication, real-vault access or deployment occurred. Private evidence is retained under `.workspace/evidence/size-reclaim/` (baseline/final profiles, prototype outputs, build/test/gate logs); `.workspace/evidence/bundle-size.json` records the current source commit, tree state and artifact hash.
 
-## Edge haze line share — 2026-11-15
+## Edge haze line share:  2026-11-15
 
 Real Obsidian 1.12.7 in the OpenClast browser-native harness (headless Playwright Chromium). The Notes view was forced onto WebGL2 by overriding the view's GPU probe, because the renderer is SwiftShader. Pixels and blending come from the real shader path; frame times are CPU rasterization, not GPU numbers. The vault is synthetic: 16,000 notes in 93 folder groups, 33,500 cross-group relationship notes (a third with two targets), in-group wikilinks and a parent hierarchy, for 52,511 drawn edges. Settings are the owner's edge settings (opacity 0.155, color mix 0.8, curved, Edges All, Adapt to zoom) with the shipped defaults otherwise. All three cameras are fixed world framings of the connected web, the same before and after.
 
@@ -1134,7 +1134,7 @@ The before frame is a uniform veil: about 8 lines overlap each core pixel, each 
 
 Verification is `build` and `test --timeout 10000` (532 pass / 0 fail), plus `gates`, where all six lanes pass. The bundle is 350,298 raw / 117,382 gzip against the 355,000 / 118,000 caps (+381 / +175 bytes). This is single-run, synthetic evidence on a software rasterizer, not native GPU, FPS or real-vault acceptance.
 
-## Importance-ranked overview — 2026-11-15
+## Importance-ranked overview:  2026-11-15
 
 The next renderer candidate (`2979e8a`, based on `d29955f`) redistributes the existing context-line share toward endpoint degree, declared interest and cross-group edges. Importance alone does not enlarge the requested share. The final refinement adds an overview allowance to the same geometry-derived budget, capped at eight shares and fading to one by home/8, while keeping adaptive retained-line opacity constant rather than boosting it close up. Retained detail lines avoid the second density-opacity penalty. Strong focus has a continuous direct-neighbour-count target rather than the former 50-neighbour cutoff; all focus-tier lines retain their admission exemption. Canvas and WebGL share the rank column, admission threshold, picking and emphasis policy, but not identical rasterization.
 
@@ -1167,7 +1167,7 @@ Evidence pairs are `before2` / `refine` with suffixes `.step-21-overview.dark.pn
 
 Exact capture invocations from the isolated worktree were `bash .workspace/overview-qa/serial-run.sh before2 plugin-before vault-16k before2.json 25` and `bash .workspace/overview-qa/serial-run.sh refine plugin-refine vault-16k refine.json 25`. The wrapper owns the shared browser lock. Verification uses the required outer `flock -w 3000 -E 75 /tmp/openclast-bun.lock timeout --kill-after=5s 1800s ./scripts/run.sh` prefix with `build`, `test --timeout 10000`, and `gates`; the inner local-verification lock remains owned by `scripts/run.sh`, never recursively acquired. Results: **554 tests pass, zero fail, 146,515 expectations; all six gates pass.** Bundle: **351,887 raw / 117,977 gzip / 101,879 Brotli**, leaving 3,113 raw and 23 gzip bytes under the unchanged caps. No overage. Software-rasterizer frame measurements are retained in the JSON but do not establish hardware GPU performance, FPS, mobile acceptance or real-vault acceptance. Independent senior review remains parent-owned and pending.
 
-## Small-dot labels and isolated fan repair — 2026-11-15
+## Small-dot labels and isolated fan repair:  2026-11-15
 
 Based on `125be11`, this follow-up retains per-label plates, turns tiny-dot label suppression into a rank cutoff, applies whole-annotation viewport insets, and moves the existing isolated-focus edge pass above opaque nodes in both renderer paths. It also clears stale hover replay on Escape and serializes Notes/Group overview through public per-view workspace state. Top-decile cross-group bridges receive a 10% rank discount at view time: this strengthens admission rather than increasing each stroke's opacity. The GPU rejects unadmitted context rows before texture/curve work where possible; compiled command-driver tests guard against per-frame endpoint/degree scans and an extra edge pass.
 
@@ -1198,7 +1198,7 @@ A follow-up `bash .workspace/visual-qa/run.sh reload-theme plugin-after vault-16
 The last completed candidate build and `test --timeout 10000` passed **564 tests, zero failures, 146,869 expectations across 35 files** (`.workspace/visual-qa/test-third.log`). They precede the final small-viewport pip guard, redundant hover-clamp deletion and nonvacuous pip assertion. That built bundle measures **353,405 raw / 118,465 gzip / 102,343 Brotli bytes**, SHA-256 `f93e76d367ed08664df66a9f7256ab5b84f3ccb0c59bbb4e6f11a9718dd622f9`: 1,595 bytes below the raw ceiling and **465 gzip bytes over** the unchanged 118,000-byte ceiling. This is the last measured bundle, not a claimed final-source size. Initial five-lane fast gates passed; renewed secrets, attribution and privacy scans also passed after the documentation changes. A final build followed by tests, using the required outer lock/timeout prefix, remained queued behind another verification process until the background task reached its lifetime limit and was stopped without build/test output. It was not restarted. Full final gates and final-source bundle size remain pending. No cap was edited and no memory-pressure failure was retried. These receipts do not constitute release acceptance.
 
 
-## Density edge compositing — 2026-11-16
+## Density edge compositing:  2026-11-16
 
 **Decision: keep Blend as the default; expose Density for comparison.** Density lowers edge-added light substantially at mid and close zoom, but makes individual context strokes fainter. The overview is still dominated by overlapping nodes; this is not a global readability fix. The measured software-rendering cost also increases. There is no hardware-GPU, mobile or real-vault acceptance claim.
 
@@ -1234,7 +1234,7 @@ The baseline at `73c03e2` builds to 355,389 raw / 119,285 gzip bytes. This track
 
 Tests cover enum validation/migration, monotone bounded tone mapping, zero opacity, protected-tier splitting, exact Blend pass selection, one-target reuse, bounded allocation, cached framebuffer/allocation failure, restoration/disposal and identical Canvas fallback. The base revision has one independently reproduced pre-existing failure: `review: a failed Back-to detail attempt consumes pending focus before any early return` lacks the new `app.workspace.requestSaveLayout` fixture seam. The coordinator owns that separate fix in `7529998`; this track does not duplicate it. Final verification used `flock -w 3000 -E 75 /tmp/openclast-bun.lock timeout --kill-after=5s 1800s ./scripts/run.sh` with `gates:fast`, `build`, `test --timeout 10000`, the same test command plus `--test-name-pattern '^(?!review: a failed Back-to detail attempt)'`, and `gates`, in that order. Build and all six final gates passed. The full suite reports **570 pass / 1 known baseline failure**; excluding exactly that coordinator-owned case reports **570 pass / 0 fail / 1 filtered**, 155,176 expectations across 35 files. Logs are `.workspace/wave7-density/final-{build,tests,tests-subset,gates}.log`. Independent merge review remains parent-owned.
 
-## Adaptive highlight emphasis — 2026-11-16
+## Adaptive highlight emphasis:  2026-11-16
 
 Based on `73c03e2`, `visuals.emphasis` adds **Adaptive** (default, including saved settings missing the key) alongside **Scale**, which retains the prior magnification. Adaptive uses screen-pixel targets and cached focus-set counts to reduce neighbour growth and context opacity when many notes are highlighted. It does not shrink normally large dots, change tier membership, move the camera/layout, or add a projection traversal or coordinate upload per frame. The selected note keeps its contrast rings; hover keeps its existing timing with target-based growth. The policy and equations are recorded in ADR-0005.
 
@@ -1266,7 +1266,7 @@ Track S is based on `2063a4e`. The main bundle changes from **372,405 raw / 124,
 Ordered verification used `flock -w 3000 -E 75 /tmp/openclast-bun.lock timeout --kill-after=5s 1800s ./scripts/run.sh` with `gates:fast`, `build`, `test --timeout 10000`, and `gates`. All **638 tests** and all six full gates passed. Three new tests cover progress-span continuity, text-only bounded transition nodes, completion, supersession, stale views and close cleanup. Deterministic receipts are `.workspace/evidence/{preflight,build-after,test-final,gates-final}.log` in the track worktree.
 
 The synthetic browser-native Obsidian harness ran on a Linux desktop-class host with software WebGL and 120 notes / 199 edges, under `/tmp/graph-ng-harness.lock`, with at least 8 GiB available before launch. The final command was `.workspace/visual-qa/run.sh wave10-s-final plugin-wave10-s-after vault-wave9-critic steps-wave10-s-after-proof.json 8`; its **26 steps passed**, with no page or console errors and completed teardown. The capture pass covers wide/narrow search, keyboard X dismissal and returned canvas focus, a held search reply, reading/layout stages, progress-span identity and static completion. Loading counters are explicit synthetic status fixtures, not a timed ingestion benchmark. All before/after images in both themes were visually inspected. Before evidence is `.workspace/visual-qa/runs/wave10-s-before*`; final evidence is `.workspace/visual-qa/runs/wave10-s-final*`. Early attempts retained stale renderer handles across harness theme refreshes and are not clean-pass receipts. This is visual and deterministic evidence, not physical-GPU, reduced-motion device, mobile or release acceptance. No upload or publication occurred.
-## Bounded motion and first-painted handoff — 2026-11-16
+## Bounded motion and first-painted handoff:  2026-11-16
 
 Based on `2063a4e`, this slice replaces perpetual hovered-note breathing with a 150 ms settle and two gentle one-second breaths, then no animation frames while the pointer remains still. Focus uses interruptible 220 ms cubic easing. `visuals.motion` defaults to `full`; `reduced`, `off`, and a live OS reduced-motion preference settle camera, focus, lens and hover immediately and suppress selection ripples. Reduced and Off intentionally have identical renderer behavior here. The Appearance dropdown belongs to the parallel integration track. Motion updates scalar state, not per-node animation buffers or textures; existing capped label/pip work still runs on painted frames.
 

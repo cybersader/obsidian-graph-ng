@@ -1,4 +1,4 @@
-# ADR-0003 — Public APIs only
+# ADR-0003: Public APIs only
 
 - Status: accepted for slice 1
 - Date: 2026-11-10

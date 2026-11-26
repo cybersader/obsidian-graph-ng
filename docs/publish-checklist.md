@@ -2,7 +2,7 @@
 
 **Nothing is published by these scripts.** The owner must explicitly decide whether this local alpha is ready to become public. A public history cannot be made private again by deleting a later line. Green tooling is necessary, not sufficient.
 
-## Owner decisions — still pending
+## Pending owner decisions
 
 - [ ] **History:** recommended fresh, scrubbed public repository assembled from the reviewed tree, retaining original slice-1 history privately/local. Alternative: publish the existing history only after a complete history audit. Do not create a remote or rewrite/delete private history without authority.
 - [ ] **Distribution:** recommended BRAT-compatible releases first; community submission is a separate later decision after real-use evidence and planned renderer/runtime-dependency work.
@@ -22,7 +22,7 @@
 - [ ] Independent boundary review covers untrusted projection/labels and any changed runtime behavior. No remote grant/transport acceptance implied by local-file testing.
 - [ ] `./scripts/verify-release.sh` passes on the clean source. Check candidate SHA256SUMS; version files match. Preserve legal files and deterministic asset names.
 
-## Full privacy/history audit — local, immediately before publishing
+## Full privacy and history audit (run locally just before publishing)
 
 - [ ] Populate the **full** local fixed-string private-terms list: private domains, personal names/paths, production details and private projection IDs/hashes. The initial local list is only a starting point; public CI's empty list is not clearance.
 - [ ] Run `./scripts/run.sh gates` and `./scripts/run.sh audit:history` locally under the same lock/containment boundary. The history entry point runs the secrets, attribution and privacy scanners with `--history`: all reachable commits' metadata, filenames and blob contents, not just HEAD.
@@ -32,7 +32,7 @@
 - [ ] Screenshots are synthetic only and visually inspected; inspect rendered labels, tabs, window chrome and image metadata. Filenames and bytes are scanned even in ignored `test-screenshots/`, but text inside pixels may evade byte scans. Do not publish raw screenshot/JSON bundles by default.
 - [ ] Raw receipts/caches/worklogs/private-terms files remain ignored and local. Share only explicitly scrubbed per-commit summaries. No production endpoints, secrets or private sample data included.
 
-## Actual publish — separate authority
+## Publishing requires separate approval
 
 - [ ] Owner approves the chosen history/distribution/identity/CI terms and the remaining acceptance gaps.
 - [ ] Only then create the approved remote/tag/release with backups of retained private history. No current script performs these actions.

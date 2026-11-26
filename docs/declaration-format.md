@@ -38,13 +38,13 @@ All top-level fields except `carrierResolvers` are required. Unknown declaration
 
 Three optional, ontology-neutral fields extend the graduated hover/selection highlight. Absent fields mean the existing topological tiers exactly; no migration rewrites them. With Family pull off (the default), they are excluded from layout identity, so adding or editing them does not itself reseed or relayout (a new `parentProperty` is ingested like any declared key). With `layout.force.familyPull > 0`, hierarchy and its parent-property facts enter layout identity and parent-only edits recompute. Group context and tint stay presentation-only.
 
-- `hierarchy.parentProperty` — each note's parents are the values of this property (a scalar or a list), resolved like inline edge targets: declared identity first, then exact path. Unresolved values and self references are dropped, duplicates collapse, multiple parents are allowed. The focus's ancestors (up to 8 levels, at most 256 notes, cycle-safe) form the *ancestor* tier.
-- `groupContext: true` — with a current grouping, other filter-visible members of the focus's group form the *same group* tier (bounded and reported when truncated).
-- `highlight: "tint"` on a `reified` rule — its edges keep their hop tier but mix in the accent color while a focus is active, so that rule's edges read as a distinct layer. Direct connections stay direct.
+- `hierarchy.parentProperty`: Each note's parents are the values of this property (a scalar or a list), resolved like inline edge targets: declared identity first, then exact path. Unresolved values and self references are dropped, duplicates collapse, multiple parents are allowed. The focus's ancestors (up to 8 levels, at most 256 notes, cycle-safe) form the *ancestor* tier.
+- `groupContext: true`: With a current grouping, other filter-visible members of the focus's group form the *same group* tier (bounded and reported when truncated).
+- `highlight: "tint"` on a `reified` rule: Its edges keep their hop tier but mix in the accent color while a focus is active, so that rule's edges read as a distinct layer. Direct connections stay direct.
 
 Precedence is fixed: focus > direct connections > ancestors > neighbours of neighbours (2-hop) > same group > context. Terms follow the README [Terminology](../README.md#terminology).
 
-**Example idea (Crosswalker-style frameworks, docs only, not a shipped preset):** framework entries carry `curie` and `parent_curie`; crosswalk notes (`kind: crosswalk-edge`) carry `subject_id`/`object_id`/`predicate_id`. Grouping by the CURIE prefix (part 1 of `curie` split at the first `:`) gives framework membership.
+**Example idea (a vault of linked frameworks, docs only, not a shipped preset):** framework entries carry `curie` and `parent_curie`; crosswalk notes (`kind: crosswalk-edge`) carry `subject_id`/`object_id`/`predicate_id`. Grouping by the CURIE prefix (part 1 of `curie` split at the first `:`) gives framework membership.
 
 ```json
 {
