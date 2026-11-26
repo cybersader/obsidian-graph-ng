@@ -99,13 +99,13 @@ test('filters inspector: inline stat rows, readable chips with named counts, fac
 test('facet toggles: one checkbox and aligned count per value; unticking and reticking rewrite the room filter', () => {
   const f = controlsFixture(), room = { kind: 'expr', expr: '!file.hasProperty("kind")' };
   const facet = (key: string, values: [string, number][]) => ({ key, distinct: values.length, values: values.map(([raw, count]) => ({ raw, label: raw === 'undefined' ? '(missing)' : JSON.parse(raw), count, visible: 0 })) });
-  const result: any = { visible: [], nodes: 0, visibleEdges: 0, edges: 0, facets: [facet('kind', [['undefined', 16309], ['"mapping-set"', 89], ['"facet"', 81]]), facet('team', [['"A"', 3], ['"B"', 2]]), { ...facet('id', [['"x"', 1], ['"y"', 1]]), distinct: 900 }] };
+  const result: any = { visible: [], nodes: 0, visibleEdges: 0, edges: 0, facets: [facet('kind', [['undefined', 1200], ['"mapping-set"', 8], ['"facet"', 4]]), facet('team', [['"A"', 3], ['"B"', 2]]), { ...facet('id', [['"x"', 1], ['"y"', 1]]), distinct: 900 }] };
   f.panel.view = { ...emptyView(), filters: [room] }; f.panel.render = () => { f.panel.body.empty(); f.panel.filters(f.panel.body, result); }; f.panel.render();
   const box = f.panel.body.querySelector('.graph-ng-toggles'); expect(box.getAttribute('aria-label')).toBe('Show notes by kind');
   // Truncated facets (more values than listed) never offer toggles.
   expect(box.querySelector('select').children.map((o: ControlElement) => o.value)).toEqual(['kind', 'team']);
   const rows = () => f.panel.body.querySelectorAll('.graph-ng-toggle').map((r: any) => [r.querySelector('input').getAttribute('aria-label'), (r.querySelector('input') as any).checked, r.querySelector('.graph-ng-count').textContent]);
-  expect(rows()).toEqual([['Show (missing)', true, '16,309'], ['Show mapping-set', false, '89'], ['Show facet', false, '81']]);
+  expect(rows()).toEqual([['Show (missing)', true, '1,200'], ['Show mapping-set', false, '8'], ['Show facet', false, '4']]);
   const tick = (label: string) => { const input: any = f.panel.body.querySelectorAll('input').find((i: ControlElement) => i.getAttribute('aria-label') === label)!; input.checked = !input.checked; input.onchange(); };
   tick('Show mapping-set'); expect(f.view().filters).toEqual([{ kind: 'expr', expr: '!["facet"].contains(note.kind)' }]);
   expect(rows().map((r: any) => r[1])).toEqual([true, true, false]);

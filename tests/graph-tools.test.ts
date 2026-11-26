@@ -410,7 +410,7 @@ test('TBR-2R admitted software Workspace updates real Canvas edge membership in 
 test('UX relationship notes Lines | Nodes: shown only with reified rules; one apply flips display; failure keeps it', async () => {
   const f = fixture(), buttons = () => f.panel.root.querySelectorAll('button').filter((b: any) => b.textContent === 'Lines' || b.textContent === 'Notes');
   let applies = 0, fail = false; const plugin = { settings: f.settings, apply: async (s: any) => { applies++; if (fail) throw new Error('synthetic save failure'); plugin.settings = s; } };
-  f.host.relationshipNotes = () => 44123; f.host.setRelationshipDisplay = (nodes: boolean) => setRelationshipDisplay(plugin, nodes);
+  f.host.relationshipNotes = () => 40_000; f.host.setRelationshipDisplay = (nodes: boolean) => setRelationshipDisplay(plugin, nodes);
   f.state.view.query = 'kept'; f.settings.explore.view = f.state.view; f.panel.show('appearance');
   expect(buttons().length).toBe(0);
   f.settings.declaration.edges.push({ kind: 'reified', name: 'crosswalk', sourceProperty: 'from', targetProperty: 'to' }); f.panel.render();

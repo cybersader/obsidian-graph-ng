@@ -397,7 +397,7 @@ Result: **548 tests pass**, full six-lane gates pass; **351,761 raw / 117,985 gz
 
 ## Layout cache reuse pass — 2026-11-15
 
-Reopening, reloading and small edits now reuse the saved layout in the cases that previously recomputed it. Against `ff6d44f`, an Obsidian reload while links are still resolving drops from a full cold layout (**1.74 s / 5.99 s** to the stable layout at 16,309 / 61,000 notes) to **0.43 s / 0.58 s**; a grouping change from **1.68 s / 6.57 s** to **0.32 s / 0.50 s**; a one-link edit from **0.75 s / 2.20 s** to **0.46 s / 0.85 s**. Cold layout itself is unchanged.
+Reopening, reloading and small edits now reuse the saved layout in the cases that previously recomputed it. Against `ff6d44f`, an Obsidian reload while links are still resolving drops from a full cold layout (**1.74 s / 5.99 s** to the stable layout at about 16k / 61k notes) to **0.43 s / 0.58 s**; a grouping change from **1.68 s / 6.57 s** to **0.32 s / 0.50 s**; a one-link edit from **0.75 s / 2.20 s** to **0.46 s / 0.85 s**. Cold layout itself is unchanged.
 
 ### Why hits were missed
 
@@ -413,7 +413,7 @@ Not misses: appearance settings, colours, `hierarchy`, `interest`, `groupContext
 
 ### Method
 
-`tests/cache-benchmark.test.ts` (`flock -w 3000 -E 75 /tmp/openclast-bun.lock timeout --kill-after=5s 1800s ./scripts/run.sh bench:cache`) drives the real layout worker and `BinaryLayoutStore` over an in-memory adapter in the same request order as the view refresh: configure, read the saved generation unless the worker holds it, ingest 2,000-row batches, project, detail, layout, then encode and write after a computed verified layout. **Stable** is the time from configure to the final layout result, the positions the first settled frame draws. It excludes Obsidian metadata IO, physical disk, renderer upload (about 60 ms, startup table below) and paint. One run per scenario on the startup fixture (16,309 / 46,400 and 61,000 / 100,000), default layout (100 iterations, 30 relax), same i9-12900K / Bun 1.3.14 host. Baseline numbers use the same harness on `ff6d44f` runtime source. The receipt is `.workspace/evidence/performance-cache.json`. Behaviour is covered by `tests/layout-cache.test.ts`, which runs the real view refresh, worker and store across a simulated reload.
+`tests/cache-benchmark.test.ts` (`flock -w 3000 -E 75 /tmp/openclast-bun.lock timeout --kill-after=5s 1800s ./scripts/run.sh bench:cache`) drives the real layout worker and `BinaryLayoutStore` over an in-memory adapter in the same request order as the view refresh: configure, read the saved generation unless the worker holds it, ingest 2,000-row batches, project, detail, layout, then encode and write after a computed verified layout. **Stable** is the time from configure to the final layout result, the positions the first settled frame draws. It excludes Obsidian metadata IO, physical disk, renderer upload (about 60 ms, startup table below) and paint. One run per scenario on the startup fixture (~16k / 46,400 and 61,000 / 100,000), default layout (100 iterations, 30 relax), same i9-12900K / Bun 1.3.14 host. Baseline numbers use the same harness on `ff6d44f` runtime source. The receipt is `.workspace/evidence/performance-cache.json`. Behaviour is covered by `tests/layout-cache.test.ts`, which runs the real view refresh, worker and store across a simulated reload.
 
 | Scenario | 16k before | 16k after | 61k before | 61k after | After: layout result |
 | --- | ---: | ---: | ---: | ---: | --- |
@@ -439,7 +439,7 @@ The main win is less work on hub selection, not a faster layout algorithm. Again
 
 Measured on a Linux x86-64 desktop CPU (Intel Core i9-12900K, 24 logical CPUs), Bun 1.3.14. No browser, real vault, shader compilation, GPU rasterization or host metadata IO was used. `tests/performance-benchmark.test.ts` runs the production solver in a real worker and the compiled production renderer against synthetic DOM/Canvas/WebGL command drivers. Canvas retains its 2,000-visible-node / 10,000-visible-edge limits and shows the hub neighbourhood; full-prefixed metrics show the entire projection through the fake WebGL driver. Text metrics are deterministic approximations. First-frame values include renderer setup and submission, not pixels becoming visible. Minimap measures density-bin construction, not raster upload.
 
-The seeded fixtures contain 16,000 nodes / 55,000 edges, or 61,000 nodes / 100,000 edges including 44,552 relationship-note nodes. They approximate a heavy-tailed graph: degree-591 hub, 84 ordinary nodes above degree 100, ordinary-node degree p50/p90/p99 = 1/13/69, 13% ordinary isolates, 93 groups (largest 1,468, median 97), cross-group relationship endpoints and hierarchy depth at most three. The requested p90 was 11; the fixture achieves 13, not an exact reconstruction. All paths, names and declarations are synthetic. A separate startup fixture uses 16,309 / 46,400.
+The seeded fixtures contain 16,000 nodes / 55,000 edges, or 61,000 nodes / 100,000 edges including 44,552 relationship-note nodes. They approximate a heavy-tailed graph: degree-591 hub, 84 ordinary nodes above degree 100, ordinary-node degree p50/p90/p99 = 1/13/69, 13% ordinary isolates, 93 groups (largest 1,468, median 97), cross-group relationship endpoints and hierarchy depth at most three. The requested p90 was 11; the fixture achieves 13, not an exact reconstruction. All paths, names and declarations are synthetic. The startup measurements below used an earlier compact fixture with about 16k notes and 46,400 edges. New runs use 16,000 notes; the historical timings are not measurements of that revision.
 
 Run from the checkout root after a frozen, script-disabled install. `./scripts/run.sh` retains the shared containment lock; the outer lock is distinct. Each command is one invocation:
 
@@ -509,7 +509,7 @@ Renderer/core buffers overlap: do not sum these rows as independent allocations.
 
 Three repetitions of `bench:startup` use the actual `runLayoutStream` scheduler and worker messages, plus compiled-renderer setup. The following medians are **CPU-path lower bounds, not measured user-visible stable-layout latency**; host metadata/cache IO, cache hashing/decoding/validation, CSS layout, shader compilation and rasterization are excluded. “Stable” means positions freeze at the 100-iteration budget, not numerical convergence.
 
-| Startup component | 16,309 / 46,400 | 61,000 / 100,000 |
+| Startup component | ~16k / 46,400 | 61,000 / 100,000 |
 | --- | ---: | ---: |
 | Pack/decode ingest | 77.17 ms | 71.66 ms |
 | Projection | 148.30 ms | 194.85 ms |

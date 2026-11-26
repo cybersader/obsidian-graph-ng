@@ -238,14 +238,14 @@ test('review regression: "!=" toggles also hide missing values, and multi-valued
 });
 
 test('loading information suppresses unsettled counts, preserves configured mode, and reports real stages', () => {
-  const report: InformationReport = { nodes: 61077, edges: 189505, listed: 61077, linksPending: true, provisional: true, unresolved: 213, duplicates: 0,
-    relationshipNodes: false, ruleNotes: { relation: 44572 }, pendingProperties: 40, progress: { iteration: 60, total: 100 } };
+  const report: InformationReport = { nodes: 60_000, edges: 180_000, listed: 60_000, linksPending: true, provisional: true, unresolved: 20, duplicates: 0,
+    relationshipNodes: false, ruleNotes: { relation: 40_000 }, pendingProperties: 40, progress: { iteration: 60, total: 100 } };
   const host: any = new ControlElement();
   renderInformation(host, '', 'building', report);
   expect(host.textContent).toContain('40 notes with unverified properties');
   expect(host.textContent).toContain('60 of 100 steps'); expect(host.textContent).not.toContain('%');
   expect(host.querySelector('.graph-ng-help-trigger').textContent).toBe('Relationship notes');
-  for (const misleading of ['44,572', '61,077', '189,505', 'drawn as dots', 'Edges included', 'No issues found', 'Save as']) expect(host.textContent).not.toContain(misleading);
+  for (const misleading of ['40,000', '60,000', '180,000', 'drawn as dots', 'Edges included', 'No issues found', 'Save as']) expect(host.textContent).not.toContain(misleading);
   expect(layoutProgress({ iteration: 3, total: 6 })).toBe('3 of 6 steps');
   expect(pendingText({ linksPending: true, pendingProperties: 0 })).toBe('Ready, source checks incomplete');
   // Completed layout does not turn unresolved host metadata into final-looking accounting.

@@ -30,7 +30,7 @@ test.skipIf(!process.env.PERF_BENCH)('startup CPU lower bounds: real stream cade
     const { rows, declaration, shape } = performanceFixture(literal, true), samples: any[] = [];
     for (let repetition = 0; repetition < 3; repetition++) {
       const start = performance.now(), decoded = unpackRows(packRows(rows, declaration)), ingested = performance.now(), p = buildProjection(decoded, declaration), projected = performance.now();
-      expect(p.paths.length).toBe(literal ? 61000 : 16309); expect(p.source.length).toBe(literal ? 100000 : 46400);
+      expect(p.paths.length).toBe(literal ? 61000 : 16000); expect(p.source.length).toBe(literal ? 100000 : 46400);
       const layout = await streamed({ count: p.paths.length, source: p.source, target: p.target, offsets: p.offsets, targets: p.targets, seed: 17 });
       const positions = layout.positions; delete layout.positions;
       expect(layout.snapshots.length).toBe(20); expect(layout.snapshots[0].iteration).toBe(0); expect(layout.snapshots[1].iteration).toBe(5);
@@ -47,7 +47,7 @@ test.skipIf(!process.env.PERF_BENCH)('startup CPU lower bounds: real stream cade
       samples.push({ ingestMs: ingested - start, projectionMs: projected - ingested, layout, renderSubmissionMs: renderMs,
         coldCpuPathMs: projected - start + layout.roundTripMs + renderMs, exactIdentityAndCopyMs, unchangedWarmPreparationMs });
     }
-    results.push({ nodes: literal ? 61000 : 16309, edges: literal ? 100000 : 46400, shape, samples });
+    results.push({ nodes: literal ? 61000 : 16000, edges: literal ? 100000 : 46400, shape, samples });
   }
   const receipt = { runtime: Bun.version, hardware: 'Linux desktop CPU; synthetic command-submission driver', command: './scripts/run.sh bench:startup', caveats: 'Not user-visible/native timing. No host metadata IO, cache IO, source hashing, CSS layout, shader compilation or rasterization. Cold path includes synchronous pack/decode/projection, real worker startup/stream delivery and compiled renderer setup. Stable means frozen at 100 iterations, NOT mathematical convergence. Cache timing assumes all existing generation and identity checks pass.', results };
   mkdirSync('.workspace/evidence', { recursive: true }); writeFileSync('.workspace/evidence/performance-startup.json', JSON.stringify(receipt, null, 2) + '\n');

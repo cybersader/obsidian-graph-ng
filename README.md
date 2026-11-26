@@ -4,30 +4,13 @@
 
 # Graph NG
 
-**Explore the shape of your notes.**
+Explore large collections of Obsidian notes locally: start with groups, select a note, and follow its connections.
 
-A performance-first graph for Obsidian, combining rich exploration tools with fluid, responsive interaction.
+![Graph NG showing the Index note, its neighbours and its connection card](docs/assets/note-connections.png)
 
 [Install](#install-locally) | [Use](#use) | [Explore](#explore-filters-groups-and-visuals) | [Declare your data](#meaning-is-declared) | [Known limits](#not-implemented--not-proven) | [Develop](#development-and-exact-commands)
 
 </div>
-
----
-
-A standalone, local-first Obsidian graph plugin. Start with a readable graph of declared groups, inspect counted relationships between groups and the relationship notes behind them, then drill into individual notes when hardware WebGL is available. No ontology, category vocabulary, relation vocabulary, or ID format is built into the core.
-
-**Built for big, connected collections of notes.** Graph NG grew out of work on OpenClast and Crosswalker, where thousands of notes need to be explored together—not just listed. It brings that same approach to your Obsidian vault; neither project is required.
-
-**Version 0.5.2 candidate / test-backed alpha.** This update exposes three existing layout settings with numeric drafts and explicit apply/reset. The subsequent local candidate adds optional worker WebGPU layout. It does not fix globally dense graphs or change host loading/indexing or node-label policy. Independent review and runtime visual acceptance are still required; runtime visuals and performance remain **UNOBSERVED**. This is not production, mobile, integrated-GPU or remote-authorization acceptance. No server, hosted service or telemetry is configured. All fixtures and captured evidence are synthetic.
-
-## At a glance
-
-| Start with… | Then explore… |
-| --- | --- |
-| **Groups, not a wall of dots** | Paged groups, member counts and counted relationships. |
-| **The notes behind a connection** | Direction/type counts, contributing edges and carrier notes. |
-| **Your own vocabulary** | Explicit declarations; no built-in ontology or identity format. |
-| **A view that fits the question** | Search, filters, grouping, color rules and saved views. |
 
 ## Install locally
 
@@ -44,14 +27,14 @@ This alpha uses a local build, not a community-plugin install flow. Use a **synt
 3. Copy `main.js`, `manifest.json`, `styles.css`, `NOTICE`, and `THIRD_PARTY_NOTICES.txt` into the synthetic vault’s `.obsidian/plugins/graph-ng/` directory.
 4. Enable **Graph NG** in Obsidian yourself.
 
-**Compatibility is not yet release-accepted.** Native evidence covers Obsidian 1.13.7 desktop; mobile and the wider version matrix remain unverified. See [supported-version caveats](SECURITY.md#supported-versions) and [known limits](#not-implemented--not-proven).
+**Desktop alpha (0.5.2 candidate).** There is no hosted service or telemetry. Mobile support and the full desktop version range are unverified. See the [supported versions](SECURITY.md#supported-versions) and [known limits](#not-implemented--not-proven).
 
 ## Use
 
-1. Run **Graph NG: Open graph** or use the fork ribbon icon.
-2. The initial **Groups** screen shows a page of nonempty declared groups with readable labels/member counts and counted edges between groups on that Canvas page (six groups by default). Independent previous/next controls page the Canvas, group list, and complete relationship list. Cross-page relationships remain accessible in the relationship list. Pairs use ↔ because they aggregate both directions; hover/click for type/directional counts and contributing edges/carrier notes. Self-pairs are retained.
-3. Click a group to see its members. Choose **Open this group in Notes** to explore just those members. Clicking a note in the graph or a member row opens it. **View → Notes** opens the full detailed graph. Zooming out returns to groups.
-4. Settings → Graph NG contains separate declaration and tuning JSON editors. **Validate and save** rejects invalid input and rebuilds. Changing `debounceMs` requires a plugin reload.
+1. Run **Graph NG: Open graph** from the command palette, or click the graph icon in the ribbon.
+2. In **Groups**, select a group to see its members, or a line to see the relationships it represents. Choose **Open this group in Notes** to explore its notes together.
+3. Switch to **Notes** for the full graph. Search for a note by name, then select a result to jump to it without hiding its neighbours. Select a connected note to follow it, or choose **Open note** to read it.
+4. To use your own properties for groups or relationships, open **Settings → Graph NG**. See [Declare your data](#meaning-is-declared) for examples.
 
 ## Terminology
 
@@ -405,7 +388,7 @@ Bun, Node.js, `flock`, and the host’s `build-contained` wrapper are prerequisi
 
 `CHROME_BIN` optionally selects an existing Chrome executable for the browser benchmark. Fixtures, generated bundles, screenshots, cached app binaries, raw receipts, and `.workspace/` worklogs are ignored. Fixture generation writes only the named synthetic small/large destinations; regenerate a matching mode before its native invocation. Never aim this generator at personal vaults.
 
-Installations explicitly disable lifecycle scripts. Configure local private terms before full gates; the fast hook is opt-in. See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), [AGENTS.md](AGENTS.md), [changelog](CHANGELOG.md), [declaration v2](docs/declaration-format.md), [projection v0 draft](docs/projection-format.md), [benchmark methodology](docs/benchmarks.md), [decisions](docs/decisions/README.md), [local releasing](docs/releasing.md), and the [pre-publish checklist](docs/publish-checklist.md). This remains a local repository; no release URL or public install path is configured.
+Installations explicitly disable lifecycle scripts. Configure local private terms before full gates; the fast hook is opt-in. See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), [AGENTS.md](AGENTS.md), [changelog](CHANGELOG.md), [declaration v2](docs/declaration-format.md), [projection v0 draft](docs/projection-format.md), [benchmark methodology](docs/benchmarks.md), [decisions](docs/decisions/README.md), [local releasing](docs/releasing.md), and the [pre-publish checklist](docs/publish-checklist.md). For this candidate, use the [local installation instructions](#install-locally).
 
 ## Current renderer evidence
 
@@ -422,7 +405,7 @@ Slice 3 removes Sigma, preserves the existing worker layout, and restores contri
 
 </details>
 
-## Historical slice-2 measured startup — 2026-11-10
+## Historical slice-2 measured startup: 2026-11-10
 
 <details>
 <summary>Read the detailed reference</summary>
@@ -431,7 +414,7 @@ At 60,600 synthetic notes (semantic/literal), final browser cold groups took **4
 
 </details>
 
-## Historical slice-1 evidence — 2026-11-10
+## Historical slice-1 evidence: 2026-11-10
 
 <details>
 <summary>Read the detailed reference</summary>
@@ -511,7 +494,7 @@ Groups streams before detail/layout. Declared columns and producer-link CSR are 
 
 `data.json` contains settings, optional numeric diagnostics and an opaque device namespace identifier, never cached fact rows. Default derived storage is `cache/local/` under the plugin folder; `cache.directory`, `cache.chunkBytes` (at most 1 MiB), `cache.maxGenerationBytes` and `cachedDeclarations` control it. Position Float32, identity dictionaries/offsets, hash-pair topology and group summaries are checksummed/chunked; manifests commit completed generations, matching chunks can resume, bad data quarantines automatically, and the LRU records kept/removed actions. Plain Obsidian uses source identity `local`; a future host can supply an opaque member/view identity through `setSourceIdentity()`. Changing it clears the old display and discards the old namespace. No remote adapter or grant enforcement is claimed.
 
-A compatible cached group summary paints first with **cached · verifying N of M**. Filters/member lists remain provisional until every Markdown note has a non-null public `metadataCache` entry, then the worker confirms or rebuilds the generation. Partial indexing cannot overwrite a complete saved generation. Old solver generations are refused, including legacy graphology positions. Producer `graph-ng-fa2@2` deliberately rebuilds them without changing binary format 3. No frontmatter scanner, private host cache access or second property authority is added. The separate startup-fact cache described above is disposable provisional input.
+A compatible cached group summary paints first with **cached (verifying N of M)**. Filters/member lists remain provisional until every Markdown note has a non-null public `metadataCache` entry, then the worker confirms or rebuilds the generation. Partial indexing cannot overwrite a complete saved generation. Old solver generations are refused, including legacy graphology positions. Producer `graph-ng-fa2@2` deliberately rebuilds them without changing binary format 3. No frontmatter scanner, private host cache access or second property authority is added. The separate startup-fact cache described above is disposable provisional input.
 
 Finite defaults are 64 MiB external aggregate JSON, 20,000 groups, 200,000 pairs and 1,000,000 carrier references. Explicit count zero still opts into unlimited counts; byte budgets remain finite. External files always say **unverified external aggregate** and never merge with live rows. In-app export is not implemented. Headless projection output is labelled **your view**, accepts only a caller-scoped fact export and requires an explicit destination.
 

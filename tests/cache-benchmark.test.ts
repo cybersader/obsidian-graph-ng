@@ -67,7 +67,7 @@ test.skipIf(!process.env.PERF_BENCH)('layout cache: cold, exact, provisional rel
       runs.reloadVerified = round(await open(p, store(), rows, declaration, 2, { reset: true }));
     } finally { p.dispose(); }
     expect((runs.reloadExact as any).cached).toBe(true);
-    results.push({ nodes: literal ? 61000 : 16309, edges: literal ? 100000 : 46400, runs });
+    results.push({ nodes: literal ? 61000 : 16000, edges: literal ? 100000 : 46400, runs });
     console.log(JSON.stringify(results.at(-1)));
   }
   const receipt = { runtime: Bun.version, hardware: 'Linux desktop CPU', command: './scripts/run.sh bench:cache', caveats: 'Real layout worker and BinaryLayoutStore over an in-memory adapter. No Obsidian metadata IO, physical disk, renderer upload or paint. stableMs runs from configure to the final layout result.', results };

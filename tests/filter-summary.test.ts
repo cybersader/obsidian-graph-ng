@@ -32,7 +32,7 @@ test('graph information renders icon stat rows, a plain-English issues list and 
   const { ControlElement } = await import('./support/controls-dom');
   const { renderInformation } = await import('../src/graph-information');
   const host: any = new ControlElement();
-  const report: any = { nodes: 16121, edges: 49534, indexed: 90, listed: 100, linksPending: true, provisional: true, unresolved: 1, duplicates: 2, rows: 100, rules: ['crosswalk'], dropped: { crosswalk: { drawn: 10, missing: 2, excluded: 1, lines: 0 } } };
+  const report: any = { nodes: 16_384, edges: 48_000, indexed: 90, listed: 100, linksPending: true, provisional: true, unresolved: 1, duplicates: 2, rows: 100, rules: ['crosswalk'], dropped: { crosswalk: { drawn: 10, missing: 2, excluded: 1, lines: 0 } } };
   renderInformation(host, 'Preparing graph', 'building', report);
   const rows = host.querySelectorAll('.graph-ng-stat').map((t: any) => [t.children[0].children[0].getAttribute('data-icon'), (t.children[1].querySelector('.graph-ng-help-trigger') ?? t.children[1]).textContent, t.children[2].textContent]);
   expect(rows).toEqual([['timer', 'Layout', 'Preparing graph'], ['spline', 'Relationship notes', 'Lines']]);
@@ -40,7 +40,7 @@ test('graph information renders icon stat rows, a plain-English issues list and 
   expect(host.querySelector('.graph-ng-status-message').textContent).toBe('Preparing graph');
   renderInformation(host, '', 'ready', report); expect(host.textContent).toContain('Starts when requested');
   expect(host.querySelector('.graph-ng-working')).toBeUndefined();
-  expect(host.textContent).not.toContain('49,534');
+  expect(host.textContent).not.toContain('48,000');
   expect(host.textContent).not.toContain('Properties loaded'); expect(host.textContent).not.toContain('Partial graph');
   expect(host.textContent).not.toContain(' · ');
   // The tile bar, card and table are gone.

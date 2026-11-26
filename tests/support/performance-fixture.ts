@@ -6,7 +6,7 @@ import type { FactRow } from '../../src/core/projection';
  * neighbours; 13% of ordinary notes are isolated. Relationship endpoints cross 93 groups.
  * Target quantiles are approximate; the receipt reports the actual generated degrees. */
 export function performanceFixture(literal: boolean, compact = false) {
-  const ordinary = literal ? 16448 : compact ? 16309 : 16000, relationships = 44552, edgeCount = literal ? 100000 : compact ? 46400 : 55000;
+  const ordinary = literal ? 16448 : 16000, relationships = 44552, edgeCount = literal ? 100000 : compact ? 46400 : 55000;
   const pairs = edgeCount - (literal ? relationships : 0), active = Math.round(ordinary * .87), rng = random(73);
   const name = (i: number) => `Notes/Note-${String(i).padStart(5, '0')}.md`;
   const groups = new Uint32Array(ordinary);

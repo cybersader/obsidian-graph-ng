@@ -43,7 +43,7 @@ const measurements: any[] = [], started = performance.now();
 afterAll(() => { const directory = new URL('../.workspace/evidence/', import.meta.url); mkdirSync(directory, { recursive: true }); writeFileSync(new URL('density-overdraw.json', directory), JSON.stringify({ kind: 'ideal scalar source-equation reference, not GPU/native pixels', milliseconds: performance.now() - started, measurements }, null, 2)); });
 test('density actual shader equations reproduce old whiteout and bound dense node glow and edges', () => {
   expect(source).toContain('gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA)');
-  const s = defaults('links'), a = edgeAlpha({ ...s.visuals, edgeOpacity: .05 }, 103058, 1, true);
+  const s = defaults('links'), a = edgeAlpha({ ...s.visuals, edgeOpacity: .05 }, 104_000, 1, true);
   const cases = [['node-glow', colors.map(c => oldNode(c, 1.2, .3)), colors.map(c => newNode(c, 1.2, .3))], ['edges', colors.map(c => oldEdge(c, a, true)), colors.map(c => newEdge(c, a, true))]] as const;
   for (const [kind, oldFragments, fragments] of cases) for (const overlaps of [1, 8, 64, 512, 4096]) {
     const oldRGB = accumulate(oldFragments, overlaps), rgb = accumulate(fragments, overlaps); measurements.push({ kind, overlaps, oldRGB, rgb });
@@ -53,7 +53,7 @@ test('density actual shader equations reproduce old whiteout and bound dense nod
   }
 });
 test('density local crowded and sparse pixels are handled independently, without a global visibility cut', () => {
-  const s = defaults('links'), alpha = edgeAlpha({ ...s.visuals, edgeOpacity: .05 }, 103058, 1, true), oldFragments = colors.map(c => oldEdge(c, alpha, true)), fragments = colors.map(c => newEdge(c, alpha, true));
+  const s = defaults('links'), alpha = edgeAlpha({ ...s.visuals, edgeOpacity: .05 }, 104_000, 1, true), oldFragments = colors.map(c => oldEdge(c, alpha, true)), fragments = colors.map(c => newEdge(c, alpha, true));
   let oldWhite = 0, white = 0, fragmentsDrawn = 0;
   for (let y = -5; y <= 5; y++) for (let x = -5; x <= 5; x++) {
     const count = Math.hypot(x, y) < 3 ? 4096 : Math.hypot(x, y) < 5 ? 64 : 1; fragmentsDrawn += count;
@@ -75,7 +75,7 @@ test('density sparse node cores and light-theme output are unchanged; translucen
 });
 test('density zero-edge contract and explicit current focus remain continuous across zoom and density', () => {
   const settings = defaults('links'), saved = JSON.stringify(settings);
-  for (const dark of [false, true]) for (const count of [1, 103058, 1000000]) for (const zoom of [.02, 1, 8]) for (const opacity of [0, .00001, .05, 1]) {
+  for (const dark of [false, true]) for (const count of [1, 104_000, 1000000]) for (const zoom of [.02, 1, 8]) for (const opacity of [0, .00001, .05, 1]) {
     const a = edgeAlpha({ ...settings.visuals, edgeOpacity: opacity }, count, zoom, dark);
     const context = newEdge(colors[0]!, a, dark), focus = newEdge(colors[0]!, a, dark, 1, true);
     if (!opacity) expect(focus).toEqual([0, 0, 0, 0]); else { expect(focus[3]).toBeGreaterThanOrEqual(context[3]!); expect(focus[3]).toBeLessThanOrEqual(1); }
@@ -116,13 +116,13 @@ test('density correction leaves node radius and edge geometry/direction/focus eq
   expect(focusFree(shader('nodeVertex'))).toBe(focusFree(before.nodeVertex)); expect(shader('nodeVertex')).not.toBe(before.nodeVertex);
   const geometry = (code: string) => focusFree(code.slice(0, code.lastIndexOf('tint = vec4(rgb * alpha,'))).replace(/vec4 sa = state\(s\), sb = state\(t\);/g, '').split('\n').map(s => s.trim()).filter(Boolean).join('\n'); expect(geometry(shader('edgeVertex'))).toBe(geometry(before.edge));
   const s = defaults('links'); s.nodeSizing = { policy: 'predictable', compensation: 1, floor: .3 };
-  for (const zoom of [.02, 1, 8]) { const radius = baseRadius(s, 800, 600, 62230, zoom); expect(radius).toBeGreaterThanOrEqual(s.nodeSize * .3); expect(radius).toBeLessThanOrEqual(s.nodeSize); }
-  expect(effectPolicy(s.visuals, 62230, 103058, 12, false, true).dark).toBe(true);
+  for (const zoom of [.02, 1, 8]) { const radius = baseRadius(s, 800, 600, 64_000, zoom); expect(radius).toBeGreaterThanOrEqual(s.nodeSize * .3); expect(radius).toBeLessThanOrEqual(s.nodeSize); }
+  expect(effectPolicy(s.visuals, 64_000, 104_000, 12, false, true).dark).toBe(true);
 });
 test('density zoom adaptation fades crowded edges as coverage, recovers zooming in, and never hides an edge', () => {
   const v = defaults('links').visuals, off = { ...v, zoomAdapt: false }, zooms = [.02, .1, .5, 1, 2, 4, 16, 64];
   expect(v.zoomAdapt).toBe(true);
-  for (const dark of [false, true]) for (const count of [1, 3000, 49534, 103058, 1e6]) {
+  for (const dark of [false, true]) for (const count of [1, 3000, 48_000, 104_000, 1e6]) {
     let last = Infinity;
     for (const zoom of zooms) {
       const a = edgeAlpha(v, count, zoom, dark), plain = edgeAlpha(off, count, zoom, dark), f = zoomFade(v, count, zoom);
@@ -138,7 +138,7 @@ test('density zoom adaptation fades crowded edges as coverage, recovers zooming 
   // Crowding is per pixel: the same graph in a smaller pane fades more; zero reference or off disables.
   expect(zoomFade(v, 6000, 1, 640, 400)).toBeLessThan(zoomFade(v, 6000, 1, 2560, 1600));
   expect(zoomFade({ ...v, edgeDensityReference: 0 }, 1e6, 64)).toBe(1); expect(zoomFade(off, 1e6, 64)).toBe(1);
-  expect(zoomFade(v, 49534, 1)).toBeCloseTo(.35, 12); expect(zoomFade(v, 6000, .5)).toBe(1); expect(zoomFade(v, 12000, 1)).toBeCloseTo(.5, 12);
+  expect(zoomFade(v, 48_000, 1)).toBeCloseTo(.35, 12); expect(zoomFade(v, 6000, .5)).toBe(1); expect(zoomFade(v, 12000, 1)).toBeCloseTo(.5, 12);
   // Hub prominence: unchanged at or inside home or uncrowded; zoom^-1/2 in half log2 steps, floored at 1/4.
   for (const zoom of [.01, .5, 1, 1.1]) expect(prominenceKeep(zoom, true)).toBe(1);
   expect(prominenceKeep(64, false)).toBe(1); expect(prominenceKeep(2, true)).toBeCloseTo(Math.SQRT1_2, 12); expect(prominenceKeep(4, true)).toBe(.5); expect(prominenceKeep(1e4, true)).toBe(.25);
